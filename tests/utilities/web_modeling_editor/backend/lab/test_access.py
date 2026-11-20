@@ -14,6 +14,7 @@ from besser.utilities.web_modeling_editor.backend.routers.auth import LabUserDep
 from besser.utilities.web_modeling_editor.backend.services.lab.access import (
     LabUser,
     allowed_logins,
+    is_admin,
     is_login_allowed,
 )
 from besser.utilities.web_modeling_editor.backend.settings import get_settings
@@ -49,6 +50,42 @@ def test_a_login_is_allowed_only_on_a_lab_that_lists_it(settings, enabled, login
     settings.lab_enabled = enabled
     settings.lab_allowed_logins = logins
     assert is_login_allowed(settings, login) is expected
+
+
+@pytest.mark.parametrize("login, expected", [
+    ("octocat", True),
+    ("OCTOCAT", True),
+    ("hubot", False),       # allowed, not an admin
+    ("mallory", False),     # an admin not on the allowed list
+    ("", False),
+    (None, False),
+])
+def test_an_admin_is_a_listed_admin_who_is_also_allowed(settings, login, expected):
+    settings.lab_admin_logins = " OctoCat , mallory "
+
+    assert is_admin(settings, login) is expected
+
+
+def test_no_admin_on_a_lab_that_is_off(settings):
+    settings.lab_admin_logins = "octocat"
+    settings.lab_enabled = False
+
+    assert is_admin(settings, "octocat") is False
+
+
+def test_an_admin_off_the_allowed_list_is_ignored_with_a_warning_logged_once(settings, caplog):
+    # Logins unique to this test: the warning is logged once per configuration and process.
+    settings.lab_allowed_logins = "warn-once-a"
+    settings.lab_admin_logins = "warn-once-a,warn-once-b"
+
+    with caplog.at_level("WARNING"):
+        assert is_admin(settings, "warn-once-b") is False
+        assert is_admin(settings, "warn-once-a") is True
+        assert is_admin(settings, "warn-once-b") is False
+
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert len(warnings) == 1
+    assert "warn-once-b" in warnings[0] and "BESSER_LAB_ALLOWED_LOGINS" in warnings[0]
 
 
 def test_a_lab_user_never_shows_its_token_in_its_repr():

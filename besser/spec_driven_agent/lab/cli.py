@@ -1,10 +1,12 @@
-"""``python -m besser.spec_driven_agent.lab``: send one message to the lab agent from a terminal.
+"""``python -m besser.spec_driven_agent.lab``: send one message about one change to the lab agent from a terminal.
 
-Progress (phases, tool calls, the model's text) goes to stderr, the result as text
-to stdout and, with ``--json``, the whole outcome as JSON to a file. The API key is
-read from the provider's usual environment variable (``ANTHROPIC_API_KEY``,
-``OPENAI_API_KEY``, ...). The exit status is 0 when the step completed (a plan step:
-with a plan), 1 otherwise.
+``--root``, ``--state-dir`` and ``--git-root`` are the lab's folders (``BESSER_LAB_WORKSPACE_ROOT``,
+``BESSER_LAB_STATE_DIR``, ``BESSER_LAB_GIT_ROOT``), laid out by ``scripts/lab/setup_workspace.sh`` from the
+canonical repositories. Without ``--change`` a new draft is made; its id is the first line of stdout, so a
+next message can name it. Progress (phases, tool calls, the model's text) goes to stderr, the result as
+text to stdout and, with ``--json``, the whole outcome as JSON to a file. The API key is read from the
+provider's usual environment variable (``ANTHROPIC_API_KEY``, ``OPENAI_API_KEY``, ...); GitHub is not
+read. The exit status is 0 when the step completed (a plan step: with a plan), 1 otherwise.
 """
 
 from __future__ import annotations
@@ -12,15 +14,25 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 from dataclasses import asdict
 from typing import Optional
 
 from besser.spec_driven_agent.errors import InvalidApiKeyError
-from besser.spec_driven_agent.lab.contracts import LabCallbacks, LabLimits, SessionOutcome
-from besser.spec_driven_agent.lab.prompts import format_plan
+from besser.spec_driven_agent.lab.contracts import (
+    DEFAULT_UPSTREAMS,
+    LAB_CACHE_DIRNAME,
+    LabCallbacks,
+    LabLimits,
+    SessionOutcome,
+)
+from besser.spec_driven_agent.lab.environments import Environments, probe_link_mode
+from besser.spec_driven_agent.lab.memory import LabMemory
+from besser.spec_driven_agent.lab.prompts import format_build_report, format_plan
+from besser.spec_driven_agent.lab.sandbox_policy import LabSandboxPolicyError
 from besser.spec_driven_agent.lab.session import ACTIONS, LabSession
-from besser.spec_driven_agent.lab.workspace import LabWorkspace, LabWorkspaceError
+from besser.spec_driven_agent.lab.workspace import LabWorkspace, LabWorkspaceError, repo_specs_from_settings
 from besser.spec_driven_agent.providers.llm_client import create_llm_client
 
 PROG = "python -m besser.spec_driven_agent.lab"
@@ -31,14 +43,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog=PROG,
         description="Send one message to the lab agent of BESSER Lab, which plans or builds a change to "
-                    "BESSER's own repositories in a working copy.",
+                    "BESSER's own repositories in the change's own working trees.",
     )
+    parser.add_argument("message", metavar="MESSAGE", help="the message to the lab agent")
     parser.add_argument("--root", required=True,
-                        help="the lab working copy: the folder holding besser/ and modeling-agent/")
-    parser.add_argument("--user", required=True, help="GitHub login the change and its commits belong to")
-    parser.add_argument("--message", required=True, help="the message to the lab agent")
+                        help="the lab workspace (BESSER_LAB_WORKSPACE_ROOT): base/ and changes/")
+    parser.add_argument("--state-dir", required=True, help="the lab's state folder (BESSER_LAB_STATE_DIR)")
+    parser.add_argument("--git-root", required=True, help="the folder of the git directories (BESSER_LAB_GIT_ROOT)")
+    parser.add_argument("--change", default=None, metavar="ID",
+                        help="the change the message is about (default: a new draft, whose id is printed)")
+    parser.add_argument("--login", required=True, help="GitHub login of the person sending the message")
     parser.add_argument("--action", choices=ACTIONS, default="auto",
-                        help="auto (default): plan until the active change's plan is approved, build after; "
+                        help="auto (default): plan until the change's plan is approved, build after; "
                              "build approves the plan")
     parser.add_argument("--provider", default="anthropic", help="LLM provider (default: anthropic)")
     parser.add_argument("--model", default=None, help="model id (default: the provider's default)")
@@ -67,10 +83,14 @@ def _stderr_callbacks() -> LabCallbacks:
 
 def _result_text(outcome: SessionOutcome) -> str:
     if outcome.build is not None:
-        return outcome.build.summary
+        parts = [outcome.build.summary]
+        if outcome.build.report is not None:
+            parts.append("Report:\n" + format_build_report(outcome.build.report))
+        parts += [f"Proposed team note: {draft.title} ({draft.kind})" for draft in outcome.note_proposals]
+        return "\n\n".join(parts)
     if outcome.plan is not None:
         return format_plan(outcome.plan)
-    return f"No plan was submitted (stop reason: {outcome.stop_reason})."
+    return outcome.final_text or f"No plan was submitted (stop reason: {outcome.stop_reason})."
 
 
 def main(argv: Optional[list[str]] = None) -> int:
@@ -82,11 +102,18 @@ def main(argv: Optional[list[str]] = None) -> int:
     except (ValueError, ImportError) as exc:
         print(f"{PROG}: cannot create the {args.provider} client: {exc}", file=sys.stderr)
         return 1
-    session = LabSession(LabWorkspace(args.root), client=client, limits=LabLimits(max_cost_usd=args.max_cost),
-                         callbacks=_stderr_callbacks())
     try:
-        outcome = session.handle(args.message, user=args.user, action=args.action)
-    except (LabWorkspaceError, InvalidApiKeyError) as exc:
+        workspace = LabWorkspace(args.root, repo_specs_from_settings(args.root, args.git_root, DEFAULT_UPSTREAMS),
+                                 state_dir=args.state_dir, git_root=args.git_root)
+        cache = os.path.join(workspace.root, LAB_CACHE_DIRNAME)
+        environments = Environments(cache, mode=probe_link_mode(cache))
+        change_id = args.change or workspace.create_draft(owner=args.login).id
+        print(f"Change {change_id}")
+        session = LabSession(workspace, client=client, environments=environments,
+                             limits=LabLimits(max_cost_usd=args.max_cost), callbacks=_stderr_callbacks(),
+                             memory=LabMemory(workspace.state_dir, workspace.root))
+        outcome = session.handle(args.message, change_id=change_id, login=args.login, action=args.action)
+    except (LabWorkspaceError, LabSandboxPolicyError, InvalidApiKeyError, OSError) as exc:
         print(f"{PROG}: {exc}", file=sys.stderr)
         return 1
     print(_result_text(outcome))

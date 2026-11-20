@@ -161,7 +161,9 @@ _STEPS: dict[ChangeKind, tuple[tuple[str, str], ...]] = {
         (REPO_FRONTEND, "Webapp: `SupportedDiagramType`, `ALL_DIAGRAM_TYPES` and `BesserProject.diagrams` in "
                         "`packages/webapp/src/main/shared/types/project.ts`, with a `PROJECT_SCHEMA_VERSION` bump "
                         "and a migration; the sidebar in "
-                        "`packages/webapp/src/main/app/shell/workspace-navigation.tsx`; generate-menu entries in "
+                        "`packages/webapp/src/main/app/shell/workspace-navigation.tsx`; an editor branch in "
+                        "`packages/webapp/src/main/features/editors/EditorView.tsx` when the type needs a non-UML "
+                        "canvas; generate-menu entries in "
                         "`packages/webapp/src/main/app/shell/menus/generator-menu-config.ts`. "
                         "Checklist: `packages/webapp/src/main/features/project/ADDING_NEW_DIAGRAM_TYPE.md`."),
         (REPO_FRONTEND, "Assistant: a converter and a modifier under "
@@ -172,17 +174,20 @@ _STEPS: dict[ChangeKind, tuple[tuple[str, str], ...]] = {
                               "`src/prompts/<type>.py`; the handler in `HANDLER_CLASSES` of "
                               "`src/diagram_handlers/registry/factory.py`."),
         (REPO_MODELING_AGENT, "Routing: the token in `_TARGET_DIAGRAM_TYPES` of `src/routing/unified_classifier.py` "
-                              "and its vocabulary in `SYSTEM_PROMPT` of `src/prompts/classifier.py`; "
-                              "`KEYWORD_TARGETS`, an `_IMPLICIT_PATTERNS` regex and `FALLBACK_PRIORITY` in "
-                              "`src/orchestrator/workspace_orchestrator.py`."),
+                              "and its vocabulary in `SYSTEM_PROMPT` of `src/prompts/classifier.py`; one "
+                              "representative entry in `training_sentences` of `modeling_agent.py` (no vocabulary "
+                              "in its `description=`); `KEYWORD_TARGETS`, an `_IMPLICIT_PATTERNS` regex and "
+                              "`FALLBACK_PRIORITY` in `src/orchestrator/workspace_orchestrator.py`."),
         (REPO_MODELING_AGENT, "`SUPPORTED_DIAGRAM_TYPES` in `src/protocol/types.py` (an unknown type is silently "
                               "treated as a class diagram), `DIAGRAM_TYPE_METADATA` in "
-                              "`src/diagram_handlers/registry/metadata.py`, suggestions in "
-                              "`src/conversation/suggestions.py`, quick responses in `src/app/state_bodies.py` and "
-                              "`src/prompts/fallback.py`."),
+                              "`src/diagram_handlers/registry/metadata.py`, a suggestion list and its "
+                              "`_DIAGRAM_SUGGESTION_HANDLERS` entry in `src/conversation/suggestions.py`, quick "
+                              "responses in `src/app/state_bodies.py` and `src/prompts/fallback.py`."),
         (REPO_MODELING_AGENT, "Tests: `tests/test_diagram_handlers.py` plus a `tests/test_<type>.py`, cases in "
                               "`tests/test_handler_envelopes.py`; a changed prompt updates its hash in "
-                              "`tests/test_prompt_snapshots.py`. Walkthrough: "
+                              "`tests/test_prompt_snapshots.py`. Docs: the \"Supported Diagram Types\" table of "
+                              "`README.md`, `docs/source/diagram_handlers.rst`, `docs/source/websocket_protocol.rst` "
+                              "and `docs/source/getting_started.rst`. Walkthrough: "
                               "`docs/source/contributing/howto_guides.rst`."),
     ),
     ChangeKind.EDITOR_ELEMENT: (
@@ -250,7 +255,7 @@ _STEPS: dict[ChangeKind, tuple[tuple[str, str], ...]] = {
 }
 
 _EVERY_CHANGE: tuple[str, ...] = (
-    "Read the `CLAUDE.md` of each repository before changing it.",
+    "Follow the `CLAUDE.md` of each repository you change (your first message holds it).",
     "Source changes come with tests: BESSER's `tests/` mirrors the source tree, the editor keeps tests in "
     "`__tests__/` folders next to the code, the modeling agent in `tests/`.",
     "Keep `docs/source/` in step with public changes (BESSER `CLAUDE.md` \"Documentation Sync\").",
@@ -260,8 +265,23 @@ _EVERY_CHANGE: tuple[str, ...] = (
 )
 
 
+#: Per kind, what to read before the change, beyond the CLAUDE.md the orientation gives: (repository, path in it,
+#: section heading or "" for the whole file). Kinds not listed have nothing beyond CLAUDE.md.
+_READ_FIRST_BY_KIND: dict[ChangeKind, tuple[tuple[str, str, str], ...]] = {
+    ChangeKind.GENERATOR: ((REPO_BESSER, ".claude/skills/besser-dev/SKILL.md", "Adding a generator"),),
+    ChangeKind.METAMODEL: ((REPO_BESSER, ".claude/skills/besser-dev/SKILL.md", "Adding a metamodel package or sub-DSL"),
+                           (REPO_BESSER, "docs/source/contributing/create_dsl.rst", "")),
+    ChangeKind.DIAGRAM_TYPE: ((REPO_BESSER, "docs/source/contributing/diagram_dsl_workflow.rst", ""),
+                              (REPO_FRONTEND, "docs/source/contributing/new-diagram-guide/", ""),
+                              (REPO_MODELING_AGENT, "docs/source/contributing/howto_guides.rst", "")),
+    ChangeKind.EDITOR_ELEMENT: ((REPO_FRONTEND, "CLAUDE.md", "Adding a Diagram Element"),),
+    ChangeKind.AGENT: ((REPO_MODELING_AGENT, "CLAUDE.md", "Adding (or Auditing) a Diagram Type"),),
+}
+
+
 def guidance(kind: ChangeKind) -> str:
-    """The steps of ``kind`` as the repositories' own guides state them, grouped by repository."""
+    """The steps of ``kind`` as the repositories' own guides state them, grouped by repository, then what to
+    read first."""
     lines = [f"Steps for {kind.value.replace('_', ' ')} changes (from {_SOURCES[kind]}):"]
     steps = _STEPS[kind]
     for repo in (_ALL, REPO_BESSER, REPO_FRONTEND, REPO_MODELING_AGENT):
@@ -273,6 +293,10 @@ def guidance(kind: ChangeKind) -> str:
         lines.extend(f"- {text}" for text in texts)
     lines.append("Every change:")
     lines.extend(f"- {text}" for text in _EVERY_CHANGE)
+    read_first = [f"{_REPO_TITLES[repo]} `{path}`" + (f' (section "{section}")' if section else "")
+                  for repo, path, section in _READ_FIRST_BY_KIND.get(kind, ())]
+    if read_first:
+        lines.append(f"Read first: {'; '.join(read_first)}.")
     return "\n".join(lines)
 
 

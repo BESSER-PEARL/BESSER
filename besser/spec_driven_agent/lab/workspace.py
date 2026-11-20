@@ -44,6 +44,7 @@ from dataclasses import asdict, replace
 from typing import Collection, Iterator, Mapping, Optional, Sequence
 
 from besser.spec_driven_agent.execution.process import run_bounded
+from besser.spec_driven_agent.execution.sandbox import sandbox_home
 from besser.spec_driven_agent.lab.contracts import (
     FRONTEND_SUBMODULE_PATH,
     LAB_BASE_DIRNAME,
@@ -797,18 +798,29 @@ class LabWorkspace:
         return {f.path for f in self._changed_files(spec, self._merge_base(spec), renames=False)}
 
     def drop(self, change: LabChange) -> None:
-        """Delete the change: its worktrees (uncommitted work included), its branches and its state."""
+        """Delete the change: its worktrees (uncommitted work included), its branches, sandbox home and state."""
         self.remove_trees(change)
         state_dir = self._state_dir(change.id)
         if os.path.isdir(state_dir):
             shutil.rmtree(state_dir)
 
     def remove_trees(self, change: LabChange) -> None:
-        """Remove the change's worktrees (uncommitted work included) and branches; its state is kept."""
+        """Remove the change's worktrees (uncommitted work included), branches and sandbox home; its state is kept.
+
+        The sandbox home (``<root>/changes/<id>.sandbox-home``, the ``$HOME`` of its shell, checks and installs)
+        that cannot be deleted is logged at warning level: the trees and branches are gone by then.
+        """
         trees_root = self._trees_root(change.id)
         with self._all_repo_locks():
             made = [(spec, change.branches[spec.key]) for spec in self._creation_order() if spec.key in change.branches]
             self._remove_worktrees(trees_root, made)
+        home = sandbox_home(trees_root)
+        if os.path.lexists(home):
+            try:
+                shutil.rmtree(home)
+            except OSError as exc:
+                logger.warning("BESSER Lab: the sandbox home %s of change %s was not deleted: %s", home, change.id,
+                               exc)
 
     def _remove_worktrees(self, trees_root: str, made: Sequence[tuple[RepoSpec, str]]) -> None:
         """Remove the worktrees under ``trees_root`` of ``made`` (in creation order) and their branches.

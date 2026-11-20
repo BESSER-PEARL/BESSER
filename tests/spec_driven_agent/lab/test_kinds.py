@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from besser.spec_driven_agent.lab.contracts import (
+    FRONTEND_SUBMODULE_PATH,
     REPO_BESSER,
     REPO_FRONTEND,
     REPO_MODELING_AGENT,
@@ -16,7 +17,7 @@ from besser.spec_driven_agent.lab.contracts import (
     RepoChange,
     RepoSpec,
 )
-from besser.spec_driven_agent.lab.kinds import evaluate_checklist, format_checklist, guidance
+from besser.spec_driven_agent.lab.kinds import _READ_FIRST_BY_KIND, evaluate_checklist, format_checklist, guidance
 
 BESSER_ROOT = Path(__file__).resolve().parents[3]
 
@@ -49,7 +50,7 @@ def test_every_kind_has_steps_and_the_rules_of_every_change(kind):
     text = guidance(kind)
     assert text.startswith(f"Steps for {kind.value.replace('_', ' ')} changes")
     assert "Never change `.github/workflows/`" in text
-    assert "Read the `CLAUDE.md` of each repository" in text
+    assert "Follow the `CLAUDE.md` of each repository you change" in text
 
 
 def test_diagram_type_guidance_covers_all_three_repositories():
@@ -78,6 +79,51 @@ def _besser_paths(text: str) -> list[str]:
 def test_besser_paths_in_the_guidance_exist(kind):
     missing = [p for p in _besser_paths(guidance(kind)) if not (BESSER_ROOT / p).exists()]
     assert missing == []
+
+
+# Where each repository may be checked out next to this one: the editor as BESSER's submodule or a sibling clone,
+# the modeling agent as a sibling clone.
+_CHECKOUTS = {
+    REPO_BESSER: (BESSER_ROOT,),
+    REPO_FRONTEND: (BESSER_ROOT.joinpath(*FRONTEND_SUBMODULE_PATH.split("/")),
+                    BESSER_ROOT.parent / "BESSER-Web-Modeling-Editor"),
+    REPO_MODELING_AGENT: (BESSER_ROOT.parent / "modeling-agent",),
+}
+
+
+@pytest.mark.parametrize("repo", [REPO_BESSER, REPO_FRONTEND, REPO_MODELING_AGENT])
+def test_read_first_paths_exist_in_their_repository(repo):
+    root = next((path for path in _CHECKOUTS[repo] if (path / "CLAUDE.md").is_file()), None)
+    if root is None:
+        pytest.skip(f"{repo} is not checked out next to BESSER")
+    entries = [(path, section) for kind in ChangeKind for key, path, section in _READ_FIRST_BY_KIND.get(kind, ())
+               if key == repo]
+    assert entries
+    for path, section in entries:
+        assert (root / path).exists(), path
+        if section:
+            headings = {line.lstrip("#").strip() for line in (root / path).read_text(encoding="utf-8").splitlines()
+                        if line.startswith("#")}
+            assert section in headings, f"{path} has no section {section!r}"
+
+
+def test_the_guidance_names_what_to_read_first():
+    text = guidance(ChangeKind.GENERATOR)
+
+    assert text.splitlines()[-1] == ('Read first: BESSER `.claude/skills/besser-dev/SKILL.md` (section "Adding a '
+                                     'generator").')
+    assert "Read first:" not in guidance(ChangeKind.BUGFIX)
+
+
+def test_diagram_type_guidance_has_every_registration_of_the_agent_and_the_editor():
+    # D3 contradiction 32: steps the agent's CLAUDE.md (Adding a Diagram Type) and the editor's list were missing.
+    text = guidance(ChangeKind.DIAGRAM_TYPE)
+
+    for expected in ("`training_sentences` of `modeling_agent.py`", "`_DIAGRAM_SUGGESTION_HANDLERS`",
+                     "`docs/source/diagram_handlers.rst`", "`docs/source/websocket_protocol.rst`",
+                     "`docs/source/getting_started.rst`", "\"Supported Diagram Types\" table of `README.md`",
+                     "`packages/webapp/src/main/features/editors/EditorView.tsx`"):
+        assert expected in text
 
 
 # -- Generator: calibrated on generators that work --------------------------------------------------

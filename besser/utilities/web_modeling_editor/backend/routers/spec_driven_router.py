@@ -664,12 +664,13 @@ async def smart_preview(request: SmartPreviewRequest, runtime: SpecDrivenRuntime
     # "update the existing app / start fresh". None = unknown, keep modifying.
     model_change = base_available = None
     if request.mode == "modify" and request.base_run_id:
-        base_dir, base_archive = modify_base(await runtime.registry.get(request.base_run_id))
+        base = await runtime.registry.get(request.base_run_id)
+        base_dir, base_archive = modify_base(base)
         base_available = base_dir is not None or base_archive is not None
         change = None
         if base_dir is not None:
             change = await asyncio.to_thread(compare_with_base, base_dir, assembled.domain_model)
-        elif base_archive is not None:
+        elif base_archive is not None and base.packaged:  # an upload's run records are not read
             change = await asyncio.to_thread(
                 lambda: compare_with_recipe(archived_recipe_text(base_archive), assembled.domain_model))
         model_change = change.to_dict() if change else None

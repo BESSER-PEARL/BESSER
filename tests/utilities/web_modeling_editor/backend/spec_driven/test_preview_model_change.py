@@ -112,17 +112,43 @@ def test_an_expired_workspace_with_its_download_is_still_a_base(tmp_path):
         zf.writestr(".besser_recipe.json",
                     json.dumps({"model": {"user_model": _classes({"Author": ["name"], "Book": []})}}))
         zf.writestr("app/main.py", "")
-    asyncio.run(current_runtime().registry.put(BASE_ID, SmartRunEntry(
-        file_path=artifact, file_name="out.zip", is_zip=True, temp_dir=workspace, created_at=time.time())))
+    entry = SmartRunEntry(file_path=artifact, file_name="out.zip", is_zip=True, temp_dir=workspace,
+                          created_at=time.time(), packaged=True)
+    asyncio.run(current_runtime().registry.put(BASE_ID, entry))
     try:
         payload = _preview(_body()).json()
         assert payload["base_available"] is True
         assert payload["model_change"]["added"] == ["Book.title"]
+        # An uploaded ZIP is still a base, but its run records are not read.
+        entry.packaged = False
+        asyncio.run(current_runtime().registry.put(BASE_ID, entry))
+        payload = _preview(_body()).json()
+        assert payload["base_available"] is True and payload["model_change"] is None
         os.remove(artifact)  # the download is gone too
         payload = _preview(_body()).json()
         assert payload["base_available"] is False and payload["model_change"] is None
     finally:
         asyncio.run(current_runtime().registry.pop(BASE_ID))
+
+
+def test_an_expired_result_without_a_zip_download_is_no_base(tmp_path):
+    from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import run_download_dir
+
+    for name, is_zip in (("single", False), ("lost", True)):
+        workspace = str(tmp_path / f"besser_llm_{BASE_ID}_{name}")  # swept
+        os.makedirs(run_download_dir(workspace))
+        artifact = os.path.join(run_download_dir(workspace), "artifact")
+        if not is_zip:  # a run whose output was one file
+            with open(artifact, "w", encoding="utf-8") as fh:
+                fh.write("print('one file')\n")
+        # else: the download could not be kept, so there is no artifact
+        asyncio.run(current_runtime().registry.put(BASE_ID, SmartRunEntry(
+            file_path=artifact, file_name="out", is_zip=is_zip, temp_dir=workspace, created_at=time.time(),
+            packaged=is_zip)))
+        try:
+            assert _preview(_body()).json()["base_available"] is False, name
+        finally:
+            asyncio.run(current_runtime().registry.pop(BASE_ID))
 
 
 def test_preview_work_runs_off_the_event_loop(base_run, monkeypatch):

@@ -76,6 +76,7 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner im
     SmartRunRegistry,
     create_run_workspace,
     run_changes,
+    run_download_dir,
 )
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.workspace_tree import (
     read_run_json,
@@ -478,10 +479,13 @@ def _run_seed(run_dir: str, owner: str, repo: str) -> tuple[Optional[str], Optio
 
 
 def _record_run_seed(run_dir: str, owner: str, repo: str, commit_sha: str, files: dict[str, str]) -> None:
-    """Record that the run's files now match ``commit_sha``, as ``repo path -> content_hash`` (best effort)."""
+    """Record that the run's files now match ``commit_sha``, as ``repo path -> content_hash`` (best effort);
+    also beside the run's download, from which a modify run seeds once the workspace is gone."""
+    record = {"owner": owner, "repo": repo, "commitSha": commit_sha, "paths": files}
     try:
-        write_run_json(os.path.join(run_dir, GITHUB_SOURCE_FILENAME),
-                       {"owner": owner, "repo": repo, "commitSha": commit_sha, "paths": files})
+        write_run_json(os.path.join(run_dir, GITHUB_SOURCE_FILENAME), record)
+        if os.path.isdir(run_download_dir(run_dir)):
+            write_run_json(os.path.join(run_download_dir(run_dir), GITHUB_SOURCE_FILENAME), record)
     except OSError:
         logger.warning("Could not record the pushed commit in run %s", run_dir, exc_info=True)
 
@@ -579,7 +583,9 @@ def _extract_generated_zip(archive: zipfile.ZipFile, dest_dir: str, keep: frozen
     Links and other non-regular members are skipped, and so are BESSER's own
     run records (``.besser_*``) other than the member names in ``keep``: the
     run's are written by BESSER alone. Everything is checked before anything
-    is written, so a refused archive writes nothing.
+    is written, so a refused archive writes nothing. Of a member's mode only
+    its execute bits are applied (``mvnw``, ``*.sh``), never setuid, setgid,
+    sticky or write bits.
     """
     dest_abs = os.path.abspath(dest_dir)
     members = []
@@ -603,6 +609,12 @@ def _extract_generated_zip(archive: zipfile.ZipFile, dest_dir: str, keep: frozen
             # The reader stops at the declared size, which the caps above counted.
             with archive.open(info) as source, open_plain_write(target, "wb", root=dest_abs) as handle:
                 shutil.copyfileobj(source, handle)
+                executable = (info.external_attr >> 16) & 0o111
+                if executable:
+                    # Through the open descriptor where the platform has one, as copy_plain_file does.
+                    fd = handle.fileno()
+                    mode = stat.S_IMODE(os.fstat(fd).st_mode) & 0o775 | executable
+                    os.chmod(fd if os.chmod in os.supports_fd else target, mode)
     except OSError as exc:
         # E.g. both ``a`` and ``a/b``: the archive has no tree a run can hold.
         raise ValueError("The generated ZIP could not be unpacked.") from exc

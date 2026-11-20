@@ -286,8 +286,9 @@ _ARCHIVE_FILES = {
 }
 
 
-def _register_archived_base(tmp_path, run_id: str, extra: dict | None = None) -> str:
-    """Register a base run whose workspace is gone and whose ZIP download remains."""
+def _register_archived_base(tmp_path, run_id: str, extra: dict | None = None, *, packaged: bool = True) -> str:
+    """Register a base run whose workspace is gone and whose ZIP download remains:
+    one BESSER packaged (``packaged``), else an uploaded generator ZIP."""
     import zipfile
 
     workspace = str(tmp_path / f"besser_llm_{run_id}_x")  # never created: swept
@@ -299,9 +300,30 @@ def _register_archived_base(tmp_path, run_id: str, extra: dict | None = None) ->
             zf.writestr(name, text)
     asyncio.run(current_runtime().registry.put(run_id, SmartRunEntry(
         file_path=artifact, file_name=f"besser_smart_{run_id}.zip", is_zip=True,
-        temp_dir=workspace, created_at=time.time(),
+        temp_dir=workspace, created_at=time.time(), packaged=packaged,
     )))
     return workspace
+
+
+def _run_modify(base_id: str) -> tuple[SmartGenerationRunner, list[dict], dict[str, str]]:
+    """Run a stubbed modify of ``base_id``: the runner, its events and the tree modify() got."""
+    runner = SmartGenerationRunner(
+        _build_request(mode="modify", base_run_id=base_id),
+        runtime=current_runtime(), base_run_id=base_id, mode="modify",
+    )
+    seeded = {}
+    real_modify = _StubOrchestrator.modify
+
+    def modify(self, instructions):
+        seeded.update(_tree(self.output_dir))
+        return real_modify(self, instructions)
+
+    _StubOrchestrator.modify = modify
+    try:
+        parsed = [_parse(f) for f in asyncio.run(_collect_frames(runner))]
+    finally:
+        _StubOrchestrator.modify = real_modify
+    return runner, parsed, seeded
 
 
 def _tree(root: str) -> dict[str, str]:
@@ -318,22 +340,7 @@ class TestArchiveSeed:
     def test_expired_workspace_seeds_from_the_download_and_stays_a_modify(self, tmp_path, stub_orchestrator):
         base_id = "c" * 32
         _register_archived_base(tmp_path, base_id)
-        runner = SmartGenerationRunner(
-            _build_request(mode="modify", base_run_id=base_id),
-            runtime=current_runtime(), base_run_id=base_id, mode="modify",
-        )
-        seeded = {}
-        real_modify = _StubOrchestrator.modify
-
-        def modify(self, instructions):
-            seeded.update(_tree(self.output_dir))
-            return real_modify(self, instructions)
-
-        _StubOrchestrator.modify = modify
-        try:
-            parsed = [_parse(f) for f in asyncio.run(_collect_frames(runner))]
-        finally:
-            _StubOrchestrator.modify = real_modify
+        runner, parsed, seeded = _run_modify(base_id)
 
         assert [m for m, _ in _CALLS] == ["modify"]
         assert not [p for p in parsed if p["event"] == "error"]
@@ -357,7 +364,7 @@ class TestArchiveSeed:
         dest = tmp_path / "dest"
         dest.mkdir()
         with pytest.raises(ValueError):
-            runner_module._seed_workspace_from_archive(str(archive), str(dest))
+            runner_module._seed_workspace_from_archive(str(archive), str(dest), True)
         assert os.listdir(dest) == []
         assert not (tmp_path / "outside.py").exists()
 
@@ -373,6 +380,117 @@ class TestArchiveSeed:
         assert runner._facts.mode_reason == "previous result could not be copied, rebuilt from scratch"
         assert any(p["event"] == "error" and p["code"] == "INCOMPLETE" for p in parsed)
         assert not (tmp_path / "outside.py").exists()
+
+    def test_executable_files_stay_executable_and_nothing_else_is_set(self, tmp_path, monkeypatch):
+        import stat
+        import zipfile
+
+        archive = tmp_path / "artifact"
+        with zipfile.ZipFile(archive, "w") as zf:
+            for name, mode in (("mvnw", 0o755), ("scripts/run.sh", 0o744), ("README.md", 0o644),
+                               ("tool", 0o6777)):
+                info = zipfile.ZipInfo(name)
+                info.external_attr = (stat.S_IFREG | mode) << 16
+                zf.writestr(info, "x\n")
+        dest = tmp_path / "dest"
+        dest.mkdir()
+        real_chmod, chmods = os.chmod, {}
+
+        def chmod(path, mode, *args, **kwargs):
+            if not isinstance(path, int):
+                chmods[os.path.relpath(os.fspath(path), dest).replace(os.sep, "/")] = mode
+            else:
+                chmods[f"fd{path}"] = mode
+            return real_chmod(path, mode, *args, **kwargs)
+
+        monkeypatch.setattr(os, "chmod", chmod)
+        runner_module._seed_workspace_from_archive(str(archive), str(dest), True)
+        assert len(chmods) == 3  # mvnw, scripts/run.sh, tool; never README.md
+        assert "README.md" not in chmods
+        for mode in chmods.values():
+            assert mode & 0o100 and not mode & (stat.S_ISUID | stat.S_ISGID | stat.S_ISVTX | 0o002)
+        if os.name == "posix":
+            assert os.stat(dest / "mvnw").st_mode & 0o111 == 0o111
+            assert os.stat(dest / "scripts" / "run.sh").st_mode & 0o111 == 0o100
+            assert os.stat(dest / "README.md").st_mode & 0o111 == 0
+            assert not os.stat(dest / "tool").st_mode & (stat.S_ISUID | stat.S_ISGID | 0o002)
+
+    def test_an_uploaded_zip_seeds_without_its_run_records(self, tmp_path, stub_orchestrator):
+        base_id = "e" * 32
+        _register_archived_base(tmp_path, base_id, packaged=False)
+        _runner, _parsed, seeded = _run_modify(base_id)
+        assert [m for m, _ in _CALLS] == ["modify"]
+        assert ".besser_recipe.json" not in seeded and ".besser_generator_output.json" not in seeded
+        assert "app/main.py" in seeded
+
+    def test_the_github_source_of_the_base_is_kept_beside_its_download(self, tmp_path, stub_orchestrator):
+        source = {"owner": "acme", "repo": "shop", "commitSha": "a" * 40, "paths": {"app/main.py": "h"}}
+        base_dir = _make_base_dir(tmp_path)
+        with open(os.path.join(base_dir, runner_module.GITHUB_SOURCE_FILENAME), "w", encoding="utf-8") as fh:
+            json.dump(source, fh)
+        base_id = "a" * 32
+        asyncio.run(current_runtime().registry.put(base_id, SmartRunEntry(
+            file_path=os.path.join(base_dir, "app", "main.py"), file_name="main.py", is_zip=False,
+            temp_dir=base_dir, created_at=time.time())))
+        runner, _parsed, _seeded = _run_modify(base_id)
+        # The run started from that base keeps the record beside its own download...
+        kept = os.path.join(runner_module.run_download_dir(runner.temp_dir), runner_module.GITHUB_SOURCE_FILENAME)
+        with open(kept, encoding="utf-8") as fh:
+            assert json.load(fh) == source
+
+        # ...and once a workspace is gone, a modify seeds the record from there.
+        _CALLS.clear()
+        archived_id = "9" * 32
+        workspace = _register_archived_base(tmp_path, archived_id)
+        with open(os.path.join(runner_module.run_download_dir(workspace), runner_module.GITHUB_SOURCE_FILENAME),
+                  "w", encoding="utf-8") as fh:
+            json.dump(source, fh)
+        _runner, _parsed, seeded = _run_modify(archived_id)
+        assert json.loads(seeded[runner_module.GITHUB_SOURCE_FILENAME]) == source
+
+    def test_a_push_records_its_commit_beside_the_download_too(self, tmp_path):
+        from besser.utilities.web_modeling_editor.backend.services.spec_driven import github_sync
+
+        workspace = tmp_path / "besser_llm_run_x"
+        workspace.mkdir()
+        os.makedirs(runner_module.run_download_dir(str(workspace)))
+        github_sync._record_run_seed(str(workspace), "acme", "shop", "b" * 40, {"app/main.py": "h"})
+        kept = os.path.join(runner_module.run_download_dir(str(workspace)), runner_module.GITHUB_SOURCE_FILENAME)
+        with open(kept, encoding="utf-8") as fh:
+            assert json.load(fh)["commitSha"] == "b" * 40
+
+    def test_a_download_removed_before_it_is_opened_reads_as_expired(self, tmp_path, stub_orchestrator,
+                                                                      monkeypatch):
+        import shutil
+
+        base_id = "8" * 32
+        workspace = _register_archived_base(tmp_path, base_id)
+        real_seed = runner_module._seed_workspace_from_archive
+
+        def swept_first(archive, dest, packaged):
+            shutil.rmtree(runner_module.run_download_dir(workspace))
+            return real_seed(archive, dest, packaged)
+
+        monkeypatch.setattr(runner_module, "_seed_workspace_from_archive", swept_first)
+        runner, parsed, _seeded = _run_modify(base_id)
+        assert [m for m, _ in _CALLS] == ["run"]
+        assert runner._facts.mode_reason == "previous result expired, rebuilt from scratch"
+        warnings = [p["message"] for p in parsed if p["event"] == "error" and p["code"] == "INCOMPLETE"]
+        assert warnings and "expired" in warnings[0]
+
+    def test_the_download_kind_survives_a_restart(self, tmp_path):
+        registry = runner_module.SmartRunRegistry()
+        for run_id, packaged in (("1" * 32, True), ("2" * 32, False)):
+            workspace = str(tmp_path / f"besser_llm_{run_id}_x")
+            os.makedirs(runner_module.run_download_dir(workspace))
+            artifact = os.path.join(runner_module.run_download_dir(workspace), "artifact")
+            open(artifact, "wb").close()
+            registry._store_download(run_id, SmartRunEntry(
+                file_path=artifact, file_name="out.zip", is_zip=True, temp_dir=workspace,
+                created_at=time.time(), packaged=packaged))
+            name = os.path.basename(runner_module.run_download_dir(workspace))
+            restored = registry._entry_from_download_dir(str(tmp_path), name, time.time())
+            assert restored is not None and restored[1].packaged is packaged
 
 
 # ---------------------------------------------------------------------

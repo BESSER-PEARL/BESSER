@@ -791,6 +791,9 @@ class SmartRunEntry:
     # endpoint prefers this over the request's projectExport so the pushed
     # buml/ stays in sync with the code. ``None`` for every other run.
     updated_project_export: Optional[dict] = None
+    # True for the ZIP a spec-driven run packaged; False for an uploaded file, whose
+    # BESSER run records are not trusted when a modify run seeds from it.
+    packaged: bool = False
 
 
 class SmartRunRegistry:
@@ -837,6 +840,7 @@ class SmartRunRegistry:
             "fileName": entry.file_name,
             "isZip": entry.is_zip,
             "createdAt": entry.created_at,
+            "packaged": entry.packaged,
         }, separators=(",", ":")), root=download_dir)
         return dataclass_replace(entry, file_path=artifact)
 
@@ -905,6 +909,7 @@ class SmartRunRegistry:
                 is_zip=bool(data["isZip"]),
                 temp_dir=workspace,
                 created_at=created_at,
+                packaged=data.get("packaged") is True,
             )
         except (KeyError, TypeError, ValueError):
             logger.warning("Ignoring invalid download metadata at %s", manifest_path, exc_info=True)
@@ -1084,21 +1089,33 @@ def _seed_workspace_from_base(base_dir: str, dest_dir: str) -> None:
     _strip_seed(dest_dir)
 
 
-def _seed_workspace_from_archive(archive_path: str, dest_dir: str) -> None:
+def _seed_workspace_from_archive(archive_path: str, dest_dir: str, packaged: bool) -> None:
     """Unpack a previous run's download into a fresh workspace for editing, when its
     workspace has expired. The download holds the same tree less what the workspace
-    seed strips; the run files a later run reads (``CARRIED_RUN_FILES``) are kept.
-    Raises ``ValueError`` for an unsafe or oversized archive, which writes nothing."""
+    seed strips; when BESSER ``packaged`` it, the run files a later run reads
+    (``CARRIED_RUN_FILES``) are kept, and the GitHub source record kept beside it is
+    restored. Raises ``ValueError`` for an unsafe or oversized archive, which writes
+    nothing, and ``FileNotFoundError`` when the download is gone."""
     from besser.utilities.web_modeling_editor.backend.services.spec_driven.github_sync import (
         _extract_generated_zip,
     )
 
     try:
         with zipfile.ZipFile(archive_path) as archive:
-            _extract_generated_zip(archive, dest_dir, keep=frozenset(CARRIED_RUN_FILES))
+            _extract_generated_zip(archive, dest_dir, keep=frozenset(CARRIED_RUN_FILES if packaged else ()))
     except (zipfile.BadZipFile, zlib.error, EOFError, NotImplementedError, RuntimeError) as exc:
         raise ValueError("The previous run's download could not be read.") from exc
     _strip_seed(dest_dir)
+    download_dir = os.path.dirname(archive_path)
+    source = os.path.join(download_dir, GITHUB_SOURCE_FILENAME)
+    if packaged and is_plain_file(source, root=download_dir):
+        copy_plain_file(source, os.path.join(dest_dir, GITHUB_SOURCE_FILENAME), root=download_dir, dst_root=dest_dir)
+
+
+_BASE_EXPIRED_MESSAGE = (
+    "The previous generation has expired, so there is nothing to edit — rebuilding from scratch "
+    "instead. Re-run to seed a fresh base for future edits."
+)
 
 
 def modify_base(entry: Optional[SmartRunEntry]) -> tuple[Optional[str], Optional[str]]:
@@ -1469,20 +1486,14 @@ class SmartGenerationRunner:
 
             # ---- Incremental modify: seed from the base run --------
             if self._mode == "modify" and self._base_run_id:
-                base_dir, base_archive = modify_base(await self._runtime.registry.get(self._base_run_id))
+                base_entry = await self._runtime.registry.get(self._base_run_id)
+                base_dir, base_archive = modify_base(base_entry)
                 if base_dir is None and base_archive is None:
                     # Base-expired fallback: the previous run's workspace and
                     # download were swept (or never existed). Warn — non-terminally —
                     # and fall through to a normal from-scratch run() so the
                     # user still gets output instead of a hard failure.
-                    yield self._sse(ErrorEvent(
-                        code="INCOMPLETE",
-                        message=(
-                            "The previous generation has expired, so there is "
-                            "nothing to edit — rebuilding from scratch instead. "
-                            "Re-run to seed a fresh base for future edits."
-                        ),
-                    ))
+                    yield self._sse(ErrorEvent(code="INCOMPLETE", message=_BASE_EXPIRED_MESSAGE))
                     logger.info(
                         "smart-modify base %s expired for run %s; "
                         "falling back to from-scratch generation",
@@ -1495,7 +1506,8 @@ class SmartGenerationRunner:
                         if base_dir is not None:
                             await self._runtime.run_blocking(_seed_workspace_from_base, base_dir, self.temp_dir)
                         else:
-                            await self._runtime.run_blocking(_seed_workspace_from_archive, base_archive, self.temp_dir)
+                            await self._runtime.run_blocking(
+                                _seed_workspace_from_archive, base_archive, self.temp_dir, base_entry.packaged)
                         self._seeded = True
                         self._facts.mode_reason = run_record.EDIT
                         # Lines that changed since the base run (a person
@@ -1520,10 +1532,13 @@ class SmartGenerationRunner:
                             self.run_id, self._base_run_id,
                         )
                         self._reset_temp_dir_after_failed_seed()
-                        self._facts.mode, self._facts.mode_reason = "generate", run_record.BASE_NOT_COPIED
+                        # Swept while being copied: it expired, it was not unreadable.
+                        expired = not os.path.exists(base_dir or base_archive)
+                        self._facts.mode, self._facts.mode_reason = "generate", (
+                            run_record.BASE_EXPIRED if expired else run_record.BASE_NOT_COPIED)
                         yield self._sse(ErrorEvent(
                             code="INCOMPLETE",
-                            message=(
+                            message=_BASE_EXPIRED_MESSAGE if expired else (
                                 "Could not copy the previous generation — "
                                 "rebuilding from scratch instead."
                             ),
@@ -2752,12 +2767,19 @@ class SmartGenerationRunner:
                     path = os.path.join(result_path, name)
                     if is_plain_entry(path) and os.path.isfile(path):
                         _zip_plain_file(zf, path, name, result_path)
+            # Not in the ZIP (the user's download): kept beside it for a modify run seeded from it.
+            source = os.path.join(result_path, GITHUB_SOURCE_FILENAME)
+            with contextlib.suppress(OSError):
+                if is_plain_file(source, root=result_path):
+                    copy_plain_file(source, os.path.join(download_dir, GITHUB_SOURCE_FILENAME),
+                                    root=result_path, dst_root=download_dir)
             entry = SmartRunEntry(
                 file_path=zip_path,
                 file_name=zip_name,
                 is_zip=True,
                 temp_dir=self.temp_dir,
                 created_at=time.time(),
+                packaged=True,
             )
 
         # Lightweight "what was generated" summary for the UI: file count and

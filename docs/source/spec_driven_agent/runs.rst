@@ -132,8 +132,15 @@ Once the workspace is gone, the run is seeded from the download instead: it hold
 the same source tree and the run files a later run reads (``.besser_recipe.json``,
 ``.besser_attribution.json``, ``.besser_generator_output.json``), and it is
 unpacked with the checks of an uploaded archive (no path outside the workspace, no
-links, size and file-count limits). It is still a modify run. A download that
-cannot be unpacked is treated like a failed copy: the run warns and rebuilds.
+links, size and file-count limits; of a file's mode only its execute bits are
+kept, so ``mvnw`` or a ``*.sh`` script stays executable). The GitHub source record
+of a run started from or pushed to a repository (``.besser_github_source.json``,
+the commit and the files it held) is not in the download; it is kept beside it and
+restored, so a later push still knows which commit the files came from. It is still
+a modify run. A download that cannot be unpacked is treated like a failed copy: the
+run warns and rebuilds; one removed while being opened counts as expired. Of a ZIP
+uploaded through ``/spec-driven/import-generated-code`` only the user's files are
+used, never BESSER run records inside it.
 
 When neither is left (or the base's output was a single file, not a ZIP) the runner
 warns and falls back to normal from-scratch generation rather than failing the

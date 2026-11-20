@@ -80,7 +80,8 @@ PIA, and the key dialog's model lists, come from the model catalog (`BESSER_MODE
 
 ### Docker images
 The root `Dockerfile` has two targets. `backend` is Python + requirements + `besser`, no compilers.
-`smartgen-worker` adds Node 22/`tsc`, JDK 21, Rust, `kotlinc`, build-essential and bubblewrap, for the
+`smartgen-worker` adds Node 22/`tsc`, JDK 21, Rust, `kotlinc`, build-essential, bubblewrap and
+`chromium-headless-shell` (the screen check; build arg `SCREEN_CHECK_BROWSER=0` leaves it out), for the
 Spec-Driven Agent's Phase 3 and `run_command`. Production runs `backend:latest` for the backend service
 and `smartgen_worker:latest` for `besser-wme-smartgen`; the local `docker-compose.yml` builds the worker
 target, since one container serves both. Behind a TLS-inspecting proxy, put its certs in `ca-certs-extra/`

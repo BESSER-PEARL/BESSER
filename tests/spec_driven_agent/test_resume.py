@@ -467,6 +467,7 @@ def test_resume_keeps_the_edits_an_open_item_already_had(simple_model, tmp_path,
     resumed.executor.execute_typed("write_file", {"path": "urls.py", "content": "ROUTES = []\n"})
 
     assert resumed.executor.task_snapshot()[0]["written"] == ["slug.py", "urls.py"]
+    resumed.executor.autoclose_verified_tasks()
     assert resumed.executor.open_tasks(), "an edit never closes an item"
 
 

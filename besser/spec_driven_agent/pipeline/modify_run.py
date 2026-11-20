@@ -750,8 +750,10 @@ class ModifyRunMixin:
             if (
                 issue.severity != "blocker"
                 and issue.message not in earlier
-                # A checklist item nothing confirmed is not an observed failure.
-                and not issue.message.startswith((self._FIX_TARGET_PREFIX, "task unverified:"))
+                # A checklist item nothing confirmed is not an observed failure; the
+                # screen check (ui_probe.py) never blocks.
+                and not issue.message.startswith((self._FIX_TARGET_PREFIX, "task unverified:",
+                                                  "screen:", "screen warning:", "screens: not run"))
                 and finding_matches_target(issue.message, self._fix_target)
             ):
                 promoted.append(ValidationIssue(

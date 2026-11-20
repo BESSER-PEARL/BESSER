@@ -247,6 +247,68 @@ gave no verdict and runs again on the next pass. With shell tools
 disabled, a separate external build can verify the output, but raw generation
 continues to state that frontend build verification is pending.
 
+Once a frontend's build has passed on the current tree, Phase 3 opens its
+screens in a headless browser (``validation/ui_probe.py``). Inside the same
+no-network sandbox it first creates records through the app's own API with the
+create probe described above, into a scratch SQLite database, then boots the
+generated FastAPI backend on that database (on every local port the built
+bundle calls), serves the build output under its base path (``vite build --base
+/app/`` included; ``index.html`` for page loads, the backend for any other path
+the build does not hold) and opens each screen in a fresh tab: ``/``, every path
+the router declares (``<Route path>``, nested relative routes,
+``createBrowserRouter`` objects and their ``children``, the scaffold's
+``ui_components.json``), then same-origin links found on the opened pages that
+match a declared route (any link, when a route's path is computed), which is how
+a ``/orders/:id`` screen is reached. A page that is still empty once the network
+is quiet is looked at again for up to 3 seconds, so a late first render is not
+called empty. At most 25 screens, 15 seconds each and 150 seconds in all for
+every frontend of the run together (less when the run has less time left).
+Nothing is clicked or typed, so forms and buttons are not exercised.
+
+Every finding is a ``screen warning:``; nothing from this check blocks, counts
+as a blocker or is sent to repair, on a fix run too. A finding names the route
+and, when the router names it, the page's source file:
+
+- a page that showed nothing (no text and no visible control anywhere in the
+  body, portals included), with what it was opened with: no signed-in user, and
+  the check's sample records or an empty database;
+- an uncaught exception, said apart for a page that still rendered;
+- React Router's default error page, which hides a render error from the
+  exception log, and console errors;
+- a 5xx from the app's backend, a 4xx, a request to a local address nothing
+  answers, and a page that did not settle (a request still open, or a fetch
+  loop);
+- a created record that the API lists but whose text is not found in the page
+  text or form fields (input and textarea values, select options) of any opened
+  screen, naming the screens that load its list route, or saying that none
+  does. The create probe's own text samples (``p3-order-title``) are the markers
+  looked for; a value drawn on a canvas or shown only as an image is not seen.
+
+A warning that starts with ``not checked:`` says what the check could not look
+at, not what the app does: a 5xx "in the sandbox (no network there)" when the
+backend's log for that screen shows a connection or name-resolution error, a
+screen the check could not finish, a backend that did not start for the check,
+the time limit stopping it, and records it could not check (its sample was
+refused or needs a record it could not create first, the record has no text
+field, its list route needs a parent record, or the API lists it only to a
+signed-in user).
+
+A screen that threw and showed nothing is also written to the trace, under the
+``screen_blocker_candidates`` key of the ``phase3_screens`` phase's exit, so the
+precision of that rule can be measured on real runs before it blocks anything.
+``screens: not run (reason)`` -- no browser, no Node.js, no sandbox, no build
+output, or the check turned off -- is a note that does not withhold verified
+completion.
+
+The browser is a Chromium-family binary found on ``PATH``
+(``chromium-headless-shell`` in the worker image), driven over the DevTools
+protocol by a Node.js script that uses Node 22's built-in WebSocket; nothing is
+downloaded. WebGL runs in software (SwiftShader). CORS is not judged, since the
+deployed origins are unknown, and host names other than ``localhost`` resolve to
+nothing. Results are reused for an unchanged tree; a check that did not run is
+tried again, and a check stopped midway keeps the screens it opened. Its time
+shows in the trace as the ``phase3_screens`` phase.
+
 Generated create probes use distinct fixture values and native association-link
 payloads. A legitimate 4xx rejection of guessed data is **unknown**, not proof
 that every valid request fails. An unresolved create probe can be discharged by
@@ -594,10 +656,13 @@ Findings are classified into three severities:
        passing check and no ``task_list`` done, or the model recorded it as
        ``blocked``, whose reason is shown; the finding says whether the files
        the item names were edited. It is also raised when the model closes
-       one of the harness's own items that no other check covers, a modeled
-       rule the generators could not enforce or a derived attribute, on its
-       word alone. It is not confirmed (below); on a fix run it is not promoted
-       to the reported failure even when it names the reported entity. A
+       one of the harness's own items that no other check covers (a modeled
+       rule the generators could not enforce, a derived attribute, or the
+       initial value of a derived enumeration attribute; they are marked when
+       the checklist is seeded, so a run resumed from a checkpoint written
+       before that mark existed does not report them) on its word alone. It is
+       not confirmed (below); on a fix run it is not promoted to the reported
+       failure even when it names the reported entity. A
        missing behavior behind it is still caught by the build, startup and
        create checks and by the requirements judge when the request states
        it),

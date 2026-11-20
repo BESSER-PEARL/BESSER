@@ -128,7 +128,7 @@ _TOOL_DETAIL_MAX_CHARS = 160
 # make a run readable afterwards.
 _TOOL_DETAIL_KEYS = (
     "path", "file_path", "filename", "target", "action", "id", "ids",
-    "text", "command", "pattern", "query", "class_name", "generator",
+    "done", "add", "drop", "blocked", "text", "command", "pattern", "query", "class_name", "generator",
 )
 
 

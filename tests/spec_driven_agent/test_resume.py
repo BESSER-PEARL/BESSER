@@ -22,6 +22,7 @@ from besser.spec_driven_agent.state.checkpoint import (
     load_checkpoint,
 )
 from besser.spec_driven_agent.providers.llm_client import UsageTracker
+from besser.spec_driven_agent.pipeline.constants import _CALLS_PER_TURN
 from besser.spec_driven_agent.pipeline.orchestrator import DEPENDENCIES_REMOVED_NOTE, LLMOrchestrator, ValidationIssue
 from besser.spec_driven_agent.state.tracing import TRACE_FILENAME
 
@@ -244,7 +245,8 @@ def test_resume_picks_up_from_saved_turn(simple_model, tmp_path):
 
 def test_unclean_resume_keeps_checkpoint_for_a_second_resume(simple_model, tmp_path):
     """A resume can itself hit a cap; that must not destroy recovery state."""
-    first = _ScriptedClient([_tool_use("c1")])
+    # ``max_turns`` allows _CALLS_PER_TURN tool calls per turn: these scripts spend them.
+    first = _ScriptedClient([_tool_use(f"c1-{n}") for n in range(_CALLS_PER_TURN)])
     LLMOrchestrator(
         llm_client=first,
         domain_model=simple_model,
@@ -254,7 +256,7 @@ def test_unclean_resume_keeps_checkpoint_for_a_second_resume(simple_model, tmp_p
     ).run("Build a blog")
     assert load_checkpoint(str(tmp_path)) is not None
 
-    second = _ScriptedClient([_tool_use("c2")])
+    second = _ScriptedClient([_tool_use(f"c2-{n}") for n in range(_CALLS_PER_TURN)])
     second_orchestrator = LLMOrchestrator(
         llm_client=second,
         domain_model=simple_model,
@@ -480,8 +482,9 @@ def test_a_resumed_run_updates_its_history_entry(simple_model, tmp_path):
             max_turns=max_turns, use_streaming=False, run_id="run-1",
         )
 
-    leg(_ScriptedClient([_tool_use("c1")]), 1).run("Build a blog")  # stops at the turn cap
-    leg(_ScriptedClient([_tool_use("c2", "write_file", path="notes.txt", content="x")]), 2).resume("Build a blog")
+    spend = [_tool_use(f"c{n}") for n in range(_CALLS_PER_TURN - 1)]
+    leg(_ScriptedClient([_tool_use("c0"), *spend]), 1).run("Build a blog")  # stops at the call budget
+    leg(_ScriptedClient([_tool_use("w", "write_file", path="notes.txt", content="x"), *spend]), 2).resume("Build a blog")
     assert load_checkpoint(str(tmp_path)) is not None
     leg(_ScriptedClient([_end_turn()]), 3).resume("Build a blog")
 

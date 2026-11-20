@@ -178,11 +178,10 @@ The three phases
    reached no conclusion (a citation not located, a guessed request the app
    refused, a check that did not run) is *not confirmed*, listed for the user and
    never a blocker. Blockers drive a
-   bounded repair loop of (LLM fix turns → re-validate) rounds: at least five,
-   and as many as the turns Phase 2 left over, each round up to ten LLM turns.
-   With auto-fix on, Phase 2 leaves this loop part of ``max_turns`` (see
-   :doc:`runs`), so a model that never ends its turn still has its output
-   checked and repaired. Each round is steered to the files its blockers name
+   bounded repair loop of (LLM fix turns → re-validate) rounds, each round up
+   to 40 executed tool calls. Phase 2 leaves Phase 3 a quarter of the run's
+   time, spend and (with auto-fix on) tool calls (see :doc:`runs`), so a model
+   that never ends its turn still has its output checked and repaired. Each round is steered to the files its blockers name
    and their neighbours (a blocker that names no file leaves the round open),
    and no tool is forced. A round that edits is kept only if it retires a
    blocker it faced (a runtime failure counts by the route it tests, not by its
@@ -294,7 +293,8 @@ reading a trace and wondering why a run did what it did.
        is discarded rather than executed — nothing lands half-written on disk —
        and the model is told to emit a smaller turn. At most four such
        recoveries per run; after that the run stops with a resumable
-       ``api_error`` rather than burning the cost cap. The budget is a
+       ``output_limit`` (its own stop reason, not a provider error) rather
+       than burning the cost cap. The budget is a
        per-run total that does NOT reset after a clean turn, so it is sized
        against the whole turn budget, not against a single bad patch.
    * - Per-file modify loop
@@ -310,9 +310,10 @@ reading a trace and wondering why a run did what it did.
        ``end_turn`` with open items is sent back with the list, twice — four
        times when an open item carries a machine check. Some items are verified
        before they are accepted (the "build the frontend" item checks that
-       frontend files exist). Ending the turn also runs ``validate_app``; a
-       blocker from its static frontend checks is sent back to the model once
-       before Phase 2 ends. The harness closes an item itself when its check
+       frontend files exist). Ending the turn also runs ``validate_app``;
+       every blocker it reports is sent back to the model with the open items,
+       and Phase 2 hands off to validation only when the model ends its turn
+       again with the same blockers on an unchanged tree. The harness closes an item itself when its check
        passes, and refuses ``done`` while the check fails; the model closes
        an item without a check with ``task_list(done=[...])``, without
        quoting code. An edit to a file the item names never closes it. Work

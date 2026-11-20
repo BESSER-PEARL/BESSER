@@ -278,10 +278,9 @@ from besser.spec_driven_agent.pipeline.constants import (  # noqa: F401
     _EDIT_TOOLS,
     _MAX_PARALLEL_WORKERS,
     _MAX_TOOLCHAIN_FIX_ITERATIONS,
-    _PHASE3_FIX_TURNS,
-    _PHASE3_NO_PROGRESS_ROUNDS,
-    _PHASE3_RESERVE_MAX_FRACTION,
-    _PHASE3_TURN_RESERVE,
+    _CALLS_PER_TURN,
+    _PHASE3_BUDGET_SHARE,
+    _PHASE3_FIX_CALLS,
     _READONLY_TOOLS,
     _RECIPE_EXCLUDED_DIRS,
     _REDUNDANT_GENERATOR_TOOLS_BY_PRIMARY,
@@ -353,10 +352,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     # How many times the end_turn checklist gate sends the model back to
     # its open items before letting the run finish anyway.
     _MAX_TASK_NUDGES = 2
-    # End-of-turn nudges that show static frontend blockers; each also counts as a task nudge.
-    _MAX_FRONTEND_BLOCKER_NUDGES = 1
-    _PHASE2_STAGNANT_TURNS = 10
-    _PHASE2_INSPECTION_TURNS = 20
+    # Executed calls with no source change and no new result before Phase 2
+    # hands off, and with no source change before it is reminded to implement.
+    _PHASE2_STAGNANT_CALLS = 20
+    _PHASE2_INSPECTION_CALLS = 40
 
     def __init__(
         self,
@@ -738,6 +737,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # different character. Traced only; the runner still reads
         # ``_phase2_stop_reason``, whose values are unchanged.
         self._phase2_stop_detail: str = ""
+        # Phase 2 was cut at its share of a budget while the model was working;
+        # only a closed checklist then shows the work was finished.
+        self._phase2_cut_at_share = False
         # Short provider error string captured when stop_reason == "api_error",
         # surfaced to the user so a rate-limit reads as such (not a mystery).
         self._phase2_api_error: str = ""
@@ -745,7 +747,6 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # model back to its open task_list items (bounded by
         # ``_MAX_TASK_NUDGES`` so a stubborn model can't loop the budget).
         self._end_turn_task_nudges: int = 0
-        self._end_turn_frontend_nudges: int = 0
         # Model-derived acceptance matrix (per entity: route/page/create),
         # computed by Phase 3 and saved in the recipe. Report-only.
         self._acceptance_matrix: dict | None = None
@@ -1072,6 +1073,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         )
         self._phase2_stop_reason = checkpoint.phase2_stop_reason
         self._phase2_exited_cleanly = checkpoint.phase2_exited_cleanly
+        self._phase2_cut_at_share = checkpoint.phase2_cut_at_share
         self._phase3_interrupted = False
         # On-disk changes survive interruption. Old scheduling history is only
         # relevant to those exact bytes; validation results are always rebuilt.
@@ -1984,6 +1986,15 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             logger.debug("could not write .gitignore", exc_info=True)
 
     def _run_phase2(self, instructions: str, extra_issues: list[str] | None = None) -> None:
+        """Run Phase 2 with Phase 3's share of the clock held back until it returns."""
+        self.deadline.hold(self.max_runtime_seconds * _PHASE3_BUDGET_SHARE)
+        self._phase2_cut_at_share = False
+        try:
+            self._run_phase2_turns(instructions, extra_issues)
+        finally:
+            self.deadline.hold(0)
+
+    def _run_phase2_turns(self, instructions: str, extra_issues: list[str] | None = None) -> None:
         """Run the Phase 2 customisation loop.
 
         Before starting, do ONE cheap LLM call (~$0.01) to scope the
@@ -2157,10 +2168,17 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         no_information_progress = 0
         inspected: set[tuple[str, str]] = set()
         observed_plans = {self._repair_obligations_revision()}
+        observed_results: set[str] = set()
+        shown_blocker_report: tuple | None = None
         inspection_nudged = False
         self._phase2_inspection_handoff = ""
-        phase2_turns = self._phase2_turn_limit()
-        for turn in range(start_turn, phase2_turns):
+        call_limit = self._phase2_call_limit()
+        phase2_seconds = self.deadline.work_remaining()
+        budget_announced = 0.0
+        for turn in range(start_turn, self._turn_guard()):
+            if self._tool_calls_executed() >= call_limit:  # Phase 2's share of the work
+                self._end_phase2_work_share(call_limit)
+                break
             self.total_turns = turn + 1
             self._trace.write(EVENT_TURN_START, turn=turn + 1)
 
@@ -2173,29 +2191,22 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 self._phase2_stop_reason = "cancelled"
                 break
 
-            # -- Runtime timeout check ------------------------------------
-            if self._start_time is not None:
-                elapsed = time.monotonic() - self._start_time
-                if elapsed > self.max_runtime_seconds:
-                    logger.warning(
-                        "Runtime timeout: %.1fs > %ds", elapsed, self.max_runtime_seconds,
-                    )
-                    self._phase2_stop_reason = "timeout"
-                    break
-
-            # -- Pre-call cost check ---------------------------------------
-            # The post-call check below catches the overrun; this one
-            # prevents firing ANOTHER billable request when the budget
-            # is already spent (e.g. after an expensive streaming turn).
-            if self.client.usage.estimated_cost >= self.max_cost_usd:  # reached is spent
+            # -- Phase 2's share of the time and spend ----------------------
+            if self.deadline.out_of_time():
+                self._stop_phase2_on_time()
+                break
+            # Checked before the call too, so no request starts on a spent share.
+            cost_limit = self.max_cost_usd * (1 - _PHASE3_BUDGET_SHARE)
+            if self.client.usage.estimated_cost >= cost_limit:  # reached is spent
                 logger.warning(
-                    "Cost cap already reached before turn %d: $%.4f >= $%.4f",
-                    turn + 1, self.client.usage.estimated_cost, self.max_cost_usd,
+                    "Phase 2 cost share spent before turn %d: $%.4f >= $%.4f",
+                    turn + 1, self.client.usage.estimated_cost, cost_limit,
                 )
-                self._phase2_stop_reason = "cost_cap"
+                self._stop_phase2_on_spend()
                 break
 
-            logger.info("LLM generation turn %d/%d", turn + 1, phase2_turns)
+            logger.info("LLM generation turn %d (%d of %d tool calls made)",
+                        turn + 1, self._tool_calls_executed(), call_limit)
 
             messages = self._maybe_compact(messages)
 
@@ -2208,7 +2219,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 raise
             except DeadlineReached as e:
                 logger.warning("Phase 2 stopped on turn %d: %s", turn + 1, e)
-                self._phase2_stop_reason = "cancelled" if e.cancelled else "timeout"
+                if e.cancelled:
+                    self._phase2_stop_reason = "cancelled"
+                else:
+                    self._stop_phase2_on_time()
                 break
             except Exception as e:
                 logger.error("LLM API call failed on turn %d: %s", turn + 1, e)
@@ -2227,18 +2241,18 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             # Every turn's cost, the closing end_turn reply included. The token
             # counters show a run that re-bills its history (a low cache hit rate).
             self._trace_cost_update(turn + 1)
-            if not _cost_warning_fired and current_cost > self.max_cost_usd * 0.8:
+            if not _cost_warning_fired and current_cost > cost_limit * 0.8:
                 logger.warning(
-                    "Cost at 80%% of cap: $%.4f / $%.4f",
-                    current_cost, self.max_cost_usd,
+                    "Cost at 80%% of Phase 2's share: $%.4f / $%.4f",
+                    current_cost, cost_limit,
                 )
                 _cost_warning_fired = True
-            if current_cost > self.max_cost_usd:
+            if current_cost > cost_limit:
                 logger.warning(
-                    "Cost cap reached: $%.4f > $%.4f",
-                    current_cost, self.max_cost_usd,
+                    "Phase 2 cost share spent: $%.4f > $%.4f",
+                    current_cost, cost_limit,
                 )
-                self._phase2_stop_reason = "cost_cap"
+                self._stop_phase2_on_spend()
                 break
 
             if response["stop_reason"] == "end_turn":
@@ -2248,12 +2262,13 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 # rather than looping the user's budget away; Phase 3
                 # still validates whatever state it left).
                 execution_report = self._validate_app()
-                # Static frontend blockers go back to the model once (it has the
-                # context here); any other blocker ends Phase 2 as before.
-                frontend_blockers = ([issue for issue in self._static_frontend_issues()
-                                      if _classify_issue(issue).severity == "blocker"]
-                                     if execution_report["blocker_count"] else [])
-                if execution_report["blocker_count"] > len(frontend_blockers):
+                # Every observed blocker goes back to the model, which has the context
+                # here; Phase 2 hands off only when it ends the turn again on the same
+                # tree and the same blockers.
+                blockers = [issue for issue in execution_report["issues"]
+                            if _classify_issue(issue).severity == "blocker"]
+                report_state = (self._workspace_revision(), tuple(blockers))
+                if execution_report["blocker_count"] and report_state == shown_blocker_report:
                     self._phase2_stop_reason = "validation_required"
                     self._phase2_stop_detail = "end_turn blocker gate"
                     self._phase2_exited_cleanly = False
@@ -2262,14 +2277,15 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 _has_verified_open = any(t.get("verify") for t in open_items)
                 _nudge_cap = (self._MAX_TASK_NUDGES + 2 if _has_verified_open
                               else self._MAX_TASK_NUDGES)
-                frontend_nudge = (bool(frontend_blockers)
-                                  and self._end_turn_frontend_nudges < self._MAX_FRONTEND_BLOCKER_NUDGES)
-                if (open_items or frontend_nudge) and self._end_turn_task_nudges < _nudge_cap:
-                    self._end_turn_task_nudges += 1
-                    self._end_turn_frontend_nudges += frontend_nudge
+                report_blockers = bool(execution_report["blocker_count"])
+                if report_blockers or (open_items and self._end_turn_task_nudges < _nudge_cap):
+                    if report_blockers:
+                        shown_blocker_report = report_state
+                    else:
+                        self._end_turn_task_nudges += 1
                     logger.info(
-                        "end_turn with %d open checklist item(s), %d frontend blocker(s) — nudge %d/%d",
-                        len(open_items), len(frontend_blockers) if frontend_nudge else 0,
+                        "end_turn with %d open checklist item(s), %d blocker(s) — nudge %d/%d",
+                        len(open_items), execution_report["blocker_count"],
                         self._end_turn_task_nudges, _nudge_cap,
                     )
                     # An empty end_turn reply (no text, no tool calls) is not
@@ -2281,13 +2297,14 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                             {"role": "assistant", "content": response["content"]}
                         )
                     parts = []
-                    if frontend_nudge:
-                        shown = "\n".join(f"  - {clip_finding(issue)}"
-                                          for issue in frontend_blockers[:self._VALIDATE_APP_MAX_ISSUES])
+                    if report_blockers:
+                        shown = "\n".join(f"  - {issue}" for issue in blockers)
+                        more = execution_report["blocker_count"] - len(blockers)
                         parts.append(
-                            "Ending the turn ran validate_app, and the frontend still has these "
-                            f"blockers:\n{shown}\nFix them now; Phase 2 ends with them unfixed "
-                            "the next time you end the turn.")
+                            "Ending the turn ran validate_app, and it still reports these "
+                            f"blockers:\n{shown}" + (f"\n  (+{more} more)" if more > 0 else "")
+                            + "\nFix them now. Ending the turn again without changing them hands "
+                            "the run to validation with them unfixed.")
                     if open_items:
                         listing = "\n".join(
                             f"  {t['id']}. {t['text']}" for t in open_items
@@ -2309,11 +2326,6 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                         "content": [{"type": "text", "text": "\n\n".join(parts)}],
                     })
                     continue
-                if frontend_blockers:
-                    self._phase2_stop_reason = "validation_required"
-                    self._phase2_stop_detail = "end_turn frontend blocker gate"
-                    self._phase2_exited_cleanly = False
-                    break
                 logger.info("LLM completed after %d turns", turn + 1)
                 self._phase2_exited_cleanly = True
                 self._phase2_stop_reason = "completed"
@@ -2330,43 +2342,58 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 if source_changed:
                     inspected.clear()
                     observed_plans.clear()
+                    observed_results.clear()
+                    inspection_nudged = False  # the next stretch gets its own reminder
                 novel_inspection = self._record_novel_inspections(tool_blocks, tool_results, inspected)
+                novel_result = self._record_novel_results(tool_blocks, tool_results, observed_results)
                 plan = self._repair_obligations_revision()
                 novel_plan = plan not in observed_plans
                 observed_plans.add(plan)
-                no_source_progress = 0 if source_changed else no_source_progress + 1
-                no_information_progress = (0 if source_changed or novel_inspection or novel_plan
-                                           else no_information_progress + 1)
+                # Counted in executed calls, so batching does not change how long a model may verify.
+                no_source_progress = 0 if source_changed else no_source_progress + len(tool_blocks)
+                no_information_progress = (0 if source_changed or novel_inspection or novel_result or novel_plan
+                                           else no_information_progress + len(tool_blocks))
                 last_progress_revision = revision
-                handoff = (no_information_progress >= self._PHASE2_STAGNANT_TURNS
-                           or no_source_progress >= self._PHASE2_INSPECTION_TURNS)
-                if not inspection_nudged and no_source_progress >= self._PHASE2_STAGNANT_TURNS:
+                stagnant = no_information_progress >= self._PHASE2_STAGNANT_CALLS
+                # The reminder is always delivered before a handoff: one turn after it, at the earliest.
+                handoff = stagnant and inspection_nudged
+                if not inspection_nudged and (stagnant or no_source_progress >= self._PHASE2_INSPECTION_CALLS):
                     inspection_nudged = True
+                    open_items = self.executor.open_tasks()
                     messages.append({"role": "user", "content": [{"type": "text", "text": (
-                        "<system-reminder>You have inspected/planned without changing source for "
-                        f"{no_source_progress} turns. New successful reads are useful, but inspection is bounded. "
+                        "<system-reminder>You have made "
+                        f"{no_source_progress} tool calls without changing source. New results are useful, "
+                        "but inspection is bounded. "
                         "Use the code already inspected to implement one coherent missing behavior, "
                         "or use test_api to verify behavior already present. "
-                        "Do not make cosmetic edits to reset progress or repeat unchanged reads. "
+                        "Do not make cosmetic edits to reset progress or repeat unchanged reads or commands. "
                         "If a prerequisite prevents progress, record the concrete blocker. "
-                        "The next stage will retain unresolved work, not treat inspection as completion.</system-reminder>"
+                        "The next stage will retain unresolved work, not treat inspection as completion."
+                        + ("\n\nThese checklist items are still OPEN; close each one with task_list as done, "
+                           "blocked with its reason, or dropped if the user did not ask for it:\n"
+                           + "\n".join(f"  {t['id']}. {t['text']}" for t in open_items) if open_items else "")
+                        + "</system-reminder>"
                     )}]})
                 if handoff:
                     self._phase2_stop_reason = "validation_required"
                     self._phase2_stop_detail = (
                         f"inspection handoff (no source change for {no_source_progress} "
-                        f"turns, no new information for {no_information_progress})")
+                        f"tool calls, no new information for {no_information_progress})")
                     paths = sorted({path for path, _ in inspected})
                     self._phase2_inspection_handoff = (
                         f"Phase 2 inspected {len(inspected)} distinct successful source excerpts and "
                         f"{len(observed_plans)} task/scenario states since the last source change. "
-                        f"No source change for {no_source_progress} turns; no new inspection/plan for "
-                        f"{no_information_progress} turns. Inspected paths: {', '.join(paths[:12]) or 'none'}"
+                        f"No source change for {no_source_progress} tool calls; no new result for "
+                        f"{no_information_progress} calls. Inspected paths: {', '.join(paths[:12]) or 'none'}"
                         + (" (additional paths omitted)" if len(paths) > 12 else "")
                         + ". This is an inspection handoff, not verification. Use the listed source and "
                         "concrete diagnostics to implement or verify the next unresolved behavior; avoid restarting a full-file tour."
                     )
                     logger.warning("Phase 2: bounded inspection/no-progress limit; switching to diagnostic-led repair")
+                if not handoff:
+                    budget_announced, reminder = self._budget_reminder(call_limit, phase2_seconds, budget_announced)
+                    if reminder:
+                        messages.append(reminder)
 
                 # Per-file modify-loop guard. After the tool_results are
                 # appended, check whether the LLM has just made a streak
@@ -2418,7 +2445,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                     )
                     continue
 
-                self._phase2_stop_reason = "api_error"
+                # Its own stop reason: the provider answered, so it is not a provider error.
+                self._phase2_stop_reason = "output_limit"
                 self._phase2_api_error = (
                     "The model hit its output token limit"
                     + (f" ({current_max_tokens} tokens)" if current_max_tokens else "")
@@ -2447,26 +2475,65 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 self._phase2_api_error = f"unexpected stop_reason: {response['stop_reason']}"
                 break
         else:
-            # No break: Phase 2 used every turn it may use. Out of its share with
-            # checklist items open, it hands off like the inspection limit: Phase 3
-            # re-raises them as blockers, so only a clean validation completes the
-            # run. With nothing to re-raise, the cut stays a turn limit.
-            reserved = phase2_turns < self.max_turns
-            if reserved:
-                self._phase2_stop_detail = (
-                    f"turn share used ({self.max_turns - phase2_turns} of {self.max_turns} "
-                    "turns reserved for validation and repair)"
-                )
-                logger.warning("Phase 2 used its %d turns; %s", phase2_turns, self._phase2_stop_detail)
-            unfinished = self.executor.open_tasks() or self.executor.blocked_tasks()
-            self._phase2_stop_reason = "validation_required" if reserved and unfinished else "max_turns"
+            # No break: the runaway guard on turns ended Phase 2.
+            self._phase2_stop_reason = "max_turns"
+            self._phase2_stop_detail = f"turn guard reached ({self._turn_guard()} turns)"
 
-    def _phase2_turn_limit(self) -> int:
-        """Turns of ``max_turns`` Phase 2 may use; the rest is kept for Phase 3's repair loop."""
-        if not self.auto_fix_issues:
-            return self.max_turns
-        reserve = min(_PHASE3_TURN_RESERVE, self.max_turns // _PHASE3_RESERVE_MAX_FRACTION)
-        return self.max_turns - (reserve if reserve >= _PHASE3_FIX_TURNS else 0)
+    def _end_phase2_work_share(self, call_limit: int) -> None:
+        """Phase 2 made the tool calls it may make: its share, or, with no share
+        kept for repair, the whole budget, a step limit."""
+        budget = self._call_budget()
+        if call_limit < budget:
+            self._hand_off_phase2_share("tool-call", f"{budget - call_limit} of {budget} calls")
+        else:
+            self._phase2_stop_reason = "max_turns"
+
+    def _stop_phase2_on_time(self) -> None:
+        """No LLM call may start in Phase 2: the runtime cap is reached, or only Phase 2's share of it."""
+        if self.deadline.cap_reached():
+            logger.warning("Runtime cap of %ds reached", self.max_runtime_seconds)
+            self._phase2_stop_reason = "timeout"
+        else:
+            self._hand_off_phase2_share(
+                "time", f"{self.max_runtime_seconds * _PHASE3_BUDGET_SHARE:.0f} of {self.max_runtime_seconds} s")
+
+    def _stop_phase2_on_spend(self) -> None:
+        """Phase 2 spent the cost cap, or only its share of it."""
+        if self.client.usage.estimated_cost >= self.max_cost_usd:
+            self._phase2_stop_reason = "cost_cap"
+        else:
+            self._hand_off_phase2_share(
+                "cost", f"${self.max_cost_usd * _PHASE3_BUDGET_SHARE:.2f} of ${self.max_cost_usd:.2f}")
+
+    def _hand_off_phase2_share(self, meter: str, reserved: str) -> None:
+        """Phase 2 used its share of one budget, not the budget: it hands off to
+        validation, and Phase 3 decides how the run ends."""
+        self._phase2_stop_reason = "validation_required"
+        self._phase2_exited_cleanly = False
+        self._phase2_cut_at_share = True
+        self._phase2_stop_detail = f"{meter} share used ({reserved} reserved for {self._phase3_work()})"
+        logger.warning("Phase 2: %s", self._phase2_stop_detail)
+
+    def _phase3_work(self) -> str:
+        """What Phase 3 does with the share Phase 2 leaves it."""
+        return "validation and repair" if self.auto_fix_issues else "validation"
+
+    def _tool_calls_executed(self) -> int:
+        """Tool calls the model's turns executed in this run; Phase 1's generator run is not one."""
+        return sum(1 for call in self.tool_calls_log if call.get("turn", 0) > 0)
+
+    def _call_budget(self) -> int:
+        """The run's work budget in executed tool calls."""
+        return self.max_turns * _CALLS_PER_TURN
+
+    def _turn_guard(self) -> int:
+        """Turns after which the run stops whatever budget is left: a runaway guard."""
+        return self.max_turns * _CALLS_PER_TURN
+
+    def _phase2_call_limit(self) -> int:
+        """Tool calls Phase 2 may make; with auto-fix on the rest is kept for Phase 3's repair loop."""
+        budget = self._call_budget()
+        return budget - int(budget * _PHASE3_BUDGET_SHARE) if self.auto_fix_issues else budget
 
     # Above this the request is not repeated as the first user message. The
     # system prompt already carries it whole ("## User request"), and a second
@@ -2503,6 +2570,61 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 "off — re-state only what you still need to write."
             ),
         }]}
+
+    @staticmethod
+    def _record_novel_results(tool_blocks, tool_results, seen) -> bool:
+        """Credit a successful result of any tool but ``read_file`` that was not
+        seen before; a failed call or command is no progress. Digits and UUIDs are
+        masked, so ports, ids, timings and timestamps do not make a repeated
+        command look new."""
+        names = {block.id: block.name for block in tool_blocks}
+        novel = False
+        for result in tool_results:
+            name, content = names.get(result.get("tool_use_id")), result.get("content")
+            if name in (None, "read_file") or not isinstance(content, str):
+                continue
+            try:
+                payload = json.loads(content)
+            except (TypeError, ValueError):
+                payload = None
+            if isinstance(payload, dict) and (payload.get("error") or payload.get("success") is False
+                                              or payload.get("exit_code") not in (None, 0)):
+                continue
+            masked = _re.sub(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}|[0-9]+", "0", content)
+            key = hashlib.sha256(f"{name}\0{masked}".encode("utf-8")).hexdigest()
+            if key not in seen and len(seen) < 1000:
+                seen.add(key)
+                novel = True
+        return novel
+
+    # Shares of Phase 2's budget at which the model is told what is left.
+    _BUDGET_REMINDER_AT = (0.5, 0.75, 0.9)
+
+    def _budget_reminder(self, call_limit: int, phase2_seconds: float | None,
+                         announced: float) -> tuple[float, dict | None]:
+        """The highest share of Phase 2's budget now used, and the message telling the
+        model what is left when it passed a share not announced yet. Sent after tool
+        results, never in the system prompt, so the cached prefix does not change."""
+        calls_left = call_limit - self._tool_calls_executed()
+        cost_limit = self.max_cost_usd * (1 - _PHASE3_BUDGET_SHARE)
+        spent = self.client.usage.estimated_cost
+        seconds_left = self.deadline.work_remaining()
+        used = max(1 - calls_left / call_limit, spent / cost_limit if cost_limit > 0 else 0.0,
+                   1 - seconds_left / phase2_seconds if seconds_left is not None and phase2_seconds else 0.0)
+        reached = max((mark for mark in self._BUDGET_REMINDER_AT if used >= mark), default=0.0)
+        if reached <= announced:
+            return announced, None
+        left = [f"{max(0, calls_left)} tool calls"]
+        if seconds_left is not None:
+            left.append(f"{max(0.0, seconds_left) / 60:.0f} minutes")
+        if spent > 0:  # a model with no price reports none
+            left.append(f"${max(0.0, cost_limit - spent):.2f}")
+        text = (f"<system-reminder>{reached:.0%} of this phase's budget is used. About {', '.join(left)} "
+                f"remain before the run moves on to {self._phase3_work()}. Keep working through the open "
+                "items. Record any you cannot finish with what remains as blocked in task_list, with "
+                "the reason; never mark undone work done."
+                "</system-reminder>")
+        return reached, {"role": "user", "content": [{"type": "text", "text": text}]}
 
     @staticmethod
     def _record_novel_inspections(tool_blocks, tool_results, seen) -> bool:
@@ -2936,6 +3058,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 source_revision=self._workspace_revision() if phase == "phase3" else "",
                 phase2_stop_reason=self._phase2_stop_reason,
                 phase2_exited_cleanly=self._phase2_exited_cleanly,
+                phase2_cut_at_share=self._phase2_cut_at_share,
                 repair_progress=self._repair_progress if phase == "phase3" else {},
                 locked_generators=sorted(self.executor.locked_generators),
                 modify=self._modify_checkpoint_state(),
@@ -4799,12 +4922,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         return json.dumps([requirements, self._instructions], sort_keys=True)
 
     def _checks_allowed(self) -> bool:
-        """A deterministic check may start: not cancelled, spend left, and time
-        before the cap for it (LLM calls need more, see ``_budget_stop_reason``)."""
-        return not (
-            self.deadline.cancelled or self.deadline.checks_out_of_time()
-            or (self.max_cost_usd is not None and self.client.usage.estimated_cost >= self.max_cost_usd)
-        )
+        """A deterministic check may start: not cancelled, and time before the cap
+        for it. Checks are free, so spend does not stop them (LLM calls need more,
+        see ``_budget_stop_reason``)."""
+        return not (self.deadline.cancelled or self.deadline.checks_out_of_time())
 
     def _verification_call_allowed(self) -> bool:
         """Do not start a paid extraction/judgment after a stop or spend cap,
@@ -5097,8 +5218,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._previous_errors.append(error_line)
 
         # A fix request is a new request: it gets a full runtime window, not
-        # what generate() left of its own (which also bounds run_command).
+        # what generate() left of its own (which also bounds run_command),
+        # and a quota that was exhausted then may have been topped up since.
         self._start_time = time.monotonic()
+        self._phase2_quota_exhausted = False
 
         retry_note = ""
         if already_tried:
@@ -5203,6 +5326,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         if self.max_cost_usd is not None and self.client.usage.estimated_cost >= self.max_cost_usd:
             return (f"the ${self.max_cost_usd:.2f} cost cap is spent "
                     f"(${self.client.usage.estimated_cost:.2f} used)")
+        if self._phase2_quota_exhausted:
+            return "the provider quota is exhausted"
         if self.deadline.out_of_time():
             return f"too little of the {self.max_runtime_seconds}s runtime cap is left"
         return ""

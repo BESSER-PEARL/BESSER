@@ -645,7 +645,7 @@ class TestPhase2SystemPrompt:
                 turn = calls[-1]
                 for message in messages:
                     for item in message.get("content", []) if isinstance(message.get("content"), list) else []:
-                        if isinstance(item, dict) and "You have inspected/planned" in item.get("text", ""):
+                        if isinstance(item, dict) and "tool calls without changing source" in item.get("text", ""):
                             reminders.add(item["text"])
                 if inspection in {"new_reads", "new_plans"} and turn >= 13:
                     return {"stop_reason": "end_turn", "content": []}
@@ -671,9 +671,11 @@ class TestPhase2SystemPrompt:
         if inspection in {"new_reads", "new_plans"}:
             assert len(calls) == 13 and orch._phase2_stop_reason == "completed"
             assert (tmp_path / "file1.py").read_text(encoding="utf-8") == "value = 99\n"
-            assert len(reminders) == 1
+            assert not reminders, "eleven calls of new information are not stagnation"
         else:
-            expected = {"repeated_reads": 11, "missing_reads": 10, "only_new_reads": 20}[inspection]
+            # 20 calls with nothing new trip the limit; the reminder goes out first and
+            # the handoff follows one call later. New reads only reset the count.
+            expected = {"repeated_reads": 22, "missing_reads": 21, "only_new_reads": 50}[inspection]
             assert len(calls) == expected and orch._phase2_stop_reason == "validation_required"
             assert "inspection handoff, not verification" in orch._phase2_inspection_handoff
             # "validation_required" is also what the end_turn blocker gate
@@ -683,7 +685,7 @@ class TestPhase2SystemPrompt:
             assert orch._phase2_stop_detail.startswith("inspection handoff")
             checkpoint = load_checkpoint(str(tmp_path))
             assert checkpoint.turn == expected and checkpoint.messages[-1]["role"] == "user"
-            assert len(reminders) <= 1
+            assert len(reminders) == 1, "the model is shown the reminder before the handoff"
 
     def test_user_request_appears_verbatim(self, simple_model, tmp_path):
         orchestrator = LLMOrchestrator(

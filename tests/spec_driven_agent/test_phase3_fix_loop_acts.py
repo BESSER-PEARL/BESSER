@@ -33,7 +33,7 @@ import pytest
 
 from besser.spec_driven_agent.pipeline.orchestrator import (
     _MAX_TOOLCHAIN_FIX_ITERATIONS,
-    _PHASE3_FIX_TURNS,
+    _PHASE3_FIX_CALLS,
     LLMOrchestrator,
     ValidationIssue,
 )
@@ -232,15 +232,15 @@ def test_validate_app_does_not_ask_for_one_scenario_covering_every_create(tmp_pa
     assert "for every listed endpoint" not in step
 
 
-def test_reading_until_the_turn_cap_ends_the_attempt(tmp_path):
+def test_reading_until_the_call_cap_ends_the_attempt(tmp_path):
     client = _StructuredClient(_read)
     orch = _build(tmp_path, client)
 
     assert orch._invoke_phase3_fix_loop([BLOCKER], is_first_attempt=True) == 0
 
     assert _main_py(tmp_path) == "x = 1\n"
-    assert [force for force, _ in client.calls] == [None] * _PHASE3_FIX_TURNS
-    assert orch.total_turns == _PHASE3_FIX_TURNS
+    assert [force for force, _ in client.calls] == [None] * _PHASE3_FIX_CALLS
+    assert orch._tool_calls_executed() == _PHASE3_FIX_CALLS
 
 
 def test_the_stop_gate_runs_before_the_next_turn(tmp_path):
@@ -290,6 +290,8 @@ def test_an_attempt_that_edited_is_not_re_prompted(tmp_path):
     # in-flight cancellation merely because no further editing turns remain.
     boundary_client = _StructuredClient(edit_then_stop)
     boundary = _build(tmp_path, boundary_client, max_turns=1, auto_fix_issues=True)
+    boundary.tool_calls_log = [{"turn": 1, "tool": "read_file", "input": {}, "success": True}] * (
+        boundary._call_budget() - 1)  # one call of the budget left
     boundary._phase2_stop_reason = "validation_required"
     with patch.object(boundary, "_collect_validation_issues", side_effect=[[BLOCKER], []]) as checks:
         boundary._run_phase3_validation()

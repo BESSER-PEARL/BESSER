@@ -45,7 +45,7 @@ from besser.spec_driven_agent.model_serializer import serialize_domain_model, to
 from besser.spec_driven_agent.pipeline.constants import (
     _MAX_TOOLCHAIN_FIX_ITERATIONS,
     _PHASE3_CREATE_EVIDENCE_REMINDER,
-    _PHASE3_FIX_TURNS,
+    _PHASE3_FIX_CALLS,
     _ROLLBACK_DISCARD_DIR,
     _ROLLBACK_PRESERVED,
     _RUNTIME_FAILED,
@@ -85,7 +85,6 @@ from besser.spec_driven_agent.validation.issues import (
     unresolved_defects,
 )
 from besser.spec_driven_agent.validation.toolchain import (
-    _build_toolchain_reminder,
     _toolchain_commands_for,
 )
 from besser.utilities.workspace_fs import copytree_plain, is_plain_entry, walk_plain
@@ -273,7 +272,11 @@ class Phase3RepairMixin:
     _repair_last_outcome: str | None = None
 
     def _complete_repair_if_verified(self) -> None:
-        if self._phase2_stop_reason == "validation_required":
+        # A handoff with checklist items still open or blocked stays one: nothing did that work.
+        # So does a cut at a budget share with no checklist to show the work was finished.
+        if self._phase2_stop_reason == "validation_required" and not (
+                self.executor.open_tasks() or self.executor.blocked_tasks()
+                or (self._phase2_cut_at_share and not self.executor.task_snapshot())):
             self._phase2_exited_cleanly = True
             self._phase2_stop_reason = "completed"
 
@@ -281,32 +284,35 @@ class Phase3RepairMixin:
         """One stop gate for repair turns and the validation calls between them.
 
         ``check_turn_budget=False`` asks for validation only, which needs time
-        before the cap for its checks; a repair turn needs time for an LLM call.
+        before the cap for its checks and is free; a repair turn is an LLM call,
+        so it also needs spend, quota, turns and time for that call.
         """
         reason = None
         if self.deadline.checks_out_of_time():
             reason = "runtime budget exhausted"
-        elif self.max_cost_usd is not None and self.client.usage.estimated_cost >= self.max_cost_usd:
-            reason = "cost budget exhausted"
-        elif self._phase2_quota_exhausted:
-            reason = "provider quota exhausted in Phase 2"
-        elif check_turn_budget and self.total_turns >= self.max_turns:
-            # No further edit turn, but final verification of the last accepted
-            # tool batch may still run. Do not poison that check as cancelled.
-            return "turn budget exhausted"
         elif self.deadline.cancelled:
             reason = "cancellation requested"
         elif self._phase3_interrupted:
             reason = "repair interrupted before verification completed"
             if self._phase3_interrupt_detail:
                 reason = f"{reason} ({self._phase3_interrupt_detail})"
-        elif check_turn_budget and self.deadline.out_of_time():
-            # Like the turn budget: no further repair turn, but the attempt
-            # so far is still checked.
-            return "runtime budget exhausted"
         if reason:
             self._phase3_interrupted = True
-        return reason
+            return reason
+        if not check_turn_budget:
+            return None
+        # No further repair turn, but the attempt so far is still checked.
+        if self.max_cost_usd is not None and self.client.usage.estimated_cost >= self.max_cost_usd:
+            return "cost budget exhausted"
+        if self._phase2_quota_exhausted:
+            return "provider quota exhausted in Phase 2"
+        if self._tool_calls_executed() >= self._call_budget():
+            return "tool-call budget exhausted"
+        if self.total_turns >= self._turn_guard():
+            return "turn budget exhausted"
+        if self.deadline.out_of_time():
+            return "runtime budget exhausted"
+        return None
 
     def _repair_obligations_revision(self) -> str:
         """Test corrections and checklist changes are progress without source edits,
@@ -501,7 +507,7 @@ class Phase3RepairMixin:
             if self._may_save_phase3_checkpoint():
                 self._save_phase3_checkpoint()
 
-        max_attempts = max(_MAX_TOOLCHAIN_FIX_ITERATIONS, self.max_turns - self.total_turns)
+        max_attempts = max(_MAX_TOOLCHAIN_FIX_ITERATIONS, self._turn_guard() - self.total_turns)
         # Which rule ends this loop, for the trace: report-only.
         exit_reason = "attempt cap"
         for _ in range(max_attempts):
@@ -1316,11 +1322,8 @@ class Phase3RepairMixin:
                 + ". It may also create new files. To edit any other file, add needed_for to that "
                 "call, naming the blocker the file is needed for.")])
 
-        # When the blockers include toolchain errors and shell tools are on,
-        # instruct the LLM to drive the toolchain itself with run_command — that's the
-        # only way to know whether a fix actually compiles. We do this
-        # as additional text in the same user turn (vs. a separate
-        # message) so the LLM sees the request as part of the brief.
+        # The one place the toolchain instruction is given. With shell tools on,
+        # the model runs the check itself: the diff alone does not show it compiles.
         if toolchain_blockers and not self.allow_shell_tools:
             cmds = self._toolchain_commands_for(toolchain_blockers)
             prompt_parts.append("")
@@ -1337,43 +1340,32 @@ class Phase3RepairMixin:
             cmd_lines = "\n".join(f"  - {c}" for c in cmds)
             prompt_parts.append("")
             prompt_parts.append(
-                "After each edit, re-run the relevant toolchain check "
-                "using run_command to confirm the error is gone:"
+                "Fix the reported compile / type errors, then re-run the relevant "
+                "toolchain check with run_command, and repeat until it reports zero errors:"
             )
             prompt_parts.append(cmd_lines)
             prompt_parts.append(
-                "Keep iterating (edit -> re-run) until the toolchain "
-                "reports zero errors. Do not declare done while any "
-                "compile / type error is still reported."
+                "Do not end the attempt while any compile / type error is still reported."
             )
 
         fix_prompt = "\n".join(prompt_parts)
         messages: list[dict] = [{"role": "user", "content": fix_prompt}]
-
-        # Inject a high-salience reminder as a separate user message
-        # right after the prompt. Matches the pattern used by the
-        # per-file modify-loop guard: a <system-reminder>-tagged block
-        # the LLM sees at response-time, not buried inside the prompt.
-        if toolchain_blockers:
-            reminder = self._build_toolchain_reminder(toolchain_blockers)
-            messages.append({
-                "role": "user",
-                "content": [{"type": "text", "text": reminder}],
-            })
 
         edits = 0                 # successful write-tool calls this attempt
         # needed_for is offered only while the attempt's edits are limited.
         tools = with_scope_widening(self.tools) if scope is not None else self.tools
         unconfirmed_at_reminder: set | None = None
         truncations = 0           # "emit less" retries after a max_tokens stop
-        turn_cap = _PHASE3_FIX_TURNS
+        # Executed tool calls this attempt may make; its turns are guarded at the same number.
+        cap = _PHASE3_FIX_CALLS
+        calls_before = self._tool_calls_executed()
         turn = 0
         while True:
             stop_reason = self._phase3_stop_requested()
             if stop_reason:
                 logger.warning("Phase 3: %s", stop_reason)
                 return edits
-            if turn >= turn_cap:
+            if max(turn, self._tool_calls_executed() - calls_before) >= cap:
                 return edits
             turn += 1
             self.total_turns += 1
@@ -1423,7 +1415,7 @@ class Phase3RepairMixin:
                 if unconfirmed and (unconfirmed_at_reminder is None
                                     or unconfirmed < unconfirmed_at_reminder):
                     unconfirmed_at_reminder = unconfirmed
-                    turn_cap = max(turn_cap, turn + 1)
+                    cap = max(cap, turn + 1, self._tool_calls_executed() - calls_before + 1)
                     if response["content"]:
                         messages.append({"role": "assistant", "content": response["content"]})
                     paths = ", ".join(f"POST {path}" for _, path in sorted(unconfirmed))
@@ -1513,11 +1505,7 @@ class Phase3RepairMixin:
             "Fix each issue concisely. Call validate_app to recheck startup and "
             "data entry after a coherent repair. When shell tools are unavailable, "
             "validate_app and test_api are the supported verification tools. Use test_api "
-            "for specification-based workflow assertions and invalid inputs. When shell tools "
-            "are available and the report contains "
-            "toolchain errors (tsc / cargo / kotlinc), verify each fix by "
-            "re-running that toolchain with run_command; the diff alone does "
-            "not show that it compiles.", "",
+            "for specification-based workflow assertions and invalid inputs.", "",
         ]
         if self._instructions:
             parts.extend([
@@ -1614,10 +1602,6 @@ class Phase3RepairMixin:
     def _toolchain_commands_for(self, toolchain_blockers: list[ValidationIssue]) -> list[str]:
         """Delegate to the toolchain module."""
         return _toolchain_commands_for(toolchain_blockers, shell_tools=self.allow_shell_tools)
-
-    def _build_toolchain_reminder(self, toolchain_blockers: list[ValidationIssue]) -> str:
-        """Delegate to the toolchain module."""
-        return _build_toolchain_reminder(toolchain_blockers, shell_tools=self.allow_shell_tools)
 
     @staticmethod
     def _repair_priority(issue: ValidationIssue) -> tuple[int, str]:

@@ -222,8 +222,9 @@ Request body
      - Soft runtime cap, clamped to the server hard cap (default 2400, max 2400).
    * - ``max_turns``
      - int
-     - Soft cap on LLM turns, clamped to the server hard cap (default 120,
-       max 150).
+     - Work budget: four executed tool calls per turn, with as many turns as a
+       runaway guard (see :doc:`runs`); clamped to the server hard cap
+       (default 120, max 150).
    * - ``mode``
      - ``generate`` | ``modify``
      - ``modify`` seeds the workspace from ``base_run_id`` and edits it in

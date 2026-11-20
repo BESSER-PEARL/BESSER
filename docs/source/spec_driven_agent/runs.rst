@@ -27,25 +27,62 @@ values are exposed by ``GET /besser_api/spec-driven/config``.
      - 120
      - 150
 
-``max_turns`` covers the customize loop (Phase 2) and the repair loop
-(Phase 3) together. With auto-fix on, Phase 2 stops 20 turns before the cap, or
-a quarter of the cap when that is less, and the repair loop gets the rest: with
-the default 120, Phase 2 may use 100. A cap under 40 is not split, since a
-quarter of it is less than one ten-turn fix attempt. A Phase 2 that uses its
-whole share with checklist items still open hands off to validation: those
-items become blockers there, so the run completes only when validation finds
-nothing left, and is reported incomplete otherwise. With no open item to bring
-back, it reports that the customization loop reached its step limit. Either
-way its trace's Phase 2 ``phase_exit`` names the reserve in ``stop_detail``. With auto-fix off, Phase 2 may use the whole cap.
+Work is budgeted in executed tool calls, not in LLM turns: ``max_turns``
+allows four tool calls per turn, for the customize loop (Phase 2) and the
+repair loop (Phase 3) together, so a model that makes one call per turn gets
+the same work as one that batches four (480 calls with the default 120). The
+same multiple of turns (480) is kept only as a guard against a runaway loop.
+
+Phase 2 leaves Phase 3 a quarter of each budget: it stops with a quarter of the
+runtime cap and of the cost cap left, and, with auto-fix on, a quarter of the
+tool calls (Phase 2 may make 360 of the default 480). Phase 3 uses that share
+for its checks, the requirements judge and the repair loop (with auto-fix off,
+the time and spend shares are kept for the checks and the judge). A Phase 2
+that uses its share of any of the three hands off to validation, and its
+trace's Phase 2 ``phase_exit`` names the share in ``stop_detail`` (``time share
+used``, ``cost share used`` or ``tool-call share used``). A handed-off run
+completes only when validation finds nothing left and no checklist item is
+still open or blocked: an item no check closes is reported as not confirmed,
+not repaired, so the run is reported as handed off, never as plainly
+completed. A run cut at a share with no checklist at all (the planning pass
+failed or was skipped) is reported as handed off too, as nothing shows the work
+it was doing was finished. Only a Phase 2 that reaches the cap itself (a
+Phase 1 that ran past it, or one reply that spent past it) stops as ``timeout``
+or ``cost_cap``.
+Phase 3's time share is held back while Phase 2 runs and released when Phase 2
+returns, so the formatting between the phases has it too. The quarter is ``_PHASE3_BUDGET_SHARE``,
+sized from recorded runs: where Phase 3 repaired, it made a median quarter of
+the run's tool calls, and a quarter of the 2400 s cap covers most recorded
+validation phases.
+
+Verifying is not stalling. Phase 2 hands off early (``stop_detail`` starts
+``inspection handoff``) only after 20 tool calls in a row that changed no source
+and returned nothing new: a read of new content, a checklist or test change, or
+any other successful result not seen before (digits and UUIDs are ignored, so a
+new port, id or timestamp does not make a repeated command new; a failed call
+or a command that exits non-zero is never new). The model is first shown a
+reminder, with its open checklist items, and the handoff comes no earlier than
+the next turn; a source change starts a new stretch, with its own reminder.
+After 40 calls without a source change it is reminded to implement.
+
+The model is told what is left. When half, three quarters and nine tenths of
+Phase 2's share (of the tool calls, the time or the spend, whichever is
+furthest along) are used, a short reminder after that turn's tool results gives
+the tool calls, minutes and, for a priced model, dollars left before validation
+(and, with auto-fix on, repair) takes over, and asks the model to record what it cannot finish as
+blocked. It is never part of the system prompt, which stays byte-identical so
+the provider's prompt cache keeps serving it.
 
 When a run hits a cap it still returns whatever it has produced so far — the
 cap is surfaced as a non-terminal warning before the final result, not as a
 hard failure.
 
-The caps are checked at turn boundaries: cancellation first, then elapsed time,
-then spend — and the cost check runs *before* the next request is sent, so a
-run cannot overshoot its cap by one more billable call. A single warning is
-logged at 80% of the cost cap.
+The budgets are checked at turn boundaries: tool calls first, then
+cancellation, then elapsed time, then spend — and the cost check runs *before*
+the next request is sent, so Phase 2 cannot overshoot its share by one more
+billable call. A single warning is logged at 80% of Phase 2's cost share. While
+Phase 2 runs, its LLM calls and commands treat the start of Phase 3's time
+share as the cap.
 
 The runtime cap and cancellation also hold *inside* a turn. LLM calls and the
 agent's own commands stop 30 seconds before the cap. Every LLM call of a run (the customize and repair turns, generator
@@ -81,7 +118,11 @@ writes its checkpoint, recipe and report as it does at any other stop.
 Only the paid LLM calls count against the budget: generator selection, the
 planning pass, a modify run's model sync, the customize loop, requirement
 extraction and judging, and any Phase 3 fix turns. The deterministic scaffold, the
-validators, and the download are free.
+validators, and the download are free. A spent cost cap or an exhausted provider
+quota therefore stops only those calls: Phase 3 still runs its checks and the
+boot-and-create probe while time is left, so a defect the run left behind is
+reported as a blocker, and the requirements judge and the repair turns are
+skipped.
 
 .. _spec-driven-durable-runs:
 
@@ -500,12 +541,18 @@ keys, always in this order:
   gateways).
 - ``limits`` (``time_seconds``, ``cost_usd``, ``turns``), ``stopped_by``
   (``finished``, ``time limit``, ``cost limit``, ``turn limit``, ``provider
-  error``, ``internal error``, ``cancelled``, ``repeated edits did not land`` or
-  ``handed off to validation``), ``stop_message`` (the run card's sentence for
-  that ending, without its variable parts) and ``outcome``. ``turn limit`` means
-  the customization loop used every turn it was allowed (see the turn split
-  above) with no open checklist item left to hand to validation; a run whose customization was skipped
-  because the scaffold already covered the request ended ``finished``.
+  error``, ``internal error``, ``cancelled``, ``repeated edits did not land``,
+  ``output limit`` or ``handed off to validation``), ``stop_message`` (the run
+  card's sentence for that ending, without its variable parts) and ``outcome``.
+  ``turn limit`` means the customization loop made every tool call of the
+  budget (auto-fix off, so no share was kept) or reached the runaway guard on
+  turns; ``time limit`` and ``cost limit`` mean the cap itself, never only
+  Phase 2's share of it; ``output limit`` means the model's replies were cut off at its output limit
+  more often than the four recoveries a run allows. A handoff stays ``handed off
+  to validation`` while a checklist item is still open or blocked after
+  validation, and its ``outcome`` is then never ``completed``. A run whose
+  customization was skipped because the scaffold already covered the request
+  ended ``finished``.
 - ``warnings``: the warnings shown to the user during the run (at most eight),
   each as a fixed sentence. A warning whose text can quote an error is left out.
 - ``duration_seconds``, ``phase_seconds`` (``select``, ``generate``, ``plan``,

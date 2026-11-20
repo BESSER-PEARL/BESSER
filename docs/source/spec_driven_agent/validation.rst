@@ -884,7 +884,8 @@ An attempt that edited the tree is kept only if all of these hold:
    retired when its status rises (missing to partial is progress, though it
    still blocks), or when it no longer has a blocker and the judge ran on the
    tree after the attempt. A requirement that disappears because the judge was
-   deferred, failed or was stopped is not retired. Missing and unsupported rank
+   deferred, failed or was stopped, or the requirements could not be extracted,
+   is not retired. Missing and unsupported rank
    the same, so turning one into the other is neither progress nor a fall.
    Other findings are compared with line and column numbers ignored, since an
    edit moves the errors it leaves; any other number (``/e2/`` against
@@ -895,7 +896,8 @@ An attempt that edited the tree is kept only if all of these hold:
    missing module or a startup failure hides the runtime checks (where the
    probe measured that tree, its boot verdict decides instead), fewer entities
    failing to be created reveals the creates and action calls that needed them,
-   a judge that was deferred, failed or stopped hides its verdicts, missing
+   a judge that was deferred, failed or stopped hides its verdicts, and so does a
+   requirement extraction that failed (it is retried once, on a later round), missing
    dependencies or a check that did not run hide ``tsc`` and the frontend build
    of that project, ``tsc`` errors hide its build, and a syntax error hides the
    lint of its file. The families are one table in ``validation/issues.py``; a

@@ -67,6 +67,7 @@ from besser.spec_driven_agent.state.tracing import (
 )
 from besser.spec_driven_agent.validation.api_probe import confirmed_create_paths
 from besser.spec_driven_agent.validation.issues import (
+    PHASE3_SKIPPED,
     RUNTIME_CHECK_UNVERIFIED,
     ValidationIssue,
     _classify_issue,
@@ -373,7 +374,7 @@ class Phase3RepairMixin:
             self._phase3_exit_reason = f"skipped: {stop_reason}"
             # Not confirmed: nothing was checked, so nothing was seen to fail.
             self._validation_issues.append(_classify_issue(
-                f"requirement unverified: Phase 3 validation did not run: {stop_reason}. "
+                f"{PHASE3_SKIPPED}: {stop_reason}. "
                 "The current application has not completed final verification."
             ))
             if self._checkpoint_phase == "phase3":

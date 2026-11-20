@@ -349,7 +349,8 @@ def _ran(verdict: dict) -> bool:
 
 # A judge note's citation annotation: a file path and a remark for the agent.
 _CITATION_NOTE_RE = re.compile(r"\s*\[citation [^\]]*\]")
-_UNCHECKED_PREFIXES = ("task unverified:", "runtime unverified:")
+# "agent left out:": the project's agent is not in the web app, so nothing about it was checked there.
+_UNCHECKED_PREFIXES = ("task unverified:", "runtime unverified:", "agent left out:")
 
 
 def _user_facing_cost(usage: Any, cost_usd: float) -> float:

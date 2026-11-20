@@ -48,12 +48,20 @@ that was already broken is never refused, so it can be repaired.
 - Local-import resolution — an import naming a module the app does not ship
   where it is used. ``ruff`` is structurally blind to this (a star import
   excuses every name), and it is fatal at startup. Imports the app starts
-  without are not checked: inside a ``try`` that handles ``ImportError``, and
-  under ``if TYPE_CHECKING:``. Under a catch-all handler (``except Exception``)
-  an unresolved import is a warning, ``possibly missing module:``, unless it
-  is inside a function and the handler goes on to the code after the
-  ``try`` (no ``return`` or ``raise`` in it): an optional fast path the
-  function falls back from. A package
+  without are not checked: inside a ``try`` that handles ``ImportError`` or a
+  ``with suppress(ImportError):``, and under ``if TYPE_CHECKING:``. Under a
+  catch-all (``except Exception``, ``with suppress(Exception):``) an
+  unresolved import is a warning, ``possibly missing module:``, unless it is
+  inside a function, the handler goes on to the code after the ``try`` (no
+  ``return`` or ``raise`` in it), and the import has a fallback: every
+  catch-all handler binds the imported name (another import, ``= None``), or
+  each read of it outside the ``try`` body (or its ``else``) or the ``with``
+  block comes after another binding of it in the function (a parameter, an
+  assignment before the guard or a later one). That is an optional fast path
+  the function falls back from. Otherwise the read, after the guard, in the
+  handler, in ``finally`` or in a closure, is a ``NameError`` when the import
+  failed, so it is reported. A flag set in the handler (``found = False``,
+  then ``if found:``) is not followed, so that read is reported too. A package
   declared in the app's manifest satisfies its import name, matched
   case-insensitively and, for names that differ (``python-socketio`` /
   ``socketio``), by name prefix, unless the app ships a module of that name.
@@ -570,7 +578,10 @@ Findings are classified into three severities:
        cosmetic rule, so no ``ruff`` finding is ``style``.
    * - ``warning``
      - Everything else, including endpoint-coherence findings (report-only for
-       now), ``form field type:``, the model-derived acceptance matrix (with
+       now), ``form field type:``, ``agent left out:`` (the project's agent
+       diagram is not in the generated web app because no screen of the GUI
+       model uses it; the run report lists it as not checked), the
+       model-derived acceptance matrix (with
        a GUI model whose screens bind at least one class, a class no screen
        offers to create, through a table with action buttons, a form or a
        create button, is not asked for a create path), ``entity coverage:`` (for an ``other`` target used through screens, the
@@ -782,24 +793,15 @@ is not among the files the verdict rests on, so a style edit does not re-judge i
 
 Two kinds of requirement cannot be shown by citing a line of code, and the
 extraction labels them: ``absence``, something the app must not have at all ("no
-sign-in", never a refusal the app enforces), and ``preservation``, existing
+data export", never a refusal the app enforces), and ``preservation``, existing
 behaviour a change must keep working as it is. When the judge leaves one
 unverified, it is settled without a citation, never as met, and an unverified
 absence is not sent to the focused round:
 
-- An absence that names sign-in or agents is checked in the app's files: a sign-in
-  library declared in a ``requirements*.txt`` or ``package.json`` dependency
-  (``passlib``, ``python-jose``, ``bcrypt``, ``next-auth``, ``jsonwebtoken``,
-  ``passport-*``, ``@clerk/*`` ...), a Python route with a ``login``, ``sign-in``,
-  ``sign-up`` or ``auth`` segment, an ``agents/<name>/`` folder at the top of the
-  app or of one of its folders (where the generator puts agents), Python code
-  importing the BESSER Agentic Framework, or the framework as a dependency. The
-  requirement is ``not_provable`` either way, and its note names what was found or
-  what was checked. A find is never a blocker: it cannot tell the excluded feature
-  from a requested one ("No sign-in for visitors" beside an admin login), and the
-  repair loop must not remove a feature the request asked for. Nothing found is no
-  proof (a hand-written login page is not seen). Only the judge's own missing or
-  partial verdict blocks an absence.
+- An absence is ``not_provable``, with a note that it cannot be shown by citing
+  code. The app's files are not scanned for it: a find could not tell the excluded
+  feature from a requested one, and finding nothing proves nothing. Only the
+  judge's own missing or partial verdict blocks an absence.
 - A preservation is ``not_provable``. Its note names the files the judge named for
   it (inspection paths and citations), and the files they import or are mounted by,
   that changed since the previous version (in a modify run the files as the run found

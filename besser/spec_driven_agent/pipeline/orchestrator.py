@@ -112,7 +112,7 @@ from besser.spec_driven_agent.agent.prompt_builder import (
     _FRONTEND_ASK_RE,
 )
 from besser.spec_driven_agent.planning.agent_wiring import (
-    AGENT_DOMAIN_TASK, agent_data_requirement, gui_uses_agent,
+    AGENT_DOMAIN_TASK, agent_data_requirement, agent_left_out_note, gui_uses_agent,
 )
 from besser.spec_driven_agent.planning.requested_routes import requested_route_tasks
 from besser.spec_driven_agent.planning.generator_keywords import (
@@ -3593,6 +3593,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # actionable verification prerequisite, not a request for source edits.
         raw_issues.extend(self._collect_tsc_issues())
         raw_issues.extend(self._format_notes)
+        if (self._generator_used == "generate_web_app" and self.agent_model is not None
+                and self.gui_model is not None and not gui_uses_agent(self.gui_model)):
+            raw_issues.append(agent_left_out_note(self.agent_model.name))
         raw_issues.extend(_collect_uncompiled_source_issues(
             self.output_dir,
             frozenset({".rs", ".kt"}) if self.enable_toolchain_validation else frozenset()))

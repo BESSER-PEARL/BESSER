@@ -283,6 +283,13 @@ def _cycle(tmp_path, after_each_attempt, *replies, entry=(IN_ORDER, ROUTE_500), 
     return orch, client
 
 
+def _reverted(tmp_path) -> str:
+    """The first rollback as the exit reason names it. An attempt that retired a blocker
+    and was reverted gets one more attempt, so the loop's own exit reason is that one's."""
+    rollback = _trace(tmp_path, "rollback")[0]
+    return f"attempt {rollback['attempt']} reverted: {rollback['reason']}"
+
+
 FIX_ORDER = _edit("backend/routers/order.py", "    return Order()\n", "    return Order()  # fixed\n")
 MAPPER = ValidationIssue("blocker", "mapper config: backend/sql_alchemy.py line 2: Mapper has no property 'customer'")
 
@@ -290,9 +297,11 @@ MAPPER = ValidationIssue("blocker", "mapper config: backend/sql_alchemy.py line 
 def test_an_attempt_that_retires_a_blocker_but_adds_an_observed_failure_is_reverted(tmp_path):
     orch, client = _cycle(tmp_path, [[ROUTE_500, MAPPER], [IN_ORDER, ROUTE_500]], _tools(FIX_ORDER))
 
-    assert orch._phase3_exit_reason.startswith("attempt 1 reverted: it added an observed failure: mapper config:")
+    assert _reverted(tmp_path).startswith("attempt 1 reverted: it added an observed failure: mapper config:")
     assert _read(tmp_path, "backend/routers/order.py") == FILES["backend/routers/order.py"]
-    assert len(client.requests) == 2
+    assert len(client.requests) == 3, "the attempt and its end of turn, then one more attempt from the restored tree"
+    assert "was rolled back: it added an observed failure: mapper config:" in client.requests[2]["messages"][0]["content"]
+    assert orch._phase3_exit_reason == "replay (attempt 2 called no tool)"
 
 
 def test_an_attempt_that_retires_a_blocker_and_adds_no_failure_is_kept_and_the_next_one_knows(tmp_path):
@@ -314,7 +323,7 @@ def test_a_kept_attempt_never_leaves_more_blockers_than_it_faced(tmp_path):
             ValidationIssue("blocker", "requirement: R3 — Customers can be searched is not implemented")]
     orch, _ = _cycle(tmp_path, [more, [IN_ORDER, ROUTE_500]], _tools(FIX_ORDER))
 
-    assert orch._phase3_exit_reason == "attempt 1 reverted: it left more blockers (2 -> 3)"
+    assert _reverted(tmp_path) == "attempt 1 reverted: it left more blockers (2 -> 3)"
     assert [i.message for i in orch._validation_issues
             if i.severity == "blocker" and not i.message.startswith("runtime gate:")] == [
         IN_ORDER.message, ROUTE_500.message]
@@ -440,14 +449,14 @@ def test_a_fixed_create_does_not_excuse_new_failures_of_entities_created_before(
         _backend({"Alpha": ("/alpha/", "created"), **created},
                  [(n, f"/{n}/{{id}}/methods/run/", "crashed") for n in others])))
 
-    assert orch._phase3_exit_reason.startswith("attempt 1 reverted: it added an observed failure: action call: "
-                                               "backend: POST /bravo/")
+    assert _reverted(tmp_path).startswith("attempt 1 reverted: it added an observed failure: action call: "
+                                          "backend: POST /bravo/")
 
 
 def test_without_the_probe_records_a_new_action_failure_is_not_excused(tmp_path):
     orch, _ = _cycle(tmp_path, [[ACTION], [CREATE]], _tools(FIX_ORDER), entry=(CREATE,))
 
-    assert orch._phase3_exit_reason.startswith("attempt 1 reverted: it added an observed failure: action call:")
+    assert _reverted(tmp_path).startswith("attempt 1 reverted: it added an observed failure: action call:")
 
 
 def test_a_deferred_judge_brings_its_verdicts_without_counting_against_the_fix(tmp_path):
@@ -462,13 +471,13 @@ def test_more_blockers_from_a_judge_that_ran_on_both_trees_is_still_reverted(tmp
     after = [B("blocker", f"requirement: R{n} — rule {n} is not implemented") for n in range(1, 41)]
     orch, _ = _cycle(tmp_path, [after, before], _tools(FIX_ORDER), entry=before)
 
-    assert orch._phase3_exit_reason == "attempt 1 reverted: it left more blockers (21 -> 40)"
+    assert _reverted(tmp_path) == "attempt 1 reverted: it left more blockers (21 -> 40)"
 
 
 def test_a_new_mapper_failure_nothing_hid_is_still_reverted(tmp_path):
     orch, _ = _cycle(tmp_path, [[MAPPER], [CREATE, IN_ORDER]], _tools(FIX_ORDER), entry=(CREATE, IN_ORDER))
 
-    assert orch._phase3_exit_reason.startswith("attempt 1 reverted: it added an observed failure: mapper config:")
+    assert _reverted(tmp_path).startswith("attempt 1 reverted: it added an observed failure: mapper config:")
 
 
 def _booted_before(orch):
@@ -481,7 +490,7 @@ def test_a_python_contract_on_an_app_that_boots_does_not_excuse_runtime_failures
     creates = [B("blocker", f"create contract: backend: POST /{n}/ - observed a server failure (500)") for n in "ab"]
     orch, _ = _cycle(tmp_path, [creates, [contract]], _tools(FIX_ORDER), entry=(contract,), before=_booted_before)
 
-    assert orch._phase3_exit_reason.startswith("attempt 1 reverted: it added an observed failure: create contract:")
+    assert _reverted(tmp_path).startswith("attempt 1 reverted: it added an observed failure: create contract:")
 
 
 def test_an_app_that_no_longer_starts_is_reverted(tmp_path):
@@ -493,7 +502,7 @@ def test_an_app_that_no_longer_starts_is_reverted(tmp_path):
     orch, _ = _cycle(tmp_path, [[ROUTE_500], [ROUTE_500], [IN_ORDER, ROUTE_500]], _tools(FIX_ORDER),
                      before=_booted_before, on_check=probe)
 
-    assert orch._phase3_exit_reason == "attempt 1 reverted: the application no longer starts"
+    assert _reverted(tmp_path) == "attempt 1 reverted: the application no longer starts"
 
 
 # ---------------------------------------------------------------- requirement status
@@ -519,7 +528,7 @@ def test_a_requirement_whose_status_falls_counts_as_one_more_blocker(tmp_path):
     r6 = B("blocker", "requirement: R6 — Orders can be cancelled is not implemented")
     orch, _ = _cycle(tmp_path, [[MISSING5, r6], [IN_ORDER, PARTIAL5]], _tools(FIX_ORDER), entry=(IN_ORDER, PARTIAL5))
 
-    assert orch._phase3_exit_reason == "attempt 1 reverted: it left more blockers (2 -> 3)"
+    assert _reverted(tmp_path) == "attempt 1 reverted: it left more blockers (2 -> 3)"
 
 
 # ---------------------------------------------------------------- attempts without an edit
@@ -605,7 +614,7 @@ def test_retiring_one_create_while_breaking_five_others_is_reverted(tmp_path):
     orch, _ = _cycle(tmp_path, [_creates("b", "c", "d", "e", "f"), _creates("a")], _tools(FIX_ORDER),
                      entry=tuple(_creates("a")))
 
-    assert orch._phase3_exit_reason.startswith("attempt 1 reverted: it added an observed failure: create contract:")
+    assert _reverted(tmp_path).startswith("attempt 1 reverted: it added an observed failure: create contract:")
     assert _read(tmp_path, "backend/routers/order.py") == FILES["backend/routers/order.py"]
 
 
@@ -614,8 +623,8 @@ def test_a_traded_create_is_not_hidden_by_a_number_in_its_path(tmp_path):
     orch, _ = _cycle(tmp_path, [_creates("e3"), [other, *_creates("e2")]], _tools(FIX_ORDER),
                      entry=(other, *_creates("e2")))
 
-    assert orch._phase3_exit_reason.startswith("attempt 1 reverted: it added an observed failure: create contract: "
-                                               "backend: POST /e3/")
+    assert _reverted(tmp_path).startswith("attempt 1 reverted: it added an observed failure: create contract: "
+                                          "backend: POST /e3/")
 
 
 def test_more_entities_failing_to_be_created_reverts_where_runtime_checks_ran(tmp_path):
@@ -624,7 +633,7 @@ def test_more_entities_failing_to_be_created_reverts_where_runtime_checks_ran(tm
                                 "input was refused (422)") for n in ("x", "y")]
     orch, _ = _cycle(tmp_path, [unconfirmed, [IN_ORDER]], _tools(FIX_ORDER), entry=(IN_ORDER,))
 
-    assert orch._phase3_exit_reason.startswith("attempt 1 reverted: more entities or actions fail at runtime")
+    assert _reverted(tmp_path).startswith("attempt 1 reverted: more entities or actions fail at runtime")
 
 
 # ---------------------------------------------------------------- a judge that did not run on the re-check
@@ -707,7 +716,7 @@ def test_partial_to_unsupported_is_a_fall(tmp_path):
     orch, _ = _cycle(tmp_path, [[UNSUPPORTED5, r6], [IN_ORDER, PARTIAL5]], _tools(FIX_ORDER),
                      entry=(IN_ORDER, PARTIAL5))
 
-    assert orch._phase3_exit_reason == "attempt 1 reverted: it left more blockers (2 -> 3)"
+    assert _reverted(tmp_path) == "attempt 1 reverted: it left more blockers (2 -> 3)"
 
 
 def test_a_requirement_judged_implemented_but_not_located_is_retired(tmp_path):
@@ -805,3 +814,28 @@ def test_an_attempt_after_which_the_probe_no_longer_finds_an_entity_is_reverted(
     assert _read(tmp_path, "backend/routers/order.py") == FILES["backend/routers/order.py"]
     assert _trace(tmp_path, "rollback")[0]["reason"] == (
         "the probe no longer finds what it tested before: Order (POST /order/)")
+
+
+TSC_TEN = [B("blocker", f"tsc [frontend]: src/pages/P{n}.tsx(3,5): error TS2339: Property 'x{n}' does not exist.")
+           for n in range(10)]
+TSC_NEW = B("blocker", "tsc [frontend]: src/api/client.ts(12,1): error TS2304: Cannot find name 'Order'.")
+
+
+def test_an_attempt_reverted_after_progress_gets_one_more_attempt_told_what_broke(tmp_path):
+    """Ten type errors fixed while one new one appears: the loop does not end after two turns."""
+    orch, client = _cycle(tmp_path, [[TSC_NEW], TSC_TEN, []], _tools(FIX_ORDER), _done(), _tools(FIX_ORDER),
+                          entry=TSC_TEN)
+
+    assert orch._phase3_exit_reason == "all blockers fixed"
+    retry = client.requests[2]["messages"][0]["content"]
+    assert f"Fix attempt 1 was rolled back: it added an observed failure: {TSC_NEW.message}" in retry
+    assert _read(tmp_path, "backend/routers/order.py").endswith("# fixed\n")
+
+
+def test_a_second_revert_in_a_row_ends_the_loop(tmp_path):
+    orch, client = _cycle(tmp_path, [[TSC_NEW], TSC_TEN, [TSC_NEW], TSC_TEN], _tools(FIX_ORDER), _done(),
+                          _tools(FIX_ORDER), entry=TSC_TEN)
+
+    assert orch._phase3_exit_reason.startswith("attempt 2 reverted: it added an observed failure: tsc [frontend]")
+    assert len(client.requests) == 4
+    assert _read(tmp_path, "backend/routers/order.py") == FILES["backend/routers/order.py"]

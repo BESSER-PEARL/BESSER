@@ -5,7 +5,9 @@ may edit only the files they name, their neighbours and new files
 (``repair_scope``). No tool is forced. An attempt that edits nothing ends the
 loop; one that edits is kept only if it retires a blocker it faced without
 adding an observed failure or blockers (``_attempt_not_kept``), else the tree
-from before it is restored and the loop ends.
+from before it is restored. An attempt that had retired or changed a blocker
+gets one more attempt from that tree, told what broke; otherwise, or after a
+second revert in a row, the loop ends.
 
 Snapshot/rollback lives here too because it is the same decision: the snapshot
 is re-taken after every kept attempt, so it always holds the tree the next
@@ -470,7 +472,8 @@ class Phase3RepairMixin:
 
         # An attempt that edits the tree is kept only if it moves it forward
         # (``_attempt_not_kept``); otherwise the tree before it is restored and
-        # the loop ends. A kept tree is the next attempt's rollback target. An
+        # the loop ends, after one more attempt from that tree when the reverted
+        # one had made progress. A kept tree is the next attempt's rollback target. An
         # attempt that edits nothing continues the loop only if its evidence
         # retired a blocker, or once after every write it tried was refused.
         current_issues = list(issues)
@@ -483,7 +486,7 @@ class Phase3RepairMixin:
         last_issues = list(issues)
         attempts_run = self._repair_progress.get("attempts_run", 0)
         self._repair_last_outcome = None
-        retried_refusals = False
+        retried_refusals = retried_revert = False
 
         def checkpoint_progress() -> None:
             self._repair_progress = {"attempts_run": attempts_run}
@@ -608,13 +611,26 @@ class Phase3RepairMixin:
                 before_facts=probe_before[1][1] if probe_before[1] and probe_before[1][0] == revision_before else None,
                 after_facts=facts_after[1] if facts_after and facts_after[0] == self._workspace_revision() else None)
             if not_kept and source_changed:
+                progressed = (self._retired(current_blockers, blockers_after, judge_ran(issues_after))
+                              or self._still_failing(current_blockers, blockers_after))
                 restored = self._revert_attempt(attempts_run, not_kept, issues_after, probe_before)
+                if restored and progressed and not retried_revert:
+                    # It moved some blockers but broke something: one more attempt from the
+                    # restored tree, told what broke. A second revert in a row ends the loop.
+                    retried_revert = True
+                    self._repair_last_outcome = (
+                        f"Fix attempt {attempts_run} was rolled back: {not_kept}. The tree from before it is "
+                        "restored, so the blockers below are the ones it faced. Repair them without causing that.")
+                    logger.warning("Phase 3: attempt %d was reverted after progress; one more attempt", attempts_run)
+                    continue
                 exit_reason = (f"attempt {attempts_run} reverted: {not_kept}" if restored
                                else f"attempt {attempts_run} not kept, and its tree could not be restored: {not_kept}")
                 if not restored:
                     last_issues = issues_after
                     self._report_findings(attempts_run, issues_after)
                 break
+            if source_changed:  # a tree newer than any restored one is kept
+                restored = retried_revert = False
             last_issues = issues_after
             self._validation_issues = self._with_model_contract(issues_after)
             self._report_findings(attempts_run, issues_after)

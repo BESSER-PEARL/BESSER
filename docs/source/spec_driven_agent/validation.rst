@@ -943,7 +943,13 @@ implemented to missing is kept at an equal count.
 An attempt that is not kept is rolled back to the tree from before it, which is
 checked again; the findings only the discarded tree showed are listed in a
 ``validation:`` note, the tool calls it made are marked ``rolled_back`` in the
-run record, checklist items it had verified are reopened, and the loop ends.
+run record, and checklist items it had verified are reopened. When the attempt
+had retired a blocker, or changed a runtime blocker's error, one more attempt
+starts from the restored tree, its prompt naming why the previous one was
+rolled back; the loop ends if that attempt is rolled back too, and otherwise
+continues as usual. An attempt that moved nothing forward ends the loop when it
+is rolled back. The tree that ships is always the last one kept, so a retry
+can cost one more attempt but never stacks a regression on the shipped tree.
 An attempt that edits nothing is checked again when it moved evidence (a
 checklist item, a corrected scenario, an accepted citation) or dependencies (a
 successful ``install_dependencies`` or ``run_command``, or a change in a

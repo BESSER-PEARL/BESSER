@@ -266,3 +266,35 @@ def test_a_router_prefix_in_the_cited_file_is_part_of_its_routes(tmp_path):
                                      "def orders(customer_id: int):\n    return []\n", encoding="utf-8")
     assert level(customer, ("GET", "/supplier/3/orders")) == "unverified"
     assert level(customer, ("GET", "/customer/3/orders")) == "verified"
+
+
+def test_an_abridged_citation_with_a_part_too_short_to_check_confirms_no_route(tmp_path):
+    """The part left out of the check (too short to locate) is what told the two handlers apart."""
+    source = """from fastapi import APIRouter, HTTPException
+
+router = APIRouter(prefix="/items")
+
+
+@router.post("/small/")
+def create_small(q: int):
+    if q<1:
+        raise HTTPException(status_code=422, detail="Invalid")
+    return {}
+
+
+@router.post("/large/")
+def create_large(count: int):
+    if count > 9:
+        raise HTTPException(status_code=422, detail="Invalid")
+    return {}
+"""
+    quote = 'if q<1: ... raise HTTPException(status_code=422, detail="Invalid")'
+    for index, calls in enumerate(([("POST", "/items/large/")], [("POST", "/items/small/")])):
+        item = _orders_level(tmp_path / str(index), quote, calls, rel="backend/routers/items.py", source=source)
+        assert item["verification"] == "unverified", calls
+        assert "API: not run (a part of the abridged citation is too short to tell its route)" in item[
+            "verification_note"], calls
+    # Every part long enough to check: the route that runs both parts is confirmed.
+    item = _orders_level(tmp_path / "whole", 'if count > 9: ... raise HTTPException(status_code=422, detail="Invalid")',
+                         [("POST", "/items/large/")], rel="backend/routers/items.py", source=source)
+    assert item["verification"] == "verified"

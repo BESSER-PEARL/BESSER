@@ -185,8 +185,9 @@ def _normalise_line(line: str) -> str:
     return _collapse(_ascii_quotes(line))
 
 
-def _citation_parts(raw: str, path: str, files: dict[str, str] | None = None) -> list[tuple[str, str, bool]]:
-    """(path, quote, cut) for each part of an abridged or listed citation.
+def _citation_parts(raw: str, path: str, files: dict[str, str] | None = None,
+                    min_part: int = _MIN_PART_QUOTE) -> list[tuple[str, str, bool]]:
+    """(path, quote, cut) for each part of an abridged or listed citation of at least ``min_part`` characters.
 
     ``cut`` when an ellipsis right after the part marks the rest of its line
     as left out; "and other.py: b", or "other.py: b" naming one of ``files``,
@@ -202,11 +203,11 @@ def _citation_parts(raw: str, path: str, files: dict[str, str] | None = None) ->
         for switch in _FILE_SWITCH_RE.finditer(segment) if files else ():
             if len(_resolve_cited_path(switch.group(1), "", files, {})) == 1:
                 quote = _evidence_quote(segment[offset:switch.start()])
-                if len(quote) >= _MIN_PART_QUOTE:
+                if len(quote) >= min_part:
                     parts.append((path, quote, False))
                 path, offset = switch.group(1), switch.end()
         quote = _evidence_quote(segment[offset:])
-        if len(quote) >= _MIN_PART_QUOTE:
+        if len(quote) >= min_part:
             parts.append((path, quote, cut))
         path = next_path or path
         position = end
@@ -2597,10 +2598,16 @@ def _route_ranges(full: str) -> dict[tuple, list[tuple[int, int]]] | None:
 
 
 def _cited_part_lines(full: str, path: str, quote: str, files: dict[str, str], parsed: dict,
-                      cache: dict) -> list[set[int]]:
+                      cache: dict) -> list[set[int]] | None:
     """The 1-based lines of ``full`` each located part of a citation is on, as
-    :func:`verify_evidence` locates it; a decorator quoted alone is located on its own line."""
+    :func:`verify_evidence` locates it; a decorator quoted alone is located on its own line.
+    None for an abridged citation located by its parts with a part too short to check:
+    the parts left may be code several routes share."""
     located = _locate_citation(path, quote, files, parsed, cache, False)[0]
+    checked = _citation_parts(quote, path, files)
+    if ({part for _, part, _ in located} <= {part for _, part, _ in checked}
+            and len(_citation_parts(quote, path, files, min_part=1)) > len(checked)):
+        return None
     parts = []
     for source, part, spans in located:
         if source.path != full:
@@ -2645,7 +2652,7 @@ def with_verification_levels(verdicts: list[dict], output_dir: str, *, frontend_
         backend = [(path, quote) for path, quote in cited if not path.lower().endswith(_FRONTEND_SUFFIXES)]
         halves, api_exercised = [], False
         if backend:
-            on_cited, unreadable = set(), False
+            on_cited, unreadable, ambiguous = set(), False, False
             for path, quote in backend:
                 homes = _resolve_cited_path(path, quote, files, quote_cache)
                 if len(homes) == 1 and homes[0].endswith(".py") and homes[0] not in routes_cache:
@@ -2656,6 +2663,9 @@ def with_verification_levels(verdicts: list[dict], output_dir: str, *, frontend_
                     continue
                 # A route counts when its request runs every located part of the citation.
                 parts = _cited_part_lines(homes[0], path, quote, files, parsed, quote_cache)
+                if parts is None:
+                    ambiguous = True
+                    continue
                 on_cited |= {route for route, spans in ranges.items() if parts and all(
                     any(first <= line <= last for first, last in spans for line in lines) for lines in parts)}
             call = next((f"{method} {path}" for method, path in sorted(exercised)
@@ -2664,6 +2674,8 @@ def with_verification_levels(verdicts: list[dict], output_dir: str, *, frontend_
             halves.append(f"API: a passing workflow called {call}, the cited route" if call
                           else "API: not run (the check cannot read the routes of the cited code)"
                           if not on_cited and unreadable
+                          else "API: not run (a part of the abridged citation is too short to tell its route)"
+                          if not on_cited and ambiguous
                           else "API: not run (no cited line is in a route handler)" if not on_cited
                           else "API: a workflow passed but called no cited route" if workflows_passed
                           else "API: no workflow passed")

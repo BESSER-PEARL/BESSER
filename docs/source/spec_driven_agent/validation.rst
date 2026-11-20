@@ -776,8 +776,9 @@ The extraction also names the previous requirements a new message changes, asks
 for again or removes. Those stay in the ledger and are judged as usual (an
 extraction that names every requirement cannot empty it): met, they are met;
 unmet, they are a warning, ``requirement changed by your newest message:``, never
-a regression and never work for the fix loop. A changed or restated requirement
-comes back as a new requirement of its own.
+a regression and never work for the fix loop; when it was implemented as the
+previous run ended, the warning says so, which tells a deliberate change from a
+break. A changed or restated requirement comes back as a new requirement of its own.
 It also says whether the messages only ask to retry, continue or finish earlier
 work. When that extraction fails, the whole request is extracted instead and
 judged as in a run without a previous ledger. When the editor sends its own

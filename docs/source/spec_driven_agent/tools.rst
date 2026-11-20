@@ -503,7 +503,9 @@ under the backend folder, outside dot-folders; it is a data file (``.json``,
 generated id, 32 hex digits or a UUID, as an app names a stored upload; and the
 command names neither its path nor its name, nor does another file the same
 command created or changed (a script writing an image under a generated name
-and the manifest naming it; text files up to 1 MB, at most 50 are read). Those
+and the manifest naming it; UTF-8 text files up to 1 MB, at most 50, never a
+database, log or other file the output leaves out by name, so the app's database
+storing an upload's path does not keep the upload). Those
 are removed by the same rules as the probe's record. A file the agent creates on
 purpose through the shell is kept: one the command names (``cat >
 data/seed.json``, ``cp a b``), code such as a migration ``alembic`` names with a

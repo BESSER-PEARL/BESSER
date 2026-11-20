@@ -200,9 +200,27 @@ def backend_files(output_dir: str) -> dict[str, list[int]] | None:
     return found
 
 
+def _text_file(root: str, rel: str) -> str | None:
+    """A small file's text when it is UTF-8 text the output would ship; None for a database,
+    log or other excluded name, a binary file, or one that cannot be read."""
+    path = os.path.join(root, *rel.split("/"))
+    if is_excluded_output_file(rel.rsplit("/", 1)[-1]):
+        return None
+    try:
+        info = os.lstat(path)
+        if not stat.S_ISREG(info.st_mode) or info.st_size > _MAX_SCRATCH_SCAN_BYTES:
+            return None
+        with open_plain(path, "rb", root=root) as handle:
+            text = handle.read().decode("utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    return None if "\0" in text else text
+
+
 def _named_by(root: str, name: str, referrers: list[str]) -> bool:
-    """Whether one of ``referrers`` (small text files) contains ``name``."""
-    return any(name in (_read_small_text(root, rel) or "") for rel in referrers)
+    """Whether one of ``referrers``, read as text (``_text_file``), contains ``name``: the app's
+    own database storing an upload's path is not a file the command built."""
+    return any(name in (_text_file(root, rel) or "") for rel in referrers)
 
 
 def files_the_app_wrote(before: dict[str, list[int]] | None, after: dict[str, list[int]] | None,

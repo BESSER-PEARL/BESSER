@@ -874,13 +874,17 @@ missing or partial for either kind stays a blocker.
 
 The recipe records, for each implemented requirement, ``verification`` and a
 ``verification_note`` giving its API half and its screens half apart. The API half
-is exercised only when a ``test_api`` call that passed on the final tree hit the
-route a cited line is on: its decorator or the handler function holding the line,
-under the literal ``prefix=`` of its router (a router whose prefix is not a literal
-verifies nothing). The note names that call ("API: a passing workflow called GET
-/x/, the cited route"). A call to another route of the same file proves nothing, and
-a citation on no route (a helper, a model, an import) is found in the code whatever
-ran: "API: not run (no cited line is in a route handler)". No check renders a
+is exercised only when a ``test_api`` call that passed on the final tree hit a route
+whose request runs the cited code: its decorator, its handler (also one registered
+with ``add_api_route``), or a function of the same file the handler calls or names in
+``Depends(...)``, under the literal ``prefix=`` of its router (a router whose prefix
+is not a literal verifies nothing). An abridged citation ("a ... b") counts a route
+only when the route runs every part of it. The note names that call ("API: a passing
+workflow called GET /x/, the cited route"). A call to another route of the same file
+proves nothing; a citation no route runs (a model, an import) is found in the code
+whatever ran: "API: not run (no cited line is in a route handler)", and cited backend
+code whose routes the check cannot read (not Python) says "API: not run (the check
+cannot read the routes of the cited code)". No check renders a
 screen, so a cited frontend file is never exercised, and the note says why: "screens:
 not run (the frontend builds)", "(the frontend build failed)", "(the frontend build
 check did not run)" or "(no frontend)". ``verified`` means every cited half was

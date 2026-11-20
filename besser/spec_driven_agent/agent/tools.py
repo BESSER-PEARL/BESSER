@@ -58,20 +58,11 @@ FILE_TOOLS: list[dict[str, Any]] = [
     {
         "name": "read_file",
         "description": (
-            "Read a file from the workspace. Every line comes back prefixed with "
-            "its line number, as 'N| '. When quoting a region as modify_file's "
-            "old_text, drop that prefix and quote the code itself; a quote that "
-            "keeps the prefix is accepted too. "
-            "Read the WHOLE function or class you intend to change in one call. "
-            "A 600-line file fits in a single read; crawling it in 10-line windows "
-            "spends one turn per window and still leaves you without the enclosing "
-            "block. Only paginate a file too large to read at once, and then in "
-            "large slices. "
-            "Returns read_id for revision-bound replace_file_lines edits. "
-            "offset is a 0-BASED SKIP; the numbers printed beside each line are "
-            "1-based. offset=50, limit=30 displays lines 51-80, so a following "
-            "replace_file_lines uses start_line=51, not 50 - or simply copy the "
-            "start_line/end_line this call returns."
+            "Read a workspace file; without offset and limit, the whole file. Every line "
+            "comes back as 'N| code' with N its 1-based line number (quote the code without "
+            "the prefix). offset is a 0-based skip: offset=50, limit=30 shows lines 51-80. "
+            "Returns start_line, end_line and a read_id for replace_file_lines on the lines "
+            "shown."
         ),
         "input_schema": {
             "type": "object",
@@ -113,22 +104,16 @@ FILE_TOOLS: list[dict[str, Any]] = [
     {
         "name": "modify_file",
         "description": (
-            "Apply a targeted search-and-replace edit to an existing file. "
-            "This is the tool for changing existing files: one modify_file "
-            "per change site, as many as the file needs, issued together in "
-            "the SAME turn. Keep old_text short - just the lines that change "
-            "plus a few neighbours so it matches exactly one place; do not "
-            "quote long unchanging runs. Calls on DIFFERENT files run in "
-            "parallel; several calls on the SAME file are applied in the "
-            "order you list them, so each one must match the file as the "
-            "previous one left it. old_text must match exactly, including "
-            "indentation. Completed replacement regions are skipped on replay, "
-            "including insertions that retain old_text. An already_applied result "
-            "requires a receipt for this exact edit and unchanged post-edit file; "
-            "it confirms the edit only, not the whole requirement. A possible_replay "
-            "result refuses a duplicate-looking insertion without claiming success. "
-            "After a miss, use its located_range with replace_file_lines; after two refused "
-            "edits, read the whole file and write_file it back. Do not keep retyping a failing old_text."
+            "Replace old_text with new_text in an existing file. old_text must match exactly "
+            "one place (indentation included) unless replace_all; keep it short, the lines "
+            "that change plus enough neighbours to be unique, one call per change site, all "
+            "in the same turn. Calls on one file apply in the order given, each to the file "
+            "the previous left; calls on different files run in parallel. A miss changes "
+            "nothing and returns the nearest lines (did_you_mean) or the span it located "
+            "(located_range, with a read_id for replace_file_lines). already_applied: this "
+            "exact edit landed before and the file is unchanged since; possible_replay: a "
+            "duplicate-looking insertion, refused. An edit that would leave a parseable file "
+            "unparseable or unimportable is refused."
         ),
         "input_schema": {
             "type": "object",
@@ -151,15 +136,13 @@ FILE_TOOLS: list[dict[str, Any]] = [
     {
         "name": "replace_file_lines",
         "description": (
-            "Replace a specific range of an existing file WITHOUT quoting old_text. "
-            "Use this with the located_range a refused edit returns, or for a complete function/block replacement. "
-            "First call read_file on the target block; copy its read_id and select the displayed "
-            "1-based start_line and end_line (both inclusive). new_text is the complete literal "
-            "replacement, with correct indentation and no numbered prefixes or omitted code. "
-            "Use an empty new_text to delete the selected lines. For insertion, include the selected "
-            "anchor line in new_text. Only the selected lines change. Unread ranges, stale reads "
-            "and syntax-breaking replacements are refused. After each successful edit, read again "
-            "before another range edit on the same file; do not batch same-file edits using one read_id."
+            "Replace lines start_line..end_line (1-based, inclusive) of a file with new_text, "
+            "without quoting them. read_id comes from a read_file or a located_range that "
+            "showed those lines; once the file changes it is stale and refused, so read again "
+            "before another range edit on the same file. new_text is the complete literal "
+            "replacement (empty deletes the lines; to insert, include the anchor line). "
+            "Refused, the file unchanged, for unseen lines, abbreviated code, or a replacement "
+            "that breaks the file's syntax."
         ),
         "input_schema": {
             "type": "object",

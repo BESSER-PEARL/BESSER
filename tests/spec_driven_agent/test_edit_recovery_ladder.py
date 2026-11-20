@@ -173,10 +173,12 @@ def test_the_per_file_reminder_names_the_rewrite_step(stuck):
     assert "switch to replace_file_lines" not in reminder and "focused edit" not in reminder
 
 
-def test_the_tool_descriptions_name_the_same_ladder():
+def test_the_tool_descriptions_state_the_result_fields_not_the_ladder():
+    """The ladder's steps arrive in the refused call's result; a description only
+    names the fields a result carries."""
     from besser.spec_driven_agent.agent.tools import FILE_TOOLS
 
     described = {tool["name"]: tool["description"] for tool in FILE_TOOLS}
-    assert "After matching failures, read the target block and use replace_file_lines" not in described["modify_file"]
-    assert "located_range" in described["modify_file"] and "write_file" in described["modify_file"]
-    assert "located_range" in described["replace_file_lines"]
+    assert "located_range" in described["modify_file"] and "located_range" in described["replace_file_lines"]
+    assert "after two refused" not in described["modify_file"].lower()
+    assert "write_file it back" not in described["modify_file"]

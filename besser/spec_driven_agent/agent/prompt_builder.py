@@ -669,7 +669,7 @@ Keep the plan short (a few lines), then proceed with surgical edits.
    atomically; do not partially persist an aggregate before validation succeeds.
 {hygiene_rule}
 8. **Read before modify** - the WHOLE function or class you intend to change, in
-   one call (read_file's description says when and how to paginate).
+   one call; a file read without offset and limit comes back whole.
 9. **Be efficient. Batch tool calls in one turn.** Issue every
    independent tool call you can in the SAME turn — read multiple files
    in one turn, edit multiple files in one turn. Each turn is a separate

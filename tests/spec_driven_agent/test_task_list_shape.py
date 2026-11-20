@@ -68,3 +68,15 @@ def test_the_earlier_action_shape_still_works_and_is_not_reported(executor):
 
     assert result["done_ids"] == [1], result
     assert "ignored_arguments" not in result
+
+
+@pytest.mark.parametrize("args, closed", [
+    ({"action": "done", "ids": "[1, 2]"}, [1, 2]),
+    ({"action": "mixed", "done_ids": "[3]", "add_texts": '["Add a customer filter"]'}, [3]),
+])
+def test_the_earlier_shape_decodes_stringified_arrays(executor, args, closed):
+    """Its arrays are no longer in the schema, so provider decoding skips them."""
+    result = _call(executor, **args)
+
+    assert "error" not in result, result
+    assert all(executor._tasks[i - 1]["done"] for i in closed)

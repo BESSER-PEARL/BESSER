@@ -80,6 +80,7 @@ from besser.spec_driven_agent.agent.edit_apply import (
 )
 from besser.spec_driven_agent.planning.agent_wiring import gui_uses_agent
 from besser.spec_driven_agent.planning.gap_analyzer import task_paths
+from besser.spec_driven_agent.providers.tool_input import coerce_to_schema
 from besser.spec_driven_agent.pipeline.constants import (
     _APPLICATION_OUTPUT_DIRS,
     REGENERABLE_GENERATORS,
@@ -263,6 +264,7 @@ class ToolExecutionResult:
 _EDIT_BODY_KEYS = ("content", "old_text", "new_text")
 # task_list's earlier shape, still accepted: action=list|done|add|drop|blocked|mixed.
 _TASK_LIST_ACTION_ARGUMENTS = frozenset({"action", "id", "ids", "reason", "text", "texts", "done_ids", "add_texts"})
+_TASK_LIST_ACTION_SCHEMA = {"properties": {key: {"type": "array"} for key in ("ids", "texts", "done_ids", "add_texts")}}
 
 # Default time a shell command can run (seconds); the model may ask for up to
 # MAX_COMMAND_TIMEOUT for a long build or a first install.
@@ -1346,6 +1348,8 @@ class ToolExecutor:
             result.get("results", {}).get("done", {}).pop("open_items", None)
             result["open_items"] = [{"id": t["id"], "label": _task_label(t["text"])} for t in self.open_tasks()]
             return result
+        # Its arrays are not in the schema, so the provider did not decode them.
+        args = coerce_to_schema(args, _TASK_LIST_ACTION_SCHEMA)
         action = args.get("action")
         if action == "list":
             return {

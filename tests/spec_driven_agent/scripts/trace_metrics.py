@@ -29,17 +29,20 @@ A second table gives, per run and phase (P2, P3 repair turns, and the calls
 outside the loop), fresh input, cache-read, cache-write and output tokens, cost,
 the cache hit ratio, the cache misses, and the seconds the loop's model calls
 and tool batches took. A loop turn's tokens are the difference of two
-``cost_update`` records less the ``llm_call`` records between them; a resumed
-run (a second ``run_start`` with the same run id) continues its run, on a new
-client whose token counters restart while its cost was seeded with the spend so
-far. A cache miss is a turn that read under 0.9 of the previous turn's prompt
-from the cache although the history was not rewritten: same conversation, no
-``compaction`` or ``eviction`` record, a prompt that did not shrink. A turn that
+``cost_update`` records less the ``llm_call`` records between them. A record
+belongs to the run its run id names, also when it precedes that run's
+``run_start`` (a modify run routes before it); a resumed run (a second
+``run_start`` with the same run id) continues its run, on a new client whose
+token counters restart while its cost was seeded with the spend so far. A cache
+miss is a turn that read under 0.9 of the previous turn's prompt from the cache
+although the history was not rewritten: same conversation, no ``compaction`` or
+``eviction`` record, a prompt that did not shrink. A turn that
 read under 0.9 of its own, smaller prompt with no such record is listed apart,
 as history rewritten without a record (on a log older than those records, a
-compaction). A run that never reports a cache read or write shows ``unknown``:
-its provider may not report them. Totals over all runs follow, each run counted
-once. Dollar figures follow the price catalog of the day; compare tokens.
+compaction). A run that never reports a cache read or
+write shows ``unknown``: its provider may not report them. Totals over all runs
+follow, each run counted once. Dollar figures follow the price catalog of the
+day; compare tokens.
 """
 
 from __future__ import annotations
@@ -106,6 +109,7 @@ class Run:
     turns: list[Turn] = field(default_factory=list)
     aux: list[tuple[str, dict]] = field(default_factory=list)    # (purpose, llm_call payload)
     wall_seconds: float | None = None
+    started: bool = False       # its run_start was read
 
 
 def _is_cut(value) -> bool:
@@ -208,7 +212,8 @@ def _in_model_order(calls: list[Call]) -> list[Call]:
 
 
 def read_trace(path: str) -> list[Run]:
-    """One :class:`Run` per ``run_start`` in a run log; a resume continues the run it resumes."""
+    """One :class:`Run` per run id in a run log. A modify run writes its routing and model-sync
+    ``llm_call`` records before its ``run_start``; a resume continues the run it resumes."""
     runs: list[Run] = []
     meter: _Meter | None = None
     phase, attempt = None, None
@@ -220,13 +225,15 @@ def read_trace(path: str) -> list[Run]:
                 continue
             kind, payload = event.get("event"), event.get("payload") or {}
             ts = event.get("ts") if isinstance(event.get("ts"), (int, float)) else None
-            if kind == "run_start" or not runs:
-                run_id = str(event.get("run_id") or "")
-                if not (payload.get("resumed") and runs and runs[-1].run_id == run_id):
+            run_id = str(event.get("run_id") or "")
+            if kind == "run_start" or not runs or (run_id and run_id != runs[-1].run_id):
+                same = bool(runs) and runs[-1].run_id == run_id
+                if not (same and (payload.get("resumed") or not runs[-1].started)):
                     runs.append(Run(source=path, run_id=run_id))
                     meter = _Meter(runs[-1])
                 phase, attempt = None, None
                 if kind == "run_start":
+                    runs[-1].started = True
                     meter.read(kind, payload, ts, phase)
                     continue
             if kind == "phase_enter":

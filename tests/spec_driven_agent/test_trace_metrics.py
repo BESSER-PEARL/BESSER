@@ -39,9 +39,9 @@ class _Log:
             self.counters[key] += value
         self.cost += cost
 
-    def llm_call(self, purpose, fresh, output=0, read=0, cost=0.0):
+    def llm_call(self, purpose, fresh, output=0, read=0, cost=0.0, at=None):
         self._spend(fresh, read, 0, output, cost)
-        self.event("llm_call", purpose=purpose, api_calls=1, input_tokens=fresh, output_tokens=output,
+        self.event("llm_call", at, purpose=purpose, api_calls=1, input_tokens=fresh, output_tokens=output,
                    cache_read_tokens=read, cache_creation_tokens=0, cost_usd=cost)
 
     def turn(self, number, fresh, read=0, write=0, output=100, cost=0.01, *, start, answered, tools_done=None,
@@ -186,6 +186,38 @@ def test_a_resumed_run_keeps_the_turns_of_both_parts(tmp_path):
     assert (figures["runs"], figures["turns"], figures["fresh"]) == (1, 5, 80_000)
     assert figures["cost"] == pytest.approx(0.08)
     assert run.wall_seconds == pytest.approx(30.0)      # the time between the parts is not the run's
+
+
+@pytest.mark.parametrize("seeded", [False, True], ids=["empty log", "log of the seed run"])
+def test_a_modify_runs_calls_before_its_run_start_belong_to_it(tmp_path, seeded):
+    """A modify run routes and syncs the model before it writes its run_start, on the client
+    whose counters the run's first cost_update carries."""
+    log = _Log("seed-run")
+    if seeded:
+        log.event("run_start", at=1_000.0)
+        log.event("phase_enter", phase="phase2")
+        log.turn(1, 500, cost=0.001, start=1_001.0, answered=1_002.0)
+        log.event("run_end", at=1_003.0)
+    log.run_id, log.counters, log.cost = "modify-run", dict.fromkeys(log.counters, 0), 0.0
+    log.llm_call("routing", 1_000, at=2_000.0)
+    log.llm_call("model_deltas", 1_000)
+    log.event("run_start", at=2_010.0, mode="modify")
+    log.event("phase_enter", phase="phase2")
+    log.turn(1, 1_000, start=2_011.0, answered=2_012.0)
+    log.event("run_end", at=2_020.0)
+
+    runs = load_runs(log.save(tmp_path / "x.trace.jsonl"))
+    *seed, modify = runs
+    figures = totals(runs)
+
+    assert [run.run_id for run in runs] == (["seed-run", "modify-run"] if seeded else ["modify-run"])
+    assert [purpose for purpose, _ in modify.aux] == ["routing", "model_deltas"]
+    assert [turn.fresh for turn in modify.turns] == [1_000]
+    assert all(not run.aux for run in seed)
+    assert (figures["runs"], figures["fresh"]) == (1 + seeded, 1_000 + 500 * seeded)
+    assert {purpose: row["fresh"] for purpose, row in figures["purposes"].items()} == {
+        "routing": 1_000, "model_deltas": 1_000}
+    assert modify.wall_seconds == pytest.approx(20.0)
 
 
 def test_a_turns_calls_are_read_in_the_order_the_model_emitted_them(tmp_path):

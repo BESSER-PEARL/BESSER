@@ -19,6 +19,7 @@ Phase 3 (validation & fix):
 """
 
 import contextlib
+import contextvars
 import hashlib
 import json
 import logging
@@ -86,6 +87,7 @@ from besser.spec_driven_agent.state.checkpoint import (
 )
 from besser.spec_driven_agent.errors import (
     CheckpointMismatchError,
+    DeadlineReached,
     EmptyInstructionsError,
     InvalidApiKeyError,
 )
@@ -145,6 +147,7 @@ from besser.spec_driven_agent.agent.runbook import (
 )
 from besser.spec_driven_agent.agent.tool_executor import ToolExecutor, ends_shell_session
 from besser.spec_driven_agent.agent.tools import dumps_for_model
+from besser.spec_driven_agent.execution.deadline import Deadline, under_deadline
 from besser.spec_driven_agent.execution.process import _safe_subprocess_env
 from besser.spec_driven_agent.execution.sandbox import SandboxUnavailable, run_confined
 from besser.spec_driven_agent.validation.docker_context import (
@@ -443,7 +446,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         )
         self.executor.app_validator = self._validate_app
         self.executor.requirement_citer = self._cite_requirements
-        self.executor.time_left = self._time_left
+        # The run's cap and cancel, read by every LLM call and command it starts.
+        self.deadline = Deadline(
+            self._time_left, lambda: self._should_continue is None or self._should_continue())
+        self.executor.time_left = self.deadline.work_remaining
         # Each generator call's files and traced regions go to the run log, which
         # the run trace is built from (state/trace_model.py).
         self.executor.on_generated = self._record_generator_output
@@ -818,6 +824,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     # ==================================================================
 
     @ends_shell_session
+    @under_deadline
     def run(self, instructions: str) -> str:
         """Run the three-phase generation. Returns path to output directory."""
         if not instructions or not instructions.strip():
@@ -958,6 +965,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         )
 
     @ends_shell_session
+    @under_deadline
     def resume(self, instructions: str) -> str:
         """Resume a previously-crashed run from its checkpoint.
 
@@ -2143,6 +2151,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 # not a misleading INTERNAL/api_error or a fake "incomplete
                 # success".
                 raise
+            except DeadlineReached as e:
+                logger.warning("Phase 2 stopped on turn %d: %s", turn + 1, e)
+                self._phase2_stop_reason = "cancelled" if e.cancelled else "timeout"
+                break
             except Exception as e:
                 logger.error("LLM API call failed on turn %d: %s", turn + 1, e)
                 self._phase2_stop_reason = "api_error"
@@ -2627,7 +2639,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 
         tool_results: list[dict] = []
         with ThreadPoolExecutor(max_workers=_MAX_PARALLEL_WORKERS) as pool:
-            futures = {pool.submit(_run_group, blocks): blocks
+            # Each tool thread works under the run's deadline.
+            futures = {pool.submit(contextvars.copy_context().run, _run_group, blocks): blocks
                        for blocks in groups.values()}
             for future in as_completed(futures):
                 blocks = futures[future]
@@ -4241,11 +4254,12 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             "the requirements judge",
             "it returned no verdicts; coverage of the original specification has not been verified",
         )
-        judge_stopped = ("requirement unverified: verification stopped or budget exhausted; "
-                         "original-specification coverage is not verified.")
+        def judge_stopped() -> str:
+            return (f"requirement unverified: not checked, {self._budget_stop_reason() or 'verification stopped'}; "
+                    "original-specification coverage is not verified.")
         if verdicts is None:
             if not self._verification_call_allowed():
-                return [judge_stopped]
+                return [judge_stopped()]
             if cache_key in self._requirement_judge_failures:
                 return [judge_failed]  # the same prompt already failed; asking again re-rolls a full-price call
             if len(self._requirement_judge_failures) >= _requirements_ledger.JUDGE_FAILED_ROUNDS_PER_RUN:
@@ -4271,7 +4285,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 checked = None
         if verdicts is None:
             if not self._verification_call_allowed():
-                return [judge_stopped]  # a stop mid-judgment is not a judge failure
+                return [judge_stopped()]  # a stop mid-judgment is not a judge failure
             self._requirement_judge_failures.add(cache_key)
             return [judge_failed]
         # Cache successful judgments only, keyed to the full bytes of the judged
@@ -4533,12 +4547,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             )
 
     def _verification_call_allowed(self) -> bool:
-        """Do not start a paid extraction/judgment after a stop or spend cap."""
-        return not (
-            (self.max_cost_usd is not None and self.client.usage.estimated_cost >= self.max_cost_usd)
-            or (self._start_time is not None and time.monotonic() - self._start_time >= self.max_runtime_seconds)
-            or (self._should_continue is not None and not self._should_continue())
-        )
+        """Do not start a paid extraction/judgment after a stop or spend cap,
+        or with too little time left for it to finish."""
+        return not self._budget_stop_reason()
 
     @staticmethod
     def _is_project_tool_output(rel: str, names_by_dir: dict[str, set[str]]) -> bool:
@@ -4736,6 +4747,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     # Interactive error feedback
     # ==================================================================
 
+    @under_deadline
     def fix_error(self, error_message: str) -> str:
         """
         Fix a user-reported error. The LLM analyzes it and either:
@@ -4835,6 +4847,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             except InvalidApiKeyError:
                 # The caller must report the bad key, not a fix summary.
                 raise
+            except DeadlineReached as e:
+                return stopped(str(e), turn)
             except Exception as e:
                 logger.error("Fix cycle API call failed: %s", e)
                 return stopped(f"the LLM call failed: {e}", turn)
@@ -4879,15 +4893,15 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     def _budget_stop_reason(self) -> str:
         """Why the run may not start another billable call, or "" if it may.
 
-        Same comparisons as ``_verification_call_allowed``: a cap exactly
-        reached is spent.
+        A cap exactly reached is spent; a call is not started with less time
+        left than it needs (``Deadline.out_of_time``).
         """
-        if self._should_continue is not None and not self._should_continue():
+        if self.deadline.cancelled:
             return "the run was cancelled"
         if self.max_cost_usd is not None and self.client.usage.estimated_cost >= self.max_cost_usd:
             return (f"the ${self.max_cost_usd:.2f} cost cap is spent "
                     f"(${self.client.usage.estimated_cost:.2f} used)")
-        if self._start_time is not None and time.monotonic() - self._start_time >= self.max_runtime_seconds:
+        if self.deadline.out_of_time():
             return f"the {self.max_runtime_seconds}s runtime cap was reached"
         return ""
 

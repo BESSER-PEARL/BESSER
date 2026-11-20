@@ -17,6 +17,19 @@ from besser.utilities.subprocess_env import (  # noqa: F401
     SECRET_SUBSTRINGS as _SECRET_SUBSTRINGS,
     safe_subprocess_env as _safe_subprocess_env,
 )
+from besser.spec_driven_agent.execution.deadline import current_deadline
+
+
+class CommandStopped(subprocess.TimeoutExpired):
+    """The run was cancelled, or its time ran out, before the command ended;
+    callers that handle a timeout handle this too. ``reason`` says which."""
+
+    def __init__(self, cmd, timeout, reason: str, output=None, stderr=None):
+        super().__init__(cmd, timeout, output=output, stderr=stderr)
+        self.reason = reason
+
+    def __str__(self) -> str:
+        return f"Command '{self.cmd}' stopped: {self.reason}"
 
 
 # Workspace subdirectory holding the untruncated output of shell commands.
@@ -101,7 +114,17 @@ def run_bounded(args, *, timeout: float, cwd: str | None = None,
     A stream past :data:`MAX_CAPTURE_BYTES` also kills the tree; only its
     head and tail are read back. ``input`` is fed on stdin, from a temp file for the same reason;
     without it stdin is empty, never the worker's own (a read would block until the timeout).
+
+    Inside a run the timeout is cut to the time left before its cap, and a
+    cancel kills the tree within a poll interval; either raises
+    :class:`CommandStopped`, as does a run already stopped (nothing is started).
     """
+    deadline = current_deadline()
+    if deadline is not None:
+        reason = deadline.command_stop_reason()
+        if reason:
+            raise CommandStopped(args, 0, reason)
+        timeout = deadline.command_timeout(timeout)
     group = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt"
              else {"start_new_session": True})
     with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err, \
@@ -112,22 +135,27 @@ def run_bounded(args, *, timeout: float, cwd: str | None = None,
         proc = subprocess.Popen(args, cwd=cwd, env=env, shell=shell,
                                 stdin=stdin if input is not None else subprocess.DEVNULL,
                                 stdout=out, stderr=err, **group)
-        deadline = time.monotonic() + timeout
+        ends_at = time.monotonic() + timeout
         flooded = False
         while True:
             try:
-                proc.wait(timeout=min(0.05, max(deadline - time.monotonic(), 0)))
+                proc.wait(timeout=min(0.05, max(ends_at - time.monotonic(), 0)))
                 break
             except subprocess.TimeoutExpired:
                 pass
             flooded = max(_captured_size(out), _captured_size(err)) > MAX_CAPTURE_BYTES
-            if flooded or time.monotonic() >= deadline:
+            stopped = deadline is not None and deadline.cancelled
+            if flooded or stopped or time.monotonic() >= ends_at:
                 _kill_tree(proc)
                 try:
                     proc.wait(timeout=10)
                 except subprocess.TimeoutExpired:
                     pass
                 if not flooded:
+                    reason = deadline.command_stop_reason() if deadline is not None else ""
+                    if reason:
+                        raise CommandStopped(args, timeout, reason, output=_decode(out),
+                                             stderr=_decode(err)) from None
                     raise subprocess.TimeoutExpired(args, timeout, output=_decode(out),
                                                     stderr=_decode(err)) from None
                 break

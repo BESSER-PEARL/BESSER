@@ -3826,6 +3826,16 @@ class ToolExecutor:
         if result.notes:
             extra["notes"] = result.notes
 
+        if result.stopped:
+            return {
+                "error": f"Command stopped: {result.stopped}. It was not run, or was killed "
+                         "with everything it started.",
+                "stopped": result.stopped,
+                "command": command,
+                "stdout": self._truncate(result.stdout, MAX_OUTPUT_SIZE // 2),
+                "stderr": self._truncate(result.stderr, MAX_OUTPUT_SIZE // 2, keep_tail=True),
+                **extra,
+            }
         if result.timed_out:
             # What it printed before the kill is often the reason it hung.
             survivors = (" The shell session and processes earlier commands left "

@@ -3019,8 +3019,8 @@ class ToolExecutor:
                 origin = ("was created by a BESSER generator" if rel_path in self._generator_files
                           else "existed before this run")
                 read_id = self._whole_view_id(path, existing)
-                removal = (f"replace_file_lines with read_id {read_id} (your whole-file read)" if read_id
-                           else "modify_file or replace_file_lines")
+                removal = (f"modify_file, or replace_file_lines with read_id {read_id} (your whole-file read)"
+                           if read_id else "modify_file or replace_file_lines")
                 return {"error": (
                     f"'{rel_path}' {origin} ({existing_lines} lines) and {loss}. Rewrite it "
                     f"in full keeping that code; to remove or rename code on purpose, edit that part with {removal}."

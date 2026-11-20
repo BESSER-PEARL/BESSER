@@ -267,3 +267,38 @@ def test_a_missing_feature_is_still_not_worth_a_rollback(orchestrator, monkeypat
 
     assert orchestrator._rollback_phase3_if_worse(
         _blockers(3), _blockers(3, prefix="action contract"), True) is False
+
+
+def _edit(orchestrator, path):
+    orchestrator.tool_calls_log.append(
+        {"turn": 1, "tool": "modify_file", "input": {"path": path}, "success": True, "status": "ok"})
+
+
+def test_a_restore_marks_the_edits_it_discarded(orchestrator, tmp_path):
+    (tmp_path / "app.py").write_text("v1\n", encoding="utf-8")
+    _edit(orchestrator, "app.py")
+    assert orchestrator._create_snapshot()
+    _edit(orchestrator, "routes.py")
+    _edit(orchestrator, "app.py")
+
+    assert orchestrator._restore_snapshot()
+
+    assert [call.get("rolled_back") for call in orchestrator.tool_calls_log] == [None, True, True]
+
+
+def test_a_later_snapshot_keeps_the_edits_it_holds(orchestrator, tmp_path):
+    (tmp_path / "app.py").write_text("v1\n", encoding="utf-8")
+    assert orchestrator._create_snapshot()
+    _edit(orchestrator, "app.py")
+    assert orchestrator._create_snapshot()
+    _edit(orchestrator, "routes.py")
+
+    assert orchestrator._restore_snapshot()
+
+    assert [call.get("rolled_back") for call in orchestrator.tool_calls_log] == [None, True]
+
+
+def test_a_failed_restore_marks_nothing(orchestrator, monkeypatch):
+    _edit(orchestrator, "app.py")
+    assert not orchestrator._restore_snapshot()  # no snapshot was taken
+    assert "rolled_back" not in orchestrator.tool_calls_log[0]

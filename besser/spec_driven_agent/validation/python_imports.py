@@ -268,6 +268,66 @@ def _falls_back(node: _ast.Try | _ast.TryStar) -> bool:
                    for n in _ast.walk(handler))
 
 
+_SCOPES = (_ast.FunctionDef, _ast.AsyncFunctionDef, _ast.Lambda, _ast.ClassDef)
+
+
+def _import_names(node: _ast.Import | _ast.ImportFrom) -> set[str]:
+    return {alias.asname or (alias.name if isinstance(node, _ast.ImportFrom) else alias.name.split(".")[0])
+            for alias in node.names}
+
+
+def _params(node: _ast.AST) -> set[str]:
+    args = getattr(node, "args", None)
+    if not isinstance(args, _ast.arguments):
+        return set()
+    return {a.arg for a in (*args.posonlyargs, *args.args, *args.kwonlyargs, args.vararg, args.kwarg) if a}
+
+
+def _is_binding(node: _ast.AST, name: str) -> bool:
+    """Whether ``node`` binds ``name``: an assignment target, an import, a def or class, ``except ... as``."""
+    if isinstance(node, _ast.Name):
+        return node.id == name and isinstance(node.ctx, _ast.Store)
+    if isinstance(node, (_ast.Import, _ast.ImportFrom)):
+        return name in _import_names(node)
+    return (isinstance(node, (_ast.FunctionDef, _ast.AsyncFunctionDef, _ast.ClassDef, _ast.ExceptHandler))
+            and node.name == name)
+
+
+def _scope_nodes(scope: _ast.AST, name: str):
+    """The nodes of ``scope`` where ``name`` is the scope's own: nested functions,
+    lambdas and classes are left out when they bind ``name`` themselves."""
+    stack = list(_ast.iter_child_nodes(scope))
+    while stack:
+        node = stack.pop()
+        if isinstance(node, _SCOPES) and (name in _params(node)
+                                          or any(_is_binding(n, name) for n in _ast.walk(node) if n is not node)):
+            continue
+        yield node
+        stack.extend(_ast.iter_child_nodes(node))
+
+
+def _read_unguarded(function: _ast.AST, guard: _ast.AST, block: list[_ast.stmt]) -> bool:
+    """Whether a name the imports in ``block`` bind may be read in ``function``
+    where the import failed: outside ``block`` and after no other binding of it
+    (a parameter, an assignment before or after ``guard``, in source order),
+    unless every catch-all handler of ``guard`` binds it as a fallback."""
+    names = {name for stmt in block for n in _ast.walk(stmt)
+             if isinstance(n, (_ast.Import, _ast.ImportFrom)) for name in _import_names(n)}
+    inside = {id(n) for stmt in block for n in _ast.walk(stmt)}
+    in_guard = {id(n) for n in _ast.walk(guard)}
+    broad = [h for h in getattr(guard, "handlers", ()) if _handler_kind(h) == _BROAD]
+    for name in names:
+        if broad and all(any(_is_binding(n, name) for stmt in h.body for n in _ast.walk(stmt)) for h in broad):
+            continue
+        nodes = list(_scope_nodes(function, name))
+        bound_at = [function.lineno] if name in _params(function) else []
+        bound_at += [n.lineno for n in nodes if id(n) not in in_guard and _is_binding(n, name)]
+        if any(isinstance(n, _ast.Name) and n.id == name and isinstance(n.ctx, _ast.Load) and id(n) not in inside
+               and not any(line < n.lineno for line in bound_at) for n in nodes):
+            return True
+    return False
+
+
 def _is_type_checking(test: _ast.expr) -> bool:
     return ((isinstance(test, _ast.Name) and test.id == "TYPE_CHECKING")
             or (isinstance(test, _ast.Attribute) and test.attr == "TYPE_CHECKING"))
@@ -289,7 +349,7 @@ def _suppress_kind(node: _ast.With) -> str | None:
 
 
 def _required_import_roots(node: _ast.AST, broad: bool = False,
-                           in_function: bool = False) -> list[tuple[str, bool]]:
+                           function: _ast.AST | None = None) -> list[tuple[str, bool]]:
     """``(root, broad)`` for the absolute imports the app needs in order to start.
 
     Skipped, because the app starts without them: imports inside a ``try``
@@ -297,7 +357,8 @@ def _required_import_roots(node: _ast.AST, broad: bool = False,
     ``with suppress(ImportError)``, ``if TYPE_CHECKING:`` imports, which never
     run, both branches of a ``sys.version_info`` check (a backport), and an
     import inside a function under a catch-all handler that neither returns nor
-    raises (an optional fast path the function falls back from).
+    raises, when the names it binds are read only under that guard (an optional
+    fast path the function falls back from). ``function`` is the enclosing one.
     ``broad`` marks an import under a handler that catches every exception.
     """
     if isinstance(node, _ast.ImportFrom):
@@ -309,7 +370,9 @@ def _required_import_roots(node: _ast.AST, broad: bool = False,
         kinds = {_handler_kind(h) for h in node.handlers}
         if _OPTIONAL in kinds or _BROAD in kinds:
             children = [*node.orelse, *node.finalbody]
-            guarded = [] if _OPTIONAL in kinds or (in_function and _falls_back(node)) else node.body
+            optional = (function is not None and _falls_back(node)
+                        and not _read_unguarded(function, node, [*node.body, *node.orelse]))
+            guarded = [] if _OPTIONAL in kinds or optional else node.body
         else:
             children = list(_ast.iter_child_nodes(node))
     elif isinstance(node, _ast.If) and _is_type_checking(node.test):
@@ -317,12 +380,14 @@ def _required_import_roots(node: _ast.AST, broad: bool = False,
     elif isinstance(node, _ast.If) and _is_version_check(node.test):
         children = []
     elif isinstance(node, _ast.With) and (kind := _suppress_kind(node)):
-        children, guarded = [], [] if kind == _OPTIONAL or in_function else node.body
+        optional = kind == _OPTIONAL or (function is not None and not _read_unguarded(function, node, node.body))
+        children, guarded = [], [] if optional else node.body
     else:
         children = list(_ast.iter_child_nodes(node))
-    in_function = in_function or isinstance(node, (_ast.FunctionDef, _ast.AsyncFunctionDef))
-    return ([root for child in children for root in _required_import_roots(child, broad, in_function)]
-            + [root for child in guarded for root in _required_import_roots(child, True, in_function)])
+    if isinstance(node, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
+        function = node
+    return ([root for child in children for root in _required_import_roots(child, broad, function)]
+            + [root for child in guarded for root in _required_import_roots(child, True, function)])
 
 
 def _unresolvable_local_imports(output_dir: str) -> list[str]:

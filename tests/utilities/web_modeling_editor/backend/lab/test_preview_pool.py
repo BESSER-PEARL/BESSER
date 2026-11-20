@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import threading
 import time
@@ -90,12 +91,20 @@ class FakeEnvironments:
 
 
 class FakeWorkspace:
-    def __init__(self, root):
+    """A change's trees; ``agent_takes_env``: its modeling agent's settings declare the port variable."""
+
+    def __init__(self, root, *, agent_takes_env: bool = True):
         self.root = str(root)
+        self.agent_takes_env = agent_takes_env
 
     def change_repos(self, change):
         trees = os.path.join(self.root, "changes", change.id)
         besser = os.path.join(trees, "besser")
+        settings = os.path.join(trees, "modeling-agent", "src", "common", "settings.py")
+        if self.agent_takes_env and not os.path.exists(settings):
+            os.makedirs(os.path.dirname(settings))
+            with open(settings, "w", encoding="utf-8") as handle:
+                handle.write('ws_port: int = Field(8765, validation_alias="BESSER_AGENT_WS_PORT")\n')
         return {
             REPO_FRONTEND: RepoSpec(REPO_FRONTEND, os.path.join(besser, "frontend"), "develop", "o", "f",
                                     git_dir=os.path.join(self.root, "git", "f")),
@@ -124,10 +133,11 @@ def made(tmp_path):
     """Builds pools and stops them at the end."""
     pools = []
 
-    def make(urls=(), *, environments=None, deployment_url="", bind="127.0.0.1", proxy_port=None):
+    def make(urls=(), *, environments=None, deployment_url="", bind="127.0.0.1", proxy_port=None,
+             agent_takes_env=True):
         environments = environments or FakeEnvironments()
         clock = Clock()
-        pool = PreviewPool(list(urls), FakeWorkspace(tmp_path), environments,
+        pool = PreviewPool(list(urls), FakeWorkspace(tmp_path, agent_takes_env=agent_takes_env), environments,
                            sandbox_for=lambda change: PreviewSandbox(
                                root=os.path.join(str(tmp_path), "changes", change.id), mounts=SandboxMounts()),
                            log_dir=str(tmp_path / "preview-logs"), bind=bind, proxy_port=proxy_port,
@@ -382,3 +392,40 @@ def test_log_tail_reads_the_slots_log_redacted(made, tmp_path):
 
     assert (tail.slot, tail.service, tail.lines, tail.truncated) == (1, "backend", ["boom [REDACTED]"], True)
     assert pool.log_tail(0, "frontend", 200).lines == []
+
+
+def test_a_slot_whose_agent_cannot_take_its_port_runs_the_editor_and_backend_and_says_why(made, caplog):
+    """The agent of the lab's base reads its port and origins only from a config.yaml no worktree has."""
+    pool, environments, _ = made(agent_takes_env=False)
+
+    with caplog.at_level(logging.WARNING, logger=preview.__name__):
+        pool.take(A, "ana")
+        _wait_for(_ready(pool, 0), "the slot to start")
+
+    # Ready: no detail, the editor and the backend run; the agent's entry says why it is not there.
+    slot = pool.view().slots[0]
+    assert slot.detail == "" and slot.enabled is True
+    backend, frontend, agent = slot.services
+    assert (backend.name, backend.state, frontend.name, frontend.state) == ("backend", "running", "frontend",
+                                                                            "running")
+    assert (agent.name, agent.state) == ("modeling_agent", "stopped")
+    assert agent.detail.startswith("The assistant is not available in this preview: ")
+    (supervisor,) = FakeSupervisor.made
+    assert [service.name for service in supervisor.services] == ["backend", "frontend"]
+    # Its environment (TensorFlow) is not made for nothing.
+    assert [key for key, _, _ in environments.calls] == [REPO_FRONTEND, REPO_BESSER]
+    # Logged once for this start.
+    assert caplog.text.count("The assistant is not available in this preview") == 1
+
+    # Restarting it is not an unknown service: the view keeps saying why.
+    view = pool.restart(0, "modeling_agent")
+    assert supervisor.restarted == [] and view.slots[0].services[2].detail == agent.detail
+
+    calls_before = len(environments.calls)
+    pool.after_build(A.id)
+    _wait_for(lambda: supervisor.restarts == 1, "the restart after the build")
+    assert [key for key, _, _ in environments.calls[calls_before:]] == [REPO_FRONTEND, REPO_BESSER]
+
+    pool.release(A.id)
+    assert [service.state for service in pool.view().slots[0].services] == ["stopped"] * 3
+    assert pool.view().slots[0].services[2].detail == "no change shown"

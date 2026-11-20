@@ -81,7 +81,11 @@ from besser.utilities.web_modeling_editor.backend.routers import (
 from besser.utilities.web_modeling_editor.backend.services.agent_simulation import AgentSimulatorState
 from besser.utilities.web_modeling_editor.backend.services.deployment.session_store import GitHubSessions
 from besser.utilities.web_modeling_editor.backend.services.kg.validation import consistency_check_slots
-from besser.utilities.web_modeling_editor.backend.services.lab.service import create_lab_service
+from besser.utilities.web_modeling_editor.backend.services.lab.service import (
+    LabUnavailableError,
+    create_lab_service,
+    run_preview_llm_proxy,
+)
 from besser.utilities.web_modeling_editor.backend.services.reverse_engineering import sdmx_import_slots
 from besser.utilities.web_modeling_editor.backend.services.validators.alloy.semantic_consistency import (
     semantic_check_slots,
@@ -237,10 +241,19 @@ async def lifespan(app: FastAPI):
     runtime = SpecDrivenRuntime.create(get_settings())
     app.state.spec_driven = runtime
     logger.info("Spec-driven runtime started (%d run slots)", get_settings().llm_max_concurrent_runs)
-    # BESSER Lab: its working copy and preview, only on a lab instance (None also when misconfigured).
+    # BESSER Lab, only on a lab instance: None when off or when it cannot start (``lab_unavailable`` says why).
     app.state.lab = None
+    app.state.lab_unavailable = ""
+    lab_tasks: list[asyncio.Task] = []
     if get_settings().lab_enabled:
-        app.state.lab = await asyncio.to_thread(create_lab_service, get_settings())
+        try:
+            app.state.lab = await asyncio.to_thread(create_lab_service, get_settings())
+        except LabUnavailableError as exc:
+            app.state.lab_unavailable = str(exc)
+    if app.state.lab is not None:
+        lab_tasks.append(asyncio.create_task(app.state.lab.refresh_loop(), name="lab-base-refresh"))
+        if app.state.lab.preview is not None and get_settings().lab_preview_openai_api_key.get_secret_value():
+            lab_tasks.append(asyncio.create_task(run_preview_llm_proxy(get_settings()), name="lab-preview-llm-proxy"))
 
     # Download metadata lives beside artifacts on the persistent run volume,
     # so a backend/container restart does not invalidate a completed result.
@@ -274,8 +287,14 @@ async def lifespan(app: FastAPI):
         await durable_run_sweeper
     except asyncio.CancelledError:
         pass
+    for task in lab_tasks:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
     if app.state.lab is not None:
-        await asyncio.to_thread(app.state.lab.close)
+        await asyncio.to_thread(app.state.lab.shutdown)
     runtime.close()
     logger.info("Spec-driven runtime stopped")
 

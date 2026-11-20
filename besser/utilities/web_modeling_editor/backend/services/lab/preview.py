@@ -3,7 +3,8 @@
 The lab changes BESSER's own source; the preview lets the user try a change. :class:`PreviewPool` holds a few
 slots (one per origin in ``BESSER_LAB_PREVIEW_URLS``), each showing one change: slot *i* runs the change's three
 services (:func:`default_services`) on ports ``9100+10i``, ``8180+10i`` and ``8865+10i`` under a
-:class:`PreviewSupervisor`. Each service runs in the lab's sandbox (the change's trees read-write, the git root
+:class:`PreviewSupervisor`; the modeling agent only when its tree takes its port and origins from the environment
+(:func:`agent_unavailable_reason`), else the slot runs the other two and its agent entry says why. Each service runs in the lab's sandbox (the change's trees read-write, the git root
 read-only, the lab's own folders hidden) with a private network: pasta forwards exactly its own port in from the
 host and, for the modeling agent, the LLM proxy's port out. On Linux a service whose sandbox cannot start fails;
 it never runs unconfined. Only on a platform without namespaces (Windows, macOS) does it run unconfined, and the
@@ -20,6 +21,7 @@ import os
 import shutil
 import signal
 import socket
+import stat
 import subprocess
 import sys
 import threading
@@ -29,12 +31,11 @@ from typing import IO, Callable, Mapping, Optional, Sequence
 from urllib.parse import urlsplit
 
 from besser.spec_driven_agent.execution.sandbox import (
-    NETWORK_WAIT_SECONDS,
-    NETWORK_WAIT_SOURCE,
     SANDBOX_POLICY_ENV,
     SandboxedCommand,
     SandboxMounts,
     SandboxUnavailable,
+    network_wait_argv,
     read_child_pid,
     sandbox_supported_platform,
     sandboxed_command,
@@ -93,13 +94,40 @@ _SKIPPED_DIRS = frozenset({"node_modules", "__pycache__"})
 #: Interpreter of a checkout's own environment (``environments.py`` makes ``<tree>/venv``).
 _VENV_PYTHON = (
     os.path.join("venv", "Scripts", "python.exe") if os.name == "nt" else os.path.join("venv", "bin", "python"))
-# Runs in the service's sandbox first: wait for pasta's interface, then become the service.
-_NETWORK_WAIT_EXEC = ("import os, sys, time\n" + NETWORK_WAIT_SOURCE +
-                      "if not wait_for_network(float(sys.argv[1])):\n"
-                      "    sys.exit('the sandbox network did not come up')\n"
-                      "os.execvp(sys.argv[2], sys.argv[2:])\n")
 _REPO_LABELS = {REPO_FRONTEND: "editor", REPO_BESSER: "BESSER", REPO_MODELING_AGENT: "modeling agent"}
 _UNCONFINED_DETAIL = "On this machine the preview runs without the sandbox."
+
+#: The modeling agent's websocket port and allowed browser origins (its ``AgentSettings`` aliases). The preview
+#: runs the agent only when its tree's settings declare :data:`AGENT_PORT_ENV`: before that the agent reads its port
+#: and origins from a gitignored ``config.yaml`` that no change's tree has, on a port that cannot follow the slot.
+AGENT_PORT_ENV = "BESSER_AGENT_WS_PORT"
+AGENT_ORIGIN_ENV = "BESSER_AGENT_WS_ORIGIN"
+AGENT_ORIGIN_ALT_ENV = "BESSER_AGENT_WS_ORIGIN_ALT"
+#: Where the modeling agent declares every environment variable it reads, relative to its tree.
+_AGENT_SETTINGS = os.path.join("src", "common", "settings.py")
+#: The agent's settings module is a few KiB; a bigger file in the model-writable tree is not read.
+_AGENT_SETTINGS_MAX_BYTES = 1 << 20
+_AGENT_UNAVAILABLE = ("The assistant is not available in this preview: this change's modeling agent reads its port "
+                      "and allowed origins only from a config.yaml file, which a change's working tree does not have.")
+
+
+def agent_unavailable_reason(agent_path: str) -> str:
+    """Why the preview cannot run the modeling agent of the tree at ``agent_path``, or "" when it can.
+
+    It can when the tree's ``src/common/settings.py`` names :data:`AGENT_PORT_ENV`. The tree is model-writable, so
+    only a regular file is opened (never a link, a folder or a FIFO), up to a size cap.
+    """
+    path = os.path.join(agent_path, _AGENT_SETTINGS)
+    try:
+        info = os.lstat(path)
+        if stat.S_ISREG(info.st_mode) and info.st_size <= _AGENT_SETTINGS_MAX_BYTES:
+            with open(path, encoding="utf-8", errors="replace") as handle:
+                text = handle.read(_AGENT_SETTINGS_MAX_BYTES)
+            if f'"{AGENT_PORT_ENV}"' in text or f"'{AGENT_PORT_ENV}'" in text:
+                return ""
+    except OSError:
+        pass  # missing or unreadable: the agent cannot take its port from the environment
+    return _AGENT_UNAVAILABLE
 
 
 class PreviewFullError(Exception):
@@ -157,8 +185,9 @@ def default_services(repos: Mapping[str, RepoSpec], *, public_url: str = "",
     modeling agent and ``/`` to the editor); empty means each service on its own localhost port. The preview editor
     talks only to that origin, and the backend gets no GitHub client id, so sign-in is off in the preview.
     ``proxy_port``: the lab's LLM proxy, the modeling agent's only way to OpenAI (it gets a placeholder key); None
-    leaves the agent without a server key. The agent reads its port from ``config.yaml`` in its tree, which must
-    say ``agent_port``.
+    leaves the agent without a server key. The agent gets its port and the editor's origins through
+    :data:`AGENT_PORT_ENV` and the origin variables; the pool runs it only when it reads them
+    (:func:`agent_unavailable_reason`).
     """
     besser_path = repos[REPO_BESSER].path
     frontend_path = repos[REPO_FRONTEND].path
@@ -169,13 +198,15 @@ def default_services(repos: Mapping[str, RepoSpec], *, public_url: str = "",
         parts = urlsplit(public_url)
         backend_url = f"{public_url}/besser_api"
         agent_url = ("wss" if parts.scheme == "https" else "ws") + public_url[len(parts.scheme):] + "/agent"
-        editor_origins = f"{parts.scheme}://{parts.netloc}"
+        # Twice: the agent fills a blank second origin with a public editor's.
+        origins = (f"{parts.scheme}://{parts.netloc}",) * 2
         deployment_url = public_url
     else:
         backend_url = f"http://localhost:{backend_port}/besser_api"
         agent_url = f"ws://localhost:{agent_port}"
-        editor_origins = f"http://localhost:{frontend_port},http://127.0.0.1:{frontend_port}"
+        origins = (f"http://localhost:{frontend_port}", f"http://127.0.0.1:{frontend_port}")
         deployment_url = f"http://localhost:{frontend_port}"
+    editor_origins = ",".join(dict.fromkeys(origins))
 
     # A dev build of the editor reads its backend from VITE_DEV_BACKEND_URL (shared/constants/constant.ts).
     frontend_env = {"VITE_DEV_BACKEND_URL": backend_url, "UML_BOT_WS_URL": agent_url}
@@ -184,7 +215,8 @@ def default_services(repos: Mapping[str, RepoSpec], *, public_url: str = "",
         frontend_env["__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS"] = urlsplit(public_url).hostname or ""
 
     # BESSER_BACKEND_URL empty: the agent's opt-in telemetry stays off (the preview has no route to the lab).
-    agent_env = {"PYTHONPATH": os.path.join(agent_path, "src"), "PYTHONUNBUFFERED": "1", "BESSER_BACKEND_URL": ""}
+    agent_env = {"PYTHONPATH": os.path.join(agent_path, "src"), "PYTHONUNBUFFERED": "1", "BESSER_BACKEND_URL": "",
+                 AGENT_PORT_ENV: str(agent_port), AGENT_ORIGIN_ENV: origins[0], AGENT_ORIGIN_ALT_ENV: origins[1]}
     if proxy_port is not None:
         agent_env["OPENAI_BASE_URL"] = f"http://127.0.0.1:{proxy_port}/v1"
         agent_env["OPENAI_API_KEY"] = PREVIEW_PROXY_PLACEHOLDER_KEY
@@ -293,14 +325,6 @@ def _probe_host(bind: str) -> str:
     if address.is_unspecified:
         return "::1" if address.version == 6 else "127.0.0.1"
     return str(address)
-
-
-def _network_wait_argv(plan_argv: Sequence[str], command: Sequence[str], info_fd: int) -> list[str]:
-    """The bwrap ``plan_argv`` (ending with ``command``) reporting its pid on ``info_fd``, the command started once
-    pasta has configured the sandbox's interface."""
-    head = list(plan_argv[:len(plan_argv) - len(command)])
-    return [head[0], "--info-fd", str(info_fd), *head[1:],
-            sys.executable, "-I", "-S", "-c", _NETWORK_WAIT_EXEC, str(NETWORK_WAIT_SECONDS), *command]
 
 
 def _service_state(name: str, state: str, detail: str, started_at: Optional[float] = None,
@@ -485,7 +509,7 @@ class PreviewSupervisor:
         try:
             try:
                 process = spawn_long_lived(lambda: subprocess.Popen(
-                    _network_wait_argv(plan.argv, command, info_w), pass_fds=(info_w,), **options))
+                    network_wait_argv(plan.argv, command, info_w), pass_fds=(info_w,), **options))
             finally:
                 os.close(info_w)
             try:
@@ -559,6 +583,8 @@ class _Slot:
     step: str = ""
     #: why preparing or refreshing failed; "" otherwise
     error: str = ""
+    #: why the change's modeling agent is not run (:func:`agent_unavailable_reason`); "" when it is
+    agent_off: str = ""
     #: bumped whenever the slot changes hands, so a preparation for an earlier change discards its work
     generation: int = 0
 
@@ -685,10 +711,10 @@ class PreviewPool:
         """A build of ``change_id`` ended: in each slot showing it, update the environments and restart the services
         whose files changed (in the background)."""
         with self._lock:
-            targets = [(slot, slot.generation, slot.change, slot.supervisor) for slot in self._slots
+            targets = [(slot, slot.generation, slot.change, slot.supervisor, slot.agent_off) for slot in self._slots
                        if slot.change is not None and slot.change.id == change_id and slot.supervisor is not None]
-        for slot, generation, change, supervisor in targets:
-            threading.Thread(target=self._refresh, args=(slot, generation, change, supervisor),
+        for slot, generation, change, supervisor, agent_off in targets:
+            threading.Thread(target=self._refresh, args=(slot, generation, change, supervisor, agent_off),
                              name=f"lab-preview-slot-{slot.index}", daemon=True).start()
 
     def release(self, change_id: str) -> None:
@@ -713,8 +739,12 @@ class PreviewPool:
         with self._lock:
             target = self._slot(slot)
             supervisor = target.supervisor
+            agent_off = target.agent_off
             if supervisor is None and target.change is not None and target.error:
                 self._prepare_locked(target, target.change, None)
+        if service == "modeling_agent" and agent_off:
+            logger.info("Lab preview: slot %d does not run its modeling agent, nothing to restart", slot)
+            return self.view()  # its state says why
         if supervisor is not None:
             if service is None:
                 supervisor.stop()
@@ -748,7 +778,7 @@ class PreviewPool:
     def _clear_locked(slot: _Slot) -> None:
         slot.generation += 1
         slot.change = slot.used_by = slot.started_at = slot.last_used_at = slot.supervisor = None
-        slot.step = slot.error = ""
+        slot.step = slot.error = slot.agent_off = ""
 
     def _prepare_locked(self, slot: _Slot, change: LabChange, previous: Optional[PreviewSupervisor]) -> None:
         """Start preparing ``slot`` for ``change`` in the background (pool lock held)."""
@@ -765,19 +795,18 @@ class PreviewPool:
             slot.step = step
             return True
 
-    def _ensure_environments(self, slot: _Slot, generation: int, change: LabChange,
-                             sandbox: PreviewSandbox) -> Optional[dict[str, RepoSpec]]:
-        """Make the change's environments with its sandboxed install runner (R3); None when the slot changed hands.
-        Raises :class:`LabEnvironmentError`."""
-        repos = self._workspace.change_repos(change)
+    def _ensure_environments(self, slot: _Slot, generation: int, repos: Mapping[str, RepoSpec],
+                             sandbox: PreviewSandbox, agent_off: str) -> bool:
+        """Make the environments of the change's ``repos`` with its sandboxed install runner (R3), the modeling
+        agent's only when it runs; False when the slot changed hands. Raises :class:`LabEnvironmentError`."""
         runner = confined_command_runner(sandbox.mounts)
         for key in REPO_ORDER:
-            if key not in repos:
+            if key not in repos or (key == REPO_MODELING_AGENT and agent_off):
                 continue
             if not self._set_step(slot, generation, f"Preparing the {_REPO_LABELS[key]} environment"):
-                return None
+                return False
             self._environments.ensure(repos[key], runner=runner)
-        return repos
+        return True
 
     def _prepare(self, slot: _Slot, generation: int, change: LabChange,
                  previous: Optional[PreviewSupervisor]) -> None:
@@ -786,12 +815,23 @@ class PreviewPool:
                 self._set_step(slot, generation, "Stopping the change shown before")
                 previous.stop()
             sandbox = self._sandbox_for(change)
-            repos = self._ensure_environments(slot, generation, change, sandbox)
-            if repos is None or not self._set_step(slot, generation, "Starting the services"):
+            repos = self._workspace.change_repos(change)
+            agent_off = agent_unavailable_reason(repos[REPO_MODELING_AGENT].path)
+            with self._lock:
+                if slot.generation != generation:
+                    return
+                slot.agent_off = agent_off
+            if agent_off:
+                logger.warning("Lab preview: slot %d shows change %s without its modeling agent. %s", slot.index,
+                               change.id, agent_off)
+            if (not self._ensure_environments(slot, generation, repos, sandbox, agent_off)
+                    or not self._set_step(slot, generation, "Starting the services")):
                 return
             backend, frontend, agent = slot.ports
             services = default_services(repos, public_url=slot.public_url, backend_port=backend,
                                         frontend_port=frontend, agent_port=agent, proxy_port=self._proxy_port)
+            if agent_off:
+                services = tuple(service for service in services if service.name != "modeling_agent")
             supervisor = PreviewSupervisor(services, log_dir=self._slot_log_dir(slot.index), sandbox=sandbox)
             supervisor.start()
         except LabEnvironmentError as exc:
@@ -808,9 +848,11 @@ class PreviewPool:
         if not current:
             supervisor.stop()
 
-    def _refresh(self, slot: _Slot, generation: int, change: LabChange, supervisor: PreviewSupervisor) -> None:
+    def _refresh(self, slot: _Slot, generation: int, change: LabChange, supervisor: PreviewSupervisor,
+                 agent_off: str) -> None:
         try:
-            if self._ensure_environments(slot, generation, change, self._sandbox_for(change)) is None:
+            if not self._ensure_environments(slot, generation, self._workspace.change_repos(change),
+                                             self._sandbox_for(change), agent_off):
                 return  # the slot changed hands meanwhile
             restarted = supervisor.restart_changed()
         except LabEnvironmentError as exc:
@@ -856,7 +898,10 @@ class PreviewPool:
             services = [_service_state(name, "starting", slot.step) for name in SERVICE_NAMES]
         else:
             services = [_service_state(name, "stopped", "no change shown") for name in SERVICE_NAMES]
-        detail = (slot.disabled or self._detail or slot.error or slot.step
+        if slot.agent_off:  # the slot is ready without it; its entry says why (the agent is listed last)
+            services = [service for service in services if service.name != "modeling_agent"]
+            services.append(_service_state("modeling_agent", "stopped", slot.agent_off))
+        detail =(slot.disabled or self._detail or slot.error or slot.step
                   or ("" if confined else _UNCONFINED_DETAIL))
         change = slot.change
         return LabPreviewSlot(

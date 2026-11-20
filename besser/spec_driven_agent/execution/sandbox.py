@@ -500,6 +500,24 @@ def read_child_pid(fd: int, timeout: float) -> int:
         buf += chunk
 
 
+# Runs in the sandbox first: wait for pasta's interface, then become the command.
+_NETWORK_WAIT_EXEC = ("import os, sys, time\n" + NETWORK_WAIT_SOURCE +
+                      "if not wait_for_network(float(sys.argv[1])):\n"
+                      "    sys.exit('the sandbox network did not come up')\n"
+                      "os.execvp(sys.argv[2], sys.argv[2:])\n")
+
+
+def network_wait_argv(plan_argv: Sequence[str], command: Sequence[str], info_fd: int) -> list[str]:
+    """The bwrap ``plan_argv`` (ending with ``command``) reporting its pid on ``info_fd``, the command run once
+    pasta has configured the sandbox's interface (exit with a message after :data:`NETWORK_WAIT_SECONDS`).
+
+    ``sys.executable`` runs the wait inside the sandbox, so it must be visible there.
+    """
+    head = list(plan_argv[:len(plan_argv) - len(command)])
+    return [head[0], "--info-fd", str(info_fd), *head[1:],
+            sys.executable, "-I", "-S", "-c", _NETWORK_WAIT_EXEC, str(NETWORK_WAIT_SECONDS), *command]
+
+
 def stop_process(proc: "subprocess.Popen | None") -> None:
     """SIGTERM, then SIGKILL; always reaped."""
     if proc is None:

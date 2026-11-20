@@ -25,6 +25,7 @@ import os
 import shutil
 import stat
 import subprocess
+import threading
 import time
 import uuid
 from dataclasses import asdict, dataclass
@@ -83,6 +84,12 @@ _HARDLINK_WARNING = ("No reflinks in %s (%s): node_modules and venvs are hard-li
                      "can reach other changes.")
 
 
+# One lock per resolved tree: two installs in one tree (preview and checks) would clash. One small lock per tree
+# this process has seen; never removed, since a change's tree path is not reused.
+_TREE_LOCKS: dict[str, threading.Lock] = {}
+_TREE_LOCKS_GUARD = threading.Lock()
+
+
 class LabEnvironmentError(Exception):
     """An environment could not be made; the message says which command or check failed."""
 
@@ -138,10 +145,22 @@ class Environments:
 
         Every install command goes through ``runner``, else the constructor's runner, else an
         unconfined subprocess. Raises :class:`LabEnvironmentError` when a command fails; no stamp
-        is written then.
+        is written then. One caller at a time per tree in this process: a second one waits, then
+        finds the stamp current.
         """
         if repo.key not in _INPUTS:
             raise LabEnvironmentError(f"no environment is defined for repository {repo.key!r}")
+        lock = _tree_lock(repo.path)
+        if not lock.acquire(blocking=False):
+            logger.info("Environment of %s in %s is being made by another caller: waiting for it", repo.key,
+                        repo.path)
+            lock.acquire()
+        try:
+            return self._ensure_locked(repo, runner)
+        finally:
+            lock.release()
+
+    def _ensure_locked(self, repo: RepoSpec, runner: Optional[CommandRunner]) -> EnvironmentStamp:
         inputs = _inputs_sha256(repo)
         current = self.stamp(repo)
         if current is not None and current.inputs_sha256 == inputs and _present(repo):
@@ -279,6 +298,13 @@ class Environments:
 
     def _uv_options(self) -> list[str]:
         return ["--cache-dir", self._uv_cache, "--link-mode", _UV_LINK_MODE[self.mode]]
+
+
+def _tree_lock(path: str) -> threading.Lock:
+    """The lock of the tree at ``path``, shared by every :class:`Environments` of this process."""
+    key = os.path.normcase(os.path.realpath(path))
+    with _TREE_LOCKS_GUARD:
+        return _TREE_LOCKS.setdefault(key, threading.Lock())
 
 
 def _run(run: CommandRunner, argv: Sequence[str], cwd: str) -> str:

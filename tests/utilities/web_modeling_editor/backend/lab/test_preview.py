@@ -625,8 +625,11 @@ def test_default_services_run_the_working_copy_on_localhost_ports(tmp_path, capl
 
     assert agent.argv == (sys.executable, "modeling_agent.py")
     assert agent.cwd == agent_repo
+    # The agent takes its port and allowed origins from the environment (the slot's, not a config.yaml).
     assert agent.env == {"PYTHONPATH": os.path.join(agent_repo, "src"), "PYTHONUNBUFFERED": "1",
-                         "BESSER_BACKEND_URL": ""}
+                         "BESSER_BACKEND_URL": "", "BESSER_AGENT_WS_PORT": "8865",
+                         "BESSER_AGENT_WS_ORIGIN": "http://localhost:8180",
+                         "BESSER_AGENT_WS_ORIGIN_ALT": "http://127.0.0.1:8180"}
     assert agent.watch == (os.path.join(agent_repo, "src"), os.path.join(agent_repo, "modeling_agent.py"))
     assert (agent.port, agent.tcp_out) == (8865, ())
     assert "runs with" in caplog.text
@@ -662,6 +665,10 @@ def test_default_services_behind_a_public_url_with_the_trees_venvs_and_the_llm_p
     assert frontend.argv[5] == "8190"
     assert agent.argv == (agent_python, "modeling_agent.py")
     assert agent.port == 8875
+    assert agent.env["BESSER_AGENT_WS_PORT"] == "8875"
+    # Blank would give the agent's default origin (a public editor), so both name the slot's origin.
+    assert agent.env["BESSER_AGENT_WS_ORIGIN"] == agent.env["BESSER_AGENT_WS_ORIGIN_ALT"] == (
+        "https://preview-2.lab.besser-pearl.org")
     # The agent reaches OpenAI only through the lab's proxy, with a placeholder key; pasta lets it reach that port.
     assert agent.env["OPENAI_BASE_URL"] == "http://127.0.0.1:9300/v1"
     assert agent.env["OPENAI_API_KEY"] == PREVIEW_PROXY_PLACEHOLDER_KEY
@@ -670,3 +677,61 @@ def test_default_services_behind_a_public_url_with_the_trees_venvs_and_the_llm_p
         assert "GITHUB_CLIENT_ID" not in service.env
         assert all(value in ("", PREVIEW_PROXY_PLACEHOLDER_KEY) for name, value in service.env.items()
                    if any(word in name for word in ("KEY", "SECRET", "TOKEN")))
+
+
+# -- Whether the preview can run a tree's modeling agent ---------------------------------------------------------
+
+
+def _agent_settings(agent_tree) -> str:
+    return os.path.join(str(agent_tree), "src", "common", "settings.py")
+
+
+def _write_agent_settings(agent_tree, text: str) -> str:
+    path = _agent_settings(agent_tree)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(text)
+    return path
+
+
+# The agent's settings as of the lab's base: origins from the environment, the port only from config.yaml.
+AGENT_SETTINGS_TODAY = 'ws_origin: str = Field("", validation_alias="BESSER_AGENT_WS_ORIGIN")\n'
+AGENT_SETTINGS_WITH_PORT = AGENT_SETTINGS_TODAY + 'ws_port: int = Field(8765, validation_alias="BESSER_AGENT_WS_PORT")\n'
+
+
+def test_an_agent_that_reads_its_port_only_from_config_yaml_is_not_run(tmp_path):
+    tree = tmp_path / "modeling-agent"
+    assert preview.agent_unavailable_reason(str(tree)).startswith("The assistant is not available in this preview")
+
+    _write_agent_settings(tree, AGENT_SETTINGS_TODAY)
+    reason = preview.agent_unavailable_reason(str(tree))
+    assert reason.startswith("The assistant is not available in this preview: ")
+    assert "config.yaml" in reason
+
+
+def test_an_agent_whose_settings_declare_the_port_variable_is_run(tmp_path):
+    tree = tmp_path / "modeling-agent"
+    _write_agent_settings(tree, AGENT_SETTINGS_WITH_PORT)
+
+    assert preview.agent_unavailable_reason(str(tree)) == ""
+
+
+def test_the_agent_check_follows_no_link_and_reads_no_folder(tmp_path):
+    """The tree is model-writable: a link out of it, or a folder in the file's place, counts as not declared."""
+    outside = _write_agent_settings(tmp_path / "elsewhere", AGENT_SETTINGS_WITH_PORT)
+    tree = tmp_path / "modeling-agent"
+    os.makedirs(os.path.dirname(_agent_settings(tree)))
+    try:
+        os.symlink(outside, _agent_settings(tree))
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks are not available to this user")
+    assert preview.agent_unavailable_reason(str(tree)) != ""
+
+    os.remove(_agent_settings(tree))
+    os.makedirs(_agent_settings(tree))
+    assert preview.agent_unavailable_reason(str(tree)) != ""
+
+
+def test_the_preview_uses_the_sandboxs_network_wait_helper():
+    assert preview.network_wait_argv is sandbox.network_wait_argv
+    assert not hasattr(preview, "_network_wait_argv")

@@ -12,6 +12,8 @@ import logging
 import os
 import shutil
 import stat
+import threading
+import time
 
 import pytest
 
@@ -404,6 +406,73 @@ def test_the_runner_passed_to_ensure_is_the_one_used(root, cache, tmp_path):
 
     envs.ensure(_besser_tree(root / "base" / "besser"))
     assert len(default.calls) == 2 and len(sandboxed.calls) == 2
+
+
+class HeldRunner(FakeRunner):
+    """A FakeRunner whose ``uv pip install`` waits for ``release``: a slow install the test controls."""
+
+    def __init__(self, python_home):
+        super().__init__(python_home)
+        self.installing = threading.Event()
+        self.release = threading.Event()
+
+    def __call__(self, argv, cwd):
+        result = super().__call__(argv, cwd)
+        if list(argv[:3]) == ["uv", "pip", "install"]:
+            self.installing.set()
+            assert self.release.wait(10)
+        return result
+
+    def installs(self) -> int:
+        return sum(1 for argv in self.argvs() if argv[:3] == ["uv", "pip", "install"])
+
+
+def _ensure_in_thread(envs, spec, results):
+    thread = threading.Thread(target=lambda: results.append(envs.ensure(spec)), daemon=True)
+    thread.start()
+    return thread
+
+
+def test_a_second_ensure_of_the_same_tree_waits_and_finds_the_stamp_current(root, cache, tmp_path):
+    """The preview's preparation and a session's checks can both ensure one tree: one install, not two."""
+    runner = HeldRunner(tmp_path / "interpreters" / "bin")
+    spec = _besser_tree(root / "changes" / "aaaaaaaaaaaa" / "besser")
+    results = []
+    # Two Environments objects: the lock belongs to the tree, not to one caller's object.
+    first = _ensure_in_thread(Environments(cache, mode="hardlink", runner=runner), spec, results)
+    assert runner.installing.wait(10)
+    second = _ensure_in_thread(Environments(cache, mode="hardlink", runner=runner), spec, results)
+
+    # Unlocked, the second caller finds no stamp and starts its own install at once.
+    deadline = time.monotonic() + 0.5
+    while time.monotonic() < deadline and runner.installs() < 2:
+        time.sleep(0.01)
+    assert runner.installs() == 1
+    assert second.is_alive()
+
+    runner.release.set()
+    first.join(10)
+    second.join(10)
+    assert runner.installs() == 1
+    assert len(results) == 2 and results[0] == results[1]
+
+
+def test_ensures_of_different_trees_do_not_wait_for_each_other(root, cache, tmp_path):
+    held = HeldRunner(tmp_path / "interpreters" / "bin")
+    envs = Environments(cache, mode="hardlink")
+    results = []
+    slow = threading.Thread(target=lambda: envs.ensure(_besser_tree(root / "changes" / "aaaaaaaaaaaa" / "besser"),
+                                                       runner=held), daemon=True)
+    slow.start()
+    assert held.installing.wait(10)
+
+    other = envs.ensure(_besser_tree(root / "changes" / "bbbbbbbbbbbb" / "besser"),
+                        runner=FakeRunner(tmp_path / "interpreters" / "bin"))
+    results.append(other)
+
+    assert slow.is_alive() and results[0].repo == REPO_BESSER
+    held.release.set()
+    slow.join(10)
 
 
 def test_stamp_is_none_when_missing_or_unreadable(root, cache, caplog):

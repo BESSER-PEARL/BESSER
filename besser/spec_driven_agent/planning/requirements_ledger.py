@@ -826,6 +826,11 @@ _SUBMIT_FOLLOW_UP_TOOL = {
 }
 
 
+def _first_message(instructions: str) -> str:
+    """The user's request before any later message."""
+    return original_request(instructions).split(LATER_REQUEST_MARKER, 1)[0].strip()
+
+
 def later_messages(instructions: str) -> list[str]:
     """The user's messages after the first one, oldest first (``LATER_REQUEST_MARKER`` sections)."""
     messages = []
@@ -839,21 +844,27 @@ def extract_follow_up(previous: list[dict], instructions: str, previous_instruct
                       llm_client, *, can_call: Callable[[], bool] | None = None) -> dict | None:
     """What the user's messages since the previous run ask of the app ``previous`` describes.
 
-    The new messages are the later messages of ``instructions`` after those of
-    ``previous_instructions`` (the previous run's) when these start the conversation, all of
-    them otherwise, and the newest one when there are none. Returns ``{"requirements",
-    "replaces", "continues"}``: requirements numbered from 1, the ids of ``previous`` a new
-    message changes, asks for again or removes, and whether the messages only ask to retry or
-    finish earlier work. None when no real provider is available or the call failed.
+    The new messages are the later messages of ``instructions`` after those it shares, from the
+    start, with ``previous_instructions`` (the previous run's); when there are none, nothing is
+    new if the first message is unchanged, else the newest message is. Returns
+    ``{"requirements", "replaces", "continues"}``: requirements numbered from 1, the ids of
+    ``previous`` a new message changes, asks for again or removes, and whether the messages only
+    ask to retry or finish earlier work. When the new messages are empty or are only the previous
+    run's newest message, that is decided without a call. None when no real provider is available
+    or the call failed.
     """
     validate_specification(instructions)
     if not _is_real_provider(llm_client):
         return None
     seen, messages = later_messages(previous_instructions or ""), later_messages(instructions)
-    # The previous run's messages are the start of this conversation; otherwise every later one is new.
-    earlier_messages = seen if messages[:len(seen)] == seen else []
-    new = messages[len(earlier_messages):] or [latest_user_message(instructions)]
-    earlier = original_request(instructions).split(LATER_REQUEST_MARKER, 1)[0].strip()
+    # A retry is sent but not kept in the conversation, so only the shared start was the previous run's.
+    shared = next((i for i, (a, b) in enumerate(zip(seen, messages)) if a != b), min(len(seen), len(messages)))
+    earlier_messages, fresh = messages[:shared], messages[shared:]
+    same_start = _first_message(instructions) == _first_message(previous_instructions or "")
+    new = fresh or [latest_user_message(instructions)]
+    if (not fresh and same_start) or not any(new) or new == [latest_user_message(previous_instructions or "")]:
+        return {"requirements": [], "replaces": set(), "continues": True}
+    earlier = _first_message(instructions)
     prompt = "\n\n".join([
         "## The earlier conversation (context only)", earlier, *earlier_messages,
         "## Requirements the app was built against", render_requirements(previous),
@@ -873,7 +884,8 @@ def extract_follow_up(previous: list[dict], instructions: str, previous_instruct
     }
 
 
-def stated_requirements_ledger(stated: list[dict], instructions: str) -> list[dict] | None:
+def stated_requirements_ledger(stated: list[dict], instructions: str, *,
+                               newest_states_nothing_new: bool = False) -> list[dict] | None:
     """The ledger built from the requirements the editor sent, or None when they
     do not cover the request and it must be extracted instead.
 
@@ -885,9 +897,12 @@ def stated_requirements_ledger(stated: list[dict], instructions: str) -> list[di
 
     The assistant extracts from the user's first request only. A request with
     later messages (``LATER_REQUEST_MARKER``) states requirements the list
-    lacks, so the whole request is extracted instead.
+    lacks, so the whole request is extracted instead; with
+    ``newest_states_nothing_new`` (the assistant's verdict on a retry or a fix)
+    the newest one is not counted.
     """
-    if LATER_REQUEST_MARKER in original_request(instructions):
+    later = later_messages(instructions)
+    if later[:-1] if newest_states_nothing_new else later:
         logger.warning(
             "Requirements ledger: the request has later messages that the %d requirements "
             "from the editor do not cover; extracting from the whole request instead", len(stated),

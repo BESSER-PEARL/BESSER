@@ -587,7 +587,7 @@ class ModifyRunMixin:
         except Exception:
             classes = []
         return (
-            f"User request: {user_request(instructions)}\n\n"
+            f"Conversation so far (context only): {user_request(instructions)}\n\n"
             f"Newest user message: {latest_user_message(instructions)}\n\n"
             f"{TARGET_RULES}\n{STACK_RULES}\n{MODIFY_RULES}\n\n"
             f"{existing}Model classes: {', '.join(classes) or 'none'}\n"
@@ -990,10 +990,10 @@ class ModifyRunMixin:
                 "required": ["new_classes"],
             },
         }
-        request = user_request(instructions)
         prompt = (
-            "An existing app is being MODIFIED with this instruction:\n\n"
-            f"'{request}'\n\n"
+            "An existing app is being MODIFIED. The change is the user's newest message:\n\n"
+            f"'{latest_user_message(instructions)}'\n\n"
+            f"The conversation so far (context only):\n\n{user_request(instructions)}\n\n"
             "The app's current domain model has these classes: "
             f"{', '.join(existing) if existing else '(none)'}.\n\n"
             "List ONLY genuinely NEW domain entities the MODEL should gain "

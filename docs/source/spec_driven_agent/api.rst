@@ -160,6 +160,12 @@ Request body
        unique, text up to 1,000 characters. When given, the requirements ledger
        judges these instead of extracting its own (see :doc:`validation`).
        Left out, the run extracts them.
+   * - ``followup_states_nothing_new``
+     - boolean (optional)
+     - Default ``false``. True when the modeling assistant judged that the
+       newest message in ``instructions`` (a retry, a fix) states nothing new,
+       so it does not stop ``requirements`` from being used. Servers that do
+       not know the field ignore it.
    * - ``actorName``
      - string (optional)
      - The person starting the run (the project owner), at most 200

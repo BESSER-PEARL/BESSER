@@ -1058,11 +1058,16 @@ A modify run is answerable for its own request and for what it breaks, not for
 the whole application again. When the seeded recipe records requirement
 verdicts, the run keeps the previous run's requirements (same ``R`` numbers, at
 most 128) and extracts only the user messages the previous run's request did not
-hold: the messages after the previous run's when those start the conversation,
-otherwise all later messages (a message sent to a run that was cancelled counts
-as new, and so does one repeated after the previous run), with the earlier
-conversation and the numbered requirements as context, so "retry", "yes" or "the
-same for the other screen" resolve. Their requirements follow the previous ones.
+hold: the later messages after those the conversation shares, from its start,
+with the previous run's (a message sent to a run that was cancelled counts as
+new; a retry the conversation did not keep does not make the messages before it
+new), with the earlier conversation and the numbered requirements as context, so
+"retry", "yes" or "the same for the other screen" resolve. When the new messages
+are empty or are only the previous run's newest message (the same request sent
+again, also the request as it was before a retry the conversation did not keep),
+the run continues earlier work without that call. Any other message is
+extracted, also one that repeats an older message of the previous run (a change
+asked for, reversed and asked for again). Their requirements follow the previous ones.
 The extraction also names the previous requirements a new message changes, asks
 for again or removes. Those stay in the ledger and are judged as usual (an
 extraction that names every requirement cannot empty it): met, they are met;
@@ -1109,6 +1114,14 @@ Each verdict keeps the requirement's trace id as ``ref``, and the recipe's
 ``requirements_source`` says where the ledger came from (``editor`` or
 ``extracted``). The assistant extracts from the user's first request only, so a
 request carrying later messages is extracted as before, with a warning in the log.
+A newest message that only asks to retry, continue or fix earlier work ("try
+again", "fix it"; a bare "continue" sends the earlier request unchanged) does not
+count when the request says so (``followup_states_nothing_new``, set from the
+assistant's verdict): the editor's requirements and their trace ids are used, with
+no extraction call, and on a modify run the message counts as asking to finish
+earlier work, so the previous run's open requirements are judged and repaired.
+Without that field, such a message is extracted like any other
+later message: one call, and verdicts without trace ids.
 
 The judge reads a digest of the app of at most 200,000 characters: the schema
 files first, then the backend code ranked by the share of its lines the agent

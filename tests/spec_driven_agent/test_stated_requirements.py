@@ -79,6 +79,23 @@ def test_a_request_with_later_messages_is_extracted_instead():
     assert ledger.stated_requirements_ledger(STATED, SPEC + LATER) is None
 
 
+RETRY = (
+    f"\n\n{ledger.LATER_REQUEST_MARKER}\n\n"
+    "This later request takes precedence where it changes earlier requirements.\n\n"
+    "Try again."
+)
+
+
+def test_a_newest_message_that_states_nothing_new_keeps_the_editor_requirements():
+    """A retry on a first build was extracted again: one call, and verdicts without trace ids."""
+    requirements = ledger.stated_requirements_ledger(STATED, SPEC + RETRY, newest_states_nothing_new=True)
+    assert [item["ref"] for item in requirements] == ["call-1:R2", "call-1:R3"]
+
+
+def test_an_earlier_later_message_is_still_extracted_when_the_newest_states_nothing_new():
+    assert ledger.stated_requirements_ledger(STATED, SPEC + LATER + RETRY, newest_states_nothing_new=True) is None
+
+
 def test_a_full_list_cannot_look_complete():
     stated = [{"id": f"r{i}", "text": f"rule {i}", "kind": "rule"} for i in range(MAX_REQUIREMENTS)]
     requirements = ledger.stated_requirements_ledger(stated, SPEC)
@@ -126,6 +143,18 @@ def test_a_follow_up_request_falls_back_to_extraction(hotel_model, tmp_path, mon
     orch._planner_instructions(SPEC + LATER)
     assert orch._requirements == extracted
     assert orch._requirements_source == "extracted"
+
+
+def test_a_retry_that_states_nothing_new_is_not_extracted(hotel_model, tmp_path, monkeypatch):
+    def no_extraction(*args, **kwargs):
+        raise AssertionError("a follow-up that states nothing new must not be extracted")
+
+    monkeypatch.setattr(ledger, "extract_requirements", no_extraction)
+    orch = LLMOrchestrator(llm_client=_MockClient(), domain_model=hotel_model, output_dir=str(tmp_path),
+                           stated_requirements=STATED, followup_states_nothing_new=True)
+    orch._planner_instructions(SPEC + RETRY)
+    assert [item["ref"] for item in orch._requirements] == ["call-1:R2", "call-1:R3"]
+    assert orch._requirements_source == "editor"
 
 
 def test_without_editor_requirements_the_run_extracts_as_before(hotel_model, tmp_path, monkeypatch):

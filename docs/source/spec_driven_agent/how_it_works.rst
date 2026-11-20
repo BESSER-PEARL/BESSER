@@ -59,7 +59,8 @@ The three phases
    ``.besser_recipe.json``, so a resume or a later modify run of the same app
    keeps it. Every modify run makes the same call once, on the primary model
    rather than the cheap planning one (its answer can rebuild the whole app),
-   with the recorded target and the model's class names, and it answers three
+   with the recorded target, the model's class names, and the request as
+   context with the user's newest message as the change, and it answers three
    more questions:
    whether the request changes the target (``changes_target``: "turn it into a
    Flutter app", "I only need the REST API now"; new features and a reworded

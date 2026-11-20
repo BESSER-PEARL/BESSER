@@ -402,6 +402,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         enable_import_smoke_check: bool = True,
         enable_requirements_ledger: bool = True,
         stated_requirements: list[dict] | None = None,
+        followup_states_nothing_new: bool = False,
         assembly_issues: list[dict] | None = None,
     ):
         self.client = llm_client
@@ -537,6 +538,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # assistant's extraction): the ledger is built from them instead of
         # extracting again, so its verdicts name the trace's requirements.
         self._stated_requirements = stated_requirements
+        # The assistant's verdict that the request's newest message states nothing new.
+        self._followup_states_nothing_new = followup_states_nothing_new
         # Where the ledger came from, for the recipe: "editor", "extracted" or None.
         self._requirements_source: str | None = None
         self._requirement_verdicts: list[dict] = []
@@ -4666,10 +4669,14 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     def _extract_requirements(self, instructions: str) -> None:
         if self._stated_requirements is not None:
             self._requirements = _requirements_ledger.stated_requirements_ledger(
-                self._stated_requirements, instructions)
+                self._stated_requirements, instructions,
+                newest_states_nothing_new=self._followup_states_nothing_new)
             self._stated_requirements = None  # decided once: used, or extract below
             if self._requirements is not None:
                 self._requirements_source = "editor"
+                # The assistant's verdict that the newest message only asks to retry or fix.
+                self._follow_up_continues = self._followup_states_nothing_new and bool(
+                    _requirements_ledger.later_messages(instructions))
                 self._adopt_previous_verdicts(self._matched_previous_ids(self._requirements))
                 self._trace.write(EVENT_REQUIREMENTS, source="editor", items=self._requirements)
                 return

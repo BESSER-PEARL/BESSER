@@ -89,6 +89,10 @@ class SmartGenerateRequest(BaseModel):
         user's request. When given, the requirements ledger is built from
         them instead of extracting its own, and each verdict names its
         requirement's trace id. Left out, the run extracts them.
+    followup_states_nothing_new
+        True when the modeling assistant judged that the newest message of
+        ``instructions`` (a retry, a fix) states nothing new: it does not stop
+        ``requirements`` from being used for the request before it.
     actorName
         Optional name of the person starting the run (the project owner), the
         Person the run's trace (``done.trace``) records besides the agent.
@@ -102,6 +106,7 @@ class SmartGenerateRequest(BaseModel):
     project: ProjectInput
     instructions: str = Field(..., min_length=1, max_length=MAX_SPECIFICATION_CHARS)
     requirements: Optional[List[RequirementInput]] = Field(default=None, max_length=MAX_REQUIREMENTS)
+    followup_states_nothing_new: bool = False
     actorName: Optional[str] = Field(default=None, max_length=TRACE_MAX_ACTOR_NAME_LENGTH)
     traceabilityEnabled: bool = False
     # Optional: the ``"free"`` provider needs no key (the server injects a

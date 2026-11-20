@@ -626,6 +626,10 @@ def _association_link_schema(schema: dict, schemas: dict, _depth: int = 0) -> di
     return None
 
 
+# Required fields of these formats take increasing days in declared order.
+_DATE_FORMATS = ("date", "date-time")
+
+
 def _sample(field: str, schema: dict, day_offset: int, *,
             entity: str = "entity", ordinal: int = 1, unique: bool = False):
     """Best-effort fixture, never a claim of business-valid input.
@@ -642,7 +646,10 @@ def _sample(field: str, schema: dict, day_offset: int, *,
         if fmt == "date":
             return (_dt.date.today() + _dt.timedelta(days=day_offset)).isoformat()
         if fmt == "date-time":
-            return (_dt.datetime.now() + _dt.timedelta(days=day_offset)).isoformat()
+            # Not now: the input is quoted in findings that repair attempts compare.
+            # The day keeps declared order (start before end), the minute keeps instances distinct.
+            noon = _dt.datetime.combine(_dt.date.today() + _dt.timedelta(days=day_offset), _dt.time(12))
+            return (noon + _dt.timedelta(minutes=ordinal)).isoformat()
         if fmt == "time":
             return "12:00:00"
         if "email" in low or fmt == "email":
@@ -743,7 +750,7 @@ def _build_payload(schema: dict, schemas: dict, relationships: dict, ids: dict,
     """Minimal payload: required fields only, relationships from created ids."""
     props = schema.get("properties", {})
     required = [f for f in props if f in set(schema.get("required", []))]
-    date_fields = [f for f in required if _resolve(props[f], schemas).get("format") == "date"]
+    date_fields = [f for f in required if _resolve(props[f], schemas).get("format") in _DATE_FORMATS]
     payload: dict = {}
     unresolved: list = []
     for field in required:
@@ -796,7 +803,7 @@ def _build_payload(schema: dict, schemas: dict, relationships: dict, ids: dict,
 def _variants(schema: dict, schemas: dict):
     yield ("base",)
     props = schema.get("properties", {})
-    if sum(_resolve(props.get(f, {}), schemas).get("format") == "date"
+    if sum(_resolve(props.get(f, {}), schemas).get("format") in _DATE_FORMATS
            for f in schema.get("required", [])) > 1:
         yield ("dates",)
     for field in schema.get("required", []):

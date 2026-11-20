@@ -316,8 +316,11 @@ tried again, and a check stopped midway keeps the screens it opened. Its time
 shows in the trace as the ``phase3_screens`` phase.
 
 Generated create probes use distinct fixture values and native association-link
-payloads. A legitimate 4xx rejection of guessed data is **unknown**, not proof
-that every valid request fails. An unresolved create probe can be discharged by
+payloads. Required date and date-time fields get later days in the order they
+are declared (a start before its end), and a retry reverses that order; a
+date-time is fixed per day and instance, not read from the clock. A
+legitimate 4xx rejection of guessed data is **unknown**, not proof that every
+valid request fails. An unresolved create probe can be discharged by
 a current-revision ``test_api`` scenario on the same backend in which the app
 booted and a successful ``POST`` to that endpoint (a path its route template
 serves: ``/order/7/line/`` for ``/order/{order_id}/line/``) is followed by a
@@ -887,9 +890,18 @@ edits, say, other routers is kept unless those edits change a finding. The
 scope reduces drift; it does not prevent it. Keeping or reverting each attempt
 is what protects the tree.
 
-An attempt that edited the tree is kept only if all of these hold:
+An attempt is never kept when the runtime probe, which measured the tree before
+it, no longer finds one of the entities it measured there on a backend that
+still starts (compared by entity name, so a create the probe already maps onto
+its table counts as the same entity). Removing a crashing create route, or
+moving its body off the schema the probe reads, makes that create absent, not
+fixed. The same holds for a create the probe can no longer read, for example
+one whose request body was renamed or whose handler now writes a table the
+probe does not map, even when the restructure was meant. Otherwise an attempt
+that edited the tree is kept only if all of these hold:
 
-1. It retired at least one blocker it faced. Attempts compare requirements by
+1. It retired at least one blocker it faced, or a runtime blocker it faced now
+   fails with another error. Attempts compare requirements by
    id and status rank, since a re-judge rewords its note: a requirement is
    retired when its status rises (missing to partial is progress, though it
    still blocks), or when it no longer has a blocker and the judge ran on the
@@ -897,9 +909,16 @@ An attempt that edited the tree is kept only if all of these hold:
    deferred, failed or was stopped, or the requirements could not be extracted,
    is not retired. Missing and unsupported rank
    the same, so turning one into the other is neither progress nor a fall.
-   Other findings are compared with line and column numbers ignored, since an
-   edit moves the errors it leaves; any other number (``/e2/`` against
-   ``/e3/``) tells them apart.
+   A runtime finding (``create contract:``, ``action call:``, ``create
+   unverified:``, ``action unverified:``) is compared by what it tests: its
+   kind, backend and route. The same route failing with another message is
+   neither retired nor added; the next attempt's prompt says it is still
+   failing and quotes the new error. The probe's generated input quoted in the
+   message is not part of the comparison, nor is a memory address
+   (``0x7f...``) an exception text prints, new in every process. Other
+   findings are compared by their message with line and column numbers
+   ignored, since an edit moves the errors it leaves; any other number
+   (``/e2/`` against ``/e3/``) tells them apart.
 2. Every observed failure it added (a check that watched something fail, not a
    judgment or an unknown) belongs to a check family that could not run on the
    tree before it. Fixing the front failure of a layer shows what it hid: a
@@ -929,7 +948,16 @@ implemented to missing is kept at an equal count.
 An attempt that is not kept is rolled back to the tree from before it, which is
 checked again; the findings only the discarded tree showed are listed in a
 ``validation:`` note, the tool calls it made are marked ``rolled_back`` in the
-run record, checklist items it had verified are reopened, and the loop ends.
+run record, and checklist items it had verified are reopened. When the attempt
+had retired a blocker, or changed a runtime blocker's error, one more attempt
+starts from the restored tree, its prompt naming why the previous one was
+rolled back; the loop ends if that attempt is rolled back too. Once an attempt
+is kept the loop continues as usual, and a later rollback may be retried again.
+The note of the rolled-back attempt stays in the findings, and the run reports
+a rollback only while the restored tree is the one that ships. An attempt that
+moved nothing forward ends the loop when it is rolled back. The tree that ships
+is always the last one kept, so a retry can cost one more attempt but never
+stacks a regression on the shipped tree.
 An attempt that edits nothing is checked again when it moved evidence (a
 checklist item, a corrected scenario, an accepted citation) or dependencies (a
 successful ``install_dependencies`` or ``run_command``, or a change in a
@@ -969,7 +997,14 @@ so stopping a run does not trigger another paid coverage judgment.
 Repair prompts retain the original specification, current files/symbols, actual
 action handlers and recent rejected operations. Each attempt is a new
 conversation, so its prompt also lists the files the run has edited and, after a
-kept attempt, what that attempt edited and which blockers it retired. The parts that are fixed for the
+kept attempt, what that attempt edited, which blockers it retired and which are
+still failing with another error. Its prompt also carries the current text of
+the files its blockers name, in repair order, as ``read_file`` returns it (with
+a ``read_id`` for ``replace_file_lines``), up to 24,000 characters in all; a
+file that does not fit gets the excerpt around its line instead, and an
+identical ``read_file`` of a shown file in that attempt returns a short
+"unchanged" note. An attempt whose blockers are all unverified evidence gets no
+file text. The parts that are fixed for the
 run (the original specification, the inspection handoff, the domain model and the
 requirements ledger) form the system prompt, identical in every repair round so
 the provider can serve it from its prompt cache; each round's message carries the

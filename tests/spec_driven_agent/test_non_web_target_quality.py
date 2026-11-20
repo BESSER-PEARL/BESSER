@@ -8,6 +8,7 @@ two buttons were cut off. Phase 3 reported none of it: the acceptance matrix
 that measures a web app's entities does not read a native one.
 """
 
+import json
 import os
 import shutil
 
@@ -291,6 +292,28 @@ def test_the_web_app_ships_the_agent_only_when_a_screen_uses_it(tmp_path, screen
                             gui_model=_gui(screen_uses_agent), agent_model=_agent())
     assert executor._gen_web_app({})["status"] == "ok"
     assert (tmp_path / "web_app" / "agents").is_dir() is screen_uses_agent
+
+
+@pytest.mark.parametrize("screen_uses_agent", [False, True])
+def test_an_agent_left_out_of_the_web_app_is_a_warning_in_the_run_summary(tmp_path, screen_uses_agent):
+    from besser.spec_driven_agent.validation.issues import _classify_issue
+    from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import build_verification_report
+
+    orch = LLMOrchestrator(llm_client=_OfflineClient(), domain_model=_web_model(), agent_model=_agent(),
+                           gui_model=_gui(screen_uses_agent), output_dir=str(tmp_path),
+                           enable_checkpointing=False, enable_tracing=False, enable_import_smoke_check=False,
+                           enable_toolchain_validation=False)
+    assert json.loads(orch.executor.execute("generate_web_app", {}))["status"] == "ok"
+    notes = [i for i in orch._collect_validation_issues() if i.message.startswith("agent left out:")]
+    if screen_uses_agent:
+        assert not notes
+        return
+    [note] = notes
+    assert "TaskAssistant" in note.message
+    assert note.severity == "warning" and _classify_issue(note.message).severity == "warning"
+    report = build_verification_report({"validation_issues": [{"severity": "warning", "message": note.message}]})
+    [item] = report.notVerified
+    assert "TaskAssistant" in item.what and "no screen" in item.what
 
 
 def _gui_agent_orch(tmp_path, screen_uses_agent, **kwargs):

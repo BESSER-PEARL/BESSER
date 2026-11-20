@@ -572,7 +572,10 @@ Findings are classified into three severities:
        cosmetic rule, so no ``ruff`` finding is ``style``.
    * - ``warning``
      - Everything else, including endpoint-coherence findings (report-only for
-       now), ``form field type:``, the model-derived acceptance matrix (with
+       now), ``form field type:``, ``agent left out:`` (the project's agent
+       diagram is not in the generated web app because no screen of the GUI
+       model uses it; the run report lists it as not checked), the
+       model-derived acceptance matrix (with
        a GUI model whose screens bind at least one class, a class no screen
        offers to create, through a table with action buttons, a form or a
        create button, is not asked for a create path), ``entity coverage:`` (for an ``other`` target used through screens, the

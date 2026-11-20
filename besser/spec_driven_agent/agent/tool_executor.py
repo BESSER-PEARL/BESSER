@@ -856,6 +856,8 @@ class ToolExecutor:
         self.gui_model = gui_model
         self.agent_model = agent_model
         self.agent_config = agent_config
+        # Name of the agent the last generate_web_app left out (no screen uses it), else None.
+        self.agent_left_out: str | None = None
         self.quantum_circuit = quantum_circuit
         self.object_model = object_model
         self.bpmn_model = bpmn_model
@@ -2456,6 +2458,9 @@ class ToolExecutor:
         out = self._gen_dir(_APPLICATION_OUTPUT_DIRS["generate_web_app"])
         # An agent no screen uses stays out of the web app, as on /generate-output.
         ships_agent = gui_uses_agent(self.gui_model)
+        self.agent_left_out = None if ships_agent or self.agent_model is None else self.agent_model.name
+        if self.agent_left_out:
+            logger.warning("generate_web_app: agent %s left out, no screen uses it", self.agent_left_out)
         generator = WebAppGenerator(
             model=self.domain_model, gui_model=self.gui_model, output_dir=out,
             agent_model=self.agent_model if ships_agent else None,

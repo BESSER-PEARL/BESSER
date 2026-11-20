@@ -74,6 +74,40 @@ def test_a_failed_judge_is_recorded_even_without_a_call(tmp_path):
     assert event["payload"]["outcome"] == "failed" and event["payload"]["requirements"] == 1
 
 
+class _Structured:
+    """A provider that answers every forced tool call, recording its usage."""
+
+    model = "mock"
+    max_tokens = None
+    planning_model = None
+    _client = object()
+
+    def __init__(self, answer):
+        self.usage = UsageTracker("mock")
+        self.answer = answer
+
+    def chat(self, system, messages, tools, force_tool=None, model_override=None):
+        self.usage.record(_Usage())
+        return {"content": [{"type": "tool_use", "input": dict(self.answer)}]}
+
+
+def test_a_modify_runs_routing_and_model_sync_calls_are_recorded(tmp_path):
+    # Without a record, their tokens were read as part of the first loop turn.
+    routing = _Structured({"target_kind": "backend", "target_description": "REST API",
+                           "has_user_interface": False, "changes_target": False, "is_failure_report": False,
+                           "reported_entity": "", "unsupported_stack": "", "generator": "NONE"})
+    orch = _orch(tmp_path, routing)
+    orch._instructions = "add a search box"
+    orch._modify_mode = True
+    orch._route_modify_request()
+    orch.client = _Structured({"new_classes": []})
+    orch._derive_and_apply_model_deltas("add a search box")
+
+    calls = [event["payload"] for event in _events(tmp_path, "llm_call")]
+    assert [(call["purpose"], call["api_calls"], call["input_tokens"]) for call in calls] == [
+        ("routing", 1, 1000), ("model_deltas", 1, 1000)]
+
+
 def test_phase2_records_the_cost_of_the_closing_reply(tmp_path, monkeypatch):
     generate_backend(tmp_path, shelf_model(author=True))
     monkeypatch.setattr(orchestrator_module, "analyze_gaps_via_llm", lambda **_: None)

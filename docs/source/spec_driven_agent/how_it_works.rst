@@ -359,7 +359,8 @@ reading a trace and wondering why a run did what it did.
        (``phase: "phase3_fix"``) writes a ``turn_start`` and a ``cost_update``
        with the cumulative token counters. Each paid call outside those loops
        writes one ``llm_call`` with its ``purpose`` (``routing``,
-       ``routing_target``, ``gap_analysis``, ``requirements_extraction``,
+       ``routing_target``, ``model_deltas`` (a modify run's model sync),
+       ``gap_analysis``, ``requirements_extraction``,
        ``requirements_judge``, ``requirements_rejudge``), ``outcome``, the
        calls, tokens and ``cost_usd`` it added, and for a judge the verdict
        count per status, how many "implemented" citations the check verified

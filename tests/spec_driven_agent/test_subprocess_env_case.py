@@ -86,3 +86,11 @@ def test_the_deny_list_is_not_dead_weight():
         "an allowlist entry now looks secret-shaped; decide which rule wins"
     )
     assert any(s in "NPM_AUTH_TOKEN" for s in _SECRET_SUBSTRINGS)
+
+
+def test_the_jvm_mitigation_flags_reach_generated_apps(monkeypatch):
+    """CVE-2026-114938: the image's JAVA_TOOL_OPTIONS must reach the Java/Kotlin apps the worker runs."""
+    flags = "-XX:+IgnoreUnrecognizedVMOptions -XX:-UseBASE64Intrinsics -XX:UseAVX=2"
+    monkeypatch.setattr(os, "environ", {"JAVA_TOOL_OPTIONS": flags})
+
+    assert _safe_subprocess_env().get("JAVA_TOOL_OPTIONS") == flags

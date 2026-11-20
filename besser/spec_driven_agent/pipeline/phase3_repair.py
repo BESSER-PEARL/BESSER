@@ -115,6 +115,8 @@ _RUNTIME_TARGET_RE = re.compile(
     r"(?:runtime unverified: )?(create contract|action call|create unverified|action unverified): (\S+): POST (\S+) - ")
 # The probe's generated input, quoted in a runtime finding: not part of the error.
 _PROBE_INPUT_RE = re.compile(r"attempted input: .*?(?=\. Th(?:is|ese) )", re.S)
+# Characters of the current text of the files the blockers name, pasted into a fix prompt.
+_FIX_PROMPT_FILE_CHARS = 24_000
 
 
 def clip_finding(text: str) -> str:
@@ -1164,7 +1166,8 @@ class Phase3RepairMixin:
         """The turns of one fix attempt; see ``_invoke_phase3_fix_loop``.
 
         A fresh conversation whose prompt carries the files the run has
-        edited and the previous attempt's outcome. It ends when the model
+        edited, the previous attempt's outcome and, within a character budget,
+        the current text of the files its blockers name. It ends when the model
         ends its turn or the per-attempt turn budget is spent; no tool is
         forced. Tool calls run through ``_execute_tool_blocks`` so they are
         recorded like Phase 2's.
@@ -1259,12 +1262,21 @@ class Phase3RepairMixin:
         prompt_parts.extend(_fix_prompt_blocker_lines(
             sorted(blockers, key=self._repair_priority), requirements, named))
 
+        # A fresh conversation: nothing read in an earlier round is in it.
+        self.executor.forget_shown_results()
+        seeded = {} if verification_only else self._seed_named_files(
+            [rel for issue in sorted(blockers, key=self._repair_priority) for rel, _ in named.get(issue.message, [])])
+        if seeded:
+            prompt_parts.extend(["", "The files these blockers name, as read_file returns them now (each read_id "
+                                     "is valid for replace_file_lines; quote old_text without the line-number "
+                                     "gutter):"])
+            prompt_parts.extend(seeded.values())
         # Show the offending lines: with only "file line N" a model spends a
         # turn on read_file; with the excerpt it calls modify_file immediately.
         # A BOUNDED window is the point -- SWE-agent's ablation scores
         # a 100-line window above the whole file (18.0 vs 12.7 on SWE-bench
-        # Lite), so this never pastes an entire file.
-        excerpts = self._excerpts_for(blockers)
+        # Lite), so this never pastes a file larger than the budget above.
+        excerpts = self._excerpts_for(blockers, shown=set(seeded))
         if excerpts:
             prompt_parts.append("")
             prompt_parts.append(
@@ -1331,8 +1343,6 @@ class Phase3RepairMixin:
 
         fix_prompt = "\n".join(prompt_parts)
         messages: list[dict] = [{"role": "user", "content": fix_prompt}]
-        # A fresh conversation: nothing read in an earlier round is in it.
-        self.executor.forget_shown_results()
 
         # Inject a high-salience reminder as a separate user message
         # right after the prompt. Matches the pattern used by the
@@ -1530,10 +1540,33 @@ class Phase3RepairMixin:
             ])
         return "\n".join(parts).rstrip("\n")
 
+    def _seed_named_files(self, paths: list[str]) -> dict[str, str]:
+        """``{path: prompt block}``: the files the blockers name, in order, read through
+        ``read_file`` so a re-read in this conversation is answered with a stub. A file
+        that does not fit what is left of ``_FIX_PROMPT_FILE_CHARS`` is left out."""
+        seeded: dict[str, str] = {}
+        budget = _FIX_PROMPT_FILE_CHARS
+        for rel in dict.fromkeys(paths):
+            try:
+                if os.path.getsize(os.path.join(self.output_dir, rel)) > budget:
+                    continue
+            except OSError:
+                continue
+            result = self.executor.execute_typed("read_file", {"path": rel})
+            payload = result.payload if result.succeeded else {}
+            content = payload.get("content")
+            if not content or payload.get("truncated") or len(content) > budget:
+                continue
+            budget -= len(content)
+            seeded[rel] = "\n".join(["", f"{rel} (read_id {payload.get('read_id')}, whole file):",
+                                     "```", content, "```"])
+        return seeded
+
     def _excerpts_for(
-        self, blockers: list[ValidationIssue], context: int = 5, limit: int = 3
+        self, blockers: list[ValidationIssue], context: int = 5, limit: int = 3,
+        shown: set[str] = frozenset(),
     ) -> list[str]:
-        """Numbered source windows around each blocker that names file+line."""
+        """Numbered source windows around each blocker that names file+line, except in ``shown`` files."""
         out: list[str] = []
         seen: set[tuple[str, int]] = set()
         for issue in blockers:
@@ -1541,7 +1574,7 @@ class Phase3RepairMixin:
             if not match:
                 continue
             rel, line_no = match.group(1), int(match.group(2))
-            if (rel, line_no) in seen or len(seen) >= limit:
+            if (rel, line_no) in seen or len(seen) >= limit or rel in shown:
                 continue
             path = os.path.realpath(os.path.join(self.output_dir, rel.replace("/", os.sep)))
             workspace = os.path.realpath(self.output_dir)

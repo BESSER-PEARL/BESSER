@@ -990,7 +990,13 @@ Repair prompts retain the original specification, current files/symbols, actual
 action handlers and recent rejected operations. Each attempt is a new
 conversation, so its prompt also lists the files the run has edited and, after a
 kept attempt, what that attempt edited, which blockers it retired and which are
-still failing with another error. The parts that are fixed for the
+still failing with another error. Its prompt also carries the current text of
+the files its blockers name, in repair order, as ``read_file`` returns it (with
+a ``read_id`` for ``replace_file_lines``), up to 24,000 characters in all; a
+file that does not fit gets the excerpt around its line instead, and an
+identical ``read_file`` of a shown file in that attempt returns a short
+"unchanged" note. An attempt whose blockers are all unverified evidence gets no
+file text. The parts that are fixed for the
 run (the original specification, the inspection handoff, the domain model and the
 requirements ledger) form the system prompt, identical in every repair round so
 the provider can serve it from its prompt cache; each round's message carries the

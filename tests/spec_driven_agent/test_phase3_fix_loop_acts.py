@@ -443,7 +443,7 @@ def test_run_7f918e11_is_repaired_end_to_end(tmp_path):
     orch._run_phase3_validation()
 
     assert "Fix site: create_booking in web_app/backend/routers/booking.py line 165" in prompts[0]
-    assert "  165|     db_booking = Booking(" in prompts[0]
+    assert "\n165|     db_booking = Booking(" in prompts[0]
     assert all(force is None for force, _ in client.calls)
     router = (tmp_path / _BOOKING_ROUTER).read_text(encoding="utf-8")
     assert router.count("totalAmountDue=0.0") == 2

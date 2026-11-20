@@ -839,3 +839,30 @@ def test_a_second_revert_in_a_row_ends_the_loop(tmp_path):
     assert orch._phase3_exit_reason.startswith("attempt 2 reverted: it added an observed failure: tsc [frontend]")
     assert len(client.requests) == 4
     assert _read(tmp_path, "backend/routers/order.py") == FILES["backend/routers/order.py"]
+
+
+# ---------------------------------------------------------------- the attempt starts with the files
+
+def test_an_attempt_starts_with_the_text_of_the_files_its_blockers_name(tmp_path):
+    client = _Client(_tools(("read_file", {"path": "backend/routers/order.py"})))
+    orch = _build(tmp_path, client)
+
+    orch._invoke_phase3_fix_loop([IN_ORDER], is_first_attempt=True)
+
+    prompt = client.requests[0]["messages"][0]["content"]
+    assert "backend/routers/order.py (read_id " in prompt and "def create_order():" in prompt
+    [reread] = _results(client.requests[1])
+    assert "unchanged" in reread and "def create_order" not in reread
+
+
+def test_a_named_file_over_the_budget_is_shown_as_an_excerpt(tmp_path):
+    client = _Client()
+    orch = _build(tmp_path, client)
+    (tmp_path / "backend/routers/order.py").write_text(
+        "from sql_alchemy import Order\n" + "".join(f"VALUE_{n} = {n}\n" for n in range(3000)), encoding="utf-8")
+
+    orch._invoke_phase3_fix_loop([B("blocker", "ruff: backend/routers/order.py:5:1: F821 Undefined name `x`")],
+                                 is_first_attempt=True)
+
+    prompt = client.requests[0]["messages"][0]["content"]
+    assert "(read_id " not in prompt and "backend/routers/order.py (lines 1-10):" in prompt

@@ -257,21 +257,21 @@ def test_no_agent_task_or_requirement_without_an_agent_model(tmp_path):
     assert not [r for r in orch._requirements_to_judge() if r["kind"] == AGENT_DATA_KIND]
 
 
-# Live (quiz app, 2026-11-18): a class + GUI project also held an agent diagram
-# that no screen used. The web app shipped it under web_app/agents/ and the
-# checklist asked to connect it to the data. The editor's own web app generation
-# includes an agent only when a screen uses it. The agent stays in the run, so a
-# request that targets it (a chatbot, generate_baf) still has it.
+# A class + GUI project can hold an agent diagram that no screen uses. Like the
+# editor's own web app generation, the web app includes an agent only when a
+# screen uses it, and the checklist does not ask to connect it to the data. The
+# agent stays in the run, so a request that targets it (a chatbot, generate_baf)
+# still has it.
 
 def _gui(with_agent: bool):
     from besser.BUML.metamodel.gui import GUIModel, Module, Screen, Text
     from besser.BUML.metamodel.gui.dashboard import AgentComponent
 
-    elements = {Text(name="intro", content="Quiz", description="")}
+    elements = {Text(name="intro", content="Tasks", description="")}
     if with_agent:
         elements.add(AgentComponent(name="chat", agent_name="TaskAssistant"))
     screen = Screen(name="Home", description="", view_elements=elements, is_main_page=True)
-    return GUIModel(name="Quiz", package="quiz", versionCode="1", versionName="1",
+    return GUIModel(name="Tasks", package="tasks", versionCode="1", versionName="1",
                     modules={Module(name="Main", screens={screen})}, description="")
 
 
@@ -280,7 +280,7 @@ def _web_model():
     task = Class(name="Task")
     task.attributes = {Property(name="id", type=PrimitiveDataType("int"), is_id=True),
                        Property(name="title", type=PrimitiveDataType("str"))}
-    return DomainModel(name="Quiz", types={task})
+    return DomainModel(name="Tasks", types={task})
 
 
 @pytest.mark.parametrize("screen_uses_agent", [False, True])

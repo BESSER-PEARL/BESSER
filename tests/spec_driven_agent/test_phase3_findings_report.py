@@ -51,7 +51,7 @@ def _cycle(orch, rounds, *, fix_edits=1, rollback=lambda *a, **k: False):
             patch.object(orch, "_restore_snapshot", return_value=True), \
             patch.object(orch, "_workspace_revision", side_effect=lambda: next(revisions)), \
             patch.object(orch, "_repair_obligations_revision", return_value="obl"), \
-            patch.object(orch, "_rollback_phase3_if_worse", side_effect=rollback), \
+            patch.object(orch, "_revert_attempt", side_effect=rollback), \
             patch.object(orch, "_invoke_phase3_fix_loop", return_value=fix_edits):
         orch._run_phase3_repair_cycle()
 
@@ -79,7 +79,7 @@ def test_a_restored_tree_is_reported_as_what_ships(orch):
         orch._validation_issues = list(first)
         return True
 
-    # Rounds that make it worse end the loop on its plateau guard.
+    # An attempt that makes it worse is rolled back, which ends the loop.
     _cycle(orch, [first, worse, worse, worse, worse], rollback=restore)
     assert orch.reported[0] == (0, [IMPORT_ERROR], False)
     assert orch.reported[-1][1:] == ([IMPORT_ERROR], True)

@@ -197,9 +197,6 @@ CREATE_500 = (
 )
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Q3: an attempt that reads (one turn) and ends its turn without an edit is re-prompted "
-    "with tool_choice forced to modify_file, although the only blocker names a route, not a file."))
 def test_a_repair_attempt_is_not_forced_to_edit_when_no_blocker_names_a_file(tmp_path, monkeypatch):
     _no_app_boot(monkeypatch, [CREATE_500])
     phase3 = [("read_file", {"path": BOOK_ROUTER}), ("read_file", {"path": "backend/sql_alchemy.py"})]

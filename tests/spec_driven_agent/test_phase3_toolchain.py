@@ -446,7 +446,7 @@ def test_toolchain_fix_iteration_cap_bounded(tmp_path) -> None:
     # And we DID at least call the LLM once — otherwise the test
     # would pass vacuously.
     assert len(client.calls) >= 1
-    assert call_count["n"] == 2  # initial sweep plus one genuinely unchanged attempt
+    assert call_count["n"] == 1  # the initial sweep; an attempt that moved nothing is not re-checked
 
 
 @pytest.mark.parametrize("reveals_crud_errors", [False, True])

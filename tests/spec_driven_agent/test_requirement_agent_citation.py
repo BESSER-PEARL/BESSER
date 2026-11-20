@@ -196,7 +196,10 @@ def test_before_any_judgment_the_reason_says_so(orch):
 
 
 def test_a_phase3_attempt_that_cites_the_line_clears_the_blocker(orch):
-    """The whole loop: the fix agent cites through validate_app, the next validation is clean."""
+    """The whole loop: the fix agent cites through validate_app, the next validation is clean.
+
+    The attempt edits nothing; the accepted citation moves the repair obligations,
+    so the tree is checked again."""
     orch._requirement_judgments[KEY] = [TABLE]
     orch._requirement_verdicts = ledger.verify_evidence([TABLE], orch.output_dir)
     orch._requirements = [{"id": 1, "text": TABLE["text"], "kind": "ui"}]
@@ -217,7 +220,6 @@ def test_a_phase3_attempt_that_cites_the_line_clears_the_blocker(orch):
             patch.object(orch, "_create_snapshot"), \
             patch.object(orch, "_restore_snapshot", return_value=True), \
             patch.object(orch, "_workspace_revision", return_value="rev"), \
-            patch.object(orch, "_repair_obligations_revision", return_value="obl"), \
             patch.object(orch, "_invoke_phase3_fix_loop", side_effect=attempt) as fix:
         orch._run_phase3_repair_cycle()
     assert fix.call_count == 1

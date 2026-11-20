@@ -211,8 +211,8 @@ workflow that did not run is kept and replayed on the next source revision;
 only a workflow that ran and failed is an ``api scenario:`` blocker; one the
 agent retired as replaced (``test_api(action="retire")``) is not replayed. A repair
 after which the probe can no longer measure a backend it measured before is
-not accepted as "all blockers fixed": the rollback check ranks that tree
-behind the measured one.
+not accepted as "all blockers fixed": that attempt is not kept, because its
+tree ranks behind the measured one.
 
 The same applies when these checks are turned off for the run
 (``enable_import_smoke_check=False``): the finding is a warning, not a
@@ -660,32 +660,46 @@ The bounded auto-fix loop
 -------------------------
 
 Blocker-level findings drive a repair/recheck loop within the remaining turn,
-cost and runtime budgets. The loop stops when blockers reach zero, after two
-consecutive unchanged/repeated source states, or after three consecutive rounds
-that change the tree without improving it. A round is progress when the tree
-scores better, the source changed, or a verification obligation was discharged
-(a checklist or scenario change counts only if it changed the set of blockers)
-— writing no source is not by itself a stop, because a round spent closing
-checklist items or correcting a scenario can resolve blockers without touching
-a file, and a round whose edits were all rejected feeds those rejections into
-the next attempt's prompt. A round that wrote nothing and never called an edit
-tool is the exception: it leaves the next prompt identical to its own, so it
-ends the loop immediately rather than paying for the same attempt twice. A larger error count does not trigger an automatic rollback: fixing one
-import may expose several previously unreachable CRUD failures. Unresolved
-output remains explicitly incomplete. Startup and data-entry failures are
-repaired before spending tokens on business requirement judgment.
+cost and runtime budgets. Only blockers reach it: a finding that only says a
+check could not run (a warning) starts no fix attempt, and the step shown for
+an attempt ("Fix attempt 1: fixing 2 of 3 blockers ...") counts those apart.
+
+Each attempt has targets. Its prompt lists the blockers, each with the
+workspace files and lines it names, and while it runs the write tools
+(``write_file``, ``modify_file``, ``replace_file_lines``, ``delete_file``)
+accept only the files the blockers name, the files those import or that import
+them, and new files. A frontend file also brings the other files of its folder
+and the app's entry and routing files. A write elsewhere is refused with the
+list of allowed files; the model can widen the set by repeating the call with
+``needed_for`` naming the blocker the file is needed for, and the trace records
+each widening as an ``edit_scope`` event. A blocker that names no file (a
+failing route, a missing requirement) leaves that attempt free to edit any file.
+
+The loop stops when blockers reach zero, or when an attempt ends its turn
+without an edit (after recording what any evidence it added settled), or when an
+attempt that edited is not kept. An attempt is kept only if it retired at least
+one of the blockers it faced, added no observed failure (a check that watched
+something fail, not a judgment or an unknown), left no more blockers than it
+faced, and did not make the runtime result worse. Line numbers are ignored when
+findings are compared, since an edit moves the errors it leaves. An attempt
+whose tree starts where the one before did not is always kept: the failures the
+probe can now see behind it were hidden, not added. An attempt that is not kept
+is rolled back to the tree from before it, which is checked again; the findings
+only the discarded tree showed are listed in a ``validation:`` note, the tool
+calls it made are marked ``rolled_back`` in the run record, and checklist items
+it had verified are reopened. So the loop never ends with more blockers than it
+started with. Unresolved output remains explicitly incomplete. Startup and
+data-entry failures are repaired before spending tokens on business requirement
+judgment.
 
 A fix turn whose reply is cut off at the output-token limit is retried with
 an instruction to emit less, up to four times per attempt, rather than
 applying a half-written edit.
 
-For concrete code defects, an attempt without a successful edit — the model explained
-the fix instead of making it, or read files until its turn budget ran out — is
-re-prompted once, with ``modify_file`` forced through ``tool_choice`` where the
-provider honours it and a reminder in the message either way; if that still
-produces no edit the attempt ends, and the log says ``ended with no successful
-edit``. Phase 3 tool calls are recorded in the trace and the recipe exactly
-like Phase 2's.
+No tool is forced in a fix attempt: it ends when the model ends its turn or
+its ten turns are spent, and an attempt without a successful edit is logged as
+``ended with no successful edit``. Phase 3 tool calls are recorded in the trace
+and the recipe exactly like Phase 2's.
 
 Evidence-only findings and generated API assertions do not force a source edit.
 The agent can inspect saved scenarios, correct a mistaken expectation with a
@@ -705,7 +719,9 @@ opinion alone does not. Cancellation is checked between repair and validation,
 so stopping a run does not trigger another paid coverage judgment.
 
 Repair prompts retain the original specification, current files/symbols, actual
-action handlers and recent rejected operations. The parts that are fixed for the
+action handlers and recent rejected operations. Each attempt is a new
+conversation, so its prompt also lists the files the run has edited and, after a
+kept attempt, what that attempt edited and which blockers it retired. The parts that are fixed for the
 run (the original specification, the inspection handoff, the domain model and the
 requirements ledger) form the system prompt, identical in every repair round so
 the provider can serve it from its prompt cache; each round's message carries the
@@ -718,16 +734,9 @@ the ledger by its id. Validation still records and reports every blocker.
 A fix attempt is skipped when every remaining blocker is a requirement whose
 cited code exists but whose citation is malformed and already had its
 citation-repair round, and that has no fragment the fix agent may complete (below):
-no edit can change it. A citation of code that exists nowhere keeps its attempt. The
-loop also ends when the last attempt faced the same
-blockers (requirements compared by id, status and citation label, since a re-judge
-rewords its note; other blockers by message), its edits were not all rejected,
-and each remaining blocker is a ``requirement unverified`` verdict the
-judge left without a citation (or with a malformed one) after its focused
-re-judge on the current source: another attempt would get the same request. A
-citation of code that exists nowhere, or one whose cited body fails its role (an
-HTTP 501 scaffold, a no-op), keeps its attempts. The blockers keep their severity
-and are reported. ``validate_app`` lists the requirement blockers of the last
+no edit can change it. A citation of code that exists nowhere keeps its attempt.
+Attempts compare requirements by id, status and citation label, since a re-judge
+rewords its note. The blockers keep their severity and are reported. ``validate_app`` lists the requirement blockers of the last
 judgment too (no new judge call), so the fix agent is never told the app is
 verified while the run holds one; their message tells it to implement behaviour
 only if it is really absent, since citations are re-judged automatically. When the

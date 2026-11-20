@@ -11,7 +11,7 @@ import pytest
 
 from besser.BUML.metamodel.structural import Class, DomainModel, PrimitiveDataType, Property
 from besser.spec_driven_agent.pipeline import orchestrator as orchestrator_module
-from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator, ValidationIssue
+from besser.spec_driven_agent.pipeline.orchestrator import _PHASE3_FIX_TURNS, LLMOrchestrator, ValidationIssue
 from besser.spec_driven_agent.providers.llm_client import UsageTracker
 from besser.spec_driven_agent.state.checkpoint import compute_fingerprint
 
@@ -102,9 +102,10 @@ def test_a_model_that_never_finishes_still_gets_phase3_repair_turns(task_model, 
     assert orch._phase2_stop_reason == "validation_required"
     assert "20 of 120 turns reserved for validation and repair" in orch._phase2_stop_detail
     assert not orch._phase2_exited_cleanly
-    assert client.calls - at_phase3["calls"] == 20, "Phase 3 must spend its reserved turns"
-    assert orch.total_turns == 120, "the run's cap is never exceeded"
-    assert orch._phase3_exit_reason == "turn budget exhausted"
+    # One full fix attempt; it wrote files but retired nothing, so it is rolled back and ends the loop.
+    assert client.calls - at_phase3["calls"] == _PHASE3_FIX_TURNS, "Phase 3 must get its reserved turns"
+    assert orch.total_turns <= 120, "the run's cap is never exceeded"
+    assert orch._phase3_exit_reason == "attempt 1 reverted: it retired none of the 1 blocker it faced"
 
 
 @pytest.mark.parametrize(("max_turns", "finish_at"), [(120, 105), (40, 35)])

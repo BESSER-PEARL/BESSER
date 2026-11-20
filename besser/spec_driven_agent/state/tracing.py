@@ -62,6 +62,9 @@ EVENT_LLM_CALL = "llm_call"
 EVENT_COMPACTION = "compaction"
 EVENT_SNAPSHOT = "snapshot"
 EVENT_ROLLBACK = "rollback"
+# A Phase 3 fix attempt's edit scope (``allowed``: the files it may edit, None
+# when open), or one write outside it justified by ``needed_for``.
+EVENT_EDIT_SCOPE = "edit_scope"
 EVENT_REGENERATION = "regeneration"
 EVENT_TARGET = "target"
 EVENT_VALIDATION_ISSUE = "validation_issue"

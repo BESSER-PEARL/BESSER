@@ -181,10 +181,13 @@ Generated Output Structure
    │   ├── bal_stdlib.py        # B-UML Action Language helpers
    │   ├── pydantic_classes.py  # Data validation models
    │   ├── sql_alchemy.py       # Database ORM models
+   │   ├── api_contract.json    # Every route, its body keys and response shapes
+   │   ├── API.md               # The same, as a reference
    │   ├── Dockerfile           # Backend container
    │   └── requirements.txt     # Python dependencies
    ├── frontend/
    │   ├── src/
+   │   │   ├── api/generated/   # Typed API client of the backend
    │   │   ├── components/      # React components
    │   │   ├── contexts/        # React contexts
    │   │   └── pages/           # Page components

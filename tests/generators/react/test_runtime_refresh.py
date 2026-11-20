@@ -32,7 +32,7 @@ def test_every_write_path_announces_the_change(build_app):
         after = table[table.index(request):]
         assert "notifyDataChanged();" in after[:after.index("} catch")], request
     form = _runtime(app, "FormBlock.tsx")
-    assert form.index("await axios.post(url, payload);") < form.index("notifyDataChanged();")
+    assert form.index('await apiRequest("POST", endpoint, { body: payload });') < form.index("notifyDataChanged();")
     assert "notifyDataChanged();" in app.file("components", "MethodButton.tsx")
 
 

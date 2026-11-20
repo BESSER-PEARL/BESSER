@@ -1,5 +1,5 @@
 import React, { CSSProperties, useEffect, useMemo, useState } from "react";
-import axios from "axios";
+import { apiRequest } from "../../api/generated/client";
 import { BarChartComponent } from "../charts/BarChartComponent";
 import { LineChartComponent } from "../charts/LineChartComponent";
 import { PieChartComponent } from "../charts/PieChartComponent";
@@ -121,10 +121,9 @@ export const ChartBlock: React.FC<ChartBlockProps> = ({
         preferSearch: !!parsedFilter?.serverCompatible && !needsDetailed,
         custom: Boolean(s.customEndpoint),
       });
-      return axios
-        .get(url)
-        .then((res) => {
-          const data = applyFilter(extractRows(res.data), parsedFilter);
+      return apiRequest<unknown>("GET", url)
+        .then((body) => {
+          const data = applyFilter(extractRows(body), parsedFilter);
           return { seriesName, data };
         })
         .catch(() => ({ seriesName, data: [] }));
@@ -160,10 +159,9 @@ export const ChartBlock: React.FC<ChartBlockProps> = ({
       custom: Boolean(dataBinding?.custom_endpoint),
     });
 
-    axios
-      .get(url)
-      .then((res) => {
-        const data = applyFilter(extractRows(res.data), parsedFilter);
+    apiRequest<unknown>("GET", url)
+      .then((body) => {
+        const data = applyFilter(extractRows(body), parsedFilter);
         setChartData(data);
       })
       .catch((err) => {

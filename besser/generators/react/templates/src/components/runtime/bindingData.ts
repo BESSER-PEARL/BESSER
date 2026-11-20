@@ -1,5 +1,6 @@
 // The data side of the runtime blocks: nested field values, filter expressions,
 // the rows of a response and the URL of an endpoint.
+import { API_BASE_URL, apiUrl } from "../../api/generated/client";
 
 export const isNestedField = (field?: string): boolean => !!field && field.includes(".");
 
@@ -333,14 +334,10 @@ export const extractRows = (payload: any): any[] => {
 };
 
 /** The backend's base URL (VITE_API_URL, without a trailing slash). */
-export const backendBase = (): string =>
-  String(import.meta.env.VITE_API_URL || "http://localhost:8000").replace(/\/+$/, "");
+export const backendBase = (): string => API_BASE_URL;
 
 /** An endpoint as a URL: a path is joined to the backend's base, an http(s) URL is kept. */
-export const backendUrl = (endpoint: string): string => {
-  if (/^https?:\/\//i.test(endpoint)) return endpoint;
-  return backendBase() + (endpoint.startsWith("/") ? endpoint : `/${endpoint}`);
-};
+export const backendUrl = (endpoint: string): string => apiUrl(endpoint);
 
 const normalizeSearchPath = (pathname: string): string => {
   if (pathname.endsWith("/search") || pathname.endsWith("/search/")) {

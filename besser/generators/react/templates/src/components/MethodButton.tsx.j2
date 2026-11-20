@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import axios from "axios";
+import { API_BASE_URL } from "../api/generated/client";
 import { useTableContext } from "../contexts/TableContext";
 import { notifyDataChanged } from "./runtime/dataVersion";
 import { humanize } from "./runtime/humanize";
@@ -88,7 +89,7 @@ export const MethodButton: React.FC<MethodButtonProps> = ({
   onError,
   className = "",
   style = {},
-  backendUrl = import.meta.env.VITE_API_URL || "http://localhost:8000",
+  backendUrl = API_BASE_URL,
 }) => {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<any>(null);

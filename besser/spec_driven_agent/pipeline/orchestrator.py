@@ -742,6 +742,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # different character. Traced only; the runner still reads
         # ``_phase2_stop_reason``, whose values are unchanged.
         self._phase2_stop_detail: str = ""
+        # Phase 2 was cut at its share of a budget while the model was working;
+        # only a closed checklist then shows the work was finished.
+        self._phase2_cut_at_share = False
         # Short provider error string captured when stop_reason == "api_error",
         # surfaced to the user so a rate-limit reads as such (not a mystery).
         self._phase2_api_error: str = ""
@@ -1075,6 +1078,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         )
         self._phase2_stop_reason = checkpoint.phase2_stop_reason
         self._phase2_exited_cleanly = checkpoint.phase2_exited_cleanly
+        self._phase2_cut_at_share = checkpoint.phase2_cut_at_share
         self._phase3_interrupted = False
         # On-disk changes survive interruption. Old scheduling history is only
         # relevant to those exact bytes; validation results are always rebuilt.
@@ -1989,6 +1993,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     def _run_phase2(self, instructions: str, extra_issues: list[str] | None = None) -> None:
         """Run Phase 2 with Phase 3's share of the clock held back until it returns."""
         self.deadline.hold(self.max_runtime_seconds * _PHASE3_BUDGET_SHARE)
+        self._phase2_cut_at_share = False
         try:
             self._run_phase2_turns(instructions, extra_issues)
         finally:
@@ -2511,6 +2516,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         validation, and Phase 3 decides how the run ends."""
         self._phase2_stop_reason = "validation_required"
         self._phase2_exited_cleanly = False
+        self._phase2_cut_at_share = True
         self._phase2_stop_detail = f"{meter} share used ({reserved} reserved for {self._phase3_work()})"
         logger.warning("Phase 2: %s", self._phase2_stop_detail)
 
@@ -3048,6 +3054,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 source_revision=self._workspace_revision() if phase == "phase3" else "",
                 phase2_stop_reason=self._phase2_stop_reason,
                 phase2_exited_cleanly=self._phase2_exited_cleanly,
+                phase2_cut_at_share=self._phase2_cut_at_share,
                 repair_progress=self._repair_progress if phase == "phase3" else {},
                 locked_generators=sorted(self.executor.locked_generators),
                 modify=self._modify_checkpoint_state(),

@@ -173,6 +173,24 @@ def test_phase3_gets_time_when_phase2_spends_the_runtime_cap(tmp_path, monkeypat
     assert agent.sent["phase3"], "Phase 3 made no repair turn"
 
 
+def test_a_time_share_cut_with_no_checklist_is_not_reported_completed(tmp_path, monkeypatch):
+    """The planner failed, so no checklist shows the work is done; Phase 2 is cut by its time
+    share before its later writes, and validation of what exists is clean."""
+    _no_app_boot(monkeypatch)
+    monkeypatch.setattr(orchestrator_module, "analyze_gaps_via_llm", lambda **kw: None)
+    clock = FakeClock()
+    monkeypatch.setattr(orchestrator_module, "time", clock)
+    monkeypatch.setattr(phase3_module, "time", clock)
+    work = [call for call in shelf_script() if not callable(call)]
+    agent, _ = _run(tmp_path, work, 1, clock=clock, seconds_per_turn=60.0, max_runtime_seconds=600)
+    orchestrator = agent.orchestrator
+    assert sum(map(len, agent.sent["phase2"])) < len(work)
+    assert orchestrator._phase2_stop_detail.startswith("time share used")
+    assert not [i for i in orchestrator._validation_issues if i.severity == "blocker"]
+    assert orchestrator._phase2_stop_reason == "validation_required"
+    assert not orchestrator._phase2_exited_cleanly
+
+
 # ----------------------------------------------------------------------
 # (c) A repair attempt is not forced to edit when no blocker names a file
 # ----------------------------------------------------------------------

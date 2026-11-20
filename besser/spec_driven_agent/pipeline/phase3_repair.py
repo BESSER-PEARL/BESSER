@@ -273,8 +273,10 @@ class Phase3RepairMixin:
 
     def _complete_repair_if_verified(self) -> None:
         # A handoff with checklist items still open or blocked stays one: nothing did that work.
+        # So does a cut at a budget share with no checklist to show the work was finished.
         if self._phase2_stop_reason == "validation_required" and not (
-                self.executor.open_tasks() or self.executor.blocked_tasks()):
+                self.executor.open_tasks() or self.executor.blocked_tasks()
+                or (self._phase2_cut_at_share and not self.executor.task_snapshot())):
             self._phase2_exited_cleanly = True
             self._phase2_stop_reason = "completed"
 

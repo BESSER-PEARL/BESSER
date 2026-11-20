@@ -44,8 +44,11 @@ used``, ``cost share used`` or ``tool-call share used``). A handed-off run
 completes only when validation finds nothing left and no checklist item is
 still open or blocked: an item no check closes is reported as not confirmed,
 not repaired, so the run is reported as handed off, never as plainly
-completed. Only a Phase 2 that reaches the cap itself (a Phase 1 that ran past
-it, or one reply that spent past it) stops as ``timeout`` or ``cost_cap``.
+completed. A run cut at a share with no checklist at all (the planning pass
+failed or was skipped) is reported as handed off too, as nothing shows the work
+it was doing was finished. Only a Phase 2 that reaches the cap itself (a
+Phase 1 that ran past it, or one reply that spent past it) stops as ``timeout``
+or ``cost_cap``.
 Phase 3's time share is held back while Phase 2 runs and released when Phase 2
 returns, so the formatting between the phases has it too. The quarter is ``_PHASE3_BUDGET_SHARE``,
 sized from recorded runs: where Phase 3 repaired, it made a median quarter of

@@ -148,9 +148,10 @@ def test_a_handoff_with_items_still_open_is_not_reported_completed(task_model, t
     assert orch._phase2_stop_reason == "validation_required" and not orch._phase2_exited_cleanly
 
 
-def test_a_cut_at_the_share_is_a_handoff_even_with_nothing_left_open(task_model, tmp_path, monkeypatch):
-    """The share is not the budget: a cut there was reported as a run that reached its step
-    limit. With no checklist item left open, a clean validation completes the run."""
+def test_a_cut_at_the_share_with_no_checklist_stays_a_handoff(task_model, tmp_path, monkeypatch):
+    """The share is not the budget: a cut there is a handoff, not a step limit. With no
+    checklist to show the work was finished, a clean validation does not complete the run:
+    the model was still writing when it was cut."""
     orch = _orchestrator(task_model, tmp_path, monkeypatch, _NeverDoneClient(), tasks=(),
                          max_turns=30, auto_fix_issues=True)
     monkeypatch.setattr(orch, "_collect_validation_issues", lambda: [])
@@ -160,7 +161,25 @@ def test_a_cut_at_the_share_is_a_handoff_even_with_nothing_left_open(task_model,
 
     assert at_phase3["calls"] == 90 and at_phase3["stop_reason"] == "validation_required"
     assert "30 of 120 calls reserved for validation and repair" in orch._phase2_stop_detail
-    assert orch._phase2_stop_reason == "completed" and orch._phase2_exited_cleanly
+    assert orch._phase2_stop_reason == "validation_required" and not orch._phase2_exited_cleanly
+
+
+def test_a_resumed_repair_after_a_share_cut_with_no_checklist_stays_a_handoff(task_model, tmp_path, monkeypatch):
+    first = _orchestrator(task_model, tmp_path, monkeypatch, _NeverDoneClient(), tasks=(),
+                          max_turns=30, auto_fix_issues=True)
+    first._instructions = "Build a task tracker"
+    first._project_fingerprint = compute_fingerprint(
+        instructions=first._instructions, primary_kind=first.primary_kind, domain_model=task_model)
+    first._hand_off_phase2_share("tool-call", "30 of 120 calls")
+    first._save_phase3_checkpoint()
+
+    resumed = _orchestrator(task_model, tmp_path, monkeypatch, _NeverDoneClient(), tasks=(),
+                            max_turns=30, auto_fix_issues=True)
+    monkeypatch.setattr(resumed, "_collect_validation_issues", lambda: [])
+    resumed.resume("Build a task tracker")
+
+    assert resumed._phase3_exit_reason == "validation clean"
+    assert resumed._phase2_stop_reason == "validation_required" and not resumed._phase2_exited_cleanly
 
 
 @pytest.mark.parametrize(("max_turns", "auto_fix", "phase2_calls", "stop_reason"), [

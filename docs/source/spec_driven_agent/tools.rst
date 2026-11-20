@@ -74,7 +74,9 @@ declaration outside comments, its ``export default``, every ``<Route>``
 element, no new elision such as ``{/* ... unchanged ... */}``, and no new
 comment-only line that reads as a placeholder (``{/* remaining fields
 unchanged */}``) in place of three or more of the file's lines that the
-rewrite no longer has, however much it adds elsewhere. A rewrite that misses one is
+rewrite has fewer copies of (a repeated section counts), or added while a
+block of three or more such lines is deleted elsewhere, however much the
+rewrite adds. A rewrite that misses one is
 refused saying which. Backend and other files, and frontend files with no
 declarations to compare, keep the two-attempt rule.
 Repeated failures do not permanently freeze the file; an agent that ignores

@@ -560,7 +560,9 @@ class ModifyRunMixin:
         seed = self._seed_target
         routing = None
         if self._can_route():
-            routing = self._select_generator_structured(self._modify_routing_prompt(seed), [], modify=True)
+            with self._traced_llm_call("routing") as call:
+                routing = self._select_generator_structured(self._modify_routing_prompt(seed), [], modify=True)
+                call["outcome"] = "failed" if routing is None or routing.target is None else "ok"
         if routing is None or routing.target is None:
             logger.warning(
                 "Modify run: the routing call failed; keeping the existing target (%s) "
@@ -906,7 +908,8 @@ class ModifyRunMixin:
             return
 
         try:
-            new_classes = self._request_model_deltas(instructions)
+            with self._traced_llm_call("model_deltas"):
+                new_classes = self._request_model_deltas(instructions)
         except Exception as exc:
             logger.warning(
                 "modify: model-sync LLM call failed; proceeding without "

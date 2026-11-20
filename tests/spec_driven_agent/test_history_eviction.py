@@ -295,6 +295,39 @@ def test_checkpoint_eviction_fires_only_when_enabled(tmp_path, monkeypatch):
     assert getattr(orch, "_eviction_count", 0) == 1
 
 
+def test_an_eviction_and_a_compaction_are_written_to_the_run_log(tmp_path, monkeypatch):
+    """Both rewrite the history the provider caches: a turn after one is expected to miss the cache."""
+    monkeypatch.setattr(orch_mod, "_HISTORY_EVICTION_ENABLED", True)
+    orch = LLMOrchestrator(llm_client=_MockClient(), domain_model=_simple_model(), output_dir=str(tmp_path))
+    orch.total_turns = 7
+    messages = [
+        {"role": "user", "content": "build it"},
+        {"role": "assistant", "content": [_write_use("t1", "app/main.py", _big(4000))]},
+        {"role": "user", "content": [_result("t1", '{"status":"written"}')]},
+        # Not a file body: eviction leaves it, so the history still needs compacting.
+        {"role": "assistant", "content": [{"type": "text", "text": "running the tests"}]},
+        {"role": "user", "content": "y" * (COMPACT_TOKEN_THRESHOLD * 4)},
+    ] + _padding(DEFAULT_PRESERVE_RECENT)
+
+    orch._maybe_compact(messages)
+
+    records = [json.loads(line) for line in (tmp_path / ".besser_trace.jsonl").read_text(
+        encoding="utf-8").splitlines()]
+    events = [(r["event"], r["payload"]) for r in records if r["event"] in ("eviction", "compaction")]
+    assert [kind for kind, _ in events] == ["eviction", "compaction"]
+    eviction, compaction = (payload for _, payload in events)
+    assert eviction["turn"] == compaction["turn"] == 7
+    assert eviction["stubbed"] >= 1
+    assert compaction["tokens_after"] < compaction["tokens_before"]
+
+
+def test_a_history_left_as_it_is_writes_no_event(tmp_path):
+    orch = LLMOrchestrator(llm_client=_MockClient(), domain_model=_simple_model(), output_dir=str(tmp_path))
+    orch._maybe_compact([{"role": "user", "content": "build it"}])
+    trace = tmp_path / ".besser_trace.jsonl"
+    assert not trace.exists() or "compaction" not in trace.read_text(encoding="utf-8")
+
+
 def test_pairing_count_is_preserved():
     body = _big()
     msgs = []

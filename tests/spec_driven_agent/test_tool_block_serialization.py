@@ -12,14 +12,17 @@ in the model's block order so tool_use/tool_result pairing holds.
 
 import json
 import os
+import time
 
 import pytest
 
 from besser.BUML.metamodel.structural import (
     Class, DomainModel, PrimitiveDataType, Property,
 )
+from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
 from besser.spec_driven_agent.providers.llm_client import UsageTracker
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
+from tests.spec_driven_agent.scripts.trace_metrics import load_runs
 
 
 @pytest.fixture
@@ -172,6 +175,30 @@ def test_a_failing_call_does_not_lose_its_sibling_result(simple_model, tmp_path)
     assert json.loads(results[0]["content"]).get("status") == "modified"
     assert "error" in json.loads(results[1]["content"])
     assert "alpha = 111" in _read(tmp_path, "app.py")
+
+
+def test_each_traced_call_records_its_place_in_the_models_batch(simple_model, tmp_path, monkeypatch):
+    """Parallel calls are traced as each finishes; batch_index keeps the order the model emitted them."""
+    def read_file(self, args):
+        if args.get("path") == "a.py":
+            time.sleep(0.3)
+        return {"content": args.get("path")}
+
+    monkeypatch.setitem(ToolExecutor._handlers, "read_file", read_file)
+    orch = _orch(simple_model, tmp_path)
+    blocks = [_Block(f"t{i}", "read_file", {"path": path}) for i, path in enumerate(("a.py", "b.py", "c.py"))]
+
+    orch._execute_tool_blocks(blocks, turn=0)
+
+    trace = str(tmp_path / ".besser_trace.jsonl")
+    with open(trace, encoding="utf-8") as handle:
+        records = [json.loads(line) for line in handle]
+    traced = [record["payload"] for record in records if record["event"] == "tool_call"]
+    assert traced[-1]["input"]["path"] == "a.py", "the slow first call should be traced last"
+    assert [event["input"]["path"] for event in sorted(traced, key=lambda e: e["batch_index"])] == [
+        "a.py", "b.py", "c.py"]
+    [run] = load_runs(trace)
+    assert [call.input["path"] for call in run.calls] == ["a.py", "b.py", "c.py"]
 
 
 def test_single_block_path_is_unchanged(simple_model, tmp_path):

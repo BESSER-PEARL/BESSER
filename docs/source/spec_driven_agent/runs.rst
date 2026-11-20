@@ -180,8 +180,10 @@ that receives each record. The record is written only with the run log
 - up to 16 KiB of every tool result, the text the model read: the contents of
   files it read, including files of an imported repository and files the user
   uploaded, command and test output, API responses;
-- each tool call's turn, ``success``, ``status`` and ``seconds`` (how long the
-  tool took), the validation findings, the phases and their token counters.
+- each tool call's turn, ``batch_index`` (its place in the turn's calls),
+  ``success``, ``status`` and ``seconds`` (how long the tool took), the
+  validation findings, the phases and their token counters, and each
+  compaction or eviction of the history.
 
 It does not contain the conversation with the LLM (the prompts and the model's
 messages).

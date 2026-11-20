@@ -276,13 +276,19 @@ def test_replay_recorded_runs(tmp_path, monkeypatch, capsys):
         phase2 = [(c.tool, c.input) for c in run.calls if c.phase in ("phase2", None)]
         if not phase2:
             continue
-        executed = {}
+        executed, sizes = {}, {}
         for n in (1, 2, 4):
             agent, _ = _run(tmp_path / f"r{index}n{n}", list(phase2), n)
             executed[n] = (sum(map(len, agent.sent["phase2"])), agent.orchestrator._phase2_stop_reason,
                            agent.orchestrator._phase2_stop_detail)
+            # Characters sent per Phase 2 request: a provider-free measure of what the loop re-sends.
+            per_turn = agent.transport.request_chars("phase2")
+            per_request = [sum(row.values()) for row in per_turn]
+            sizes[n] = (sum(per_request), max(per_request, default=0))
         rows.append(f"run {run.run_id[:8]}: {len(phase2)} Phase 2 calls; executed (stop) at 1/2/4 "
-                    f"per turn: {executed}")
+                    f"per turn: {executed}; request chars (total, largest): {sizes}")
+        rows.extend(f"  turn {turn} at 4 per turn: system {row['system']:,}, tools {row['tools']:,}, "
+                    f"messages {row['messages']:,}" for turn, row in enumerate(per_turn, 1))
         assert executed[4][0] > 0
     with capsys.disabled():
         print("\n" + "\n".join(rows))

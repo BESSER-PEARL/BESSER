@@ -44,6 +44,7 @@ from besser.spec_driven_agent.providers.llm_client import (
     _with_message_cache,
 )
 from besser.spec_driven_agent.state.checkpoint import _to_wire
+from besser.spec_driven_agent.state.tracing import NullTraceWriter
 
 from tests.spec_driven_agent.message_validity import (
     ANTHROPIC_MAX_CACHE_BREAKPOINTS,
@@ -238,6 +239,8 @@ class _CompactionHost:
         self.state_machines = self.object_model = self.quantum_circuit = None
         self.bpmn_model = self.nn_model = self.primary_kind = None
         self._compaction_count = 0
+        self.total_turns = 0
+        self._trace = NullTraceWriter()
         self.executor = SimpleNamespace(forget_shown_results=lambda: None)
 
     def _compaction_work_state(self) -> dict:

@@ -59,7 +59,11 @@ EVENT_COST_UPDATE = "cost_update"
 # repair, ...). Payload: ``purpose``, ``outcome``, the call's ``*_tokens``
 # counters and ``cost_usd``, so a run's whole cost is visible in the trace.
 EVENT_LLM_CALL = "llm_call"
+# The loop's history was summarized (``tokens_before``/``tokens_after``) or had stale
+# file bodies stubbed (``stubbed``) before the request of ``turn``: either rewrites the
+# prefix the provider caches, so that turn's cache miss is expected.
 EVENT_COMPACTION = "compaction"
+EVENT_EVICTION = "eviction"
 EVENT_SNAPSHOT = "snapshot"
 EVENT_ROLLBACK = "rollback"
 # A Phase 3 fix attempt's edit scope (``allowed``: the files it may edit, None

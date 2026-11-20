@@ -218,8 +218,10 @@ from besser.spec_driven_agent.state.agent_trace import harness_writes, record_ge
 from besser.spec_driven_agent.state.recipe_size import bounded_recipe
 from besser.spec_driven_agent.state.tracing import (
     EVENT_CHECKPOINT,
+    EVENT_COMPACTION,
     EVENT_ERROR,
     EVENT_COST_UPDATE,
+    EVENT_EVICTION,
     EVENT_GENERATOR_OUTPUT,
     EVENT_LLM_CALL,
     EVENT_PHASE_ENTER,
@@ -2644,6 +2646,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # one that batches, which makes MAX_TURNS mean wildly different things
         # per model — invisible unless this is recorded.
         self._blocks_in_turn = len(tool_blocks)
+        # Calls finish (and are traced) out of order; this keeps the model's.
+        self._batch_index = {id(block): index for index, block in enumerate(tool_blocks)}
         return self._run_tool_blocks(tool_blocks, turn)
 
     def _run_tool_blocks(self, tool_blocks: list, turn: int) -> list[dict]:
@@ -2863,6 +2867,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             input=logged_input,
             # How many calls the model batched into this turn (1 = no batching).
             blocks_in_turn=getattr(self, "_blocks_in_turn", 1),
+            batch_index=getattr(self, "_batch_index", {}).get(id(block), 0),
             # What the model was told, redacted and bounded.
             result=_trace_result_excerpt(result),
             # WHY it failed, and which edit tier matched when it succeeded —
@@ -5322,6 +5327,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                     "Checkpoint eviction: stubbed %d stale file body/bodies "
                     "(history now ~%d tokens)", evicted, _estimate_tokens(messages),
                 )
+                self._trace.write(EVENT_EVICTION, turn=self.total_turns, stubbed=evicted)
         result, did_compact = maybe_compact(
             messages=messages,
             tool_calls_log=self.tool_calls_log,
@@ -5349,6 +5355,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         )
         if did_compact:
             self._compaction_count += 1
+            self._trace.write(EVENT_COMPACTION, turn=self.total_turns,
+                              tokens_before=_estimate_tokens(messages), tokens_after=_estimate_tokens(result))
         if did_compact or evicted:
             result = self._drop_stale_thinking(result, "the history was compacted")
             # Earlier read results may be gone: no "unchanged since" stubs.

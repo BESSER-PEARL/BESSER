@@ -13,6 +13,9 @@ Review 2026-09-28 findings:
 * a fallback model kept being billed at the primary's rate.
 """
 
+import itertools
+from types import SimpleNamespace
+
 import httpx
 import openai
 import pytest
@@ -111,10 +114,19 @@ def _chat(p):
     return p.chat("sys", [{"role": "user", "content": "hi"}], tools=[])
 
 
+def _each_attempt_takes(monkeypatch, seconds: float) -> None:
+    """Every request lasts ``seconds`` on the provider's clock (read at its
+    start and at its failure); sleeps keep whatever the test patched in."""
+    ticks = itertools.count(step=seconds)
+    monkeypatch.setattr(llm_client, "time", SimpleNamespace(
+        sleep=llm_client.time.sleep, monotonic=lambda: next(ticks)))
+
+
 class TestOpenAIChatPaths:
     def test_timeout_goes_straight_to_the_fallback(self, monkeypatch):
         """Each timeout already cost 300s; with a fallback, don't re-pay it."""
         p, sleeps, fallbacks = _provider(openai.APITimeoutError(request=_REQUEST), monkeypatch)
+        _each_attempt_takes(monkeypatch, 300)
         with pytest.raises(UpstreamLLMError):
             _chat(p)
         assert p._client.chat.completions.calls == 1
@@ -123,10 +135,11 @@ class TestOpenAIChatPaths:
 
     @pytest.mark.parametrize("exc", [openai.APITimeoutError(request=_REQUEST),
                                      openai.APIConnectionError(request=_REQUEST)])
-    def test_without_a_fallback_a_timeout_is_retried_twice(self, monkeypatch, exc):
+    def test_without_a_fallback_a_slow_transport_failure_is_retried_twice(self, monkeypatch, exc):
         p = OpenAIProvider(api_key="sk-test", model="gpt-4o")
         p._client = _FakeClient(exc)
         monkeypatch.setattr(llm_client.time, "sleep", lambda s: None)
+        _each_attempt_takes(monkeypatch, 300)
         with pytest.raises(UpstreamLLMError):
             _chat(p)
         assert p._client.chat.completions.calls == llm_client._MAX_TRANSPORT_RETRIES + 1 == 3
@@ -137,9 +150,19 @@ class TestOpenAIChatPaths:
         messages = _RaisingCompletions(anthropic.APITimeoutError(request=_REQUEST))
         client._client = type("C", (), {"messages": messages})()
         monkeypatch.setattr(llm_client.time, "sleep", lambda s: None)
+        _each_attempt_takes(monkeypatch, 300)
         with pytest.raises(UpstreamLLMError):
             client.chat("sys", [{"role": "user", "content": "hi"}], tools=[])
         assert messages.calls == 3
+
+    def test_a_fast_transport_failure_gets_the_full_retry_budget(self, monkeypatch):
+        """A refused connection costs milliseconds, not a 300s timeout."""
+        p, sleeps, fallbacks = _provider(openai.APIConnectionError(request=_REQUEST), monkeypatch)
+        with pytest.raises(UpstreamLLMError):
+            _chat(p)
+        assert p._client.chat.completions.calls == p._max_retries + 1 == 5
+        assert len(sleeps) == 4
+        assert len(fallbacks) == 1
 
     def test_token_count_400_is_not_an_invalid_key(self, monkeypatch):
         p, sleeps, _ = _provider(_status_error(openai.BadRequestError, 400, TOKENS_400),
@@ -164,6 +187,123 @@ class TestOpenAIChatPaths:
         p, _, _ = _provider(_status_error(openai.AuthenticationError, 401, "bad"), monkeypatch)
         with pytest.raises(InvalidApiKeyError):
             _chat(p)
+
+
+def _reply(model):
+    message = SimpleNamespace(content="ok", tool_calls=None)
+    return SimpleNamespace(
+        model=model, choices=[SimpleNamespace(message=message, finish_reason="stop")],
+        usage=SimpleNamespace(prompt_tokens=10, completion_tokens=1, prompt_tokens_details=None))
+
+
+def _stream(model):
+    delta = SimpleNamespace(content="ok", tool_calls=None)
+    return iter([SimpleNamespace(model=model, usage=None,
+                                 choices=[SimpleNamespace(delta=delta, finish_reason="stop")])])
+
+
+def _gateway(monkeypatch, fail):
+    """Every client the provider builds, its fallbacks' too, answers through
+    ``fail(model)``: an error to raise, or None to reply. Returns the models
+    requested, in order."""
+    requested: list = []
+
+    def create(**kwargs):
+        requested.append(kwargs["model"])
+        error = fail(kwargs["model"])
+        if error is not None:
+            raise error
+        return _stream(kwargs["model"]) if kwargs.get("stream") else _reply(kwargs["model"])
+
+    completions = SimpleNamespace(create=create)
+    monkeypatch.setattr(llm_client, "openai_client",
+                        lambda **kw: SimpleNamespace(chat=SimpleNamespace(completions=completions)))
+    monkeypatch.setattr(llm_client.time, "sleep", lambda s: None)
+    return requested
+
+
+def _chained_provider():
+    return OpenAIProvider(api_key="sk-test", model="primary-model",
+                          base_url="https://gateway.example.invalid/v1",
+                          fallback=[("https://gateway.example.invalid/v1", "tok", "alt-model"),
+                                    ("http://127.0.0.1:9/v1", "tok2", "last-resort-model")])
+
+
+def _once(error):
+    """Fail the first request with ``error``, then answer."""
+    seen: list = []
+    return lambda model: (seen.append(model), error if len(seen) == 1 else None)[1]
+
+
+class TestOneBlipDoesNotSwitchTheRun:
+    """A run on a tier with a fallback chain stays on its model for the rest of
+    the run once it switches, so one connection error must not switch it."""
+
+    @pytest.mark.parametrize("error", [openai.APIConnectionError(request=_REQUEST),
+                                       ConnectionError("Connection error.")])
+    def test_one_connection_error_is_retried_on_the_primary(self, monkeypatch, error):
+        requested = _gateway(monkeypatch, _once(error))
+        p = _chained_provider()
+        _chat(p)
+        assert requested == ["primary-model", "primary-model"]
+        assert p.model == "primary-model" and p.fallback_reason is None
+
+    def test_one_connection_error_on_a_stream_is_retried_on_the_primary(self, monkeypatch):
+        requested = _gateway(monkeypatch, _once(openai.APIConnectionError(request=_REQUEST)))
+        p = _chained_provider()
+        events = list(p.chat_stream("sys", [{"role": "user", "content": "hi"}], tools=[]))
+        assert events[-1]["type"] == "message_done"
+        assert requested == ["primary-model", "primary-model"]
+        assert p.model == "primary-model"
+
+    def test_a_timeout_that_took_the_full_sdk_timeout_still_moves_on(self, monkeypatch):
+        requested = _gateway(monkeypatch, _once(openai.APITimeoutError(request=_REQUEST)))
+        p = _chained_provider()
+        _each_attempt_takes(monkeypatch, 300)
+        _chat(p)
+        assert requested == ["primary-model", "alt-model"]
+        assert p.model == "alt-model"
+
+    def test_an_endpoint_that_stays_down_still_moves_on(self, monkeypatch):
+        requested = _gateway(monkeypatch, lambda model: (
+            openai.APIConnectionError(request=_REQUEST) if model == "primary-model" else None))
+        p = _chained_provider()
+        _chat(p)
+        assert requested == ["primary-model"] * 5 + ["alt-model"]
+        assert p.model == "alt-model"
+
+
+class TestPlanningCallLeavesThePrimaryAlone:
+    """A model_override (planning) call that fails is the caller's to retry on
+    the primary; it never switches the primary down the fallback chain."""
+
+    @pytest.mark.parametrize("error", [
+        _status_error(openai.NotFoundError, 404, "model_not_found: planner-model"),
+        _status_error(openai.InternalServerError, 503, "overloaded"),
+        _status_error(openai.AuthenticationError, 401, "bad key"),
+        openai.APITimeoutError(request=_REQUEST),
+    ])
+    def test_a_failed_planning_call_raises_and_keeps_the_primary(self, monkeypatch, error):
+        requested = _gateway(monkeypatch, lambda model: error if model == "planner-model" else None)
+        p = _chained_provider()
+        _each_attempt_takes(monkeypatch, 300)
+        with pytest.raises((UpstreamLLMError, InvalidApiKeyError)):
+            p.chat("sys", [{"role": "user", "content": "hi"}], tools=[],
+                   model_override="planner-model")
+        assert set(requested) == {"planner-model"}
+        assert p.model == "primary-model" and p._fallback_step == 0
+        assert p.fallback_reason is None
+        _chat(p)
+        assert requested[-1] == "primary-model"
+
+    def test_a_rejected_tool_choice_names_the_model_that_rejected_it(self, monkeypatch):
+        rejected = _status_error(openai.BadRequestError, 400,
+                                 "tool_choice of type 'function' is not supported")
+        _gateway(monkeypatch, lambda model: rejected if model == "planner-model" else None)
+        p = _chained_provider()
+        with pytest.raises(UpstreamLLMError, match="planner-model"):
+            p.chat("sys", [{"role": "user", "content": "hi"}], tools=[],
+                   model_override="planner-model")
 
 
 class TestSdkRetriesDisabled:

@@ -567,6 +567,9 @@ def _transport_error_types() -> tuple[type, ...]:
 
 # A timeout already cost a full SDK timeout (300s), so cap its retries hard.
 _MAX_TRANSPORT_RETRIES = 2
+# A transport failure faster than this (refused, reset, DNS) cost almost
+# nothing, so it gets the normal retries.
+_FAST_TRANSPORT_FAILURE_SECONDS = 10.0
 
 
 def _is_transport_error(error: Exception) -> bool:
@@ -577,13 +580,16 @@ def _is_transport_error(error: Exception) -> bool:
         marker in str(error).lower() for marker in ("timed out", "timeout"))
 
 
-def _stop_retrying_transport(error: Exception, attempt: int, has_fallback: bool) -> bool:
-    """True when a timeout should not be retried again on this endpoint.
+def _stop_retrying_transport(error: Exception, attempt: int, has_fallback: bool,
+                             elapsed: float) -> bool:
+    """True when a transport failure that took ``elapsed`` seconds should not
+    be retried again on this endpoint.
 
-    With a fallback it goes there at once; without one it gets
-    ``_MAX_TRANSPORT_RETRIES`` retries, not the full budget (~25 min worst case).
+    A fast one is retried like any transient error. A slow one (a timeout can
+    take the full SDK timeout) goes to the fallback at once; without one it
+    gets ``_MAX_TRANSPORT_RETRIES`` retries, not the full budget (~25 min worst case).
     """
-    if not _is_transport_error(error):
+    if not _is_transport_error(error) or elapsed < _FAST_TRANSPORT_FAILURE_SECONDS:
         return False
     return has_fallback or attempt >= _MAX_TRANSPORT_RETRIES
 
@@ -877,6 +883,7 @@ class ClaudeLLMClient(LLMProvider):
 
         for attempt in range(self._max_retries + 1):
             options = _request_options(self._timeout)
+            started = time.monotonic()
             try:
                 request_kwargs: dict[str, Any] = {
                     "model": effective_model,
@@ -902,7 +909,8 @@ class ClaudeLLMClient(LLMProvider):
                 _raise_if_deadline(e)
                 last_error = self._redacted(e)
                 if (attempt < self._max_retries and _is_retryable(e)
-                        and not _stop_retrying_transport(e, attempt, False)):
+                        and not _stop_retrying_transport(
+                            e, attempt, False, time.monotonic() - started)):
                     backoff = _backoff_seconds(e, attempt)
                     logger.warning(
                         "API call failed (attempt %d/%d), retrying in %.1fs: %s",
@@ -927,6 +935,7 @@ class ClaudeLLMClient(LLMProvider):
 
         for attempt in range(self._max_retries + 1):
             options = _request_options(self._timeout)
+            started = time.monotonic()
             try:
                 with self._client.messages.stream(
                     model=self._model,
@@ -952,7 +961,8 @@ class ClaudeLLMClient(LLMProvider):
                 _raise_if_deadline(e)
                 last_error = self._redacted(e)
                 if (attempt < self._max_retries and _is_retryable(e)
-                        and not _stop_retrying_transport(e, attempt, False)):
+                        and not _stop_retrying_transport(
+                            e, attempt, False, time.monotonic() - started)):
                     backoff = _backoff_seconds(e, attempt)
                     logger.warning("Stream failed (attempt %d), retrying: %s", attempt + 1, last_error)
                     _sleep_before_retry(backoff)
@@ -1633,8 +1643,7 @@ class OpenAIProvider(LLMProvider):
         if token:
             client_kwargs["default_headers"] = {"Authorization": f"Bearer {token}"}
         logger.warning(
-            "Model %s unavailable after all retries (%s) — switching to "
-            "fallback %d/%d: %s",
+            "Model %s failed (%s) — switching to fallback %d/%d: %s",
             self._model, self._redacted(error), self._fallback_step,
             len(self._fallback_chain), fb_model,
         )
@@ -1698,6 +1707,7 @@ class OpenAIProvider(LLMProvider):
 
         for attempt in range(self._max_retries + 1):
             options = _request_options(self._timeout)
+            started = time.monotonic()
             try:
                 # Newer models (GPT-5+, o3+) use max_completion_tokens
                 # instead of max_tokens
@@ -1763,7 +1773,8 @@ class OpenAIProvider(LLMProvider):
                         last_error[:200],
                     )
                 elif (attempt < self._max_retries and _is_retryable(e)
-                      and not _stop_retrying_transport(e, attempt, self._has_fallback())):
+                      and not _stop_retrying_transport(
+                          e, attempt, self._has_fallback(), time.monotonic() - started)):
                     backoff = _backoff_seconds(e, attempt)
                     logger.warning(
                         "OpenAI API call failed (attempt %d/%d), retrying in %.1fs: %s",
@@ -1771,20 +1782,24 @@ class OpenAIProvider(LLMProvider):
                     )
                     _sleep_before_retry(backoff)
                     continue
+                # A failed model_override call leaves the primary as it is: its
+                # caller retries on the primary, which falls back if it must.
                 if _is_auth_error(e):
                     # Only the server-paid tiers have a fallback: there a rejected
                     # key is the server's (e.g. an expired free-tier token), and
                     # another endpoint can still serve the run. A user's own key
                     # has no fallback and fails here, loudly.
-                    if self._activate_fallback(e, past_endpoint=self._base_url):
+                    if not model_override and self._activate_fallback(
+                            e, past_endpoint=self._base_url):
                         return self.chat(
                             system, messages, tools,
                             force_tool=force_tool, model_override=model_override,
                         )
                     raise InvalidApiKeyError(f"OpenAI API rejected the key: {last_error}") from None
                 if _is_tools_unsupported_error(e):
-                    raise UpstreamLLMError(_tools_unsupported_message(self._model)) from None
-                if ((_is_retryable(e) or _is_model_unavailable(e) or _is_quota_exhausted(e))
+                    raise UpstreamLLMError(_tools_unsupported_message(effective_model)) from None
+                if (not model_override
+                        and (_is_retryable(e) or _is_model_unavailable(e) or _is_quota_exhausted(e))
                         and self._activate_fallback(e)):
                     return self.chat(
                         system, messages, tools,
@@ -1807,6 +1822,7 @@ class OpenAIProvider(LLMProvider):
 
         for attempt in range(self._max_retries + 1):
             options = _request_options(self._timeout)
+            started = time.monotonic()
             try:
                 tok_key = _openai_max_tokens_key(self._model)
                 kwargs: dict[str, Any] = {
@@ -1932,7 +1948,8 @@ class OpenAIProvider(LLMProvider):
                         last_error[:200],
                     )
                 elif (attempt < self._max_retries and _is_retryable(e)
-                      and not _stop_retrying_transport(e, attempt, self._has_fallback())):
+                      and not _stop_retrying_transport(
+                          e, attempt, self._has_fallback(), time.monotonic() - started)):
                     backoff = _backoff_seconds(e, attempt)
                     logger.warning("OpenAI stream failed (attempt %d), retrying: %s", attempt + 1, last_error)
                     _sleep_before_retry(backoff)

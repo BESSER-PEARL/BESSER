@@ -126,7 +126,8 @@ Troubleshooting a run
      - The provider failed before the run wrote any file (rate limit,
        overload, timeout). Usually transient — retry. A timeout switches
        straight to the fallback model when the tier has a fallback chain;
-       otherwise it is retried twice before the run fails.
+       otherwise it is retried twice before the run fails. A connection that
+       fails within seconds is retried on the same model first.
    * - The model declined the request
      - A provider safety stop (Anthropic ``refusal``, OpenAI
        ``content_filter``) ends the customization loop with the reason and

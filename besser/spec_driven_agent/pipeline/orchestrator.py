@@ -506,6 +506,15 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # A modify run's judged files as the run found them (path -> sha256): a requirement to keep
         # behaviour as it was is met by its files left unchanged.
         self._seed_source_hashes: dict[str, str] | None = None
+        # A modify run's verdicts of the previous run on the tree it delivered
+        # (requirements_ledger.previous_run_verdicts); None in a create run.
+        self._previous_verdicts: list[dict] | None = None
+        self._previous_instructions: str | None = None  # the previous run's request, from its recipe
+        # Ids of the previous run's requirements this run still holds, and whether the
+        # newest messages only ask to retry or finish earlier work (then those are in scope).
+        self._previous_ids: set[int] = set()
+        self._follow_up_continues = False
+        self._replaced_ids: set[int] = set()  # previous requirements a newer message changes or removes
         # (requirement cache key, import index): one index per judged tree; see _import_index.
         self._import_index_cache: tuple[str, _requirements_ledger.ImportIndex] | None = None
         self._requirement_judgments: dict[str, list[dict]] = {}
@@ -4266,7 +4275,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             self.output_dir, stylesheets=_requirements_ledger.shows_stylesheets(requirements))
         cache_key = self._requirement_cache_key(requirements)
         imports = self._import_index(cache_key)
-        scope = json.dumps([requirements, self._instructions], sort_keys=True)
+        scope = self._requirement_scope(requirements)
+        if self._previous_verdicts and not self._requirement_verdicts_scope:
+            self._seed_previous_verdicts(requirements)  # first pass, also after a resume
         verdicts = self._requirement_judgments.get(cache_key)
         checked = None  # the check of a fresh judgment, reused below when nothing was kept
         # A judge outage is an unknown no code edit settles: a warning that
@@ -4325,8 +4336,11 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # was not judged on the code; it joins the focused round with that file shown
         # (the judge is told to answer unverified for code it was not shown).
         # An unverified absence is settled below, never by showing more code.
+        # Nor is a verdict carried from the previous run on files this run left unchanged.
+        carried = self._carried_previous_verdicts()
         rejudgeable = [item for item in self._requirement_verdicts
-                       if not (item.get("kind") == _requirements_ledger.ABSENCE_KIND and item["status"] == "unverified")]
+                       if not (item.get("kind") == _requirements_ledger.ABSENCE_KIND and item["status"] == "unverified")
+                       and item["id"] not in carried]
         unseen = {item["id"]: _requirements_ledger.named_digest_gaps(item, digest_gaps)
                   for item in rejudgeable if item["status"] in ("partial", "missing", "unverified")}
         unseen = {rid: paths for rid, paths in unseen.items() if paths}
@@ -4347,6 +4361,11 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             _requirements_ledger.settle_uncitable(self._requirement_verdicts, self.output_dir, imports,
                                                   self._seed_source_hashes),
             self._ui_in_scope())
+        if self._previous_verdicts:
+            self._requirement_verdicts = _requirements_ledger.mark_inherited(
+                self._requirement_verdicts,
+                [item for item in self._previous_verdicts if item["id"] in self._previous_ids],
+                inherit=not self._follow_up_continues, changed=frozenset(self._replaced_ids))
         self._requirement_verdicts_scope = scope
         self._requirement_verdicts_key = cache_key
         return _requirements_ledger.ledger_issues(self._requirement_verdicts)
@@ -4469,20 +4488,33 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         """The last pass's verified verdicts whose cited files, and the files
         those import or are mounted by, are byte-identical (no call): an edit
         elsewhere must not re-roll them. An edit to a cited file can break the
-        behaviour while the cited line survives."""
+        behaviour while the cited line survives. In a modify run, also the
+        previous run's unmet verdicts on files this run left unchanged."""
         if scope != self._requirement_verdicts_scope:
             return {}
-
-        def unchanged(hashes: dict[str, str]) -> bool:
-            return all(digest and _requirements_ledger.cited_file_hash(os.path.join(self.output_dir, rel)) == digest
-                       for rel, digest in hashes.items())
-
         # A verdict recorded before dependency hashes existed has none to check.
-        previous = [item for item in self._requirement_verdicts if item.get("status") == "implemented"
-                    and item.get("cited_file_hashes") and unchanged(item["cited_file_hashes"])
-                    and unchanged(item.get("dependency_file_hashes") or {})]
-        return {item["id"]: item for item in _requirements_ledger.verify_evidence(previous, self.output_dir, imports)
+        previous = [item for item in self._requirement_verdicts
+                    if item.get("status") == "implemented" and self._fingerprint_unchanged(item)]
+        kept = {item["id"]: item for item in _requirements_ledger.verify_evidence(previous, self.output_dir, imports)
                 if item["status"] == "implemented"}
+        return {**self._carried_previous_verdicts(), **kept}
+
+    def _carried_previous_verdicts(self) -> dict[int, dict]:
+        """A modify run's unmet verdicts of the previous run whose named files, and the files
+        those rest on, this run left byte-identical: kept as they were, without a judge call.
+        None when the new messages ask to finish earlier work: then they are judged and repaired."""
+        if self._follow_up_continues:
+            return {}
+        return {item["id"]: item for item in self._previous_verdicts or []
+                if item["id"] in self._previous_ids and item["status"] != "implemented"
+                and self._fingerprint_unchanged(item)}
+
+    def _fingerprint_unchanged(self, verdict: dict) -> bool:
+        """The verdict records file hashes, and every one of them still matches."""
+        hashes = {**(verdict.get("dependency_file_hashes") or {}), **(verdict.get("cited_file_hashes") or {})}
+        return bool(verdict.get("cited_file_hashes")) and all(
+            digest and _requirements_ledger.cited_file_hash(os.path.join(self.output_dir, rel)) == digest
+            for rel, digest in hashes.items())
 
     def _format_python_output(self) -> None:
         """Format the Python files the LLM wrote whole (``write_file``) in this run.
@@ -4539,19 +4571,39 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             self._stated_requirements = None  # decided once: used, or extract below
             if self._requirements is not None:
                 self._requirements_source = "editor"
+                self._adopt_previous_verdicts(self._matched_previous_ids(self._requirements))
                 self._trace.write(EVENT_REQUIREMENTS, source="editor", items=self._requirements)
                 return
         # One initial attempt and one recovery attempt; failed extraction stays
         # unknown instead of being cached forever as a successful empty list.
         if self._requirement_extraction_attempts >= 2 or not self._verification_call_allowed():
             return
+        # A modify run keeps the previous run's requirements and extracts only the messages since.
+        previous = self._previous_requirements()
+        follow_up = None
         self._requirement_extraction_attempts += 1
         before = self._safe_usage_counters()
         with self._traced_llm_call("requirements_extraction") as call:
-            self._requirements = _requirements_ledger.extract_requirements(
-                instructions, self.client, can_call=self._verification_call_allowed)
+            if previous:
+                follow_up = _requirements_ledger.extract_follow_up(
+                    previous, instructions, self._previous_instructions, self.client,
+                    can_call=self._verification_call_allowed)
+                self._requirements = follow_up["requirements"] if follow_up else None
+            if previous and follow_up is None and self._verification_call_allowed():
+                # The follow-up call failed: judge the whole request, as a run without a previous ledger.
+                logger.warning("Requirements ledger: the follow-up extraction returned nothing; "
+                               "extracting the whole request instead")
+                self._previous_verdicts = None
+                self._requirement_extraction_attempts += 1
+                self._requirements = _requirements_ledger.extract_requirements(
+                    instructions, self.client, can_call=self._verification_call_allowed)
+            elif not previous:
+                self._requirements = _requirements_ledger.extract_requirements(
+                    instructions, self.client, can_call=self._verification_call_allowed)
             call["outcome"] = "failed" if self._requirements is None else "ok"
             call["requirements"] = len(self._requirements or [])
+        if follow_up is not None:
+            self._continue_previous_ledger(previous, follow_up)
         if self._requirements is not None:
             self._requirements_source = "extracted"
             after = self._safe_usage_counters()
@@ -4572,6 +4624,72 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 "(model %s); requirement verification will not run",
                 self._requirement_extraction_attempts, getattr(self.client, "model", "?"),
             )
+
+    def _derived_requirement_texts(self) -> set[str]:
+        """The texts of the requirements a run derives from the model and the agent, not the request."""
+        requirements, self._requirements = self._requirements, []
+        try:
+            return {item["text"] for item in self._requirements_to_judge()}
+        finally:
+            self._requirements = requirements
+
+    def _previous_requirements(self) -> list[dict]:
+        """The previous run's own requirements (its ledger without the items this run derives
+        again from the model and the agent): ``[]`` outside a modify run or without a ledger."""
+        if not self._previous_verdicts:
+            return []
+        derived = self._derived_requirement_texts()
+        return [{key: item[key] for key in ("id", "text", "kind", "ref") if key in item}
+                for item in self._previous_verdicts if item["text"] not in derived]
+
+    def _continue_previous_ledger(self, previous: list[dict], follow_up: dict) -> None:
+        """The ledger: the previous run's requirements, then the new messages' own, numbered
+        after them. One a new message changes or removes stays, judged as usual: unmet, it is
+        reported as changed by that message, never as a regression (an extraction that names
+        too many must not empty the ledger)."""
+        next_id = max(item["id"] for item in previous) + 1
+        self._requirements = previous + [{**item, "id": next_id + i} for i, item in enumerate(self._requirements)]
+        self._follow_up_continues = follow_up["continues"]
+        self._replaced_ids = set(follow_up["replaces"])
+        if self._replaced_ids:
+            logger.info("Requirements ledger: the new messages change R%s of the previous run",
+                        ", R".join(map(str, sorted(self._replaced_ids))))
+        self._adopt_previous_verdicts({item["id"]: item["id"] for item in previous})
+
+    def _matched_previous_ids(self, requirements: list[dict]) -> dict[int, int]:
+        """Previous id -> id in ``requirements`` (the editor's) of the same requirement: the
+        same trace artifact when the previous one names one, else the same text."""
+        by_ref = {item["ref"]: item["id"] for item in requirements if item.get("ref")}
+        by_text = {item["text"]: item["id"] for item in requirements}
+        matched = {item["id"]: by_ref.get(item["ref"]) if item.get("ref") else by_text.get(item["text"])
+                   for item in self._previous_requirements()}
+        return {old: new for old, new in matched.items() if new is not None}
+
+    def _adopt_previous_verdicts(self, current_id: dict[int, int]) -> None:
+        """Keep the previous verdicts of the requirements this run still holds, under their ids
+        here (``current_id``: previous id -> id), and of the derived requirements by text."""
+        if not self._previous_verdicts:
+            return
+        derived = self._derived_requirement_texts()
+        derived_ids = {item["text"]: item["id"] for item in self._requirements_to_judge() if item["text"] in derived}
+        ledger = [item for item in self._previous_verdicts if item["text"] not in derived]
+        self._previous_ids = {current_id[item["id"]] for item in ledger
+                              if item["id"] in current_id and item.get("kind") != "verification"}
+        self._previous_verdicts = (
+            [{**item, "id": current_id[item["id"]]} for item in ledger if item["id"] in current_id]
+            + [{**item, "id": derived_ids[item["text"]]} for item in self._previous_verdicts
+               if item["text"] in derived_ids])
+
+    def _seed_previous_verdicts(self, requirements: list[dict]) -> None:
+        """Start the kept-verdict check from the previous run's verdicts on the tree it
+        delivered: a requirement whose files this run leaves unchanged is not judged again."""
+        self._requirement_verdicts = [item for item in self._previous_verdicts or []
+                                      if item["status"] == "implemented"]
+        self._requirement_verdicts_scope = self._requirement_scope(requirements)
+
+    def _requirement_scope(self, requirements: list[dict]) -> str:
+        """What a set of verdicts answered: the requirements and the request."""
+        return json.dumps([requirements, self._instructions], sort_keys=True)
 
     def _verification_call_allowed(self) -> bool:
         """Do not start a paid extraction/judgment after a stop or spend cap."""
@@ -5482,7 +5600,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         account of every call so far.
         """
         self.executor.stop_shell_processes()
-        result = remove_app_runtime_files(self.output_dir, self._written_paths() | self._files_at_start)
+        result = remove_app_runtime_files(self.output_dir, self._written_paths() | self._files_at_start,
+                                          self.executor.command_app_files)
         if result.removed:
             logger.warning("Removed %d file(s) the app wrote while it was test-run; they are not "
                            "part of the output: %s", len(result.removed), ", ".join(result.removed[:20]))

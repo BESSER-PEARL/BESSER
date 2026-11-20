@@ -26,7 +26,7 @@ import subprocess
 import sys
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import IO, Callable, Mapping, Optional, Sequence
 from urllib.parse import urlsplit
 
@@ -88,6 +88,12 @@ LOG_TAIL_MAX_BYTES = 1 << 20
 #: inside the sandbox (a reset arrives at once; a listening server waits for the request instead).
 PROBE_CONNECT_SECONDS = 0.5
 PROBE_RESET_SECONDS = 0.2
+#: A service's listen address in its own network namespace: every address there, since current pasta delivers a
+#: forwarded connection to the namespace's public address, not its loopback (--host-lo-to-ns-lo covers only host
+#: loopback sources, and Ubuntu 24.04's pasta lacks it). Only pasta's forwarded ports reach that namespace.
+NAMESPACE_LISTEN_HOST = "0.0.0.0"
+#: A service's listen address when it runs unconfined, in the host's own network.
+UNCONFINED_LISTEN_HOST = "127.0.0.1"
 
 #: Never scanned for watched files: dependencies and caches hold no source of the working copy.
 _SKIPPED_DIRS = frozenset({"node_modules", "__pycache__"})
@@ -154,6 +160,8 @@ class PreviewService:
     port: int
     #: host loopback ports the sandbox may reach (the modeling agent: the LLM proxy)
     tcp_out: tuple[int, ...] = ()
+    #: the option that sets its listen address (``--host``), appended at launch; "" when it picks its own
+    host_option: str = ""
 
 
 @dataclass(frozen=True)
@@ -227,7 +235,7 @@ def default_services(repos: Mapping[str, RepoSpec], *, public_url: str = "",
             # BESSER CLAUDE.md, "Running locally".
             argv=(_checkout_python(besser_path, "backend"), "-m",
                   "besser.utilities.web_modeling_editor.backend.backend",
-                  "--host", "127.0.0.1", "--port", str(backend_port)),
+                  "--port", str(backend_port)),
             cwd=besser_path,
             # PYTHONPATH makes the change's ``besser`` win over any installed one. The lab's own flags and build
             # stamp pass safe_subprocess_env(): the preview is a plain editor backend, not a second lab.
@@ -236,16 +244,18 @@ def default_services(repos: Mapping[str, RepoSpec], *, public_url: str = "",
                  "BESSER_LAB_PREVIEW_ENABLED": "false", "BESSER_BUILD_SHA": ""},
             watch=(os.path.join(besser_path, "besser"),),
             port=backend_port,
+            host_option="--host",
         ),
         PreviewService(
             name="frontend",
             # WME CLAUDE.md runs ``npm run dev`` (Vite); called directly, since that script pins port 8080.
-            argv=("npx", "vite", "--host", "127.0.0.1", "--port", str(frontend_port), "--strictPort"),
+            argv=("npx", "vite", "--port", str(frontend_port), "--strictPort"),
             cwd=os.path.join(frontend_path, "packages", "webapp"),
             env=frontend_env,
             # Vite reloads the editor's source itself; new dependencies need a restart.
             watch=(os.path.join(frontend_path, "package-lock.json"),),
             port=frontend_port,
+            host_option="--host",
         ),
         PreviewService(
             name="modeling_agent",
@@ -477,6 +487,11 @@ class PreviewSupervisor:
             reason = (f"{SANDBOX_POLICY_ENV}=off" if plan.mode == "unconfined-override"
                       else f"no namespace sandbox on {sys.platform}")
             logger.warning("Lab preview: %s runs without the sandbox (%s)", name, reason)
+        if service.host_option:
+            host = (service.host_option,
+                    NAMESPACE_LISTEN_HOST if plan.private_network else UNCONFINED_LISTEN_HOST)
+            command = [*command, *host]
+            plan = replace(plan, argv=[*plan.argv, *host])
         mtimes = _watched_mtimes(service.watch)
         os.makedirs(self._log_dir, exist_ok=True)
         # One log per process: a restart starts it afresh.

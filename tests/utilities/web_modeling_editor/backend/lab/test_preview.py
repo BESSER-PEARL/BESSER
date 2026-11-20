@@ -489,6 +489,28 @@ def test_launch_uses_a_private_network_and_forwards_only_the_services_ports(tmp_
     assert process.code is not None and _status(supervisor, "modeling_agent").state == "stopped"
 
 
+@pytest.mark.parametrize("private, host", [(True, "0.0.0.0"), (False, "127.0.0.1")])
+def test_a_service_listens_on_every_address_only_inside_its_own_network_namespace(tmp_path, sandboxed_launch,
+                                                                                  monkeypatch, private, host):
+    """pasta delivers a forwarded port to the namespace's own address, not its loopback (a probe bound to 127.0.0.1
+    inside was never reached through passt 2025_05), so inside it a service listens on every address; unconfined,
+    in the host's network, only on loopback."""
+    if not private:
+        monkeypatch.setattr(preview, "sandboxed_command",
+                            lambda command, **kwargs: SandboxedCommand(list(command), False, "unconfined-override"))
+    service = PreviewService(name="backend", argv=(sys.executable, "-m", "backend", "--port", "9100"),
+                             cwd=str(tmp_path), env={}, watch=(), port=9100, host_option="--host")
+    supervisor = PreviewSupervisor([service], log_dir=str(tmp_path / "logs"), sandbox=PreviewSandbox(
+        root=str(tmp_path / "change"), mounts=SandboxMounts(writable=())))
+
+    supervisor.start()
+
+    (process,) = sandboxed_launch["popen"]
+    assert process.argv[-4:] == ["--port", "9100", "--host", host]
+    assert len(sandboxed_launch["pasta"]) == (1 if private else 0)
+    supervisor.stop()
+
+
 def test_an_unavailable_sandbox_fails_the_service_and_never_runs_it_bare(tmp_path, sandboxed_launch, monkeypatch):
     def unavailable(command, **kwargs):
         raise SandboxUnavailable("a private network cannot be set up here (pasta (passt) is not installed)")
@@ -525,11 +547,13 @@ def _private_network_works() -> bool:
     return sandbox.sandbox_selftest_error() is None and sandbox._network_selftest(shutil.which("bwrap"))[0]
 
 
-# Listens on argv[1] inside its sandbox, then records whether it can reach the host listener on argv[2].
+# Listens on argv[1] inside its sandbox, on the address its ``--host`` option gives (argv[4:6]), then records whether
+# it can reach the host listener on argv[2].
 _NETWORK_PROBE = textwrap.dedent("""
     import socket, sys
+    assert sys.argv[4] == "--host"
     server = socket.socket()
-    server.bind(("127.0.0.1", int(sys.argv[1])))
+    server.bind((sys.argv[5], int(sys.argv[1])))
     server.listen()
     try:
         socket.create_connection(("127.0.0.1", int(sys.argv[2])), timeout=3).close()
@@ -537,7 +561,7 @@ _NETWORK_PROBE = textwrap.dedent("""
     except OSError as exc:
         reached = "refused: " + type(exc).__name__
     with open(sys.argv[3], "w") as handle:
-        handle.write(reached)
+        handle.write(reached + " " + sys.argv[5])
     while True:
         conn, _ = server.accept()
         conn.sendall(b"hello")
@@ -560,13 +584,16 @@ def test_a_sandboxed_service_cannot_reach_host_loopback_but_its_port_is_forwarde
         service = PreviewService(name="backend",
                                  argv=(sys.executable, "probe.py", str(port), str(host_listener.getsockname()[1]),
                                        str(tree / "reach.txt")),
-                                 cwd=str(tree), env={}, watch=(), port=port)
+                                 cwd=str(tree), env={}, watch=(), port=port, host_option="--host")
         supervisor = PreviewSupervisor([service], log_dir=str(tmp_path / "logs"), sandbox=PreviewSandbox(
             root=str(tmp_path / "change"), mounts=SandboxMounts(writable=(str(tree),))))
         try:
             supervisor.start()
             _wait_for(lambda: (tree / "reach.txt").exists(), "the probe")
-            assert (tree / "reach.txt").read_text(encoding="utf-8").startswith("refused")
+            reached = (tree / "reach.txt").read_text(encoding="utf-8")
+            assert reached.startswith("refused") and reached.endswith(" 0.0.0.0")
+            # pasta (passt 2025_05 here) delivers the forwarded port to the namespace's own address, so a service
+            # listening on its loopback only would never be reached.
             _wait_for(lambda: _status(supervisor, "backend").state == "running", "the forwarded port")
             with socket.create_connection(("127.0.0.1", port), timeout=5) as conn:
                 assert conn.recv(5) == b"hello"
@@ -603,7 +630,8 @@ def test_default_services_run_the_working_copy_on_localhost_ports(tmp_path, capl
 
     besser, agent_repo = repos[REPO_BESSER].path, repos[REPO_MODELING_AGENT].path
     assert backend.argv == (sys.executable, "-m", "besser.utilities.web_modeling_editor.backend.backend",
-                            "--host", "127.0.0.1", "--port", "9100")
+                            "--port", "9100")
+    assert backend.host_option == "--host"  # the supervisor appends the listen address at launch
     assert backend.cwd == besser
     assert backend.env["PYTHONPATH"] == besser
     assert backend.env["CORS_ORIGINS"] == "http://localhost:8180,http://127.0.0.1:8180"
@@ -615,7 +643,8 @@ def test_default_services_run_the_working_copy_on_localhost_ports(tmp_path, capl
     assert backend.watch == (os.path.join(besser, "besser"),)
     assert (backend.port, backend.tcp_out) == (9100, ())
 
-    assert frontend.argv == ("npx", "vite", "--host", "127.0.0.1", "--port", "8180", "--strictPort")
+    assert frontend.argv == ("npx", "vite", "--port", "8180", "--strictPort")
+    assert frontend.host_option == "--host"
     assert frontend.cwd == os.path.join(repos[REPO_FRONTEND].path, "packages", "webapp")
     # A dev build of the editor reads VITE_DEV_BACKEND_URL, not BACKEND_URL (shared/constants/constant.ts).
     assert frontend.env == {"VITE_DEV_BACKEND_URL": "http://localhost:9100/besser_api",
@@ -662,7 +691,7 @@ def test_default_services_behind_a_public_url_with_the_trees_venvs_and_the_llm_p
         "UML_BOT_WS_URL": "wss://preview-2.lab.besser-pearl.org/agent",
         "__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS": "preview-2.lab.besser-pearl.org",
     }
-    assert frontend.argv[5] == "8190"
+    assert frontend.argv[3] == "8190"
     assert agent.argv == (agent_python, "modeling_agent.py")
     assert agent.port == 8875
     assert agent.env["BESSER_AGENT_WS_PORT"] == "8875"

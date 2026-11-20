@@ -942,6 +942,11 @@ def _normalize_task_path(path: str) -> str:
     return re.sub(r"^(?:\./)+", "", path.replace("\\", "/"))
 
 
+def task_paths(text: str) -> list[str]:
+    """The file paths a task's text names, normalised, in order of first mention."""
+    return list(dict.fromkeys(_normalize_task_path(token) for token in _TASK_PATH_RE.findall(text)))
+
+
 def _resolve_task_paths(tasks: list, workspace_files: list) -> list:
     """Repair the file paths a task list names, against the real tree.
 

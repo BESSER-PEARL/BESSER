@@ -398,24 +398,19 @@ VALIDATION_TOOLS: list[dict[str, Any]] = [
             "action='mixed' does SEVERAL OF THE ABOVE IN ONE CALL — the turn "
             "you finish two items AND discover a new one AND drop one you didn't "
             "need should be ONE task_list call, not four. Pass any combination of "
-            "`done_ids` (+ top-level `evidence`/`existing`, same as action='done'), "
+            "`done_ids` (same as action='done' `ids`), "
             "`add_texts` (same as action='add' `texts`), `drop` (a list of "
             "{id, reason} objects), and `blocked` (a list of {id, reason} objects). "
             "The reply nests each verb's own result under `results` — check every "
             "key you used; a mixed call can succeed on one verb and be refused on "
             "another in the same response. "
-            "For done without an attached verifier, supply evidence=[{id, path, quote}]: "
-            "current exact quotes from your successful writes. For an already-existing "
-            "implementation, read the source first and set existing=true with exact "
-            "executable evidence (citing code you read, without claiming you wrote it); "
-            "do not make unnecessary edits just to close a task. This records "
-            "implementation only, not verified acceptance. "
             "Mark items done as you complete them — the run does not finish "
             "while items are open. Batch them: one task per call wastes a turn "
-            "each, and you have a limited number of turns. Some items are "
-            "checked before they are accepted; if one is refused, do the work "
-            "and try again — after a few refusals it is recorded as blocked "
-            "and you should move on rather than retry it."
+            "each, and you have a limited number of turns. An item with a machine "
+            "check closes by itself once the check passes, and done is refused while "
+            "it fails. An item that names files also closes by itself once your "
+            "edits have touched each of them. Closing an item is bookkeeping: the "
+            "harness still checks the app."
         ),
         "input_schema": {
             "type": "object",
@@ -424,22 +419,8 @@ VALIDATION_TOOLS: list[dict[str, Any]] = [
                     "type": "string",
                     "enum": ["list", "done", "add", "drop", "blocked", "mixed"],
                 },
-                "existing": {"type": "boolean"},
                 "id": {"type": "integer"},
                 "reason": {"type": "string"},
-                "evidence": {
-                    "type": "array",
-                    "maxItems": 20,
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "id": {"type": "integer"},
-                            "path": {"type": "string"},
-                            "quote": {"type": "string", "maxLength": 4000},
-                        },
-                        "required": ["id", "path", "quote"],
-                    },
-                },
                 "ids": {"type": "array", "items": {"type": "integer"}},
                 "text": {"type": "string"},
                 "texts": {"type": "array", "items": {"type": "string"}},

@@ -548,7 +548,9 @@ Findings are classified into three severities:
        or a fixed fact may keep a fixed reply; the citation is the line that
        reads or writes the records);
        partial requirements and unverified evidence (distinct from proven missing
-       behavior); unresolved checklist work and unimplemented action contracts;
+       behavior); a checklist item whose deterministic check fails (an action
+       handler still a stub, a requested route the app does not declare, a
+       missing frontend) and unimplemented action contracts;
        a method button that takes its row id from a table of another
        entity; frontend-contract and
        data-contract violations; create forms that cannot save (``api url:``,
@@ -568,7 +570,7 @@ Findings are classified into three severities:
        included), ``runtime unverified:``, ``api scenario:``,
        ``create contract:``, ``action call:``, ``requirement:``,
        ``requirement partial:``, ``requirement unverified:``,
-       ``action contract:``, ``task unverified:``, ``verification setup:``
+       ``action contract:``, ``task incomplete:``, ``verification setup:``
        (dependencies a permitted install would provide), ``tsc [``,
        ``cargo [``, ``kotlinc [`` and ``frontend build [``. These drive the
        auto-fix loop.
@@ -578,7 +580,14 @@ Findings are classified into three severities:
        cosmetic rule, so no ``ruff`` finding is ``style``.
    * - ``warning``
      - Everything else, including endpoint-coherence findings (report-only for
-       now), ``form field type:``, ``agent left out:`` (the project has an
+       now), ``task unverified:`` (a checklist item nothing settled: the model
+       neither closed it nor could finish it (``blocked``, whose reason is
+       shown), it has no check or its check could not run, and no write
+       touched every file it names; the run report lists it as not
+       confirmed, it never starts or prolongs a repair and is not counted as
+       a blocker; a missing behavior behind it is still caught by the build,
+       startup and create checks and by the requirements judge),
+       ``form field type:``, ``agent left out:`` (the project has an
        agent diagram, and the web app generator's output has no ``agents``
        folder because it was generated when no screen held an agent
        component; read from the files, so a modify run that changes the GUI

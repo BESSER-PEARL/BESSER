@@ -91,9 +91,7 @@ def test_task_list_tool_crud(tmp_path):
     assert listing["open"] == 2
     assert listing["tasks"][0] == {"id": 1, "text": "Add auth", "status": "open"}
 
-    executor._write_file({"path": "auth.py", "content": "enabled = True\n"})
-    done = json.loads(executor.execute("task_list", {"action": "done", "id": 1,
-        "evidence": [{"id": 1, "path": "auth.py", "quote": "enabled = True"}]}))
+    done = json.loads(executor.execute("task_list", {"action": "done", "id": 1}))
     assert done["open_remaining"] == 1
     assert done["open_items"] == [{"id": 2, "label": "Style the pages"}]
 
@@ -111,9 +109,7 @@ def test_task_snapshot_restore_preserves_done_state_and_verifier(tmp_path):
         {"text": "Build frontend", "verify": lambda: True},
         "Write README",
     ])
-    executor._write_file({"path": "README.md", "content": "Run python main.py\n"})
-    json.loads(executor.execute("task_list", {"action": "done", "id": 2,
-        "evidence": [{"id": 2, "path": "README.md", "quote": "Run python main.py"}]}))
+    json.loads(executor.execute("task_list", {"action": "done", "id": 2}))
     snapshot = executor.task_snapshot()
 
     restored = ToolExecutor(workspace=str(tmp_path))
@@ -188,10 +184,8 @@ def test_end_turn_with_closed_checklist_finishes_immediately(tmp_path, monkeypat
     client = _ScriptedClient([
         _tool_use("write_file", "w1", {"path": "auth.py", "content": "enabled = True\n"}),
         _tool_use("write_file", "w2", {"path": "style.css", "content": "body { color: black; }\n"}),
-        _tool_use("task_list", "t1", {"action": "done", "id": 1,
-            "evidence": [{"id": 1, "path": "auth.py", "quote": "enabled = True"}]}),
-        _tool_use("task_list", "t2", {"action": "done", "id": 2,
-            "evidence": [{"id": 2, "path": "style.css", "quote": "body { color: black; }"}]}),
+        _tool_use("task_list", "t1", {"action": "done", "id": 1}),
+        _tool_use("task_list", "t2", {"action": "done", "id": 2}),
         _end_turn(),
     ])
     orch = _make_orch(tmp_path, client)

@@ -129,7 +129,7 @@ def _cite_ledger_requirements(message: str, requirements: list[dict]) -> str:
 
     A conversion-recovery requirement runs to ~900 chars and was pasted three
     times per prompt: the ledger, its ``requirement:`` blocker and its
-    ``task unverified:`` blocker. The ledger keeps the one full copy.
+    ``task incomplete:`` blocker. The ledger keeps the one full copy.
     """
     for requirement in requirements:
         rid, text = f"R{requirement['id']}", requirement["text"]
@@ -241,20 +241,14 @@ class Phase3RepairMixin:
         return reason
 
     def _repair_obligations_revision(self) -> str:
-        """Test corrections and checklist evidence are progress without source edits.
+        """Test corrections and checklist changes are progress without source edits.
 
-        Two things deliberately do NOT move it, because neither discharges
-        anything and both would reset the no-progress streak:
-
-        * ``attempts`` in the task snapshot - a REFUSED ``task_list(done=...)``
-          increments it, so failing to close an item would read as closing one;
-        * the scenario KEY - the model may pass its own ``scenario_id``, so
-          re-registering identical requests under a new name would mint a new
-          entry. Only distinct scenario CONTENT counts, so a rename is not a
-          new obligation.
+        The scenario KEY deliberately does NOT move it: the model may pass its
+        own ``scenario_id``, so re-registering identical requests under a new
+        name would mint a new entry and reset the no-progress streak. Only
+        distinct scenario CONTENT counts, so a rename is not a new obligation.
         """
-        tasks = [{k: v for k, v in task.items() if k != "attempts"}
-                 for task in self.executor.task_snapshot()]
+        tasks = self.executor.task_snapshot()
         scenarios = sorted(
             json.dumps(record["scenario"], sort_keys=True)
             for record in self._api_scenarios.values()
@@ -1101,7 +1095,7 @@ class Phase3RepairMixin:
         # A verified existing implementation or corrected test need not mutate
         # production code. Keep forced edits only for concrete code defects.
         verification_only = all(issue.message.startswith((
-            "requirement unverified:", "task unverified:", "api scenario:",
+            "requirement unverified:", "api scenario:",
             "runtime unverified:", "create unverified:", "verification setup:",
         )) for issue in blockers)
 
@@ -1516,7 +1510,7 @@ class Phase3RepairMixin:
             return 0, message
         if message.startswith(("data contract:", "runtime unverified:")):
             return 1, message
-        if message.startswith(("requirement", "task unverified:")):
+        if message.startswith(("requirement", "task incomplete:")):
             return 3, message
         return 2, message
 

@@ -2235,8 +2235,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                             f"{listing}\n"
                             "Finish each one now. If an item is already "
                             "complete, mark it with task_list(action='done', "
-                            "id=N, evidence=[{id, path, quote}]) when no verifier "
-                            "is attached. If required work cannot be finished, "
+                            "ids=[...]). If required work cannot be finished, "
                             "record task_list(action='blocked', id=N, reason=...). "
                             "If the user did not ask for it, close it "
                             "honestly with task_list(action='drop', id=N, "
@@ -2285,7 +2284,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                         "<system-reminder>You have inspected/planned without changing source for "
                         f"{no_source_progress} turns. New successful reads are useful, but inspection is bounded. "
                         "Use the code already inspected to implement one coherent missing behavior, "
-                        "or use test_api/task_list evidence to verify behavior already present. "
+                        "or use test_api to verify behavior already present. "
                         "Do not make cosmetic edits to reset progress or repeat unchanged reads. "
                         "If a prerequisite prevents progress, record the concrete blocker. "
                         "The next stage will retain unresolved work, not treat inspection as completion.</system-reminder>"
@@ -2676,8 +2675,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         elif tool_name == "task_list":
             # Bookkeeping is not a loop when it works, which is why task_list
             # is read-only for loop purposes. A streak of REFUSED calls (e.g.
-            # marking tasks done one per turn, each rejected for supplying no
-            # evidence) is a loop. _is_stuck only fires when every call in the window
+            # marking items done one per turn while their checks fail) is a
+            # loop. _is_stuck only fires when every call in the window
             # failed, so a healthy batch still never trips it.
             loop_key = "task_list"
         else:
@@ -2756,7 +2755,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 "Marking an item done is bookkeeping, not progress, and the "
                 "checklist will keep refusing items you have not implemented. "
                 "Stop closing items: open the file named by the next unresolved "
-                "task and make the change, then cite it."
+                "task and make the change; a checked item closes by itself once its check passes."
             )
             result = dumps_for_model(result_obj)
 
@@ -3984,27 +3983,34 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             ) if item["status"] == "implemented"}
             verified_conversion_texts = {item["text"] for item in conversion_requirements
                                          if item["id"] in verified_ids}
+        # A Phase 3 edit can satisfy a formerly open or blocked item: settle
+        # every item from the current tree first, never from a claim.
+        self.executor.autoclose_verified_tasks()
         issues = []
         for task in self.executor.open_tasks() + self.executor.blocked_tasks():
             if task["text"] in verified_conversion_texts:
                 task.update(done=True, blocked=False, verification="evidence_checked")
                 task.pop("blocked_reason", None)
                 continue
+            text = task["text"]  # Verbatim: the fix prompt cites a requirement's exact text by id.
             verify = task.get("verify")
-            if verify is not None:
-                try:
-                    if verify():
-                        # A Phase 3 edit can satisfy a formerly blocked structural
-                        # task; evaluate the real callback, never trust the claim.
-                        self.executor._task_list({"action": "done", "id": task["id"]})
-                        continue
-                except Exception:
-                    pass  # The task remains unresolved, not successful.
+            try:
+                failed = verify is not None and not verify()
+            except Exception:
+                failed = False  # The check could not run: unknown, not a defect.
+            if failed:
+                issues.append(
+                    f"task incomplete: task {task['id']} is not done: {text}. Its deterministic "
+                    "check fails on the current source; implement the required work."
+                )
+                continue
+            blocked = (f" The agent recorded it as blocked: {task['blocked_reason']}."
+                       if task.get("blocked_reason") else "")
+            # Only an observed failure blocks: an item nothing settled is reported, not repaired.
             issues.append(
-                f"task unverified: task {task['id']} remains unresolved: {task['text']}. "
-                f"{task.get('blocked_reason', '')} Inspect and implement the required work; "
-                "record exact current evidence with task_list (existing=true is allowed "
-                "for an implementation already present; acceptance still needs verification)."
+                f"task unverified: task {task['id']} was not confirmed: {text}.{blocked} Neither "
+                "a task_list close nor a write to every file it names settled it; the other "
+                "checks still cover the app."
             )
         return issues
 

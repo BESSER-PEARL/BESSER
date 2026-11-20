@@ -44,6 +44,7 @@ GROUP_SENTENCES = {
     "action_failed": "{n} actions failed or changed nothing in the test run: {subjects}.",
     "requirement_unconfirmed": "{n} requirements could not be confirmed in the code: {subjects}.",
     "task_unconfirmed": "{n} planned changes could not be confirmed as done.",
+    "task_incomplete": "{n} planned changes are not done.",
     "workflow_failed": "{n} test workflows ran and failed: {subjects}.",
     "no_create_screen": "The user interface offers no way to create: {subjects}.",
     "operation_missing": "{n} operations of the model are not implemented: {subjects}.",
@@ -72,7 +73,13 @@ _ACTION = re.compile(r"POST \S+ - (?P<action>\w+) (?:on (?P<entity>\w+)|answered
 _ACTION_CALLING = re.compile(r"failure calling (?P<action>\w+) on a (?P<entity>\w+)")
 _ACTION_ENTITY = re.compile(r"the (?P<entity>\w+) created one request earlier")
 _SCENARIO = re.compile(r"^api scenario: (?P<id>.+?) failed:")
-_TASK = re.compile(r"remains unresolved: (?P<text>.*?)\.(?: |$)", re.S)
+_TASK = re.compile(r"(?:remains unresolved|was not confirmed|is not done|was closed by the agent, not checked): "
+                   r"(?P<text>.*?)\.(?: |$)", re.S)
+# What an unconfirmed item's message says about it, said for the user.
+_TASK_NOTES = (("was closed by the agent, not checked", " (the agent marked it done)"),
+               ("Every file it names was edited", " (its files were edited)"),
+               ("Some of the files it names were edited", " (some of its files were edited)"),
+               ("The files it names were not touched", " (its files were not touched)"))
 _DID_NOT_RUN = re.compile(r"^validation(?: unverified)?: (?P<check>.+?) did not run(?: completely)?"
                           r"(?: \((?P<reason>.*?)\))?(?: - |$)")
 _DETAIL_TEXT = re.compile(r'"detail"\s*:\s*"((?:[^"\\]|\\.)+)"')
@@ -251,11 +258,14 @@ def user_finding(message: str) -> Finding:
     for prefix in ("requirement unverified:", "requirement partial:", "requirement:"):
         if lower.startswith(prefix):
             return _requirement(text, prefix)
-    if lower.startswith("task unverified:"):
+    if lower.startswith(("task unverified:", "task incomplete:")):
         task = _TASK.search(text)
-        return Finding("A planned change could not be confirmed as done"
-                       + (f": {_cut(task.group('text'), _MAX_REQUIREMENT)}" if task else "."),
-                       "task_unconfirmed")
+        unverified = lower.startswith("task unverified:")
+        note = next((said for marker, said in _TASK_NOTES if marker in text), "") if unverified else ""
+        return Finding(("A planned change could not be confirmed as done" if unverified
+                        else "A planned change is not done")
+                       + (f": {_cut(task.group('text'), _MAX_REQUIREMENT)}{note}" if task else "."),
+                       "task_unconfirmed" if unverified else "task_incomplete")
     if scenario := _SCENARIO.match(text):
         name = scenario.group("id")
         return Finding(f"The test workflow '{name}' ran and failed.", "workflow_failed", name)

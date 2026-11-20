@@ -559,7 +559,10 @@ Findings are classified into three severities:
        or a fixed fact may keep a fixed reply; the citation is the line that
        reads or writes the records);
        partial requirements and unverified evidence (distinct from proven missing
-       behavior); unresolved checklist work and unimplemented action contracts;
+       behavior); a checklist item whose deterministic check fails (an action
+       handler still a stub, a requested route the app does not declare, a
+       missing frontend; a stub already reported as an ``action contract:``
+       is not reported a second time) and unimplemented action contracts;
        a method button that takes its row id from a table of another
        entity; frontend-contract and
        data-contract violations; create forms that cannot save (``api url:``,
@@ -579,7 +582,7 @@ Findings are classified into three severities:
        included), ``runtime unverified:``, ``api scenario:``,
        ``create contract:``, ``action call:``, ``requirement:``,
        ``requirement partial:``, ``requirement unverified:``,
-       ``action contract:``, ``task unverified:``, ``verification setup:``
+       ``action contract:``, ``task incomplete:``, ``verification setup:``
        (dependencies a permitted install would provide), ``tsc [``,
        ``cargo [``, ``kotlinc [`` and ``frontend build [``. These drive the
        auto-fix loop.
@@ -589,7 +592,19 @@ Findings are classified into three severities:
        cosmetic rule, so no ``ruff`` finding is ``style``.
    * - ``warning``
      - Everything else, including endpoint-coherence findings (report-only for
-       now), ``form field type:``, ``agent left out:`` (the project has an
+       now), ``task unverified:`` (a checklist item nothing closed: no
+       passing check and no ``task_list`` done, or the model recorded it as
+       ``blocked``, whose reason is shown; the finding says whether the files
+       the item names were edited. It is also raised when the model closes
+       one of the harness's own items that no other check covers, a modeled
+       rule the generators could not enforce or a derived attribute, on its
+       word alone. The run report lists it as not confirmed; it is not a
+       blocker, not counted in the blocker number, not sent to the repair
+       loop, and on a fix run it is not promoted to the reported failure. A
+       missing behavior behind it is still caught by the build, startup and
+       create checks and by the requirements judge when the request states
+       it),
+       ``form field type:``, ``agent left out:`` (the project has an
        agent diagram, and the web app generator's output has no ``agents``
        folder because it was generated when no screen held an agent
        component; read from the files, so a modify run that changes the GUI

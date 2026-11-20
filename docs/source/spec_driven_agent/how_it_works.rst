@@ -300,11 +300,16 @@ reading a trace and wondering why a run did what it did.
        before they are accepted (the "build the frontend" item checks that
        frontend files exist). Ending the turn also runs ``validate_app``; a
        blocker from its static frontend checks is sent back to the model once
-       before Phase 2 ends. An item whose check fails three times is recorded
-       as *blocked* and stops holding the gate, so a task the model cannot
-       satisfy can no longer livelock the run. An item the user did not ask
-       for is closed honestly with ``task_list(action='drop', id=N,
-       reason=...)`` rather than marked done.
+       before Phase 2 ends. The harness closes an item itself when its check
+       passes, and refuses ``done`` while the check fails; the model closes
+       an item without a check with ``task_list(action='done')``, without
+       quoting code. An edit to a file the item names never closes it. Work
+       the model cannot finish is recorded with ``action='blocked'`` and
+       stops holding the gate. An item the user did not ask for is closed
+       honestly with ``task_list(action='drop', id=N, reason=...)`` rather
+       than marked done. In Phase 3 only an item whose check fails is a
+       blocker; an item nothing closed is listed in the run report as not
+       confirmed.
    * - Per-write diagnostics
      - Every file the model writes is parsed immediately — ``ast`` plus
        pyflakes' undefined-name checks for Python, a structural scanner for

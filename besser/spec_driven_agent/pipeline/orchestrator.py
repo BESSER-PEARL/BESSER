@@ -548,6 +548,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self.tool_calls_log: list[dict] = []
         # ``tool_calls_log`` length at the last snapshot (None: none taken by this process).
         self._snapshot_calls: int | None = None
+        self._snapshot_task_writes: dict[int, list[str]] = {}
         self.total_turns = 0
         # (loop key, succeeded) per non-readonly call. Success matters: counting
         # names alone flags a run of SUCCESSFUL edits as a loop.
@@ -2264,8 +2265,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                             f"{listing}\n"
                             "Finish each one now. If an item is already "
                             "complete, mark it with task_list(action='done', "
-                            "id=N, evidence=[{id, path, quote}]) when no verifier "
-                            "is attached. If required work cannot be finished, "
+                            "ids=[...]). If required work cannot be finished, "
                             "record task_list(action='blocked', id=N, reason=...). "
                             "If the user did not ask for it, close it "
                             "honestly with task_list(action='drop', id=N, "
@@ -2314,7 +2314,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                         "<system-reminder>You have inspected/planned without changing source for "
                         f"{no_source_progress} turns. New successful reads are useful, but inspection is bounded. "
                         "Use the code already inspected to implement one coherent missing behavior, "
-                        "or use test_api/task_list evidence to verify behavior already present. "
+                        "or use test_api to verify behavior already present. "
                         "Do not make cosmetic edits to reset progress or repeat unchanged reads. "
                         "If a prerequisite prevents progress, record the concrete blocker. "
                         "The next stage will retain unresolved work, not treat inspection as completion.</system-reminder>"
@@ -2706,8 +2706,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         elif tool_name == "task_list":
             # Bookkeeping is not a loop when it works, which is why task_list
             # is read-only for loop purposes. A streak of REFUSED calls (e.g.
-            # marking tasks done one per turn, each rejected for supplying no
-            # evidence) is a loop. _is_stuck only fires when every call in the window
+            # marking items done one per turn while their checks fail) is a
+            # loop. _is_stuck only fires when every call in the window
             # failed, so a healthy batch still never trips it.
             loop_key = "task_list"
         else:
@@ -2788,7 +2788,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 "Marking an item done is bookkeeping, not progress, and the "
                 "checklist will keep refusing items you have not implemented. "
                 "Stop closing items: open the file named by the next unresolved "
-                "task and make the change, then cite it."
+                "task and make the change; a checked item closes by itself once its check passes."
             )
             result = dumps_for_model(result_obj)
 
@@ -4005,6 +4005,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         return self._action_endpoints
 
     def _collect_task_issues(self) -> list[str]:
+        """A finding per checklist item no check closed."""
         conversion_requirements = [item for item in self._requirements_for_validation()
                                    if item.get("conversion_issue_id")]
         verified_conversion_texts = set()
@@ -4020,29 +4021,54 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             ) if item["status"] == "implemented"}
             verified_conversion_texts = {item["text"] for item in conversion_requirements
                                          if item["id"] in verified_ids}
+        # A Phase 3 edit can satisfy a formerly open or blocked item: settle
+        # every item from the current tree first, never from a claim.
+        self.executor.autoclose_verified_tasks()
         issues = []
+        stubs: list[str] | None = None  # the ``action contract:`` findings, read once if needed
         for task in self.executor.open_tasks() + self.executor.blocked_tasks():
             if task["text"] in verified_conversion_texts:
                 task.update(done=True, blocked=False, verification="evidence_checked")
                 task.pop("blocked_reason", None)
                 continue
+            text = task["text"]  # Verbatim: the fix prompt cites a requirement's exact text by id.
             verify = task.get("verify")
-            if verify is not None:
-                try:
-                    if verify():
-                        # A Phase 3 edit can satisfy a formerly blocked structural
-                        # task; evaluate the real callback, never trust the claim.
-                        self.executor._task_list({"action": "done", "id": task["id"]})
-                        continue
-                except Exception:
-                    pass  # The task remains unresolved, not successful.
+            try:
+                failed = verify is not None and not verify()
+            except Exception:
+                failed = False  # The check could not run: unknown, not a defect.
+            if failed:
+                if task.get("_action_contract") and stubs is None:
+                    stubs = action_implementation_issues(self.output_dir, self._expected_action_endpoints())
+                if not _action_already_reported(task.get("_action_contract"), stubs or ()):
+                    issues.append(
+                        f"task incomplete: task {task['id']} is not done: {text}. Its deterministic "
+                        "check fails on the current source; implement the required work."
+                    )
+                continue
+            blocked = (f" The agent recorded it as blocked: {task['blocked_reason']}."
+                       if task.get("blocked_reason") else "")
+            # Only an observed failure blocks: an item nothing closed is reported, not repaired.
             issues.append(
-                f"task unverified: task {task['id']} remains unresolved: {task['text']}. "
-                f"{task.get('blocked_reason', '')} Inspect and implement the required work; "
-                "record exact current evidence with task_list (existing=true is allowed "
-                "for an implementation already present; acceptance still needs verification)."
+                f"task unverified: task {task['id']} was not confirmed: {text}.{blocked} "
+                f"{_named_file_edits(task, self.output_dir)}Nothing closed it; the other checks still cover the app."
             )
+        unchecked = self._unchecked_task_texts()
+        for task in self.executor.unverified_tasks():
+            if task["text"] in unchecked:
+                issues.append(
+                    f"task unverified: task {task['id']} was closed by the agent, not checked: "
+                    f"{task['text']}. No other check covers this item."
+                )
         return issues
+
+    def _unchecked_task_texts(self) -> set[str]:
+        """Harness items no other check covers: modeled rules the generators could not
+        enforce, and derived attributes (seeded as in ``_deterministic_gap_tasks``)."""
+        texts = set(self._unenforced_rule_tasks())
+        if not self._modify_mode and self._scaffold_family() == "fastapi":
+            texts.update(derived_attribute_tasks(self.domain_model))
+        return texts
 
     def _unenforced_rule_tasks(self) -> list[str]:
         """One task per modeled OCL rule the generators could not enforce.
@@ -5917,6 +5943,41 @@ _ADVISORY_PREFIX = "advisory, not a blocker: "
 
 # Focused re-judge rounds per judged source: the first, and one more for files it left out.
 _REJUDGE_ROUNDS = 2
+
+
+def _named_file_edits(task: dict, workspace: str) -> str:
+    """Whether the run edited the files a checklist item names, as a sentence ('' when it names none).
+
+    A named path that is not a workspace file (``routers/x.py`` for ``backend/routers/x.py``)
+    is said to be absent, not untouched.
+    """
+    written = task.get("written") or ()
+    named = task.get("files") or []
+    absent = [path for path in named
+              if path not in written and not os.path.isfile(os.path.join(workspace, path))]
+    files = [path for path in named if path not in absent]
+    note = f"No workspace file is at {', '.join(absent)}. " if absent else ""
+    if not files:
+        return note
+    edited = [path for path in files if path in written]
+    if len(edited) == len(files):
+        said = f"Every file it names was edited ({', '.join(files)}); that alone does not show it is done. "
+    elif edited:
+        rest = [path for path in files if path not in edited]
+        said = (f"Some of the files it names were edited. Edited: {', '.join(edited)}; "
+                f"not touched: {', '.join(rest)}. ")
+    else:
+        said = f"The files it names were not touched ({', '.join(files)}). "
+    return said + note
+
+
+def _action_already_reported(action, reported) -> bool:
+    """An ``action contract:`` finding already names the stub handler of this item."""
+    if not action:
+        return False
+    path, _function, method, route = action
+    head, served = f"action contract: {path} line ", f": {method} {route} ("
+    return any(str(message).startswith(head) and served in str(message) for message in reported)
 
 
 def _check_reason(note: str) -> str:

@@ -743,7 +743,8 @@ class ModifyRunMixin:
             if (
                 issue.severity != "blocker"
                 and issue.message not in earlier
-                and not issue.message.startswith(self._FIX_TARGET_PREFIX)
+                # A checklist item nothing confirmed is not an observed failure.
+                and not issue.message.startswith((self._FIX_TARGET_PREFIX, "task unverified:"))
                 and finding_matches_target(issue.message, self._fix_target)
             ):
                 promoted.append(ValidationIssue(

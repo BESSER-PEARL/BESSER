@@ -43,7 +43,7 @@ def _hard_blockers(issues: list) -> list:
     """
     return [i for i in issues if not i.message.startswith((
         "requirement:", "requirement unverified:",
-        "requirement partial:", "task unverified:",
+        "requirement partial:", "task unverified:", "task incomplete:",
         "runtime unverified:", "create unverified:",
     ))]
 
@@ -251,11 +251,16 @@ def _classify_issue(message: str) -> ValidationIssue:
     )):
         return ValidationIssue("blocker", text)
 
+    # A checklist item nothing settled is reported, not repaired; one whose
+    # deterministic check fails is missing work.
+    if lower.startswith("task unverified:"):
+        return ValidationIssue("warning", text)
+
     # Missing behavior and incomplete requirement verification both prevent
     # verified completion; unknown evidence is not proof of absent behavior.
     if lower.startswith((
         "requirement:", "requirement partial:", "requirement unverified:",
-        "action contract:", "task unverified:",
+        "action contract:", "task incomplete:",
     )):
         return ValidationIssue("blocker", text)
 

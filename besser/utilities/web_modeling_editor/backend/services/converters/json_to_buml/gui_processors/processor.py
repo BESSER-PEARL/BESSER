@@ -44,6 +44,7 @@ from .chart_parsers import (
 )
 from .component_helpers import has_data_binding, has_menu_structure
 from .component_parsers import (
+    is_text_element,
     parse_alert,
     parse_button,
     parse_container,
@@ -521,7 +522,7 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
             return input_field
 
         # === LABEL (OR OTHER TEXT) AROUND AN INPUT (its input is kept, labelled with its text) ===
-        if (comp_type in {"text", "label"} or tag in TEXT_TAGS) and wraps_input(component):
+        if is_text_element(comp_type, tag) and wraps_input(component):
             name = get_unique_name(component, "Container")
             container = parse_label_around_input(component, styling, name, meta, parse_component_list)
             attach_meta(container, meta)

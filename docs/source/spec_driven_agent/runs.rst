@@ -46,6 +46,15 @@ sized from recorded runs: where Phase 3 repaired, it made a median quarter of
 the run's tool calls, and a quarter of the 2400 s cap covers most recorded
 validation phases.
 
+Verifying is not stalling. Phase 2 hands off early (``stop_detail`` starts
+``inspection handoff``) only after 20 tool calls in a row that changed no source
+and returned nothing new: a read of new content, a checklist or test change, or
+any other successful result not seen before (digits are ignored, so a new port,
+id or timestamp does not make a repeated command new). The model is first shown
+a reminder, with its open checklist items, and the handoff comes no earlier than
+the next turn. After 40 calls without a source change it is reminded once to
+implement.
+
 When a run hits a cap it still returns whatever it has produced so far — the
 cap is surfaced as a non-terminal warning before the final result, not as a
 hard failure.

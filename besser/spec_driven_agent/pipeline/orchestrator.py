@@ -355,8 +355,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     _MAX_TASK_NUDGES = 2
     # End-of-turn nudges that show static frontend blockers; each also counts as a task nudge.
     _MAX_FRONTEND_BLOCKER_NUDGES = 1
-    _PHASE2_STAGNANT_TURNS = 10
-    _PHASE2_INSPECTION_TURNS = 20
+    # Executed calls with no source change and no new result before Phase 2
+    # hands off, and with no source change before it is reminded to implement.
+    _PHASE2_STAGNANT_CALLS = 20
+    _PHASE2_INSPECTION_CALLS = 40
 
     def __init__(
         self,
@@ -2163,6 +2165,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         no_information_progress = 0
         inspected: set[tuple[str, str]] = set()
         observed_plans = {self._repair_obligations_revision()}
+        observed_results: set[str] = set()
         inspection_nudged = False
         self._phase2_inspection_handoff = ""
         call_limit = self._phase2_call_limit()
@@ -2334,38 +2337,48 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 if source_changed:
                     inspected.clear()
                     observed_plans.clear()
+                    observed_results.clear()
                 novel_inspection = self._record_novel_inspections(tool_blocks, tool_results, inspected)
+                novel_result = self._record_novel_results(tool_blocks, tool_results, observed_results)
                 plan = self._repair_obligations_revision()
                 novel_plan = plan not in observed_plans
                 observed_plans.add(plan)
-                no_source_progress = 0 if source_changed else no_source_progress + 1
-                no_information_progress = (0 if source_changed or novel_inspection or novel_plan
-                                           else no_information_progress + 1)
+                # Counted in executed calls, so batching does not change how long a model may verify.
+                no_source_progress = 0 if source_changed else no_source_progress + len(tool_blocks)
+                no_information_progress = (0 if source_changed or novel_inspection or novel_result or novel_plan
+                                           else no_information_progress + len(tool_blocks))
                 last_progress_revision = revision
-                handoff = (no_information_progress >= self._PHASE2_STAGNANT_TURNS
-                           or no_source_progress >= self._PHASE2_INSPECTION_TURNS)
-                if not inspection_nudged and no_source_progress >= self._PHASE2_STAGNANT_TURNS:
+                stagnant = no_information_progress >= self._PHASE2_STAGNANT_CALLS
+                # The reminder is always delivered before a handoff: one turn after it, at the earliest.
+                handoff = stagnant and inspection_nudged
+                if not inspection_nudged and (stagnant or no_source_progress >= self._PHASE2_INSPECTION_CALLS):
                     inspection_nudged = True
+                    open_items = self.executor.open_tasks()
                     messages.append({"role": "user", "content": [{"type": "text", "text": (
-                        "<system-reminder>You have inspected/planned without changing source for "
-                        f"{no_source_progress} turns. New successful reads are useful, but inspection is bounded. "
+                        "<system-reminder>You have made "
+                        f"{no_source_progress} tool calls without changing source. New results are useful, "
+                        "but inspection is bounded. "
                         "Use the code already inspected to implement one coherent missing behavior, "
                         "or use test_api to verify behavior already present. "
-                        "Do not make cosmetic edits to reset progress or repeat unchanged reads. "
+                        "Do not make cosmetic edits to reset progress or repeat unchanged reads or commands. "
                         "If a prerequisite prevents progress, record the concrete blocker. "
-                        "The next stage will retain unresolved work, not treat inspection as completion.</system-reminder>"
+                        "The next stage will retain unresolved work, not treat inspection as completion."
+                        + ("\n\nThese checklist items are still OPEN; close each one with task_list as done, "
+                           "blocked with its reason, or dropped if the user did not ask for it:\n"
+                           + "\n".join(f"  {t['id']}. {t['text']}" for t in open_items) if open_items else "")
+                        + "</system-reminder>"
                     )}]})
                 if handoff:
                     self._phase2_stop_reason = "validation_required"
                     self._phase2_stop_detail = (
                         f"inspection handoff (no source change for {no_source_progress} "
-                        f"turns, no new information for {no_information_progress})")
+                        f"tool calls, no new information for {no_information_progress})")
                     paths = sorted({path for path, _ in inspected})
                     self._phase2_inspection_handoff = (
                         f"Phase 2 inspected {len(inspected)} distinct successful source excerpts and "
                         f"{len(observed_plans)} task/scenario states since the last source change. "
-                        f"No source change for {no_source_progress} turns; no new inspection/plan for "
-                        f"{no_information_progress} turns. Inspected paths: {', '.join(paths[:12]) or 'none'}"
+                        f"No source change for {no_source_progress} tool calls; no new result for "
+                        f"{no_information_progress} calls. Inspected paths: {', '.join(paths[:12]) or 'none'}"
                         + (" (additional paths omitted)" if len(paths) > 12 else "")
                         + ". This is an inspection handoff, not verification. Use the listed source and "
                         "concrete diagnostics to implement or verify the next unresolved behavior; avoid restarting a full-file tour."
@@ -2520,6 +2533,29 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 "off — re-state only what you still need to write."
             ),
         }]}
+
+    @staticmethod
+    def _record_novel_results(tool_blocks, tool_results, seen) -> bool:
+        """Credit a successful result of any tool but ``read_file`` that was not
+        seen before. Digits are masked, so ports, ids, timings and timestamps do
+        not make a repeated command look new."""
+        names = {block.id: block.name for block in tool_blocks}
+        novel = False
+        for result in tool_results:
+            name, content = names.get(result.get("tool_use_id")), result.get("content")
+            if name in (None, "read_file") or not isinstance(content, str):
+                continue
+            try:
+                payload = json.loads(content)
+            except (TypeError, ValueError):
+                payload = None
+            if isinstance(payload, dict) and payload.get("error"):
+                continue
+            key = hashlib.sha256(f"{name}\0{_re.sub(r'[0-9]+', '0', content)}".encode("utf-8")).hexdigest()
+            if key not in seen and len(seen) < 1000:
+                seen.add(key)
+                novel = True
+        return novel
 
     @staticmethod
     def _record_novel_inspections(tool_blocks, tool_results, seen) -> bool:

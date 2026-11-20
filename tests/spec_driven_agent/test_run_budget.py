@@ -62,3 +62,21 @@ def test_phase2_stops_at_its_share_of_the_clock_and_phase3_validates(tmp_path, m
     # A scripted turn takes 60 s: Phase 2's last call started before Phase 3's share began.
     last_call_at = rounds[0] - 1_000.0 - 60.0
     assert last_call_at < 600 * (1 - _PHASE3_BUDGET_SHARE), f"Phase 2's last call started {last_call_at:.0f} s in"
+
+
+def test_verifying_one_call_per_turn_is_not_stagnation(tmp_path, monkeypatch):
+    """After its last edit the model checks its work one call per turn, each call with a
+    new result. The inspection handoff counted that as no progress and cut it after ten
+    turns; only new reads counted, and an unclosed checklist reached Phase 3 unseen."""
+    _no_app_boot(monkeypatch)
+    script = shelf_script()
+    checks = [("search_in_files", {"pattern": pattern}) for pattern in (
+        "def book_stats", "def shelf_stats", "def shelf_totals", "include_router", "APIRouter",
+        "get_db", "Session", "Depends", "response_model", "tags=", "sum(", "query(Book)",
+        "query(Library)", "library.books")]
+    script[13:13] = checks   # after the second validate_app, before the last checklist update
+    agent = ScriptedAgent(str(tmp_path), script, TASKS)
+    orchestrator = run_scripted(tmp_path, agent)
+
+    assert orchestrator._phase2_stop_reason == "completed", orchestrator._phase2_stop_detail
+    assert sum(map(len, agent.sent["phase2"])) == len(script)

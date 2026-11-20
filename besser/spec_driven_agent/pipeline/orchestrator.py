@@ -3593,9 +3593,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # actionable verification prerequisite, not a request for source edits.
         raw_issues.extend(self._collect_tsc_issues())
         raw_issues.extend(self._format_notes)
-        if (self._generator_used == "generate_web_app" and self.agent_model is not None
-                and self.gui_model is not None and not gui_uses_agent(self.gui_model)):
-            raw_issues.append(agent_left_out_note(self.agent_model.name))
+        raw_issues.extend(self._agent_left_out_issues())
         raw_issues.extend(_collect_uncompiled_source_issues(
             self.output_dir,
             frozenset({".rs", ".kt"}) if self.enable_toolchain_validation else frozenset()))
@@ -3875,6 +3873,17 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 except OSError:
                     continue
         return bool(_route_may_serve_home(_CodeFiles(files)))
+
+    def _agent_left_out_issues(self) -> list[str]:
+        """``agent left out:`` when the web app generator's output on disk has no agents folder
+        while the project has an agent: what was generated, whatever the GUI model says now."""
+        generated = self._generator_used == "generate_web_app" or any(
+            call.get("tool") == "generate_web_app" and call.get("success") for call in self.tool_calls_log)
+        web_app = os.path.join(self.output_dir, _APPLICATION_OUTPUT_DIRS["generate_web_app"])
+        if (generated and self.agent_model is not None and os.path.isdir(web_app)
+                and not os.path.isdir(os.path.join(web_app, "agents"))):
+            return [agent_left_out_note(self.agent_model.name)]
+        return []
 
     def _app_agent(self):
         """The agent model when it is part of the app: without a GUI, when a screen

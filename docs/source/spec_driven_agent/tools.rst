@@ -69,7 +69,8 @@ region, or a range edit's ``read_id`` is stale, the result holds that span as a
 ``located_range`` with a fresh ``read_id`` for ``replace_file_lines``. From the
 second refused edit on a file (with no landed edit between), the step is to read
 the whole file and ``write_file`` it back. The orchestrator's reminders repeat
-that step.
+that step. No tool call is forced: the step is in the result, and the model
+chooses its next call, in Phase 2 as in a repair attempt.
 
 A rewrite of a file this run did not create must keep its code when the file
 is a generated one over 200 lines, or, in a modify run, any file over 15

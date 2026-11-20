@@ -163,7 +163,6 @@ def test_the_repeat_escalation_names_the_rewrite_step(stuck):
     text = messages[-1]["content"][0]["text"]
     assert "read_file on the WHOLE file" in text and "write_file" in text, text
     assert "use replace_file_lines" not in text and "select the whole enclosing block" not in text
-    assert stuck._force_tool_next == "read_file"
 
 
 def test_the_per_file_reminder_names_the_rewrite_step(stuck):

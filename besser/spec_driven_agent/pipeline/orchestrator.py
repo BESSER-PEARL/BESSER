@@ -596,9 +596,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._last_modify_warning_path: str | None = None
         self._phase2_inspection_handoff = ""
         # Escalation for an edit the executor has already rejected and the
-        # model sends again (see _escalate_repeat_rejection): the tool the
-        # next request must call, and per path the repeat count already acted on.
-        self._force_tool_next: str | None = None
+        # model sends again (see _escalate_repeat_rejection): per path the
+        # repeat count already acted on.
         self._repeat_escalations: dict[str, int] = {}
         self._compaction_count = 0
         self._generator_used: str | None = None
@@ -2203,7 +2202,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             messages = self._maybe_compact(messages)
 
             try:
-                response = self._chat_with_pending_force(system, messages)
+                response = self._chat_turn(system, messages)
             except InvalidApiKeyError:
                 # Auth failures must PROPAGATE so the runner reports INVALID_KEY,
                 # not a misleading INTERNAL/api_error or a fake "incomplete
@@ -2807,9 +2806,6 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 execution.payload["checklist_closed"] = closed
                 logger.info("Auto-closed %d verified checklist item(s): %s",
                             len(closed), [item["id"] for item in closed])
-        recovery = execution.payload.get("edit_recovery", {})
-        if recovery.get("next_tool") in {"read_file", "replace_file_lines", "modify_file"}:
-            self._force_tool_next = recovery["next_tool"]
         result = execution.to_json()
         success = execution.succeeded
 
@@ -5145,7 +5141,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             self.total_turns += 1
 
             try:
-                response = self._chat_with_pending_force(system, messages)
+                response = self._chat_turn(system, messages)
             except InvalidApiKeyError:
                 # The caller must report the bad key, not a fix summary.
                 raise

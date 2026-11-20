@@ -1293,9 +1293,6 @@ class Phase3RepairMixin:
             turn += 1
             self.total_turns += 1
             self._trace.write(EVENT_TURN_START, turn=self.total_turns, phase="phase3_fix")
-            # No tool is forced in a fix attempt; the executor's recovery
-            # ladder still names its next step in the tool result.
-            self._force_tool_next = None
             # Same compaction as Phase 2; the blockers ride in its work state.
             messages = self._maybe_compact(messages)
             request_messages = without_rejected_edit_drafts(messages)

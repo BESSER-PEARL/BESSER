@@ -944,7 +944,7 @@ A fix turn whose reply is cut off at the output-token limit is retried with
 an instruction to emit less, up to four times per attempt, rather than
 applying a half-written edit.
 
-No tool is forced in a fix attempt: it ends when the model ends its turn or
+No tool is forced in a fix attempt, as in Phase 2: it ends when the model ends its turn or
 its ten turns are spent, and an attempt without a successful edit is logged as
 ``ended with no successful edit``. Phase 3 tool calls are recorded in the trace
 and the recipe exactly like Phase 2's.

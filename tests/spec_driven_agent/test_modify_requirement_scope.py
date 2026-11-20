@@ -485,3 +485,16 @@ def test_a_modify_run_judges_its_request_and_its_changes_only(tmp_path, monkeypa
     assert calls == [[1, 4]]
     assert _blockers(found["issues"]) == []
     assert any(issue.startswith("requirement still open from the previous run: R3") for issue in found["issues"])
+
+
+@pytest.mark.parametrize("rid, before", [(2, "implemented"), (3, "missing")])
+def test_a_changed_requirement_says_whether_it_was_implemented_before(run, rid, before):
+    """A deliberate change and a break both read 'changed': the note tells which one was working."""
+    run.client.reply = {"requirements": [], "replaces": [rid], "continues_earlier_work": False}
+    _write(run.root, "backend/routers/customers.py", CUSTOMERS_PY.replace("def list_customers():", "def _x():"))
+    _write(run.root, "backend/services/reports.py", REPORTS_PY.replace("return 0", "return -1"))
+
+    [changed] = _about(run.orch._collect_requirement_issues(), rid)
+
+    assert changed.startswith(f"requirement changed by your newest message: R{rid}")
+    assert ("It was implemented when the previous run ended." in changed) is (before == "implemented")

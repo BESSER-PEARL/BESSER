@@ -2710,18 +2710,19 @@ def mark_inherited(verdicts: list[dict], previous: list[dict], *, inherit: bool 
     """``verdicts`` with each unmet one in ``changed`` (a newer message changes or removes it)
     marked :data:`CHANGED_LATER`, each other unmet one whose ``previous`` verdict (by id) was
     unmet too marked :data:`INHERITED` (unless ``inherit`` is off), and each unmet one whose
-    previous verdict was implemented noted as a regression. Only the ids in ``previous`` are compared."""
+    previous verdict was implemented noted so, a regression unless it is in ``changed``.
+    Only the ids in ``previous`` are compared."""
     before = {item["id"]: item.get("status") for item in previous}
     marked = []
     for verdict in verdicts:
         status, earlier = verdict.get("status"), before.get(verdict["id"])
+        if status in UNMET_STATUSES and earlier == "implemented":
+            verdict = {**verdict, "note": " ".join(
+                f"{verdict.get('note') or ''} It was implemented when the previous run ended.".split())}
         if status in UNMET_STATUSES and verdict["id"] in changed:
             verdict = {**verdict, CHANGED_LATER: True}
         elif inherit and status in UNMET_STATUSES and earlier in UNMET_STATUSES:
             verdict = {**verdict, INHERITED: True}
-        elif status in UNMET_STATUSES and earlier == "implemented":
-            verdict = {**verdict, "note": " ".join(
-                f"{verdict.get('note') or ''} It was implemented when the previous run ended.".split())}
         marked.append(verdict)
     return marked
 

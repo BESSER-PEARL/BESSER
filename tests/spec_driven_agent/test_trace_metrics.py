@@ -14,7 +14,7 @@ import json
 import pytest
 
 from tests.spec_driven_agent.scripts.trace_metrics import (
-    cache_misses, load_runs, report, totals, usage,
+    cache_misses, load_runs, report, totals, unrecorded_rewrites, usage,
 )
 
 
@@ -124,6 +124,22 @@ def test_a_turn_that_reads_little_of_an_unchanged_prefix_from_cache_is_flagged(t
     assert ("history rewritten without a compaction or eviction record (turn: fresh, cache read, previous "
             "prompt): 6: 2,000 fresh, 0 read after a 11,000-token prompt\n") in text
     assert totals([run])["misses"] == 1 and totals([run])["unrecorded_rewrites"] == 1
+
+
+def test_a_prompt_that_shrank_by_under_one_percent_counts_as_unchanged(tmp_path):
+    """Recorded: a turn 2 that read 13,056 of a 17,143-token prompt after a 17,209-token one was
+    listed as a rewrite while the same miss after a slightly smaller first prompt was a miss."""
+    log = _Log()
+    log.event("run_start", at=1_000.0)
+    log.event("phase_enter", phase="phase2")
+    log.turn(1, 4_153, read=13_056, start=1_001.0, answered=1_002.0)
+    log.turn(2, 4_087, read=13_056, start=1_003.0, answered=1_004.0)
+    log.event("run_end", at=1_005.0)
+
+    run = _one_run(tmp_path, log)
+
+    assert [turn.turn for turn in cache_misses(run)] == [2]
+    assert unrecorded_rewrites(run) == []
 
 
 def test_cache_is_unknown_when_the_provider_reports_no_cache_reads(tmp_path):

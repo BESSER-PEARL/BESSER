@@ -36,10 +36,10 @@ belongs to the run its run id names, also when it precedes that run's
 token counters restart while its cost was seeded with the spend so far. A cache
 miss is a turn that read under 0.9 of the previous turn's prompt from the cache
 although the history was not rewritten: same conversation, no ``compaction`` or
-``eviction`` record, a prompt that did not shrink. A turn that
+``eviction`` record, a prompt that did not shrink by 1% or more. A turn that
 read under 0.9 of its own, smaller prompt with no such record is listed apart,
 as history rewritten without a record (on a log older than those records, a
-compaction). A run that never reports a cache read or
+compaction); the split is a heuristic. A run that never reports a cache read or
 write shows ``unknown``: its provider may not report them. Totals over all runs
 follow, each run counted once. Dollar figures follow the price catalog of the
 day; compare tokens.
@@ -64,6 +64,7 @@ _TRACE_SUFFIXES = (".trace.jsonl", ".besser_trace.jsonl")
 _RECIPE_SUFFIXES = (".recipe.json", ".besser_recipe.json")
 _COUNTERS = ("input_tokens", "cache_read_tokens", "cache_creation_tokens", "output_tokens")
 CACHE_MISS_SHARE = 0.9
+SHRINK_NOISE = 0.01     # a prompt that shrank by less is read as unchanged
 
 
 @dataclass
@@ -410,14 +411,16 @@ def _phase_of(turn: Turn) -> str:
 def _misses(run: Run) -> tuple[list[tuple[Turn, int]] | None, list[tuple[Turn, int]]]:
     """(turn, previous prompt) of the turns that read under 0.9 of the prefix they share with the
     previous request from the cache, with no compaction or eviction record: those whose prompt did
-    not shrink (misses; None when the run reports no cache at all), and those whose prompt shrank
-    (a rewrite of the history that wrote no record, or a log older than those records)."""
+    not shrink by ``SHRINK_NOISE`` or more (misses; None when the run reports no cache at all), and
+    those whose prompt shrank more (a rewrite of the history that wrote no record, or a log older
+    than those records)."""
     if not any(turn.cache_read or turn.cache_write for turn in run.turns):
         return None, []
     flagged = [(turn, previous.prompt) for previous, turn in zip(run.turns, run.turns[1:])
                if not turn.new_context and turn.cache_read < CACHE_MISS_SHARE * min(turn.prompt, previous.prompt)]
-    return ([row for row in flagged if row[0].prompt >= row[1]],
-            [row for row in flagged if row[0].prompt < row[1]])
+    unchanged = [row[0].prompt >= (1 - SHRINK_NOISE) * row[1] for row in flagged]
+    return ([row for row, same in zip(flagged, unchanged) if same],
+            [row for row, same in zip(flagged, unchanged) if not same])
 
 
 def cache_misses(run: Run) -> list[Turn] | None:

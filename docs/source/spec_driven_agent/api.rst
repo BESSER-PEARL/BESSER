@@ -61,7 +61,8 @@ Endpoints
      - Resume an interrupted run from its checkpoint (streams SSE).
    * - ``/spec-driven/cancel/{run_id}``
      - POST
-     - Cancel an in-flight run at its next turn boundary.
+     - Cancel an in-flight run: the command or streaming LLM call it is
+       running is stopped at once (see :doc:`runs`).
    * - ``/spec-driven/download/{run_id}``
      - GET
      - Download the generated ZIP/file (re-fetchable for
@@ -256,10 +257,15 @@ Model change in the preview
 ---------------------------
 
 With ``mode: "modify"`` and a
-``base_run_id`` whose workspace is still available, the ``/preview`` response
+``base_run_id`` whose workspace or ZIP download is still available, the ``/preview`` response
 carries ``model_change``: how the project's class diagram relates to the one
 the base run was built from. It is ``null`` for ``mode: "generate"``, an
 unknown or expired base run, or a base run without a recorded class model.
+The response also carries ``base_available``: ``true`` when a modify run can
+edit the base run (see :ref:`spec-driven-modify-mode`), ``false`` when it would
+build the app again from scratch (the base is unknown, its workspace and its ZIP
+download are gone, or its output was a single file), ``null`` for ``mode:
+"generate"`` and for a modify request without ``base_run_id``.
 
 .. list-table::
    :header-rows: 1
@@ -330,6 +336,15 @@ SSE event types
      - Extra detail for the current phase (e.g. the gap task list); for
        ``validate``, the first check's result as ``message``
        (``"2 blockers / 5 total"``).
+   * - ``step``
+     - What the current phase is doing now, sent during ``validate`` because
+       one check round, requirement judge call or fix attempt can take
+       minutes: ``phase``, ``message`` (for example ``"First check: checking
+       35 requirements against the code"``, ``"Fix attempt 2: fixing 24
+       blockers (20 about requirements)"``, ``"Packaging the result"``) and
+       ``elapsedSeconds``, the run's elapsed time when the step started. A
+       step lasts until the next ``step``, ``phase`` or terminal event; the
+       ``cost`` ticks tell how long it has been running.
    * - ``findings``
      - One Phase 3 validation round: ``attempt`` (0 for the first check, n for
        the re-check after fix attempt n), ``blockers`` (at most 20 messages,
@@ -377,8 +392,11 @@ SSE event types
        a three-way authorship split of the output tree, and ``aiShare``, the
        AI-written share of the lines from the run's Agent Trace record (see
        :ref:`spec-driven-agent-trace`). ``mode`` is ``create`` or ``modify``;
-       ``changedFiles`` (capped) and ``changedFileCount`` are the files the
-       agent wrote, edited or deleted, and ``modelChanges`` how the model
+       ``changedFiles`` (capped) and ``changedFileCount`` are the distinct
+       files the agent's successful calls wrote, edited or deleted (not those a
+       Phase 3 rollback discarded), plus those
+       the model change regeneration wrote, merged, moved (new path) or
+       removed (the recipe's ``regenerated_files``), and ``modelChanges`` how the model
        differs from the one the base app was built from (modify runs).
        ``trace`` is the run's trace, a trace-file fragment (``projectId``
        null) the editor merges into the project trace (see

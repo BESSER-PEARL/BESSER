@@ -151,12 +151,24 @@ _MAX_QUOTE_LINES = 25
 _MAX_UNQUOTED_TAIL = 24
 _BLOCK_PUNCTUATION = frozenset("{(:;,[")
 
+# A judge may return quotation marks typographic (“button”, »button»): the glyph is not code.
+_TYPOGRAPHIC_QUOTES = str.maketrans({
+    "“": '"', "”": '"', "„": '"', "‟": '"', "«": '"', "»": '"',
+    "‘": "'", "’": "'", "‚": "'", "‛": "'", "‹": "'", "›": "'",
+    "＂": '"', "＇": "'",
+})
+
+
+def _ascii_quotes(text: str) -> str:
+    """Every quotation mark as ``"``: single, typographic and fullwidth ones alike."""
+    return text.translate(_TYPOGRAPHIC_QUOTES).replace("'", '"')
+
 
 def _normalise_quote(text: str, escapes: bool = True) -> str:
     """The judge's quote, made comparable to file text: literal escape
     sequences become spaces (unless ``escapes`` is off, for a quote of code
-    such as ``"\\n".join(...)``), single quotes become double quotes (a judge may
-    rewrite ``Mapped_["Booking"]`` as ``Mapped_['Booking']``), and
+    such as ``"\\n".join(...)``), single and typographic quotes become double quotes
+    (a judge may rewrite ``Mapped_["Booking"]`` as ``Mapped_['Booking']``), and
     only the first quoted line counts - later lines are often abridged."""
     if escapes:
         text = text.replace("\\n", "\n").replace("\\t", " ")
@@ -164,13 +176,13 @@ def _normalise_quote(text: str, escapes: bool = True) -> str:
     # read_file numbers what the model sees; no real source line starts with
     # "175| ", so such a prefix is always a copied artifact.
     first = _READ_NUMBER_PREFIX_RE.sub("", first, count=1)
-    return _collapse(first.replace("'", '"'))
+    return _collapse(_ascii_quotes(first))
 
 
 def _normalise_line(line: str) -> str:
     """A source line in a quote's form. Its escapes stay as written: turning
     ``"\\n".join(...)`` into a line break cut the line at that string."""
-    return _collapse(line.replace("'", '"'))
+    return _collapse(_ascii_quotes(line))
 
 
 def _citation_parts(raw: str, path: str, files: dict[str, str] | None = None) -> list[tuple[str, str, bool]]:
@@ -308,7 +320,20 @@ def _quote_spans(quoted: str, source: _Source, cut: bool = False) -> list[tuple[
     spans = list(_spans_in(quoted, source, source.normalised, cut))
     if not spans and source.bare != source.normalised:
         spans = list(_spans_in(quoted, source, source.bare, cut))
-    return spans
+    return spans or _quoteless_span(quoted, source)
+
+
+def _quoteless_span(quoted: str, source: _Source) -> list[tuple[int, int]]:
+    """For a quote with no quotation mark at all (some providers return a citation with them
+    left out): the one line of the file that reads as the quote once its quotation marks are
+    removed; none when no line or more than one line does, so a line is never picked among several."""
+    bare = quoted
+    if '"' in quoted or len(bare) < _MIN_PART_QUOTE:
+        return []  # a quote that kept quotation marks is compared with them
+    found = [index + 1 for index, line in enumerate(source.normalised)
+             if (text := line.replace('"', "")) == bare
+             or (text.startswith(bare) and set(text[len(bare):]) <= _BLOCK_PUNCTUATION)]
+    return [(found[0], found[0])] if len(found) == 1 else []
 
 
 def _spans_in(quoted: str, source: _Source, normalised: list[str], cut: bool):
@@ -459,8 +484,9 @@ _EXTRACT_SYSTEM_PROMPT = (
     "rules; 'computed' for values worked out rather than typed in; "
     "'transition' for state changes and when they are refused; 'action' for "
     "named operations; 'ui' for screens and interactions; 'absence' for "
-    "something the app must not have at all (no sign-in, no admin area), never "
-    "a refusal or limit the app enforces (that is a 'rule'); 'preservation' "
+    "something the app must not have at all (no sign-in, no admin area, no "
+    "data invented beyond a given source), never a refusal or limit the app "
+    "enforces (that is a 'rule'); 'preservation' "
     "for existing behaviour a change must keep working as it is.\n"
     "- Skip the technology stack and instructions to the assistant.\n"
     "- Broad goals such as 'functional for any user' or 'no errors' do not add "
@@ -740,6 +766,11 @@ def extract_requirements(instructions: str, llm_client, *,
         logger.warning("Requirements ledger: 'requirements' came back as %s, not a list",
                        type(extracted).__name__)
         return None
+    return _requirement_items(extracted)
+
+
+def _requirement_items(extracted: list) -> list[dict]:
+    """The extraction tool's items as ledger requirements numbered from 1."""
     requirements: list[dict] = []
     for item in extracted:
         # A bare string is a requirement's text; a null or non-string text is
@@ -762,6 +793,83 @@ def extract_requirements(instructions: str, llm_client, *,
 
 def _incomplete_extraction_item(rid: int) -> dict:
     return {"id": rid, "text": _EXTRACTION_INCOMPLETE, "kind": "verification"}
+
+
+_FOLLOW_UP_SYSTEM_PROMPT = _EXTRACT_SYSTEM_PROMPT + (
+    "\n\nThis is a follow-up on an application already built. Extract requirements only "
+    "from the NEW user messages; the earlier conversation and the numbered requirements "
+    "the app was built against are context, used to resolve references such as 'retry', "
+    "'yes', 'the same for the other screen'.\n"
+    "- A new message that asks again for a numbered requirement, or changes it, gives a "
+    "requirement in its new form; put the number in 'replaces'. A numbered requirement a "
+    "new message removes or no longer wants goes in 'replaces' too.\n"
+    "- 'continues_earlier_work' is true when the new messages ask to retry, continue, "
+    "finish or fix what was asked before without stating what to change; then the "
+    "requirement list may be empty."
+)
+
+_SUBMIT_FOLLOW_UP_TOOL = {
+    "name": "submit_follow_up_requirements",
+    "description": "Submit the requirements the new user messages state.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "requirements": _SUBMIT_REQUIREMENTS_TOOL["input_schema"]["properties"]["requirements"],
+            "replaces": {"type": "array", "items": {"type": "integer"},
+                         "description": "Numbers of the listed requirements a new message changes, "
+                                        "asks for again or removes."},
+            "continues_earlier_work": {"type": "boolean"},
+        },
+        "required": ["requirements", "replaces", "continues_earlier_work"],
+    },
+}
+
+
+def later_messages(instructions: str) -> list[str]:
+    """The user's messages after the first one, oldest first (``LATER_REQUEST_MARKER`` sections)."""
+    messages = []
+    for part in original_request(instructions).split(LATER_REQUEST_MARKER)[1:]:
+        head, sep, rest = part.strip().partition("\n\n")
+        messages.append((rest if sep and head.startswith("This later request takes precedence") else part).strip())
+    return messages
+
+
+def extract_follow_up(previous: list[dict], instructions: str, previous_instructions: str | None,
+                      llm_client, *, can_call: Callable[[], bool] | None = None) -> dict | None:
+    """What the user's messages since the previous run ask of the app ``previous`` describes.
+
+    The new messages are the later messages of ``instructions`` after those of
+    ``previous_instructions`` (the previous run's) when these start the conversation, all of
+    them otherwise, and the newest one when there are none. Returns ``{"requirements",
+    "replaces", "continues"}``: requirements numbered from 1, the ids of ``previous`` a new
+    message changes, asks for again or removes, and whether the messages only ask to retry or
+    finish earlier work. None when no real provider is available or the call failed.
+    """
+    validate_specification(instructions)
+    if not _is_real_provider(llm_client):
+        return None
+    seen, messages = later_messages(previous_instructions or ""), later_messages(instructions)
+    # The previous run's messages are the start of this conversation; otherwise every later one is new.
+    earlier_messages = seen if messages[:len(seen)] == seen else []
+    new = messages[len(earlier_messages):] or [latest_user_message(instructions)]
+    earlier = original_request(instructions).split(LATER_REQUEST_MARKER, 1)[0].strip()
+    prompt = "\n\n".join([
+        "## The earlier conversation (context only)", earlier, *earlier_messages,
+        "## Requirements the app was built against", render_requirements(previous),
+        "## The new user messages", *(f"{n}. {message}" for n, message in enumerate(new, 1)),
+    ])
+    payload = _call_with_tool(llm_client, _FOLLOW_UP_SYSTEM_PROMPT, prompt, _SUBMIT_FOLLOW_UP_TOOL,
+                              can_call=can_call)
+    if not payload or not isinstance(payload.get("requirements"), list):
+        return None
+    known = {item["id"] for item in previous}
+    replaces = payload.get("replaces")
+    return {
+        "requirements": _requirement_items(payload["requirements"]),
+        "replaces": {rid for rid in map(_verdict_id, replaces if isinstance(replaces, list) else [])
+                     if rid in known},
+        "continues": payload.get("continues_earlier_work") is True,
+    }
 
 
 def stated_requirements_ledger(stated: list[dict], instructions: str) -> list[dict] | None:
@@ -1714,7 +1822,7 @@ def _as_written(raw: str, fragment: str, limit: int = _UNMATCHED_NOTE_CHARS) -> 
     """``fragment`` (a whitespace-free quote part) as the judge wrote it in
     ``raw``, clipped, so a re-judge can see which part to correct."""
     kept = [i for i, char in enumerate(raw) if not char.isspace()]
-    at = "".join(raw[i] for i in kept).replace("'", '"').find(fragment) if fragment else -1
+    at = _ascii_quotes("".join(raw[i] for i in kept)).find(fragment) if fragment else -1
     text = " ".join(raw[kept[at]:kept[at + len(fragment) - 1] + 1].split()) if at >= 0 else fragment
     return text if len(text) <= limit else text[:limit - 3] + "..."
 
@@ -1847,7 +1955,7 @@ def _collapsed_text(full: str, cache: dict) -> str:
     if key not in cache:
         try:
             with open(full, "r", encoding="utf-8-sig", errors="ignore") as handle:
-                cache[key] = _collapse(handle.read().replace("'", '"'))
+                cache[key] = _collapse(_ascii_quotes(handle.read()))
         except OSError:
             cache[key] = ""
     return cache[key]
@@ -2449,11 +2557,59 @@ _SCREEN_REASONS = {"passed": "the frontend builds", "failed": "the frontend buil
                    "not_run": "the frontend build check did not run", "none": "no frontend"}
 
 
-def _cited_lines(full: str, quotes: list[str]) -> set[int]:
-    """The 1-based lines of a cited file the quotes locate on."""
-    source = _load_source(full, {}, False)
-    return {line for quote in quotes for first, last in _quote_spans(_evidence_quote(quote), source)
-            for line in range(first, last + 1)}
+def _route_ranges(full: str) -> dict[tuple, list[tuple[int, int]]] | None:
+    """Each route of a Python file with the line ranges its request runs: its declaration
+    (decorators and handler, or the ``add_api_route`` call), the handler an
+    ``add_api_route`` names, and the module functions the handler calls or depends on
+    (``Depends(f)``) by name. None when the file cannot be parsed."""
+    try:
+        tree = ast.parse(Path(full).read_text(encoding="utf-8-sig", errors="ignore"))
+    except (OSError, SyntaxError, ValueError, RecursionError):
+        return None
+    defs = {(_statement_start(node), node.end_lineno): node for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    module_functions = {node.name: node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    registrations = {(node.lineno, node.end_lineno): node for node in ast.walk(tree)
+                     if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                     and node.func.attr == "add_api_route"}
+
+    def span(node: ast.AST) -> tuple[int, int]:
+        return _statement_start(node), node.end_lineno
+
+    ranges = {}
+    for route in _declared_routes(full):
+        handler, call = defs.get(route[2:]), registrations.get(route[2:])
+        if call is not None:
+            endpoint = call.args[1] if len(call.args) > 1 else next(
+                (kw.value for kw in call.keywords if kw.arg == "endpoint"), None)
+            handler = module_functions.get(getattr(endpoint, "id", None))
+        own = [route[2:]] + ([span(handler)] if handler is not None and call is not None else [])
+        callees = set()
+        for node in ast.walk(handler) if handler is not None else ():
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                callees.add(node.func.id)
+            if (isinstance(node, ast.Call) and getattr(node.func, "id", getattr(node.func, "attr", None)) == "Depends"
+                    and node.args and isinstance(node.args[0], ast.Name)):
+                callees.add(node.args[0].id)
+        ranges[route] = own + [span(module_functions[name]) for name in sorted(callees)
+                               if name in module_functions and module_functions[name] is not handler]
+    return ranges
+
+
+def _cited_part_lines(full: str, path: str, quote: str, files: dict[str, str], parsed: dict,
+                      cache: dict) -> list[set[int]]:
+    """The 1-based lines of ``full`` each located part of a citation is on, as
+    :func:`verify_evidence` locates it; a decorator quoted alone is located on its own line."""
+    located = _locate_citation(path, quote, files, parsed, cache, False)[0]
+    parts = []
+    for source, part, spans in located:
+        if source.path != full:
+            continue
+        if not spans and part.startswith("@"):
+            spans = _quote_spans(part, source)
+        if spans:
+            parts.append({line for first, last in spans for line in range(first, last + 1)})
+    return parts
 
 
 def with_verification_levels(verdicts: list[dict], output_dir: str, *, frontend_build: str,
@@ -2462,15 +2618,19 @@ def with_verification_levels(verdicts: list[dict], output_dir: str, *, frontend_
     the screens half reported apart.
 
     The API half is exercised when a passing ``test_api`` call (``exercised``: method, path)
-    hit the route a cited line is on (its decorator or handler), or, when no cited line is
-    on a route, any route of a cited backend file; that call is named. No harness check
+    hit a route whose request runs every located part of a citation (:func:`_route_ranges`:
+    its decorator or handler, or a function of the file the handler calls or depends on);
+    that call is named. A citation no route runs (a model, an import) is found in code,
+    whatever ran, and so is cited code whose routes cannot be read (not Python). No harness check
     renders a screen, so a cited frontend file is never exercised (``frontend_build``:
     passed, failed, not_run or none says why). ``verification``: ``verified`` when every
     cited half was exercised, ``api_verified`` when the API half was and screens are cited,
     ``unverified`` otherwise. Never a blocker.
     """
     files = _source_files(output_dir)
-    routes_cache: dict[str, set] = {}
+    routes_cache: dict[str, dict | None] = {}
+    parsed: dict[str, _Source] = {}
+    quote_cache: dict = {}
     leveled = []
     for item in verdicts:
         if item.get("status") != "implemented":
@@ -2485,19 +2645,26 @@ def with_verification_levels(verdicts: list[dict], output_dir: str, *, frontend_
         backend = [(path, quote) for path, quote in cited if not path.lower().endswith(_FRONTEND_SUFFIXES)]
         halves, api_exercised = [], False
         if backend:
-            on_cited, in_files = set(), set()
+            on_cited, unreadable = set(), False
             for path, quote in backend:
-                full = files.get(path) or next((v for k, v in files.items() if k.endswith("/" + path)), None)
-                if full and full.endswith(".py"):
-                    routes = routes_cache.setdefault(full, _declared_routes(full))
-                    lines = _cited_lines(full, [quote])
-                    in_files |= routes
-                    on_cited |= {route for route in routes if any(route[2] <= line <= route[3] for line in lines)}
-            routes, which = (on_cited, "the cited route") if on_cited else (in_files, "a route of the cited file")
-            call = next((f"{method} {path}" for method, path in sorted(exercised) if _route_called(routes, method, path)),
-                        None)
+                homes = _resolve_cited_path(path, quote, files, quote_cache)
+                if len(homes) == 1 and homes[0].endswith(".py") and homes[0] not in routes_cache:
+                    routes_cache[homes[0]] = _route_ranges(homes[0])
+                ranges = routes_cache.get(homes[0]) if len(homes) == 1 else None
+                if ranges is None:
+                    unreadable = True
+                    continue
+                # A route counts when its request runs every located part of the citation.
+                parts = _cited_part_lines(homes[0], path, quote, files, parsed, quote_cache)
+                on_cited |= {route for route, spans in ranges.items() if parts and all(
+                    any(first <= line <= last for first, last in spans for line in lines) for lines in parts)}
+            call = next((f"{method} {path}" for method, path in sorted(exercised)
+                         if _route_called(on_cited, method, path)), None)
             api_exercised = call is not None
-            halves.append(f"API: a passing workflow called {call}, {which}" if call
+            halves.append(f"API: a passing workflow called {call}, the cited route" if call
+                          else "API: not run (the check cannot read the routes of the cited code)"
+                          if not on_cited and unreadable
+                          else "API: not run (no cited line is in a route handler)" if not on_cited
                           else "API: a workflow passed but called no cited route" if workflows_passed
                           else "API: no workflow passed")
         if screens:
@@ -2536,119 +2703,111 @@ def scope_to_output(verdicts: list[dict], has_frontend: bool) -> list[dict]:
             for v in verdicts]
 
 
-# What an absence requirement may name, the words that name it, what was checked when nothing
-# is found, and the packages that bring it (fullmatch on the lower-case name, ``-`` for ``_``).
-# A find is named, never a blocker: it cannot tell the excluded feature from a requested one
-# ("no sign-in for visitors" beside an admin login).
-_ABSENCE_TOPICS = (
-    # "auth" and its derivations, never "author".
-    ("authentication", re.compile(r"\b(?:auth|authenticat\w*|authori[sz]\w*|log(?:ging)?[\s-]?ins?"
-                                  r"|sign(?:ing)?[\s-]?(?:in|up)s?|passwords?)\b", re.I),
-     "no authentication library or sign-in route found (requirements*.txt and package.json dependencies, "
-     "Python routes)",
-     re.compile(r"python-jose|jose|passlib|pyjwt|bcrypt|bcryptjs|argon2(?:-cffi)?|fastapi-users|fastapi-login"
-                r"|fastapi-jwt-auth|authlib|flask-login|flask-httpauth|flask-jwt-extended|django-allauth"
-                r"|djangorestframework-simplejwt|python-keycloak|next-auth|better-auth|lucia|jsonwebtoken"
-                r"|passport(?:-.+)?|keycloak-js|oidc-client-ts|react-oidc-context|@auth/.+|@auth0/.+|@clerk/.+"
-                r"|@azure/msal-.+|@supabase/auth.*")),
-    ("agents", re.compile(r"\b(?:agents?|chat\s?bots?)\b", re.I),
-     "no agent code or agent library found (an agents/<name>/ folder at the top of the app, Python code "
-     "importing the agent framework, requirements*.txt and package.json dependencies)",
-     re.compile(r"besser-agentic-framework")),
-)
-_AUTH_ROUTE_SEGMENTS = frozenset({"login", "logout", "signin", "signup", "auth", "oauth"})
-_AGENT_FRAMEWORK_IMPORT_RE = re.compile(r"^\s*(?:from|import)\s+baf\b", re.M)
-_REQUIREMENTS_FILE_RE = re.compile(r"requirements[\w.-]*\.txt")
-
-
-def _declared_packages(output_dir: str) -> dict[str, str]:
-    """Runtime packages the app declares (``requirements*.txt``, ``package.json``
-    dependencies), lower-case with ``-`` for ``_``: name -> the manifest declaring it."""
-    base = Path(output_dir)
-    found: dict[str, str] = {}
-    for root, dirs, names in walk_plain(base):
-        dirs[:] = [d for d in dirs if not d.startswith(".") and d not in _DIGEST_SKIP_DIRS]
-        for name in names:
-            if name != "package.json" and not _REQUIREMENTS_FILE_RE.fullmatch(name):
-                continue
-            path = Path(root, name)
-            try:
-                text = path.read_text(encoding="utf-8-sig", errors="ignore")
-                data = json.loads(text) if name == "package.json" else None
-            except (OSError, ValueError):
-                continue
-            if name == "package.json":
-                deps = list((data.get("dependencies") or {}) if isinstance(data, dict) else ())
-            else:
-                deps = [re.split(r"[\s\[<>=!~;@]", line.strip(), maxsplit=1)[0] for line in text.splitlines()
-                        if line.strip() and not line.strip().startswith(("#", "-"))]
-            for dep in deps:
-                found.setdefault(str(dep).lower().replace("_", "-"), path.relative_to(base).as_posix())
-    return found
-
-
-def _topic_found(topic: str, packages: re.Pattern, files: dict[str, str], declared: dict[str, str]) -> list[str]:
-    """Where the app has what an absence requirement may exclude: a package of the topic, an
-    authentication route, or agents as the generator lays them out (``agents/<name>/`` at the
-    top of the app or of one of its folders) and Python code importing the agent framework,
-    never the screens or routes of a domain class called Agent."""
-    found = [f"{name} in {declared[name]}" for name in sorted(declared) if packages.fullmatch(name)]
-    if topic == "authentication":
-        for rel, full in sorted(files.items()):
-            if rel.endswith(".py"):
-                found += sorted(f"route /{'/'.join(segments)} in {rel}" for _, segments, *_ in _declared_routes(full)
-                                if _AUTH_ROUTE_SEGMENTS & {s.lower().replace("-", "").replace("_", "") for s in segments})
-    else:
-        folders = {"/".join(parts[:parts.index("agents") + 1]) for parts in (rel.split("/") for rel in files)
-                   if "agents" in parts[:2] and len(parts) >= parts.index("agents") + 3}
-        found += [f"agents folder {folder}" for folder in sorted(folders)]
-        for rel, full in sorted(files.items()):
-            if rel.endswith(".py") and not any(rel.startswith(folder + "/") for folder in folders):
-                try:
-                    text = Path(full).read_text(encoding="utf-8-sig", errors="ignore")
-                except OSError:
-                    continue
-                if _AGENT_FRAMEWORK_IMPORT_RE.search(text):
-                    found.append(f"agent code {rel}")
-    return found
-
-
 def source_hashes(output_dir: str) -> dict[str, str]:
     """sha256 of every judged file, by its path."""
     return {rel: cited_file_hash(full) for rel, full in _source_files(output_dir).items()}
+
+
+# Set on a modify run's verdict that is unmet now and was unmet when the previous run ended:
+# reported as still open, not a blocker of this run.
+INHERITED = "open_since_previous_run"
+# Set on a modify run's unmet verdict of a previous requirement a newer message changes or removes:
+# reported as such, neither a regression nor work for the fix loop.
+CHANGED_LATER = "changed_by_newer_message"
+UNMET_STATUSES = ("partial", "missing", "unverified")
+
+
+def _recorded_verdict(item) -> dict | None:
+    """A verdict read from a recipe, in the shape this module writes; None when it is not one
+    (the recipe may come from a repository anyone edited)."""
+    if not (isinstance(item, dict) and type(item.get("id")) is int and isinstance(item.get("text"), str)
+            and item["text"].strip() and item.get("status") in (*_STATUSES, NOT_PROVABLE, "out_of_scope")):
+        return None
+    evidence = item.get("evidence")
+    if isinstance(evidence, list):
+        evidence = [{"path": c["path"], "line": c["line"]} for c in evidence
+                    if isinstance(c, dict) and isinstance(c.get("path"), str) and isinstance(c.get("line"), str)]
+    elif not isinstance(evidence, str):
+        evidence = ""
+    paths = item.get("inspection_paths")
+    verdict = {"id": item["id"], "text": item["text"], "status": item["status"],
+               "kind": item["kind"] if isinstance(item.get("kind"), str) else "",
+               "evidence": evidence, "note": item["note"] if isinstance(item.get("note"), str) else "",
+               "inspection_paths": [p for p in paths if isinstance(p, str)] if isinstance(paths, list) else []}
+    if isinstance(item.get("ref"), str):
+        verdict["ref"] = item["ref"]
+    return verdict
+
+
+def previous_run_verdicts(recorded: list, output_dir: str) -> list[dict]:
+    """A previous run's recorded verdicts as of ``output_dir``, the tree it delivered (no call).
+
+    An "implemented" citation is checked again (:func:`verify_evidence`), which records its
+    file hashes; an "implemented" whose citation no longer matches stays implemented without
+    hashes, so it is judged again. An unmet verdict records the hashes of the files it names
+    (inspection paths and citations) and of the files they rest on, so a later pass can tell
+    they are unchanged; one that names no file records none.
+    """
+    items = [verdict for verdict in map(_recorded_verdict, recorded) if verdict][:MAX_REQUIREMENTS]
+    files = _source_files(output_dir)
+    imports = ImportIndex(output_dir, files)
+    verdicts = []
+    for item, checked in zip(items, verify_evidence(items, output_dir, imports)):
+        if item["status"] == "implemented" and checked["status"] != "implemented":
+            checked = item
+        elif item["status"] != "implemented":
+            named = resolved_focus_paths(files, [*item["inspection_paths"], *cited_paths(item["evidence"])])
+            if named:
+                checked["cited_file_hashes"] = {rel: cited_file_hash(files[rel]) for rel in named}
+                checked["dependency_file_hashes"] = {rel: cited_file_hash(files[rel])
+                                                     for rel in sorted(imports.dependencies(set(named)))}
+        verdicts.append(checked)
+    return verdicts
+
+
+def mark_inherited(verdicts: list[dict], previous: list[dict], *, inherit: bool = True,
+                   changed: frozenset[int] = frozenset()) -> list[dict]:
+    """``verdicts`` with each unmet one in ``changed`` (a newer message changes or removes it)
+    marked :data:`CHANGED_LATER`, each other unmet one whose ``previous`` verdict (by id) was
+    unmet too marked :data:`INHERITED` (unless ``inherit`` is off), and each unmet one whose
+    previous verdict was implemented noted so, a regression unless it is in ``changed``.
+    Only the ids in ``previous`` are compared."""
+    before = {item["id"]: item.get("status") for item in previous}
+    marked = []
+    for verdict in verdicts:
+        status, earlier = verdict.get("status"), before.get(verdict["id"])
+        if status in UNMET_STATUSES and earlier == "implemented":
+            verdict = {**verdict, "note": " ".join(
+                f"{verdict.get('note') or ''} It was implemented when the previous run ended.".split())}
+        if status in UNMET_STATUSES and verdict["id"] in changed:
+            verdict = {**verdict, CHANGED_LATER: True}
+        elif inherit and status in UNMET_STATUSES and earlier in UNMET_STATUSES:
+            verdict = {**verdict, INHERITED: True}
+        marked.append(verdict)
+    return marked
 
 
 def settle_uncitable(verdicts: list[dict], output_dir: str, imports: ImportIndex | None,
                      baseline: dict[str, str] | None) -> list[dict]:
     """The unverified absence and preservation verdicts, settled without a citation: never met.
 
-    Absence is ``NOT_PROVABLE``, naming what of its topics (``_ABSENCE_TOPICS``) was found in
-    the tree, or what was checked. Preservation is ``NOT_PROVABLE``, naming the files the judge named for
-    it, and the files they rest on, that changed since ``baseline`` (:func:`source_hashes` of the
-    previous version; the stored generator output when None), or that none did.
+    Both are ``NOT_PROVABLE``. A preservation's note names the files the judge named for it, and
+    the files they rest on, that changed since ``baseline`` (:func:`source_hashes` of the previous
+    version; the stored generator output when None), or that none did.
     """
     if not any(v.get("status") == "unverified" and v.get("kind") in (ABSENCE_KIND, PRESERVATION_KIND)
                for v in verdicts):
         return verdicts
     files = _source_files(output_dir)
-    declared: dict[str, str] | None = None
     settled = []
     for verdict in verdicts:
         kind = verdict.get("kind")
         if verdict.get("status") != "unverified" or kind not in (ABSENCE_KIND, PRESERVATION_KIND):
             settled.append(verdict)
             continue
-        text = str(verdict.get("text") or "")
         if kind == ABSENCE_KIND:
-            topics = [topic for topic in _ABSENCE_TOPICS if topic[1].search(text)]
-            declared = _declared_packages(output_dir) if topics and declared is None else declared
-            found = {name: _topic_found(name, packages, files, declared) for name, _, _, packages in topics}
-            seen = [where for wheres in found.values() for where in wheres]
-            checked = [absent for name, _, absent, _ in topics if not found[name]]
-            status, note = NOT_PROVABLE, "; ".join(
-                ["Something the app must not have cannot be shown by citing code"]
-                + ([f"found in the app, which this requirement may exclude: {', '.join(seen[:5])}"] if seen else [])
-                + [f"checked: {absent}" for absent in checked]) + ". Not counted as a blocker."
+            status, note = NOT_PROVABLE, ("Something the app must not have cannot be shown by citing code. "
+                                          "Not counted as a blocker.")
         else:
             named = resolved_focus_paths(files, [*verdict.get("inspection_paths", []),
                                                  *cited_paths(verdict.get("evidence"))])
@@ -2679,6 +2838,14 @@ def ledger_issues(verdicts: list[dict]) -> list[str]:
         label = f"R{v['id']} — {v['text']}"
         note = f" ({v['note']})" if v.get("note") else ""
         status = v.get("status")
+        if v.get(INHERITED):
+            # Unclassified prefix: a warning, never a blocker.
+            issues.append(f"requirement still open from the previous run: {label} ({status}){note}")
+            continue
+        if v.get(CHANGED_LATER):
+            # Unclassified prefix: a warning, never a blocker.
+            issues.append(f"requirement changed by your newest message: {label} ({status}){note}")
+            continue
         if status == "out_of_scope":
             # Unclassified prefix: a warning, never a blocker.
             issues.append(f"requirement out of scope: {label}{note}")

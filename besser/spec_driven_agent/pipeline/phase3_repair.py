@@ -28,7 +28,7 @@ from collections import Counter
 from besser.spec_driven_agent.agent.history_eviction import (
     without_rejected_edit_drafts,
 )
-from besser.spec_driven_agent.errors import InvalidApiKeyError
+from besser.spec_driven_agent.errors import DeadlineReached, InvalidApiKeyError
 from besser.spec_driven_agent.planning import requirements_ledger as _requirements_ledger
 from besser.spec_driven_agent.planning.action_inventory import (
     collect_action_endpoints,
@@ -72,6 +72,7 @@ from besser.spec_driven_agent.validation.issues import (
     ValidationIssue,
     _classify_issue,
     _hard_blockers,
+    is_completion_issue,
     required_check_unverified,
 )
 from besser.spec_driven_agent.validation.toolchain import (
@@ -175,6 +176,26 @@ def _no_edit_exit_reason(attempt: int, calls: list[dict]) -> str:
             f"none an edit{failed_note}: {tools})")
 
 
+def counted(count: int, noun: str) -> str:
+    """``1 blocker`` / ``3 blockers``: a count as the run card's progress line says it."""
+    return f"{count} {noun}{'' if count == 1 else 's'}"
+
+
+def _fixing_blockers(blockers: list[ValidationIssue], round_issues: list[ValidationIssue]) -> str:
+    """A fix attempt's step: what it faces, by count, never by internal ids.
+
+    The round's blocker count (``FindingsEvent``) also counts checks that could
+    not run; no edit settles those, so the attempt says it leaves them.
+    """
+    not_run = sum(1 for issue in round_issues if issue.severity != "blocker" and is_completion_issue(issue))
+    about_requirements = sum(1 for issue in blockers if issue.message.startswith("requirement "))
+    notes = ([f"{about_requirements} about requirements"] if about_requirements else []) + (
+        [f"{not_run} {'is a check' if not_run == 1 else 'are checks'} that could not run"] if not_run else [])
+    head = (f"fixing {len(blockers)} of {counted(len(blockers) + not_run, 'blocker')}" if not_run
+            else f"fixing {counted(len(blockers), 'blocker')}")
+    return head + (f" ({'; '.join(notes)})" if notes else "")
+
+
 def _judge_left_unverified(verdict: dict) -> bool:
     """The judge gave no citation to reject, or only a malformed one (real code misquoted):
     no rejected citation of absent or role-failing code."""
@@ -197,9 +218,13 @@ class Phase3RepairMixin:
             self._phase2_stop_reason = "completed"
 
     def _phase3_stop_requested(self, *, check_turn_budget: bool = True) -> str | None:
-        """One stop gate for repair turns and the validation calls between them."""
+        """One stop gate for repair turns and the validation calls between them.
+
+        ``check_turn_budget=False`` asks for validation only, which needs time
+        before the cap for its checks; a repair turn needs time for an LLM call.
+        """
         reason = None
-        if self._start_time is not None and time.monotonic() - self._start_time > self.max_runtime_seconds:
+        if self.deadline.checks_out_of_time():
             reason = "runtime budget exhausted"
         elif self.max_cost_usd is not None and self.client.usage.estimated_cost >= self.max_cost_usd:
             reason = "cost budget exhausted"
@@ -209,12 +234,16 @@ class Phase3RepairMixin:
             # No further edit turn, but final verification of the last accepted
             # tool batch may still run. Do not poison that check as cancelled.
             return "turn budget exhausted"
-        elif self._should_continue is not None and not self._should_continue():
+        elif self.deadline.cancelled:
             reason = "cancellation requested"
         elif self._phase3_interrupted:
             reason = "repair interrupted before verification completed"
             if self._phase3_interrupt_detail:
                 reason = f"{reason} ({self._phase3_interrupt_detail})"
+        elif check_turn_budget and self.deadline.out_of_time():
+            # Like the turn budget: no further repair turn, but the attempt
+            # so far is still checked.
+            return "runtime budget exhausted"
         if reason:
             self._phase3_interrupted = True
         return reason
@@ -252,12 +281,24 @@ class Phase3RepairMixin:
             self.phase3_started_at = time.monotonic()
         # Announced before the first check, which can take minutes (npm, tsc), so
         # that time is counted as validation, not as the phase before it.
-        if self.on_progress:
-            self.on_progress(self.total_turns, "__validating__", "")
+        self._emit_progress(self.total_turns, "__validating__", "")
         try:
             self._run_phase3_repair_cycle()
         finally:
             self._apply_runtime_gate()
+        self._report_validation_step("Packaging the result")
+
+    def _report_validation_step(self, message: str) -> None:
+        """Name what Phase 3 is doing now on the run card: one check or LLM call can take minutes."""
+        self._emit_progress(self.total_turns, "__validation_step__", message)
+
+    def _report_round_step(self, step: str) -> None:
+        """A step of the current validation round, e.g. "First check: building the frontend"."""
+        self._report_validation_step(f"{self._validation_round}: {step}")
+
+    def _begin_validation_round(self, label: str) -> None:
+        self._validation_round = label
+        self._report_round_step("checking the code for errors")
 
     def _report_findings(self, attempt: int, issues: list[ValidationIssue], restored: bool = False) -> None:
         """Hand one validation round to ``on_findings`` (the run card's findings-and-repairs view).
@@ -309,6 +350,9 @@ class Phase3RepairMixin:
                 self._save_phase3_checkpoint()
             return
 
+        # A resumed repair has run attempts already: its first sweep is not the run's first check.
+        self._begin_validation_round(
+            "Check after resuming" if self._repair_progress.get("attempts_run") else "First check")
         issues = self._collect_validation_issues()
 
         if not issues:
@@ -337,12 +381,11 @@ class Phase3RepairMixin:
         if self._checkpoint_phase == "phase3":
             self._save_phase3_checkpoint()
 
-        if self.on_progress:
-            self.on_progress(
-                self.total_turns,
-                "validation",
-                f"{len(blockers_before)} blockers / {len(issues)} total",
-            )
+        self._emit_progress(
+            self.total_turns,
+            "validation",
+            f"{len(blockers_before)} blockers / {len(issues)} total",
+        )
         self._report_findings(0, issues)
 
         # Auto-fix is opt-in (default off). Industry pattern: report by
@@ -452,6 +495,8 @@ class Phase3RepairMixin:
             is_first_attempt = attempts_run == 0
             attempts_run += 1
             faced_last = self._blocker_identity(current_blockers)
+            self._validation_round = f"Fix attempt {attempts_run}"
+            self._report_round_step(_fixing_blockers(current_blockers, last_issues))
             self._trace.write(
                 EVENT_PHASE_ENTER,
                 phase="phase3_fix_attempt",
@@ -506,6 +551,7 @@ class Phase3RepairMixin:
                 break
             # Re-validate: re-running the checks is the only evidence that
             # the repair actually compiles.
+            self._begin_validation_round(f"Re-check after fix attempt {attempts_run}")
             issues_after = self._collect_validation_issues()
             blockers_after = [i for i in issues_after if i.severity == "blocker"]
             if (self._phase3_tree_score(blockers_after)[1] > best_score[1]
@@ -996,6 +1042,7 @@ class Phase3RepairMixin:
                 "Phase 3 rollback discarded the implementation of %d checklist "
                 "item(s), now reopened: %s", len(reopened), reopened,
             )
+        self._begin_validation_round("Check of the restored earlier version")
         restored = self._collect_validation_issues()
         # Only what the DISCARDED tree added. Printing the whole final set
         # listed findings that describe the tree that just shipped - the one
@@ -1269,8 +1316,11 @@ class Phase3RepairMixin:
                     "Phase 3: LLM call failed on fix turn %d, aborting fix loop: %s",
                     turn, exc,
                 )
+                if isinstance(exc, DeadlineReached) and not exc.cancelled:
+                    return edits  # no time for another turn; the attempt so far is still checked
                 self._phase3_interrupted = True
-                self._phase3_interrupt_detail = f"provider call failed: {type(exc).__name__}"
+                self._phase3_interrupt_detail = (str(exc) if isinstance(exc, DeadlineReached)
+                                                 else f"provider call failed: {type(exc).__name__}")
                 return edits
             # Repair calls can trigger the outage fallback too, as in Phase 2.
             self._notify_model_switch()
@@ -1518,6 +1568,8 @@ class Phase3RepairMixin:
             if os.path.exists(snapshot_path):
                 shutil.rmtree(snapshot_path)
             os.replace(staging_path, snapshot_path)
+            # The calls whose edits the snapshot holds; a restore discards the later ones.
+            self._snapshot_calls = len(self.tool_calls_log)
             logger.info("Snapshot created at %s", snapshot_path)
             return True
         except Exception as e:
@@ -1591,6 +1643,9 @@ class Phase3RepairMixin:
 
         self._carry_over_ignored_dirs(discard_path)
         shutil.rmtree(discard_path, ignore_errors=True)
+        if self._snapshot_calls is not None:
+            for call in self.tool_calls_log[self._snapshot_calls:]:
+                call["rolled_back"] = True
         logger.info("Restored from snapshot")
         return True
 

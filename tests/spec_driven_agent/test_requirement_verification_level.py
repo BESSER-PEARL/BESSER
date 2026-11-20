@@ -93,11 +93,105 @@ def test_a_backend_citation_is_verified_by_a_call_to_the_cited_route(tmp_path):
     assert "API: no workflow passed" in none["verification_note"]
 
 
-def test_with_no_cited_line_on_a_route_any_route_of_the_file_counts_and_is_named(tmp_path):
-    imports = _levels(tmp_path, [_verdict(5, "action", ROUTER, line="from fastapi import APIRouter")],
-                      calls=[("GET", "/dashboard/alerts/")])[0]
-    assert imports["verification"] == "verified"
-    assert "GET /dashboard/alerts/, a route of the cited file" in imports["verification_note"]
+ORDERS = "backend/routers/orders.py"
+ORDERS_SOURCE = '''from fastapi import APIRouter, Depends, HTTPException
+
+router = APIRouter(prefix="/orders")
+
+
+def check_quantity(quantity: int):
+    if quantity <= 0:
+        raise HTTPException(status_code=422, detail="quantity must be positive")
+
+
+def require_clerk(role: str = "clerk"):
+    if role != "clerk":
+        raise HTTPException(status_code=403, detail="clerks only")
+
+
+@router.get("/")
+def list_orders():
+    result = []
+    return result
+
+
+@router.post("/", dependencies=[Depends(require_clerk)])
+def create_order(quantity: int):
+    if quantity > 100:
+        raise HTTPException(status_code=422, detail="at most 100 items")
+    check_quantity(quantity)
+    result = {"quantity": quantity}
+    return result
+
+
+def cancel_order(order_id: int):
+    if order_id < 1:
+        raise HTTPException(status_code=404, detail="no such order")
+    return {}
+
+
+router.add_api_route("/{order_id}/cancel", cancel_order, methods=["POST"])
+'''
+GET_ONLY = [("GET", "/orders/")]
+WITH_POST = [("GET", "/orders/"), ("POST", "/orders/")]
+
+
+def _orders_level(tmp_path, line, calls, *, rel=ORDERS, source=ORDERS_SOURCE):
+    (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / rel).write_text(source, encoding="utf-8")
+    return ledger.with_verification_levels([_verdict(1, "rule", rel, line=line)], str(tmp_path),
+                                           frontend_build="none", exercised=set(calls),
+                                           workflows_passed=len(calls))[0]
+
+
+# Code POST /orders/ runs, cited as the evidence check accepts it: verbatim, with a comment the
+# source does not have, wrapped differently, abridged with an ellipsis around a line GET has too,
+# a helper the handler calls, a dependency of the route, and its decorator alone.
+POST_QUOTES = ("if quantity > 100:",
+               'if quantity > 100:  # cap\n        raise HTTPException(status_code=422, detail="at most 100 items")',
+               'raise HTTPException(\n  status_code=422,\n  detail="at most 100 items")',
+               "if quantity > 100: ... return result",
+               "if quantity <= 0:",
+               'if role != "clerk":',
+               '@router.post("/", dependencies=[Depends(require_clerk)])')
+
+
+def test_code_a_route_runs_is_found_in_code_until_that_route_ran(tmp_path):
+    for index, line in enumerate(POST_QUOTES):
+        item = _orders_level(tmp_path / str(index), line, GET_ONLY)
+        assert item["verification"] == "unverified", line
+        assert item["verification_note"].startswith("Found in the source; "), line
+        assert "API: a workflow passed but called no cited route" in item["verification_note"], line
+
+
+def test_code_a_route_runs_is_verified_when_that_route_ran(tmp_path):
+    for index, line in enumerate(POST_QUOTES):
+        item = _orders_level(tmp_path / str(index), line, WITH_POST)
+        assert item["verification"] == "verified", line
+        assert "API: a passing workflow called POST /orders/, the cited route" in item["verification_note"], line
+
+
+def test_the_handler_registered_with_add_api_route_is_its_route(tmp_path):
+    item = _orders_level(tmp_path / "a", "if order_id < 1:", [("POST", "/orders/3/cancel")])
+    assert item["verification"] == "verified"
+    assert _orders_level(tmp_path / "b", "if order_id < 1:", WITH_POST)["verification"] == "unverified"
+
+
+def test_a_citation_no_route_runs_is_found_in_code_whatever_ran(tmp_path):
+    calls = [*WITH_POST, ("POST", "/orders/3/cancel")]
+    for line in ("from fastapi import APIRouter, Depends, HTTPException", 'router = APIRouter(prefix="/orders")'):
+        item = _orders_level(tmp_path, line, calls)
+        assert item["verification"] == "unverified", line
+        assert "API: not run (no cited line is in a route handler)" in item["verification_note"], line
+
+
+def test_backend_code_whose_routes_cannot_be_read_says_so(tmp_path):
+    item = _orders_level(tmp_path, "if (quantity > 100) {", WITH_POST, rel="backend/src/OrderController.java",
+                         source="class OrderController {\n  void create(int quantity) {\n"
+                                "    if (quantity > 100) {\n      throw new IllegalArgumentException();\n"
+                                "    }\n  }\n}\n")
+    assert item["verification"] == "unverified"
+    assert "API: not run (the check cannot read the routes of the cited code)" in item["verification_note"]
 
 
 def test_a_full_stack_requirement_whose_api_half_ran_is_api_verified(tmp_path):

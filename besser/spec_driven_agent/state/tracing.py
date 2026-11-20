@@ -108,6 +108,10 @@ class TraceWriter:
         Optional callable returning the LLM client's cumulative token
         counters; its result is stamped as ``usage`` on the
         :data:`USAGE_EVENTS`.
+    mirror
+        Optional callable given every record as well, with the ``uncut``
+        fields of :meth:`write` in its payload. The backend keeps the
+        run's full record server-side through it.
     """
 
     def __init__(
@@ -116,23 +120,26 @@ class TraceWriter:
         run_id: str = "",
         primary_kind: str | None = None,
         usage: Callable[[], dict[str, Any]] | None = None,
+        mirror: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         self.output_dir = output_dir
         self.run_id = run_id
         self.primary_kind = primary_kind
         self._usage = usage
+        self._mirror = mirror
         self._path = os.path.join(output_dir, TRACE_FILENAME)
 
     @property
     def path(self) -> str:
         return self._path
 
-    def write(self, event: str, **payload: Any) -> None:
+    def write(self, event: str, uncut: dict[str, Any] | None = None, **payload: Any) -> None:
         """Append a single trace record. Never raises.
 
         Extra keyword arguments become the ``payload`` object. The
         framing fields (``ts``, ``run_id``, ``primary_kind``, ``event``)
         are written unconditionally so every record is self-describing.
+        ``uncut`` fields replace payload fields in the mirror's copy only.
         """
         if self._usage is not None and event in USAGE_EVENTS:
             try:
@@ -157,6 +164,11 @@ class TraceWriter:
         except Exception as exc:
             # Instrumentation must not break the run.
             logger.debug("Failed to write trace record (%s): %s", event, exc)
+        if self._mirror is not None:
+            try:
+                self._mirror({**record, "payload": {**payload, **(uncut or {})}})
+            except Exception as exc:
+                logger.debug("Failed to mirror trace record (%s): %s", event, exc)
 
     def tail(self, limit: int = 50) -> list[dict[str, Any]]:
         """Return the last ``limit`` records from the trace file.
@@ -195,7 +207,7 @@ class NullTraceWriter:
 
     path = ""
 
-    def write(self, event: str, **payload: Any) -> None:  # noqa: D401
+    def write(self, event: str, uncut: dict[str, Any] | None = None, **payload: Any) -> None:  # noqa: D401
         return None
 
     def tail(self, limit: int = 50) -> list[dict[str, Any]]:

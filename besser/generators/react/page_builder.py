@@ -782,10 +782,12 @@ class PageBuilderMixin:
             row_style = self._format_prop("style", {"display": "flex", "alignItems": "center", "gap": "6px"})
             grp_style = self._format_prop("style", {"display": "flex", "flexDirection": "column", "gap": "6px"})
             lines = [f'{indent_str}<div role="radiogroup" id={json.dumps(component_id)} {grp_style}>']
+            radio_required = " required" if required else ""
             for o in options:
                 lines.append(
                     f'{indent_str}  <label {row_style}>'
-                    f'<input type="radio" name={json.dumps(component_id)} value={json.dumps(o.get("value", ""))} />'
+                    f'<input type="radio" name={json.dumps(component_id)} value={json.dumps(o.get("value", ""))}'
+                    f'{radio_required} />'
                     f' {{{json.dumps(o.get("label", ""))}}}</label>'
                 )
             lines.append(f"{indent_str}</div>")

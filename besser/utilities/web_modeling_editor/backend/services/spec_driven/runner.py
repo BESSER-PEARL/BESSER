@@ -124,6 +124,7 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
 )
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.workspace_tree import read_run_json
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import run_record
+from besser.utilities.web_modeling_editor.backend.services.spec_driven import run_evidence
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.sse_events import (
     BaseSseEvent,
     CostEvent,
@@ -147,7 +148,7 @@ from besser.utilities.secret_redaction import (
     redact_text,
     scrub_secret_files,
 )
-from besser.utilities.web_modeling_editor.backend.settings import get_settings
+from besser.utilities.web_modeling_editor.backend.settings import get_settings, server_secrets
 
 if TYPE_CHECKING:
     from besser.utilities.web_modeling_editor.backend.services.spec_driven.runtime import (
@@ -1159,6 +1160,7 @@ class SmartGenerationRunner:
         self._telemetry_participant = getattr(request, "telemetry_participant", None)
         self._summary_recorded = False
         self._t_orchestrator: Any = None
+        self._secret_values: tuple[str, ...] | None = None
         self._t_client: Any = None
         self._t_done_payload: Optional[dict] = None
         self._t_last_error_code: Optional[str] = None
@@ -1294,7 +1296,13 @@ class SmartGenerationRunner:
                 self._facts.outcome = "cancelled"
             elif event.code not in _WARNING_CODES:
                 self._facts.outcome = "failed"
-        return format_sse(event, secrets=(self.request.resolved_api_key(),))
+        return format_sse(event, secrets=self._secrets())
+
+    def _secrets(self) -> tuple[str, ...]:
+        """The user's own key and the server's tokens: what the stream and the run record redact literally."""
+        if self._secret_values is None:
+            self._secret_values = (self.request.resolved_api_key(), *server_secrets())
+        return self._secret_values
 
     def _run_totals(self) -> dict[str, Any]:
         """The run's cost, turns and elapsed seconds so far, as the ``cost`` event reports them."""
@@ -1876,6 +1884,9 @@ class SmartGenerationRunner:
             # BESSER_LLM_ENABLE_* env vars without a code change.
             enable_tracing=settings.llm_enable_tracing,
             enable_checkpointing=settings.llm_enable_checkpointing,
+            # The full record, kept server-side when the operator asks: the recipe the user gets is
+            # size-bounded.
+            run_evidence=run_evidence.for_run(self.run_id, secrets=self._secrets()),
             # Heavy per-project compilers (tsc / cargo / kotlinc) are
             # opt-in for the web deployment — they were the main driver
             # of the duration/cost regression on non-Python stacks.
@@ -1935,18 +1946,17 @@ class SmartGenerationRunner:
         async def run_orchestrator() -> str:
             try:
                 if self._resume_run_id:
-                    return await self._runtime.run_blocking(
-                        orchestrator.resume, self.request.instructions
-                    )
-                if self._mode == "modify" and self._seeded:
+                    entry = orchestrator.resume
+                elif self._mode == "modify" and self._seeded:
                     # Seeded modify: edit the copied files in place.
                     # (A base-expired / failed-seed fallback left _seeded
                     # False and drops through to the from-scratch run().)
-                    return await self._runtime.run_blocking(
-                        orchestrator.modify, self.request.instructions
-                    )
+                    entry = orchestrator.modify
+                else:
+                    entry = orchestrator.run
+                # Every line the worker thread logs names the run.
                 return await self._runtime.run_blocking(
-                    orchestrator.run, self.request.instructions
+                    run_record.with_run_id(self.run_id, entry), self.request.instructions
                 )
             finally:
                 # Sentinel: tells the drain loop to stop waiting for

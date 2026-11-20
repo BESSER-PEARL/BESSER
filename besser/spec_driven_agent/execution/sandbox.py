@@ -236,7 +236,7 @@ def _mount_args(workspace: str, writable: "list[str] | None" = None) -> list[str
         args += ["--tmpfs", path]
     for env_name, default in ((_TELEMETRY_DIR_ENV, _TELEMETRY_DIR_DEFAULT),
                               (_INCIDENT_DIR_ENV, _INCIDENT_DIR_DEFAULT)):
-        masked = os.path.realpath(os.environ.get(env_name) or default)
+        masked = os.path.realpath((os.environ.get(env_name) or "").strip() or default)
         if os.path.isdir(masked) and not any(_within(masked, h) for h in hidden):
             args += ["--tmpfs", masked]
     home = sandbox_home(workspace)

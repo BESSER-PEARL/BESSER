@@ -288,6 +288,10 @@ Storage and lifecycle
   Point it at a persistent volume so runs survive a container restart.
 - ``BESSER_LLM_RUN_WORKSPACE_ROOT`` -- Persistent parent directory for run
   workspaces and checkpoints (default: the OS temp directory).
+- ``BESSER_LLM_RUN_EVIDENCE_RETENTION_DAYS`` (``30``) -- How long each run's
+  full record stays in the ``runs/`` folder of ``BESSER_INCIDENT_LOG_DIR``, when
+  that is set (see :ref:`spec-driven-run-evidence`); the hourly cleanup removes
+  older files. ``0`` (or a negative value) keeps no record.
 - ``BESSER_LLM_DOWNLOAD_TTL_SECONDS`` (10800, 3 hours) -- How long a finished
   run's workspace stays: the window in which a modify run can edit it, a push
   can send it to GitHub and its events stay replayable. The editor reads it as
@@ -316,7 +320,12 @@ Storage and lifecycle
   ``cost`` SSE tick.
 - ``BESSER_INCIDENT_LOG_DIR`` (``/app/incidents``) -- Where provider-incident
   records (a failed endpoint, a fallback-chain switch) are written, with
-  credentials redacted from their message, traceback and instructions. When it is
+  credentials redacted from their message, traceback and instructions. A blank
+  value counts as unset. When it is set explicitly, its ``runs/`` folder also
+  keeps every run's full record, which holds the start of each request, the
+  files the agent wrote and what its tools returned
+  (:ref:`spec-driven-run-evidence`); on a container it belongs on a persistent
+  mount. When it is
   set explicitly, every run's trace is also copied to its ``traces/``
   folder; when it is unset, only the traces of research-study runs are kept,
   in ``BESSER_TELEMETRY_DIR``. Study mode is described alongside the

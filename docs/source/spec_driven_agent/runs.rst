@@ -146,6 +146,66 @@ removes it. Likewise a run that fails or is cancelled after writing a
 checkpoint keeps its workspace, so an abandoned run that reports
 ``resumeAvailable: true`` can be resumed.
 
+.. _spec-driven-run-evidence:
+
+What the server keeps of a run
+------------------------------
+
+The recipe (``.besser_recipe.json``) ships in the download, so it is bounded:
+over 128 KiB it is shortened, and its ``recipe_shortened`` section counts what
+was cut and says so in ``note``, for example *kept 5 of 109 tool calls*. The run
+log (``.besser_trace.jsonl``) stays in the workspace and is deleted with it,
+after ``BESSER_LLM_DOWNLOAD_TTL_SECONDS``.
+
+The server keeps a run's full record only when the operator asks for it, by
+setting ``BESSER_INCIDENT_LOG_DIR`` (a blank value counts as unset). Each run
+started through the backend then appends to
+``<BESSER_INCIDENT_LOG_DIR>/runs/<run id>.jsonl`` as it goes, so a run that is
+cancelled or crashes keeps what it did up to then, and a shortened recipe adds
+*full record kept server-side under run <run id>* to its note. Files are kept
+``BESSER_LLM_RUN_EVIDENCE_RETENTION_DAYS`` days (30); ``0`` turns the record
+off (a negative value counts as ``0``) and then the cleanup removes nothing, so
+older files stay until the operator deletes them. A run driven from Python with
+``LLMOrchestrator`` writes none unless it passes ``run_evidence``, a callable
+that receives each record. The record is written only with the run log
+(``BESSER_LLM_ENABLE_TRACING``, on by default).
+
+**What it contains.** One JSON line for every record of the run log, with
+``phase`` added. That is personal data of the user and of what the agent read:
+
+- the first 500 characters of the user's request (in ``run_start``) and the
+  requirements read from it (in ``requirements``);
+- every file the agent wrote or edited, whole up to 64 KiB (``write_file``
+  content, ``modify_file`` old and new text);
+- up to 16 KiB of every tool result, the text the model read: the contents of
+  files it read, including files of an imported repository and files the user
+  uploaded, command and test output, API responses;
+- each tool call's turn, ``success``, ``status`` and ``seconds`` (how long the
+  tool took), the validation findings, the phases and their token counters.
+
+It does not contain the conversation with the LLM (the prompts and the model's
+messages).
+
+- **Caps.** Any one string is kept up to 64 KiB (its first and last 32 KiB
+  beyond that). A tool result is kept up to 16 KiB, its first and last 8 KiB.
+- **Redaction.** Every string is redacted before it is cut: first the user's
+  own key and every token or password the server holds (the LLM tiers' tokens,
+  the demo token, ...), then the rules of the run's events and of a generation
+  trace: provider tokens, private keys, ``.env``-style assignments, credentials
+  written as quoted literals in code (``apiKey = "..."``), URL passwords
+  (``https://user:password@host``), ``Authorization``, ``Cookie``,
+  ``Set-Cookie`` and ``X-...-Key`` / ``X-...-Token`` headers, token fields and
+  JWTs, and ``test_api`` header values. A tool result in JSON is redacted with
+  its text unescaped, so the line rules see real lines.
+- **Access.** A run's shell never sees the folder: the sandbox masks
+  ``BESSER_INCIDENT_LOG_DIR``. Whoever can read the folder on the host can read
+  the records.
+- **Size.** Measured on production runs, a record is about 0.2 to 1.6 MB
+  (0.7 MB on average).
+
+While a run is working, each warning its worker logs carries
+``run_id=<run id>``, as the ``spec-driven run start`` and ``run end`` lines do.
+
 .. _spec-driven-modify-mode:
 
 Modifying a previous run

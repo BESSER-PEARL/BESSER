@@ -47,14 +47,20 @@ def test_the_runner_hands_the_requirements_to_the_orchestrator(monkeypatch):
     class CaptureRequirements(_StubOrchestrator):
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
-            observed.append(kwargs["stated_requirements"])
+            observed.append((kwargs["stated_requirements"], kwargs["followup_states_nothing_new"]))
             self._validation_issues = []
 
     monkeypatch.setattr(runner_module, "create_llm_client", lambda **kwargs: _FakeClient())
     monkeypatch.setattr(runner_module, "LLMOrchestrator", CaptureRequirements)
     try:
-        asyncio.run(_collect_frames(SmartGenerationRunner(_build_request(requirements=[REQUIREMENT]), runtime=current_runtime())))
+        asyncio.run(_collect_frames(SmartGenerationRunner(
+            _build_request(requirements=[REQUIREMENT], followup_states_nothing_new=True), runtime=current_runtime())))
         asyncio.run(_collect_frames(SmartGenerationRunner(_build_request(), runtime=current_runtime())))
     finally:
         _cleanup()
-    assert observed == [[REQUIREMENT], None]
+    assert observed == [([REQUIREMENT], True), (None, False)]
+
+
+def test_a_field_this_server_does_not_know_is_ignored():
+    """An editor newer than the server may send fields it lacks; the run must still start."""
+    assert not hasattr(_build_request(field_from_a_newer_editor=True), "field_from_a_newer_editor")

@@ -882,7 +882,8 @@ def extract_follow_up(previous: list[dict], instructions: str, previous_instruct
     }
 
 
-def stated_requirements_ledger(stated: list[dict], instructions: str) -> list[dict] | None:
+def stated_requirements_ledger(stated: list[dict], instructions: str, *,
+                               newest_states_nothing_new: bool = False) -> list[dict] | None:
     """The ledger built from the requirements the editor sent, or None when they
     do not cover the request and it must be extracted instead.
 
@@ -894,9 +895,12 @@ def stated_requirements_ledger(stated: list[dict], instructions: str) -> list[di
 
     The assistant extracts from the user's first request only. A request with
     later messages (``LATER_REQUEST_MARKER``) states requirements the list
-    lacks, so the whole request is extracted instead.
+    lacks, so the whole request is extracted instead; with
+    ``newest_states_nothing_new`` (the assistant's verdict on a retry or a fix)
+    the newest one is not counted.
     """
-    if LATER_REQUEST_MARKER in original_request(instructions):
+    later = later_messages(instructions)
+    if later[:-1] if newest_states_nothing_new else later:
         logger.warning(
             "Requirements ledger: the request has later messages that the %d requirements "
             "from the editor do not cover; extracting from the whole request instead", len(stated),

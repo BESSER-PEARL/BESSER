@@ -2021,6 +2021,7 @@ class SmartGenerationRunner:
                 [item.model_dump(mode="json") for item in self.request.requirements]
                 if self.request.requirements is not None else None
             ),
+            followup_states_nothing_new=self.request.followup_states_nothing_new,
             # Binding generator choice from an approved preview plan. A
             # bound None explicitly skips Phase 1; an unbound None auto-selects.
             target_generator=target_generator,

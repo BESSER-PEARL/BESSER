@@ -1078,11 +1078,12 @@ Each verdict keeps the requirement's trace id as ``ref``, and the recipe's
 ``requirements_source`` says where the ledger came from (``editor`` or
 ``extracted``). The assistant extracts from the user's first request only, so a
 request carrying later messages is extracted as before, with a warning in the log.
-That includes a later message that only asks to retry, continue or fix earlier
-work ("try again", "fix it"; a bare "continue" sends the earlier request
-unchanged): the assistant sends it as the newest message, so on a run
-without a previous ledger (a first build tried again, or an expired result) it
-costs one extraction call and the verdicts carry no trace id.
+A newest message that only asks to retry, continue or fix earlier work ("try
+again", "fix it"; a bare "continue" sends the earlier request unchanged) does not
+count when the request says so (``followup_states_nothing_new``, set from the
+assistant's verdict): the editor's requirements and their trace ids are used, with
+no extraction call. Without that field, such a message is extracted like any other
+later message: one call, and verdicts without trace ids.
 
 The judge reads a digest of the app of at most 200,000 characters: the schema
 files first, then the backend code ranked by the share of its lines the agent

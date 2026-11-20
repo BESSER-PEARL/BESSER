@@ -133,3 +133,13 @@ def method_timedelta_param(name, value):
         return _TypeAdapter(_timedelta).validate_python(value)
     except _ValidationError:
         raise _HTTPException(status_code=422, detail=f"{name} must be a duration in seconds or ISO 8601") from None
+
+
+def method_record_param(database, model, key, value):
+    """A parameter typed by a class, sent as the id of one of its records: that record; 404 when there is none."""
+    if value is None or isinstance(value, model):
+        return value
+    record = database.query(model).filter(key == value).first()
+    if record is None:
+        raise _HTTPException(status_code=404, detail=f"{model.__name__} not found")
+    return record

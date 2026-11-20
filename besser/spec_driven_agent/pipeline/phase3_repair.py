@@ -85,7 +85,6 @@ from besser.spec_driven_agent.validation.issues import (
     unresolved_defects,
 )
 from besser.spec_driven_agent.validation.toolchain import (
-    _build_toolchain_reminder,
     _toolchain_commands_for,
 )
 from besser.utilities.workspace_fs import copytree_plain, is_plain_entry, walk_plain
@@ -1322,11 +1321,8 @@ class Phase3RepairMixin:
                 + ". It may also create new files. To edit any other file, add needed_for to that "
                 "call, naming the blocker the file is needed for.")])
 
-        # When the blockers include toolchain errors and shell tools are on,
-        # instruct the LLM to drive the toolchain itself with run_command — that's the
-        # only way to know whether a fix actually compiles. We do this
-        # as additional text in the same user turn (vs. a separate
-        # message) so the LLM sees the request as part of the brief.
+        # The one place the toolchain instruction is given. With shell tools on,
+        # the model runs the check itself: the diff alone does not show it compiles.
         if toolchain_blockers and not self.allow_shell_tools:
             cmds = self._toolchain_commands_for(toolchain_blockers)
             prompt_parts.append("")
@@ -1343,29 +1339,16 @@ class Phase3RepairMixin:
             cmd_lines = "\n".join(f"  - {c}" for c in cmds)
             prompt_parts.append("")
             prompt_parts.append(
-                "After each edit, re-run the relevant toolchain check "
-                "using run_command to confirm the error is gone:"
+                "Fix the reported compile / type errors, then re-run the relevant "
+                "toolchain check with run_command, and repeat until it reports zero errors:"
             )
             prompt_parts.append(cmd_lines)
             prompt_parts.append(
-                "Keep iterating (edit -> re-run) until the toolchain "
-                "reports zero errors. Do not declare done while any "
-                "compile / type error is still reported."
+                "Do not end the attempt while any compile / type error is still reported."
             )
 
         fix_prompt = "\n".join(prompt_parts)
         messages: list[dict] = [{"role": "user", "content": fix_prompt}]
-
-        # Inject a high-salience reminder as a separate user message
-        # right after the prompt. Matches the pattern used by the
-        # per-file modify-loop guard: a <system-reminder>-tagged block
-        # the LLM sees at response-time, not buried inside the prompt.
-        if toolchain_blockers:
-            reminder = self._build_toolchain_reminder(toolchain_blockers)
-            messages.append({
-                "role": "user",
-                "content": [{"type": "text", "text": reminder}],
-            })
 
         edits = 0                 # successful write-tool calls this attempt
         # needed_for is offered only while the attempt's edits are limited.
@@ -1524,11 +1507,7 @@ class Phase3RepairMixin:
             "Fix each issue concisely. Call validate_app to recheck startup and "
             "data entry after a coherent repair. When shell tools are unavailable, "
             "validate_app and test_api are the supported verification tools. Use test_api "
-            "for specification-based workflow assertions and invalid inputs. When shell tools "
-            "are available and the report contains "
-            "toolchain errors (tsc / cargo / kotlinc), verify each fix by "
-            "re-running that toolchain with run_command; the diff alone does "
-            "not show that it compiles.", "",
+            "for specification-based workflow assertions and invalid inputs.", "",
         ]
         if self._instructions:
             parts.extend([
@@ -1625,10 +1604,6 @@ class Phase3RepairMixin:
     def _toolchain_commands_for(self, toolchain_blockers: list[ValidationIssue]) -> list[str]:
         """Delegate to the toolchain module."""
         return _toolchain_commands_for(toolchain_blockers, shell_tools=self.allow_shell_tools)
-
-    def _build_toolchain_reminder(self, toolchain_blockers: list[ValidationIssue]) -> str:
-        """Delegate to the toolchain module."""
-        return _build_toolchain_reminder(toolchain_blockers, shell_tools=self.allow_shell_tools)
 
     @staticmethod
     def _repair_priority(issue: ValidationIssue) -> tuple[int, str]:

@@ -27,6 +27,9 @@ SAFE_ENV_ALLOWLIST: frozenset[str] = frozenset({
     "PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV",
     # Node (harmless, often needed by tools)
     "NODE_PATH",
+    # The JVM flags that mitigate CVE-2026-114938, set in the Dockerfile:
+    # generated Java/Kotlin apps must run with them too.
+    "JAVA_TOOL_OPTIONS",
 })
 
 # Variable-name substrings that identify secret-like env vars. Even if

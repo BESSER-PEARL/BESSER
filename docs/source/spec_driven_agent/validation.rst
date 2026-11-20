@@ -596,9 +596,11 @@ Findings are classified into three severities:
        passing check and no ``task_list`` done, or the model recorded it as
        ``blocked``, whose reason is shown; the finding says whether the files
        the item names were edited. It is also raised when the model closes
-       one of the harness's own items that no other check covers, a modeled
-       rule the generators could not enforce or a derived attribute, on its
-       word alone. The run report lists it as not confirmed; it is not a
+       one of the harness's own items that no other check covers (a modeled
+       rule the generators could not enforce, a derived attribute, or the
+       initial value of a derived enumeration attribute; they are marked when
+       the checklist is seeded, so a run resumed from a checkpoint written
+       before that mark existed does not report them) on its word alone. The run report lists it as not confirmed; it is not a
        blocker, not counted in the blocker number, not sent to the repair
        loop, and on a fix run it is not promoted to the reported failure. A
        missing behavior behind it is still caught by the build, startup and

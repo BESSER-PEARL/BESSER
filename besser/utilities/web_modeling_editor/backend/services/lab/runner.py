@@ -50,7 +50,7 @@ from besser.utilities.web_modeling_editor.backend.services.lab.access import Lab
 from besser.utilities.web_modeling_editor.backend.services.lab.github_reader import LabGitHubReader
 from besser.utilities.web_modeling_editor.backend.services.lab.model_proposal import (
     SPEC_ERRORS,
-    _change_diagram,
+    change_diagram,
     model_spec_from_project,
     proposal_from_plan,
 )
@@ -256,7 +256,7 @@ class LabRunner:
     def _record_start(self) -> None:
         """The message and ``running`` in the change's thread (blocking: files)."""
         project, change_id = self.request.project, self.request.changeId
-        diagram = _change_diagram(project, change_id) if project is not None else None
+        diagram = change_diagram(project, change_id) if project is not None else None
         action = "build" if self.request.review is not None else self.request.action
         thread = self._lab.thread(change_id)
         try:

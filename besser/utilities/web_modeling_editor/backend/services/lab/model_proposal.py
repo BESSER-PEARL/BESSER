@@ -48,7 +48,7 @@ logger = logging.getLogger(__name__)
 _PRIMITIVES = {primitive.name: primitive for primitive in data_types}
 # What a spec can get wrong that B-UML or the converter refuses.
 SPEC_ERRORS = (ConversionError, KeyError, TypeError, ValueError)
-# ``DiagramInput.config`` keys by which the editor ties a class diagram to a lab change (see _change_diagram).
+# ``DiagramInput.config`` keys by which the editor ties a class diagram to a lab change (see change_diagram).
 _CHANGE_MARKERS = ("labProposalChangeId", "labChangeId")
 
 # The proposal's layout. Widths follow the editor's classifier: text measured at its 16 px font plus 20 px
@@ -247,7 +247,7 @@ def domain_model_to_spec(domain_model: DomainModel) -> dict[str, Any]:
     }
 
 
-def _change_diagram(project: ProjectInput, change_id: str) -> Optional[DiagramInput]:
+def change_diagram(project: ProjectInput, change_id: str) -> Optional[DiagramInput]:
     """The project's class diagram of change ``change_id``: the active one when it is the change's, else the last.
 
     The editor marks the proposal tab with ``config.labProposalChangeId`` and a kept proposal with
@@ -267,7 +267,7 @@ def model_spec_from_project(project: ProjectInput, change_id: str) -> Optional[d
     Raises:
         ConversionError, KeyError, TypeError, ValueError: the diagram cannot be converted.
     """
-    diagram = _change_diagram(project, change_id)
+    diagram = change_diagram(project, change_id)
     if diagram is None or not diagram.model:
         return None
     spec = domain_model_to_spec(process_class_diagram(diagram.model_dump()))

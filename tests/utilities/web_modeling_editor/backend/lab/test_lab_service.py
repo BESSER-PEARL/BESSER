@@ -465,6 +465,21 @@ def test_a_note_approved_from_a_proposal_leaves_the_pending_proposals(lab_env):
     assert [n.id for n in service.memory_view().notes] == [stored.id]
 
 
+def test_the_thread_lists_only_the_proposals_still_pending(lab_env):
+    # W5-V finding 3: the run card rebuilt from the thread offered notes already approved or dismissed.
+    service = make_service(lab_env.workspace())
+    change = service.workspace.create_draft(owner="ana")
+    run(service, change.id, "ana",
+        result=done(change.id, proposals=[_proposal("p1"), _proposal("p2"), _proposal("p3")]))
+    service.add_note(user("ben"), LabNoteInput(kind="decision", title="Keep notes short", body="One idea per note.",
+                                               fromProposal=LabProposalRef(changeId=change.id, id="p1")))
+    service.dismiss_proposal(user("ben"), LabProposalRef(changeId=change.id, id="p3"))
+
+    (item,) = service.change_detail(change.id).thread
+
+    assert [proposal.id for proposal in item.lab.noteProposals] == ["p2"]
+
+
 def test_memory_off_refuses_writes_with_the_reason(lab_env):
     # A state folder inside the workspace root: code the agent runs could plant a note there.
     service = make_service(LabWorkspace(lab_env.root, lab_env.specs(), state_dir=os.path.join(lab_env.root, "state"),

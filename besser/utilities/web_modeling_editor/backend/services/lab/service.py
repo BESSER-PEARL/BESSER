@@ -85,6 +85,7 @@ from besser.utilities.web_modeling_editor.backend.models.lab import (
     LabRunRecord,
     LabRunsView,
     LabSettingsResponse,
+    LabThreadItem,
     LabUpdateBranchResponse,
     LabUserView,
 )
@@ -386,8 +387,8 @@ class LabService:
                                 behind={status.repo: status.behind for status in statuses})
         return LabChangeDetail(
             **summary.model_dump(), branches=dict(change.branches), bases=statuses,
-            view=self._view(change, records, repo_changes),
-            thread=self.thread(change_id).items({record.runId: record for record in records}), runs=records)
+            view=self._view(change, records, repo_changes), thread=self._thread_items(change_id, records),
+            runs=records)
 
     def diff(self, change_id: str, repo: Optional[str], path: Optional[str]) -> LabDiffResponse:
         """The change's working trees against their bases (blocking: git).
@@ -857,6 +858,15 @@ class LabService:
         except LabMemoryUnavailable as exc:
             return LabMemoryInfo(enabled=False, reason=str(exc), count=0, max=MAX_NOTES)
         return LabMemoryInfo(enabled=True, reason="", count=count, max=MAX_NOTES)
+
+    def _thread_items(self, change_id: str, records: list[LabRunRecord]) -> list[LabThreadItem]:
+        """The thread, each run's proposed notes narrowed to those still pending (not approved or dismissed)."""
+        items = self.thread(change_id).items({record.runId: record for record in records})
+        pending = {proposal.id for proposal in self._read_proposals(change_id)}
+        for item in items:
+            if item.type == "run" and item.lab is not None and item.lab.noteProposals:
+                item.lab.noteProposals = [p for p in item.lab.noteProposals if p.id in pending]
+        return items
 
     def _requested_by(self, change_id: str, records: list[LabRunRecord]) -> list[str]:
         """Logins that sent the change's messages, first first (its runs' logins when the thread has none)."""

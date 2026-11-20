@@ -20,7 +20,7 @@ into the HTTP response. Endpoints are organized by concern:
 - **``routers/validation_router.py``** -- Diagram validation (metamodel + OCL constraints)
 - **``routers/deployment_router.py``** -- Docker deployment and feedback
 - **``routers/spec_driven_router.py``** -- The :doc:`Spec-Driven Agent <spec_driven_agent/index>`: SSE generation runs, preview, config, durable run status and event replay, resume, cancel, download, and GitHub push/import
-- **``routers/lab_router.py``** -- :doc:`BESSER Lab <spec_driven_agent/lab>`: the lab chat (SSE), the state, pull requests, park/resume/drop and the preview reset (see `BESSER Lab`_)
+- **``routers/lab_router.py``** -- :doc:`BESSER Lab <spec_driven_agent/lab>`: the home, changes and their runs (SSE), pull requests, the review loop, the Try it preview, settings and audit, team notes (see `BESSER Lab`_)
 - **``routers/telemetry_router.py``** -- Opt-in run telemetry collection and reporting
 - **``routers/agent_simulator_router.py``** -- Live agent simulation (see `Agent Simulation`_)
 - **``routers/traceability_router.py``** -- Code generation that also returns the trace of the run (see `Traceability`_)
@@ -40,7 +40,7 @@ Additional infrastructure:
 - **``services/kg/``** -- The machinery behind the Knowledge Graph endpoints: ``payloads.py`` (parsing a KG diagram from a request, the ``kgSignature`` check, report-to-response mapping), ``decisions.py`` (applying Refine-KG decisions), ``llm.py`` (reaching the user's own LLM provider under one request deadline) and ``validation.py`` (the consistency check under its concurrency cap, and the KG findings of ``/validate-diagram``)
 - **``services/traceability/``** -- ``traced_generation.py``: runs a generation through ``services/generation`` (the same path as the plain endpoints) and builds the trace fragment of the run from its ``Generation`` with ``besser.utilities.generation_trace``
 - **``services/spec_driven/``** -- The machinery behind the Spec-Driven Agent: ``runner.py`` (drives a run and emits SSE), ``run_manager.py`` (durable ownership, SQLite-backed event store, replay), ``runtime.py`` (the per-app state of the runs, see `Runtime State`_), ``model_assembly.py`` (project payload to B-UML models), ``preview.py`` (pre-flight plan, no LLM call), ``github_sync.py`` (a run pushed to GitHub, a GitHub repo imported as a run), ``sse_events.py`` (the typed event schema), ``telemetry.py``, ``incidents.py``. Frames, packaged workspaces and repo writes are redacted by ``besser.utilities.secret_redaction``
-- **``services/lab/``** -- The :doc:`BESSER Lab <spec_driven_agent/lab>` services: ``access.py`` (``LabUser`` and the ``BESSER_LAB_ALLOWED_LOGINS`` check), ``pull_requests.py`` (pushes a change's lab branches and opens its draft pull requests), ``preview.py`` (runs the working copy's backend, editor and modeling agent as a preview), ``service.py`` (the lab of one instance on ``app.state.lab``: working copy, preview, one run or change action at a time), ``runner.py`` (one lab message streamed as Spec-Driven SSE events), ``model_proposal.py`` (a plan's class diagram to the editor's JSON, and the user's diagram back for the build step)
+- **``services/lab/``** -- The :doc:`BESSER Lab <spec_driven_agent/lab>` services (see `BESSER Lab`_ for each module)
 - **``constants/constants.py``** -- API version, temp prefixes, generator defaults and the built-in CORS origins
 - **``settings.py``** -- ``BackendSettings``, every environment variable the backend reads (see `Environment Variables`_)
 - **``models/responses.py``** -- Standardized Pydantic response models. They derive from ``ResponseModel``, which marks every field the backend sends (defaults included) as required in the OpenAPI schema, and use ``Literal`` types and nested models for fields with a fixed set of values or a fixed shape, so the editor's generated client needs no casts. ``KGIssueResponse`` and ``KGActionResponse`` stay plain ``BaseModel`` classes: they are also part of a request body
@@ -526,22 +526,160 @@ Backend-side notes that do not belong in the contract:
 BESSER Lab
 ^^^^^^^^^^
 
-Seven endpoints under ``/lab/*`` back :doc:`BESSER Lab <spec_driven_agent/lab>`,
-the deployment whose chat changes BESSER's own source. Each needs the
-``X-GitHub-Session`` header of a login in ``BESSER_LAB_ALLOWED_LOGINS`` and
-answers 404 while ``BESSER_LAB_ENABLED`` is off, 401 without a valid session
-and 403 for a login not on the list. They are registered on every instance,
-so the OpenAPI schema does not depend on ``BESSER_LAB_ENABLED``. A lab instance answers 404 to ``POST /spec-driven/generate``
-and ``POST /spec-driven/resume/{run_id}``. Request and response shapes are in
+Twenty-four routes under ``/lab/*`` back :doc:`BESSER Lab <spec_driven_agent/lab>`,
+the private instance in which the BESSER team develops BESSER. Each needs the
+``X-GitHub-Session`` header of a login in ``BESSER_LAB_ALLOWED_LOGINS``
+(``LabUserDep``) and answers 404 while ``BESSER_LAB_ENABLED`` is off, 401
+without a valid session, 403 for a login not on the list and 503, with the
+reason, on a lab that could not start. They are registered on every instance,
+so the OpenAPI schema does not depend on ``BESSER_LAB_ENABLED``. A refusal
+answers ``{"detail": {"code", "message"}}`` with the status of its code:
+``change_busy`` 409, ``runs_full`` 429, ``user_cap`` 409, ``instance_cap``
+409, ``not_owner`` 403, ``preview_full`` 409, ``not_found`` 404, ``state``
+409. Every allowed login may see and continue any change; dropping one is for
+its owner or an admin.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 25 45
+
+   * - Route
+     - Body / query
+     - Answer
+   * - ``GET /lab/home``
+     -
+     - ``LabHomeResponse``: the user, the bases, the runs in progress, the
+       month's meters, the preview slots, the link mode, the team memory's
+       state
+   * - ``GET /lab/changes``
+     -
+     - ``LabChangesResponse``: open changes and drafts, last updated first, then
+       the 10 most recently closed
+   * - ``POST /lab/change``
+     -
+     - ``LabChangeDetail``: a new draft owned by the user (``user_cap``,
+       ``instance_cap``)
+   * - ``GET /lab/change``
+     - ``changeId``
+     - ``LabChangeDetail``: files, last run, branches, bases, thread, run
+       records
+   * - ``POST /lab/message``
+     - ``LabMessageRequest`` (``changeId`` required; ``action``, ``project``,
+       ``review``, ``issue``)
+     - An SSE stream of the Spec-Driven Agent's event types; ``done.lab`` is
+       ``LabDone``. ``POST /spec-driven/cancel/{run_id}`` stops it
+   * - ``POST /lab/pull-request``
+     - ``LabPullRequestRequest`` (``changeId``, ``title``, ``body``,
+       ``closesIssues``)
+     - ``LabPullRequestsResponse``: the draft pull requests and
+       ``checksNote``. 400 for an issue that is not the change's, 401 when
+       GitHub refuses the user's sign-in
+   * - ``POST /lab/change/drop``
+     - ``LabChangeRequest``
+     - ``LabChangesResponse`` (``not_owner`` for anyone but the owner or an
+       admin)
+   * - ``POST /lab/change/close``
+     - ``LabChangeRequest``
+     - ``LabChangeDetail``; refused (``state``) while a pull request is open or
+       work is not on GitHub
+   * - ``POST /lab/change/update-base``
+     - ``LabUpdateBranchRequest`` (``changeId``, ``repo``)
+     - ``LabUpdateBranchResponse``: GitHub's update-branch with an open pull
+       request, else a local merge; conflicts are left for a build step
+   * - ``GET /lab/diff``
+     - ``changeId``, optional ``repo`` and ``path``
+     - ``LabDiffResponse``: the working trees against their bases, redacted;
+       refused for a draft and a closed change
+   * - ``GET /lab/review``
+     - ``changeId``
+     - ``LabReviewResponse``: each pull request's state, CI checks with
+       failing log tails, reviews and comments, ``lifecycle``, ``closable``
+       and when to ask again
+   * - ``GET /lab/preview``
+     -
+     - ``LabPreviewView``: every slot, its change and its three services
+   * - ``POST /lab/preview/slot``
+     - ``LabTakeSlotRequest`` (``changeId``)
+     - ``LabPreviewSlot``: the slot now showing the change (``preview_full``)
+   * - ``POST /lab/preview/slot/touch``
+     - ``LabTouchSlotRequest`` (``slot``)
+     - 204: the user still uses the slot
+   * - ``POST /lab/preview/restart``
+     - ``LabPreviewRestartRequest`` (``slot``, optional ``service``)
+     - ``LabPreviewView``
+   * - ``GET /lab/preview/logs/{service}``
+     - ``slot``, ``lines`` (1 to 2000, default 200)
+     - ``LabPreviewLog``: the end of one service's log, redacted
+   * - ``GET /lab/settings``
+     -
+     - ``LabSettingsResponse``: repositories and bases, limits, admins, the
+       month's spending, the link mode
+   * - ``POST /lab/settings/refresh-bases``
+     -
+     - ``LabSettingsResponse``, after fetching every base branch
+   * - ``GET /lab/audit``
+     - ``month`` (``YYYY-MM``, default the current UTC month)
+     - ``LabAuditResponse``: the month's audit log and what each login spent
+   * - ``GET /lab/memory``
+     -
+     - ``LabMemoryResponse``: the team notes and whether the memory is on
+   * - ``POST /lab/memory``
+     - ``LabNoteInput`` (optional ``fromProposal``)
+     - ``LabNote``: a note approved by the user
+   * - ``PUT /lab/memory/{note_id}``
+     - ``LabNoteInput``
+     - ``LabNote``
+   * - ``DELETE /lab/memory/{note_id}``
+     -
+     - 204
+   * - ``POST /lab/memory/proposals/dismiss``
+     - ``LabProposalRef`` (``changeId``, ``id``)
+     - 204: the proposed note is not kept
+
+Routes elsewhere that behave differently on a lab instance:
+``POST /spec-driven/generate`` and ``POST /spec-driven/resume/{run_id}`` answer
+404; the run routes (``GET /spec-driven/runs/{run_id}``, its ``/events`` and
+``/events.json``, ``POST /spec-driven/cancel/{run_id}``) need an allowed login,
+and a lab run stops only for its starter, the change's owner or an admin (403
+otherwise); ``GET /github/auth/callback`` refuses a login not on the list and
+redirects to ``<DEPLOYMENT_URL>?error=not_allowed#login=<login>``;
+``GET /github/auth/login?prompt=select_account`` passes that value to GitHub,
+which then shows its account picker. ``GET /spec-driven/config`` reports
+``"lab": {"enabled": bool}``. Shapes, rules and the ``LabDone`` example are in
 :doc:`spec_driven_agent/lab`.
 
-- ``POST /lab/message`` -- Run one message of the lab chat (plan or build); answers with an SSE stream of the Spec-Driven Agent's event types, whose ``done`` carries a ``lab`` field. One run at a time per instance (409 otherwise); ``POST /spec-driven/cancel/{run_id}`` stops it
-- ``GET /lab/state`` -- The signed-in user, the active change with its changed files, the parked changes, the preview's services and the run in progress (``run``)
-- ``POST /lab/pull-request`` -- Push the active change's lab branches and open a draft pull request in each repository it touched; returns the pull requests and ``checksNote`` (only the quick checks ran). 409 when ``changeId`` is not the active change
-- ``POST /lab/change/park``, ``POST /lab/change/resume``, ``POST /lab/change/drop`` -- Park the active change, resume a parked one (``{"changeId"}``), or drop the active change; each returns the state
-- ``POST /lab/preview/reset`` -- Check out the base branches when no change is active (409 otherwise); returns the state
+The service modules, in ``services/lab/``:
 
-``GET /spec-driven/config`` reports ``"lab": {"enabled": bool}``.
+- ``service.py`` -- ``LabService``, built by the lifespan
+  (``create_lab_service``) and kept on ``app.state.lab``: changes and their
+  locks, runs (a slot of ``BESSER_LAB_MAX_CONCURRENT_RUNS`` and a cost
+  reservation each), the change actions, the ledgers of each change, the
+  preview pool, settings, audit view, team memory and the base refresh task.
+  ``LabRefusal`` (code, message, status) is defined here.
+- ``runner.py`` -- ``LabRunner``: one message through ``LabSession.handle`` in
+  a worker thread, streamed as Spec-Driven SSE events; a build is committed as
+  the requesting login; however the stream ends, the run is given back to the
+  service.
+- ``thread.py`` -- ``ChangeThread``: the change's conversation,
+  ``thread.jsonl``.
+- ``access.py`` -- ``LabUser``, the allowed logins and the admins.
+- ``audit.py`` -- the monthly audit log, ``audit/<YYYY-MM>.jsonl``.
+- ``budget.py`` -- the monthly caps per login and for the lab, and each run's
+  cost reservation.
+- ``pull_requests.py`` -- pushes a change's branches and opens or updates its
+  draft pull requests, with the lab-owned block of their bodies.
+- ``review.py`` -- the review loop: the pull requests' status, update from the
+  base, the build message of a review task.
+- ``diff_view.py`` -- the change's diff as ``GET /lab/diff`` sends it: capped
+  and redacted per file.
+- ``github_reader.py`` -- ``LabGitHubReader``: the lab agent's GitHub reads,
+  with the requesting user's token.
+- ``model_proposal.py`` -- a plan's class diagram to the editor's JSON, and
+  the change's diagram back for the next step.
+- ``preview.py`` -- ``PreviewPool``: the Try it slots, each running a change's
+  backend, editor and modeling agent in the sandbox.
+- ``llm_proxy.py`` -- the preview's key-holding LLM proxy, a lifespan task of
+  the lab backend.
 
 Telemetry (research study mode)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -1023,27 +1161,37 @@ durable-run storage paths -- are documented in one place, with the agent:
 demo token are on ``BackendSettings``; the rest are on the agent's
 ``AgentSettings`` (``besser/spec_driven_agent/settings.py``).
 
-**BESSER Lab** (all optional, read once per process; see :doc:`spec_driven_agent/lab`):
+**BESSER Lab** (all optional, read once per process; defaults and meanings in
+the table of :doc:`spec_driven_agent/lab`, "Configuration"):
 
-- ``BESSER_LAB_ENABLED`` (off) -- This instance is a BESSER Lab: the ``/lab/*``
-  endpoints answer and GitHub sign-in is limited to ``BESSER_LAB_ALLOWED_LOGINS``.
-  Off, every lab endpoint answers 404 and sign-in is unchanged.
-- ``BESSER_LAB_ALLOWED_LOGINS`` (empty) -- Comma-separated GitHub logins allowed
-  to use the lab, ignoring case; empty allows no one.
-- ``BESSER_LAB_WORKSPACE_ROOT`` (unset) -- Absolute path of the folder holding the
-  lab's working copies (``besser``, ``modeling-agent``).
-- ``BESSER_LAB_STATE_DIR`` (unset) -- Absolute path of the lab's state (changes'
-  state and notes, last checks, preview logs); unset, ``.lab`` of
-  ``BESSER_LAB_WORKSPACE_ROOT``. Set it outside the working copy on a server.
-- ``BESSER_LAB_LLM_PROVIDER`` (``anthropic``) -- LLM provider of the lab agent.
-- ``BESSER_LAB_LLM_MODEL`` (unset) -- Model of the lab agent; unset, the
-  provider's default.
-- ``BESSER_LAB_LLM_API_KEY`` (unset) -- The server's key for that provider;
-  users never send their own.
-- ``BESSER_LAB_MAX_COST_USD`` (``5.0``) -- Cost cap of one lab run, in US dollars.
-- ``BESSER_LAB_MAX_RUNTIME_SECONDS`` (``2400``) -- Runtime cap of one lab run.
-- ``BESSER_LAB_PREVIEW_ENABLED`` (off) -- Run the working copy's backend, editor
-  and modeling agent as a live preview.
+- Who: ``BESSER_LAB_ENABLED`` (off), ``BESSER_LAB_ALLOWED_LOGINS`` (empty: no
+  one), ``BESSER_LAB_ADMIN_LOGINS`` (empty).
+- Folders: ``BESSER_LAB_WORKSPACE_ROOT`` (unset: the lab cannot start),
+  ``BESSER_LAB_GIT_ROOT`` (``<workspace root>-git``), ``BESSER_LAB_STATE_DIR``
+  (``<workspace root>-state``).
+- Repositories (``owner/name@branch``; a malformed value stops the backend):
+  ``BESSER_LAB_REPO_BESSER`` (``BESSER-PEARL/BESSER@development``),
+  ``BESSER_LAB_REPO_FRONTEND``
+  (``BESSER-PEARL/BESSER-Web-Modeling-Editor@develop``),
+  ``BESSER_LAB_REPO_MODELING_AGENT`` (``BESSER-PEARL/modeling-agent@develop``),
+  ``BESSER_LAB_BASE_REFRESH_MINUTES`` (``60``; ``0``: by hand and when a change
+  opens).
+- The lab agent: ``BESSER_LAB_LLM_PROVIDER`` (``anthropic``),
+  ``BESSER_LAB_LLM_MODEL`` (the provider's default),
+  ``BESSER_LAB_PLAN_LLM_MODEL`` (``BESSER_LAB_LLM_MODEL``),
+  ``BESSER_LAB_LLM_API_KEY`` (the server's key; users never send their own).
+- Limits: ``BESSER_LAB_MAX_COST_USD`` (``5.0`` per run),
+  ``BESSER_LAB_MAX_RUNTIME_SECONDS`` (``2400``),
+  ``BESSER_LAB_USER_MONTHLY_CAP_USD`` (``75.0``),
+  ``BESSER_LAB_MONTHLY_CAP_USD`` (``300.0``),
+  ``BESSER_LAB_MAX_CONCURRENT_RUNS`` (``2``).
+- Try it: ``BESSER_LAB_PREVIEW_ENABLED`` (off), ``BESSER_LAB_PREVIEW_URLS``
+  (empty: one slot on localhost ports; a malformed origin stops the backend),
+  ``BESSER_LAB_PREVIEW_BIND`` (``127.0.0.1``),
+  ``BESSER_LAB_PREVIEW_OPENAI_API_KEY`` (unset: no LLM proxy),
+  ``BESSER_LAB_PREVIEW_OPENAI_BASE_URL`` (``https://api.openai.com/v1``),
+  ``BESSER_LAB_PREVIEW_LLM_PROXY_PORT`` (``9300``),
+  ``BESSER_LAB_PREVIEW_LLM_MAX_REQUESTS_PER_DAY`` (``2000``).
 
 **Telemetry, research study mode (all optional):**
 

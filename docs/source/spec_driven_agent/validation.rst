@@ -88,7 +88,11 @@ that was already broken is never refused, so it can be repaired.
   the generated client's ``apiRequest(<METHOD>, <path>)`` calls, that match no
   generated backend route, and calls of a typed client function
   (``bookApi.create``) the generated client does not have. The typed functions
-  are resolved to their routes through the app's ``api_contract.json``.
+  are resolved to their routes through the app's ``api_contract.json``. In an
+  app that has the generated client, a literal ``fetch`` or Axios call to a
+  route the client covers is reported too, naming the client function to call
+  instead; a route the client does not cover (one the agent added) is not.
+  Warning.
 - API call shapes (``api call:``, blocker) — a frontend call with a literal or
   template URL that resolves to exactly one route, checked against that
   route's handler, which is read without importing the app. The calls read are

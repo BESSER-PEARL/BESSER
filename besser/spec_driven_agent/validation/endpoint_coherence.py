@@ -76,6 +76,8 @@ _TYPED_CALL_RE = re.compile(
     r"(?P<chain>(?:\s*\.\s*(?:relations\s*\.\s*[\w$]+|methods)(?![\w$]))?)\s*\.\s*(?P<function>[\w$]+)\s*\(")
 # The typed client the React generator writes (src/api/generated/client.ts).
 _GENERATED_CLIENT_RE = re.compile(r"(?:^|/)api/generated/client\.[jt]sx?$")
+# Calls that bypass the generated client.
+_RAW_CALLS = frozenset({"fetch", "axios", "axios-config", "fetch-helper"})
 _TEMPLATE_VALUE_RE = re.compile(r"\$\{[^}]+\}")
 _ROUTE_VALUE_RE = re.compile(r"\{[^}/]+\}")
 
@@ -288,6 +290,18 @@ def _paths_match(frontend_path: str, backend_path: str) -> bool:
     return True
 
 
+def _covering_function(call: FrontendCall, by_route: dict) -> str | None:
+    """The client function of the route the call reaches; an interpolated segment
+    prefers a route parameter (``/task/${id}/`` is ``get``, not ``count``)."""
+    matches = []
+    for (method, path), function in by_route.items():
+        if method == call.method and _paths_match(call.path, path):
+            literal = sum(1 for mine, theirs in zip(call.path.split("/"), path.split("/"))
+                          if _ROUTE_VALUE_RE.fullmatch(mine) and not _ROUTE_VALUE_RE.fullmatch(theirs))
+            matches.append((literal, function))
+    return min(matches)[1] if matches else None
+
+
 def collect_endpoint_coherence_issues(
     output_dir: str,
     *,
@@ -300,6 +314,7 @@ def collect_endpoint_coherence_issues(
 
     calls: list[FrontendCall] = []
     typed = typed_client_functions(output_dir)
+    has_client = False
     for root, dirs, files in walk_plain(output_dir):
         dirs[:] = [directory for directory in dirs if directory not in _SKIP_DIRS]
         for filename in files:
@@ -314,6 +329,7 @@ def collect_endpoint_coherence_issues(
                 or "/src/" in rel_lower
             ) or _GENERATED_CLIENT_RE.search(rel_lower):
                 # Regeneration rewrites the generated client; its functions are checked where code calls them.
+                has_client = has_client or bool(_GENERATED_CLIENT_RE.search(rel_lower))
                 continue
             try:
                 if os.path.getsize(full_path) > 1_000_000:
@@ -324,9 +340,23 @@ def collect_endpoint_coherence_issues(
                 continue
             calls.extend(_calls_in_file(rel_path, content, typed=typed))
 
+    # The generated client's function for each route it calls, when the app has the client.
+    by_route = {}
+    for function, route in sorted(typed.items()) if has_client else ():
+        by_route.setdefault((route["method"], route["path"]), function)
     issues: list[str] = []
     seen: set[tuple[str, str]] = set()
     for call in calls:
+        covering = _covering_function(call, by_route) if call.client in _RAW_CALLS else None
+        if covering:
+            issues.append(
+                f"endpoint coherence: {call.file} line {call.line} calls {call.method} {call.path} with "
+                f"{call.client}, which the generated API client has as {covering}(...). Call that function of "
+                "src/api/generated/client.ts: it returns the plain value and throws ApiError."
+            )
+            if len(issues) >= max_issues:
+                break
+            continue
         if call.client == "typed" and not call.method:
             issues.append(
                 f"endpoint coherence: {call.file} line {call.line} calls {call.function}(...), which the "

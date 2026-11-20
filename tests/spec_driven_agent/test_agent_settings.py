@@ -110,6 +110,9 @@ ROWS = [
     ("llm_shell_session_max", "BESSER_LLM_SHELL_SESSION_MAX", 10,
      lambda: _old_env_int("BESSER_LLM_SHELL_SESSION_MAX", 10),
      lambda s: s.llm_shell_session_max),
+    ("llm_screen_check", "BESSER_LLM_SCREEN_CHECK", True,
+     lambda: _get("BESSER_LLM_SCREEN_CHECK", "1").strip().lower() not in ("0", "false", "no"),
+     lambda s: s.llm_screen_check),
 ]
 
 EDGE_VALUES = [

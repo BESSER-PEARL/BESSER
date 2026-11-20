@@ -382,3 +382,21 @@ def test_run_never_detects_a_fix_target(tmp_path, monkeypatch):
     assert orch._is_fix_run is False
     assert orch._fix_target is None
     assert orch._fix_target_message is None
+
+
+def test_a_screen_check_finding_is_never_promoted(tmp_path):
+    """The screen check reports warnings only: a fix run must not turn one into a blocker."""
+    orch = _orch(tmp_path, _domain("Order"))
+    orch._is_fix_run = True
+    orch._fix_target = parse_reported_target(_EXCEPTION_INSTR, orch.domain_model, "Order")
+    issues = [ValidationIssue("warning", message) for message in (
+        "screen warning: [frontend] created an Order through the API (POST /order/) and the API lists it, "
+        "but its text was not found in the page text of any of the 3 opened screen(s)",
+        "screen warning: [frontend] route /orders (frontend/src/pages/OrderList.jsx): the page showed nothing",
+        "screens: not run ([frontend] Order screens: the shell sandbox is unavailable on this server)",
+    )]
+
+    assert orch._promote_fix_target_findings(issues) == issues
+    orch._validation_issues = issues
+    orch._evaluate_fix_target_gate()
+    assert orch._fix_target_resolved is True

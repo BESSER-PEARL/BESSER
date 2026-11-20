@@ -209,6 +209,52 @@ def test_gate_soft_target_is_unverified(tmp_path):
     assert orch._fix_target_message is None
 
 
+_EXCEPTION_INSTR = ("I got \"if order.quantity > stock: TypeError: '>' not supported between "
+                   "instances of 'NoneType' and 'int'\". Fix this error.")
+
+
+def test_gate_ignores_requirement_and_task_findings_that_name_the_entity(tmp_path):
+    """The judge's and the checklist's findings are about the request, not the reported failure:
+    a requirement that mentions the entity left the fixed error reported as unconfirmed."""
+    orch = _orch(tmp_path, _domain("Order", "Customer"))
+    orch._is_fix_run = True
+    orch._fix_target = parse_reported_target(_EXCEPTION_INSTR, orch.domain_model, "Order")
+    assert orch._fix_target.kind == "exception" and orch._fix_target.entities == ("Order",)
+    orch._validation_issues = [
+        ValidationIssue("blocker", "requirement unverified: R11 — The Order screen offers a discount "
+                                   "option — the cited evidence '' does not verify it"),
+        ValidationIssue("blocker", "requirement partial: R3 — Orders are listed by date; inspect and complete"),
+        ValidationIssue("blocker", "task unverified: task 2 remains unresolved: show the Order total"),
+    ]
+
+    orch._evaluate_fix_target_gate()
+
+    assert orch._fix_target_resolved is True
+    assert orch._fix_target_message is None
+
+
+def test_requirement_findings_are_never_promoted_as_the_reported_failure(tmp_path):
+    orch = _orch(tmp_path, _domain("Order"))
+    orch._is_fix_run = True
+    orch._fix_target = parse_reported_target(_EXCEPTION_INSTR, orch.domain_model, "Order")
+    issue = ValidationIssue("warning", "requirement still open from the previous run: R4 — Orders can be "
+                                       "exported (missing)")
+
+    assert orch._promote_fix_target_findings([issue]) == [issue]
+
+
+def test_a_runtime_finding_on_the_entity_still_keeps_the_failure_unconfirmed(tmp_path):
+    orch = _orch(tmp_path, _domain("Order"))
+    orch._is_fix_run = True
+    orch._fix_target = parse_reported_target(_EXCEPTION_INSTR, orch.domain_model, "Order")
+    orch._validation_issues = [ValidationIssue(
+        "blocker", "create contract: backend: POST /order/ - observed a server/persistence failure")]
+
+    orch._evaluate_fix_target_gate()
+
+    assert orch._fix_target_resolved is False
+
+
 # ----------------------------------------------------------------------
 # Full modify() wiring
 # ----------------------------------------------------------------------

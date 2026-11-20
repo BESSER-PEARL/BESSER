@@ -170,7 +170,9 @@ def _fetch_models(base_url: str, token: str) -> dict[str, int]:
     for entry in entries or []:
         if not isinstance(entry, dict):
             continue
-        model_id, window = entry.get("id"), entry.get("context_length")
+        # Mistral names the field max_context_length.
+        model_id = entry.get("id")
+        window = entry.get("context_length") or entry.get("max_context_length")
         if isinstance(model_id, str) and isinstance(window, int) and window > 0:
             windows[model_id] = window
     return windows
@@ -185,6 +187,7 @@ def _fetch_catalog() -> dict[str, int]:
     settings = AgentSettings()
     endpoints: list[tuple[str, str]] = []
     for base_url, token in ((settings.free_llm_base_url, settings.free_llm_token),
+                            (settings.free_llm_secondary_base_url, settings.free_llm_secondary_token),
                             (settings.sponsored_llm_base_url, settings.sponsored_llm_token)):
         base_url = base_url.strip()
         if base_url and base_url not in (b for b, _ in endpoints):

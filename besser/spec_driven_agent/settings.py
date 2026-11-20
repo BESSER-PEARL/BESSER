@@ -93,6 +93,16 @@ class AgentSettings(LLMSettings):
     free_llm_alt_models: str = Field(
         "", validation_alias="BESSER_FREE_LLM_ALT_MODELS",
         description="Comma-separated extra models on the free tier endpoint. Read per call.")
+    free_llm_secondary_base_url: str = Field(
+        "", validation_alias="BESSER_FREE_LLM_SECONDARY_BASE_URL",
+        description="Second free tier endpoint, tried after the alt models and before the "
+                    "last-resort one; needs models too. Read per call.")
+    free_llm_secondary_models: str = Field(
+        "", validation_alias="BESSER_FREE_LLM_SECONDARY_MODELS",
+        description="Comma-separated models of the second free tier endpoint. Read per call.")
+    free_llm_secondary_token: SecretStr = Field(
+        SecretStr(""), validation_alias="BESSER_FREE_LLM_SECONDARY_TOKEN",
+        description="Bearer token of the second free tier endpoint. Read per call.")
     free_llm_fallback_base_url: str = Field(
         "", validation_alias="BESSER_FREE_LLM_FALLBACK_BASE_URL",
         description="Last-resort free tier endpoint; needs a model too. Read per call.")

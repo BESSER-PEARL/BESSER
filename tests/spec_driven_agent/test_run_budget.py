@@ -7,10 +7,13 @@ model (``scripted_rig``), as in ``test_scripted_loop_structure``.
 from __future__ import annotations
 
 import json
+import uuid
+from types import SimpleNamespace
 
 import besser.spec_driven_agent.pipeline.orchestrator as orchestrator_module
 import besser.spec_driven_agent.pipeline.phase3_repair as phase3_module
 from besser.spec_driven_agent.pipeline.constants import _PHASE3_BUDGET_SHARE
+from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 from tests.spec_driven_agent.run_transport import plain
 from tests.spec_driven_agent.scripted_rig import FakeClock, ScriptedAgent, run_scripted
 from tests.spec_driven_agent.test_scripted_loop_structure import MAIN, TASKS, _no_app_boot, shelf_script
@@ -107,6 +110,41 @@ def test_the_formatter_runs_after_phase2_used_its_time_share(tmp_path, monkeypat
     assert orchestrator._phase2_stop_detail.startswith("time share used")
     assert seen["remaining"] > 100, seen
     assert not any("did not run" in note for note in seen["notes"]), seen["notes"]
+
+
+def test_a_failing_or_id_only_result_is_not_new_information():
+    """Stagnation credits a new successful result. A failing command's new stderr, and a
+    result that differs only by a generated id, counted as new and kept resetting it."""
+    def outcome(name, payload):
+        block = SimpleNamespace(id="t1", name=name)
+        return LLMOrchestrator._record_novel_results([block], [{"tool_use_id": "t1", "content": json.dumps(payload)}],
+                                                     seen)
+    seen: set = set()
+    assert not outcome("run_command", {"exit_code": 1, "success": False, "stderr": "npm ERR! code ERESOLVE"})
+    assert not outcome("run_command", {"exit_code": 1, "success": False, "stderr": "npm ERR! peer dep"})
+    assert not outcome("run_command", {"exit_code": 2, "stdout": "", "stderr": "build failed"})
+    created = [outcome("test_api", {"status": 201, "body": {"id": str(uuid.uuid4()), "title": "x"}})
+               for _ in range(3)]
+    assert created == [True, False, False]
+    assert outcome("run_command", {"exit_code": 0, "success": True, "stdout": "2 passed"})
+
+
+def test_every_stagnation_stretch_gets_its_reminder_before_the_handoff(tmp_path, monkeypatch):
+    """The reminder with the open checklist was sent once per run: after a source change, the
+    next stretch of calls with no new result handed off without one."""
+    _no_app_boot(monkeypatch)
+    stall = [("read_file", {"path": MAIN})] * 24
+    edit = ("write_file", {"path": "backend/notes_extra.py", "content": "VALUE = 1\n"})
+    script = shelf_script()[:8] + stall[:21] + [edit] + stall
+    agent = ScriptedAgent(str(tmp_path), script, TASKS)
+    orchestrator = run_scripted(tmp_path, agent)
+
+    assert orchestrator._phase2_stop_detail.startswith("inspection handoff")
+    last = plain(agent.transport.of("phase2")[len(agent.sent["phase2"]) - 1]["messages"])
+    reminders = [i for i, m in enumerate(last) if "tool calls without changing source" in json.dumps(m["content"])]
+    [edit_at] = [i for i, m in enumerate(last) if "notes_extra.py" in json.dumps(m["content"])
+                 and m["role"] == "assistant"]
+    assert len(reminders) == 2 and reminders[0] < edit_at < reminders[1], (reminders, edit_at)
 
 
 def test_verifying_one_call_per_turn_is_not_stagnation(tmp_path, monkeypatch):

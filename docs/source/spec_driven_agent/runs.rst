@@ -55,11 +55,12 @@ validation phases.
 Verifying is not stalling. Phase 2 hands off early (``stop_detail`` starts
 ``inspection handoff``) only after 20 tool calls in a row that changed no source
 and returned nothing new: a read of new content, a checklist or test change, or
-any other successful result not seen before (digits are ignored, so a new port,
-id or timestamp does not make a repeated command new). The model is first shown
-a reminder, with its open checklist items, and the handoff comes no earlier than
-the next turn. After 40 calls without a source change it is reminded once to
-implement.
+any other successful result not seen before (digits and UUIDs are ignored, so a
+new port, id or timestamp does not make a repeated command new; a failed call
+or a command that exits non-zero is never new). The model is first shown a
+reminder, with its open checklist items, and the handoff comes no earlier than
+the next turn; a source change starts a new stretch, with its own reminder.
+After 40 calls without a source change it is reminded to implement.
 
 The model is told what is left. When half, three quarters and nine tenths of
 Phase 2's share (of the tool calls, the time or the spend, whichever is

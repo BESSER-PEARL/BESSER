@@ -2344,6 +2344,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                     inspected.clear()
                     observed_plans.clear()
                     observed_results.clear()
+                    inspection_nudged = False  # the next stretch gets its own reminder
                 novel_inspection = self._record_novel_inspections(tool_blocks, tool_results, inspected)
                 novel_result = self._record_novel_results(tool_blocks, tool_results, observed_results)
                 plan = self._repair_obligations_revision()
@@ -2573,8 +2574,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     @staticmethod
     def _record_novel_results(tool_blocks, tool_results, seen) -> bool:
         """Credit a successful result of any tool but ``read_file`` that was not
-        seen before. Digits are masked, so ports, ids, timings and timestamps do
-        not make a repeated command look new."""
+        seen before; a failed call or command is no progress. Digits and UUIDs are
+        masked, so ports, ids, timings and timestamps do not make a repeated
+        command look new."""
         names = {block.id: block.name for block in tool_blocks}
         novel = False
         for result in tool_results:
@@ -2585,9 +2587,11 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 payload = json.loads(content)
             except (TypeError, ValueError):
                 payload = None
-            if isinstance(payload, dict) and payload.get("error"):
+            if isinstance(payload, dict) and (payload.get("error") or payload.get("success") is False
+                                              or payload.get("exit_code") not in (None, 0)):
                 continue
-            key = hashlib.sha256(f"{name}\0{_re.sub(r'[0-9]+', '0', content)}".encode("utf-8")).hexdigest()
+            masked = _re.sub(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}|[0-9]+", "0", content)
+            key = hashlib.sha256(f"{name}\0{masked}".encode("utf-8")).hexdigest()
             if key not in seen and len(seen) < 1000:
                 seen.add(key)
                 novel = True

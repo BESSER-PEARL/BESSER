@@ -120,11 +120,12 @@ See :doc:`runs` for how the caps are enforced.
   get a ``429``. Starting or resuming a run that is already in flight answers
   ``409``.
 - ``BESSER_LLM_CALL_TIMEOUT_SECONDS`` (300) -- Per-request SDK timeout, so a
-  stalled provider call cannot hang a turn indefinitely.
+  stalled provider call cannot hang a turn indefinitely. Inside a run a call
+  gets the run's time left when that is less (see :doc:`runs`).
 - ``BESSER_LLM_WATCHDOG_GRACE_SECONDS`` (120) -- Extra time allowed on top of
   the request's ``max_runtime_seconds`` before the runner-level watchdog
-  force-cancels a run. It covers Phase 3 and packaging, which happen after the
-  Phase 2 loop has already hit its own runtime check.
+  force-cancels a run. A backstop: LLM calls and commands already end by the
+  cap; the grace covers writing the result after it, which takes seconds.
 
 Feature flags
 -------------

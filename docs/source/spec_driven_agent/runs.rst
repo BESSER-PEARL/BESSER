@@ -47,6 +47,37 @@ then spend — and the cost check runs *before* the next request is sent, so a
 run cannot overshoot its cap by one more billable call. A single warning is
 logged at 80% of the cost cap.
 
+The runtime cap and cancellation also hold *inside* a turn. LLM calls and the
+agent's own commands stop 30 seconds before the cap. Every LLM call of a run (the customize and repair turns, generator
+selection, planning, model sync, requirement extraction and judging) gets as its
+timeout that time left, never more than its usual timeout, and is not started
+with less than 20 seconds left: requirements a judgment would have checked are
+reported as not checked for lack of time, an unknown rather than a failure. The
+provider SDKs apply a timeout to each wait for data, not to a whole response, so
+a streaming call is also closed when the time left runs out; its partial reply,
+a half-written tool call included, is dropped. A call stopped by the cap or a
+cancellation is reported as such, not as a provider error, and never moves the
+run to a fallback model; a provider error (an exhausted quota, an unknown model)
+stays one. Every command a run starts (``run_command``,
+``install_dependencies``, the scaffold's install, the validators, the build and
+type checks) ends by the cap at the latest, and a check or a tool cut by the cap
+says so rather than reporting its own timeout. Those last 30 seconds are left to
+formatting the output and to Phase 3's checks, which start while at least 10
+seconds remain before the cap, so a repair whose turns ran out of time is still
+checked, not thrown away. Writing the recipe, report and checkpoint and packing
+the download start no command and take seconds; they may end a few seconds past
+the cap, which the watchdog's grace (``BESSER_LLM_WATCHDOG_GRACE_SECONDS``)
+covers.
+
+A cancellation — from ``POST /besser_api/spec-driven/cancel/{run_id}``, a closed
+connection, the abandonment timer or the runtime watchdog — takes effect at
+once: the command running at that moment is killed with every process it
+started (its whole sandbox on Linux, its process tree on Windows and macOS) and
+the tool reports ``Command stopped: the run was cancelled``; a streaming LLM
+response is closed and its socket shut down. A non-streaming LLM call that is
+already in flight still runs to its end, which its timeout bounds. The run then
+writes its checkpoint, recipe and report as it does at any other stop.
+
 Only the paid LLM calls count against the budget: generator selection, the
 planning pass, a modify run's model sync, the customize loop, requirement
 extraction and judging, and any Phase 3 fix turns. The deterministic scaffold, the
@@ -91,8 +122,8 @@ producer is cooperatively stopped — which bounds unattended BYOK spend. A
 client polling ``events.json`` counts as present: the run is stopped only when
 no stream is open *and* no poll arrived within the grace period. When
 the event store itself fails mid-run (a full disk, a lock held past its
-timeout), or the backend stops, the run's worker is cancelled at its next turn
-boundary, and its concurrency slot is freed only once the worker has stopped;
+timeout), or the backend stops, the run's worker is cancelled (as above, the
+command it is running is stopped at once), and its concurrency slot is freed only once the worker has stopped;
 the run is recorded ``failed`` (``interrupted`` on shutdown). A
 server restart marks still-running records ``interrupted`` and ends their event
 log with a terminal ``error`` frame (code ``INTERNAL``) whose ``resumeAvailable``,

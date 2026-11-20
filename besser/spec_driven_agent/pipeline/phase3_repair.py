@@ -28,7 +28,7 @@ from collections import Counter
 from besser.spec_driven_agent.agent.history_eviction import (
     without_rejected_edit_drafts,
 )
-from besser.spec_driven_agent.errors import InvalidApiKeyError
+from besser.spec_driven_agent.errors import DeadlineReached, InvalidApiKeyError
 from besser.spec_driven_agent.planning import requirements_ledger as _requirements_ledger
 from besser.spec_driven_agent.planning.action_inventory import (
     collect_action_endpoints,
@@ -218,9 +218,13 @@ class Phase3RepairMixin:
             self._phase2_stop_reason = "completed"
 
     def _phase3_stop_requested(self, *, check_turn_budget: bool = True) -> str | None:
-        """One stop gate for repair turns and the validation calls between them."""
+        """One stop gate for repair turns and the validation calls between them.
+
+        ``check_turn_budget=False`` asks for validation only, which needs time
+        before the cap for its checks; a repair turn needs time for an LLM call.
+        """
         reason = None
-        if self._start_time is not None and time.monotonic() - self._start_time > self.max_runtime_seconds:
+        if self.deadline.checks_out_of_time():
             reason = "runtime budget exhausted"
         elif self.max_cost_usd is not None and self.client.usage.estimated_cost >= self.max_cost_usd:
             reason = "cost budget exhausted"
@@ -230,12 +234,16 @@ class Phase3RepairMixin:
             # No further edit turn, but final verification of the last accepted
             # tool batch may still run. Do not poison that check as cancelled.
             return "turn budget exhausted"
-        elif self._should_continue is not None and not self._should_continue():
+        elif self.deadline.cancelled:
             reason = "cancellation requested"
         elif self._phase3_interrupted:
             reason = "repair interrupted before verification completed"
             if self._phase3_interrupt_detail:
                 reason = f"{reason} ({self._phase3_interrupt_detail})"
+        elif check_turn_budget and self.deadline.out_of_time():
+            # Like the turn budget: no further repair turn, but the attempt
+            # so far is still checked.
+            return "runtime budget exhausted"
         if reason:
             self._phase3_interrupted = True
         return reason
@@ -1308,8 +1316,11 @@ class Phase3RepairMixin:
                     "Phase 3: LLM call failed on fix turn %d, aborting fix loop: %s",
                     turn, exc,
                 )
+                if isinstance(exc, DeadlineReached) and not exc.cancelled:
+                    return edits  # no time for another turn; the attempt so far is still checked
                 self._phase3_interrupted = True
-                self._phase3_interrupt_detail = f"provider call failed: {type(exc).__name__}"
+                self._phase3_interrupt_detail = (str(exc) if isinstance(exc, DeadlineReached)
+                                                 else f"provider call failed: {type(exc).__name__}")
                 return edits
             # Repair calls can trigger the outage fallback too, as in Phase 2.
             self._notify_model_switch()

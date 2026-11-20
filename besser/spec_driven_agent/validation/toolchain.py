@@ -21,7 +21,12 @@ import os
 import re as _re
 
 from besser.spec_driven_agent.state.checkpoint import _SNAPSHOT_DIR
-from besser.spec_driven_agent.execution.process import _safe_subprocess_env, run_bounded
+from besser.spec_driven_agent.execution.process import (
+    CommandStopped,
+    _safe_subprocess_env,
+    run_bounded,
+    timeout_cause,
+)
 from besser.spec_driven_agent.validation.issues import (
     ValidationIssue,
     _check_did_not_run,
@@ -101,7 +106,8 @@ def format_python_files(output_dir: str, rel_paths: list[str]) -> list[str]:
             timeout=_RUFF_FORMAT_TIMEOUT_SECONDS, cwd=output_dir, env=_safe_subprocess_env(),
         )
     except (subprocess.TimeoutExpired, OSError) as exc:
-        return [_check_did_not_run("ruff format", f"it could not run: {type(exc).__name__}")]
+        cause = exc.reason if isinstance(exc, CommandStopped) else type(exc).__name__
+        return [_check_did_not_run("ruff format", f"it could not run: {cause}")]
     if result.returncode != 0:
         # Exit 2 names files it could not parse; it still formats the others.
         detail = (result.stderr or result.stdout or "").strip().splitlines()[:1]
@@ -506,8 +512,8 @@ def _collect_tsc_issues(
             issues.append(required_check_unverified(
                 f"tsc [{rel}]", str(exc)))
             continue
-        except subprocess.TimeoutExpired:
-            issues.append(required_check_unverified(f"tsc [{rel}]", "timed out after 60s"))
+        except subprocess.TimeoutExpired as exc:
+            issues.append(required_check_unverified(f"tsc [{rel}]", timeout_cause(exc, "timed out after 60s")))
             continue
         except OSError as exc:
             issues.append(
@@ -797,8 +803,8 @@ def _collect_cargo_issues(output_dir: str) -> list[str]:
             issues.append(_check_did_not_run(
                 f"cargo [{rel}]", str(exc)))
             continue
-        except subprocess.TimeoutExpired:
-            issues.append(_check_did_not_run(f"cargo [{rel}]", "timed out after 180s"))
+        except subprocess.TimeoutExpired as exc:
+            issues.append(_check_did_not_run(f"cargo [{rel}]", timeout_cause(exc, "timed out after 180s")))
             continue
         except OSError as exc:
             issues.append(
@@ -933,9 +939,9 @@ def _collect_kotlinc_issues(output_dir: str) -> list[str]:
                 [kotlinc_bin, "-nowarn", "-d", os.devnull, *kt_files],
                 timeout=180, cwd=output_dir, env=_safe_subprocess_env(),
             )
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as exc:
             # A timed-out module must not read as "compiled clean".
-            issues.append(_check_did_not_run(f"kotlinc [{module_rel}]", "timed out after 180s"))
+            issues.append(_check_did_not_run(f"kotlinc [{module_rel}]", timeout_cause(exc, "timed out after 180s")))
             continue
         except OSError as exc:
             issues.append(

@@ -25,7 +25,7 @@ from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
 
 from besser.spec_driven_agent.state.checkpoint import _SNAPSHOT_DIR
-from besser.spec_driven_agent.execution.process import _safe_subprocess_env
+from besser.spec_driven_agent.execution.process import _safe_subprocess_env, timeout_cause
 from besser.spec_driven_agent.validation.issues import _check_did_not_run
 from besser.spec_driven_agent.validation.python_source import _python_files
 from besser.spec_driven_agent.parsed_source import parse_source
@@ -591,10 +591,10 @@ def _import_smoke_issues(output_dir: str) -> list[str]:
                 "the import smoke check", str(exc),
             ))
             continue
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as exc:
             issues.append(_check_did_not_run(
                 "the import smoke check",
-                f"timed out after {_IMPORT_SMOKE_TIMEOUT_SECONDS}s on {rel}",
+                f"{timeout_cause(exc, f'timed out after {_IMPORT_SMOKE_TIMEOUT_SECONDS}s')} on {rel}",
             ))
             continue
         except OSError as exc:

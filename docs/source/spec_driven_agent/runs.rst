@@ -66,7 +66,7 @@ The model is told what is left. When half, three quarters and nine tenths of
 Phase 2's share (of the tool calls, the time or the spend, whichever is
 furthest along) are used, a short reminder after that turn's tool results gives
 the tool calls, minutes and, for a priced model, dollars left before validation
-and repair take over, and asks the model to record what it cannot finish as
+(and, with auto-fix on, repair) takes over, and asks the model to record what it cannot finish as
 blocked. It is never part of the system prompt, which stays byte-identical so
 the provider's prompt cache keeps serving it.
 
@@ -74,11 +74,12 @@ When a run hits a cap it still returns whatever it has produced so far — the
 cap is surfaced as a non-terminal warning before the final result, not as a
 hard failure.
 
-The caps are checked at turn boundaries: tool calls first, then cancellation,
-then elapsed time, then spend — and the cost check runs *before* the next
-request is sent, so a run cannot overshoot its cap by one more billable call. A
-single warning is logged at 80% of the cost cap. While Phase 2 runs, its LLM
-calls and commands treat the start of Phase 3's time share as the cap.
+The budgets are checked at turn boundaries: tool calls first, then
+cancellation, then elapsed time, then spend — and the cost check runs *before*
+the next request is sent, so Phase 2 cannot overshoot its share by one more
+billable call. A single warning is logged at 80% of Phase 2's cost share. While
+Phase 2 runs, its LLM calls and commands treat the start of Phase 3's time
+share as the cap.
 
 The runtime cap and cancellation also hold *inside* a turn. LLM calls and the
 agent's own commands stop 30 seconds before the cap. Every LLM call of a run (the customize and repair turns, generator

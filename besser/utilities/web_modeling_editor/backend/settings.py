@@ -143,8 +143,8 @@ class BackendSettings(BaseSettings):
 
     # -- Spec-Driven Agent: per-run caps -----------------------------------
     # The UI reads the hard caps from /spec-driven/config, so they are what a
-    # run is actually allowed. The turns cap fits models that make one tool
-    # call per turn (about 4x the turns of one that batches).
+    # run is actually allowed. max_turns budgets four executed tool calls per
+    # turn; the same multiple of turns is only a runaway guard.
     llm_max_cost_usd_hard_cap: _PositiveFloat = Field(
         5.0, validation_alias="BESSER_LLM_MAX_COST_USD_HARD_CAP",
         description="Ceiling (USD) a run's max_cost_usd is clamped to.")

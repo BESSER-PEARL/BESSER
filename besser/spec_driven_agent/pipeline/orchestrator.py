@@ -2241,10 +2241,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             # Every turn's cost, the closing end_turn reply included. The token
             # counters show a run that re-bills its history (a low cache hit rate).
             self._trace_cost_update(turn + 1)
-            if not _cost_warning_fired and current_cost > self.max_cost_usd * 0.8:
+            if not _cost_warning_fired and current_cost > cost_limit * 0.8:
                 logger.warning(
-                    "Cost at 80%% of cap: $%.4f / $%.4f",
-                    current_cost, self.max_cost_usd,
+                    "Cost at 80%% of Phase 2's share: $%.4f / $%.4f",
+                    current_cost, cost_limit,
                 )
                 _cost_warning_fired = True
             if current_cost > cost_limit:
@@ -2620,7 +2620,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         if spent > 0:  # a model with no price reports none
             left.append(f"${max(0.0, cost_limit - spent):.2f}")
         text = (f"<system-reminder>{reached:.0%} of this phase's budget is used. About {', '.join(left)} "
-                "remain before the run moves on to validation and repair. Keep working through the open "
+                f"remain before the run moves on to {self._phase3_work()}. Keep working through the open "
                 "items. Record any you cannot finish with what remains as blocked in task_list, with "
                 "the reason; never mark undone work done."
                 "</system-reminder>")

@@ -147,6 +147,18 @@ def test_every_stagnation_stretch_gets_its_reminder_before_the_handoff(tmp_path,
     assert len(reminders) == 2 and reminders[0] < edit_at < reminders[1], (reminders, edit_at)
 
 
+def test_the_budget_reminder_names_validation_alone_when_auto_fix_is_off(tmp_path, monkeypatch):
+    _no_app_boot(monkeypatch)
+    agent = ScriptedAgent(str(tmp_path), shelf_script(), TASKS)
+    run_scripted(tmp_path, agent, max_turns=6, auto_fix=False)
+
+    text = json.dumps(plain(agent.transport.of("phase2")[len(agent.sent["phase2"]) - 1]["messages"]))
+    reminders = [part.split("</system-reminder>")[0] for part in text.split("<system-reminder>")[1:]
+                 if "of this phase's budget is used" in part]
+    assert reminders and all("before the run moves on to validation. " in r and "repair" not in r
+                             for r in reminders), reminders
+
+
 def test_verifying_one_call_per_turn_is_not_stagnation(tmp_path, monkeypatch):
     """After its last edit the model checks its work one call per turn, each call with a
     new result. The inspection handoff counted that as no progress and cut it after ten

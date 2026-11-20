@@ -39,7 +39,12 @@ from besser.llm.retry import (
     is_retryable_status as _is_retryable_status,
     status_code as _status_code,
 )
-from besser.spec_driven_agent.errors import DeadlineReached, InvalidApiKeyError, UpstreamLLMError
+from besser.spec_driven_agent.errors import (
+    DeadlineReached,
+    InvalidApiKeyError,
+    RequestRejectedError,
+    UpstreamLLMError,
+)
 from besser.spec_driven_agent.execution import deadline as _deadline
 from besser.spec_driven_agent.execution.deadline import (
     CANCELLED,
@@ -608,6 +613,14 @@ def _is_retryable(error: Exception) -> bool:
     ))
 
 
+def _call_failed(message: str, error: Exception) -> UpstreamLLMError:
+    """The error for a call that ended on ``error``: a
+    :class:`RequestRejectedError` when the endpoint refused this request."""
+    if _is_retryable(error) or _is_quota_exhausted(error):
+        return UpstreamLLMError(message)
+    return RequestRejectedError(message)
+
+
 def _is_model_unavailable(error: Exception) -> bool:
     """True when the requested model id no longer resolves upstream.
 
@@ -920,7 +933,7 @@ class ClaudeLLMClient(LLMProvider):
                     continue
                 if _is_auth_error(e):
                     raise InvalidApiKeyError(f"Claude API rejected the key: {last_error}") from None
-                raise UpstreamLLMError(f"Claude API call failed: {last_error}") from None
+                raise _call_failed(f"Claude API call failed: {last_error}", e) from None
 
         raise UpstreamLLMError(f"Claude API call failed after {self._max_retries + 1} attempts: {last_error}") from None
 
@@ -1797,7 +1810,7 @@ class OpenAIProvider(LLMProvider):
                         )
                     raise InvalidApiKeyError(f"OpenAI API rejected the key: {last_error}") from None
                 if _is_tools_unsupported_error(e):
-                    raise UpstreamLLMError(_tools_unsupported_message(effective_model)) from None
+                    raise RequestRejectedError(_tools_unsupported_message(effective_model)) from None
                 if (not model_override
                         and (_is_retryable(e) or _is_model_unavailable(e) or _is_quota_exhausted(e))
                         and self._activate_fallback(e)):
@@ -1805,7 +1818,7 @@ class OpenAIProvider(LLMProvider):
                         system, messages, tools,
                         force_tool=force_tool, model_override=model_override,
                     )
-                raise UpstreamLLMError(f"OpenAI API call failed: {last_error}") from None
+                raise _call_failed(f"OpenAI API call failed: {last_error}", e) from None
 
         raise UpstreamLLMError(f"OpenAI API call failed after {self._max_retries + 1} attempts: {last_error}") from None
 

@@ -18,7 +18,7 @@ import logging
 from besser.spec_driven_agent.agent.history_eviction import (
     without_rejected_edit_drafts,
 )
-from besser.spec_driven_agent.errors import UpstreamLLMError
+from besser.spec_driven_agent.errors import RequestRejectedError
 from besser.spec_driven_agent.pipeline.constants import _EDIT_TOOLS
 
 logger = logging.getLogger(__name__)
@@ -31,8 +31,8 @@ class EditLoopGuardsMixin:
         """One chat call. When an escalation asked for a specific tool, make
         that request non-streaming with ``force_tool`` (only clients whose
         ``chat`` accepts it; a plain client just gets the message). The force
-        only steers: a provider failure of the forced call (an endpoint that
-        rejects a named ``tool_choice``) resends the turn unforced."""
+        only steers: when the endpoint refuses the forced request (one that
+        rejects a named ``tool_choice``), the turn is resent unforced."""
         messages = without_rejected_edit_drafts(messages)
         force = self._force_tool_next
         self._force_tool_next = None
@@ -41,8 +41,8 @@ class EditLoopGuardsMixin:
                 return self.client.chat(
                     system=system, messages=messages, tools=self.tools, force_tool=force,
                 )
-            except UpstreamLLMError as exc:
-                logger.warning("The call forcing %s failed (%s); resending it unforced",
+            except RequestRejectedError as exc:
+                logger.warning("The call forcing %s was refused (%s); resending it unforced",
                                force, exc)
         if self.use_streaming and self.on_text and hasattr(self.client, "chat_stream"):
             return self._call_streaming(system, messages)

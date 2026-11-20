@@ -18,7 +18,8 @@ import openai
 import pytest
 
 from besser.BUML.metamodel.structural import Class, DomainModel, PrimitiveDataType, Property
-from besser.spec_driven_agent.errors import InvalidApiKeyError
+from besser.spec_driven_agent.errors import InvalidApiKeyError, UpstreamLLMError
+from besser.spec_driven_agent.execution.deadline import Deadline, under_deadline
 from besser.spec_driven_agent.providers import llm_client
 from besser.spec_driven_agent.providers.llm_client import OpenAIProvider, UsageTracker
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
@@ -159,16 +160,23 @@ def test_a_client_without_force_tool_still_gets_the_message_and_the_stop(simple_
     assert any("read_file on the WHOLE file" in t for t in client.texts_seen)
 
 
-def _openai_endpoint(monkeypatch, fail):
+def _openai_endpoint(monkeypatch, fail, seconds_per_request=0.0):
     """An OpenAIProvider whose endpoint answers through ``fail(kwargs)``: an
-    error to raise, or None to reply. Returns it and the requests it got."""
+    error to raise, or None to reply. Each request lasts ``seconds_per_request``
+    on the provider's clock. Returns it and the requests it got."""
     requests = []
+    clock = [0.0]
 
     def create(**kwargs):
         requests.append(kwargs)
+        clock[0] += seconds_per_request
         error = fail(kwargs)
         if error is not None:
             raise error
+        if kwargs.get("stream"):
+            delta = SimpleNamespace(content="done", tool_calls=None)
+            return iter([SimpleNamespace(model=kwargs["model"], usage=None,
+                                         choices=[SimpleNamespace(delta=delta, finish_reason="stop")])])
         message = SimpleNamespace(content="done", tool_calls=None)
         return SimpleNamespace(
             model=kwargs["model"], choices=[SimpleNamespace(message=message, finish_reason="stop")],
@@ -177,7 +185,8 @@ def _openai_endpoint(monkeypatch, fail):
     completions = SimpleNamespace(create=create)
     monkeypatch.setattr(llm_client, "openai_client",
                         lambda **kw: SimpleNamespace(chat=SimpleNamespace(completions=completions)))
-    monkeypatch.setattr(llm_client.time, "sleep", lambda s: None)
+    monkeypatch.setattr(llm_client, "time",
+                        SimpleNamespace(sleep=lambda s: None, monotonic=lambda: clock[0]))
     return OpenAIProvider(api_key="sk-test", model="gpt-4o",
                           base_url="https://gateway.example.invalid/v1"), requests
 
@@ -216,6 +225,59 @@ def test_a_rejected_key_on_a_forced_call_is_not_resent(simple_model, tmp_path, m
     with pytest.raises(InvalidApiKeyError):
         orch._chat_with_pending_force("system", [{"role": "user", "content": "go on"}])
     assert len(requests) == 1
+
+
+@pytest.mark.parametrize("error, seconds, expected", [
+    # A timeout costs the full SDK timeout: capped at 3 requests, not 6.
+    (openai.APITimeoutError(request=httpx.Request("POST", "https://gateway.example.invalid")),
+     300.0, 3),
+    (openai.APIConnectionError(request=httpx.Request("POST", "https://gateway.example.invalid")),
+     0.0, 5),
+    (_status_error(openai.InternalServerError, 503, "overloaded"), 0.0, 5),
+    (_status_error(openai.RateLimitError, 429, "insufficient_quota: you exceeded your quota"),
+     0.0, 1),
+    (_status_error(openai.BadRequestError, 400, "insufficient credits"), 0.0, 1),
+], ids=["slow-timeout", "fast-refused", "503", "quota-429", "credits-400"])
+def test_a_forced_call_the_endpoint_could_not_serve_is_not_resent(
+        simple_model, tmp_path, monkeypatch, error, seconds, expected):
+    """Only a request the endpoint answered and refused is resent unforced. A
+    failure that already spent the retry budget is not paid for twice."""
+    provider, requests = _openai_endpoint(monkeypatch, lambda kwargs: error, seconds)
+    orch = LLMOrchestrator(llm_client=provider, domain_model=simple_model,
+                           output_dir=str(tmp_path), use_streaming=False)
+    orch._force_tool_next = "read_file"
+
+    with pytest.raises(UpstreamLLMError):
+        orch._chat_with_pending_force("system", [{"role": "user", "content": "go on"}])
+    assert len(requests) == expected
+    assert all("tool_choice" in kwargs for kwargs in requests)
+
+
+class _UnderDeadline:
+    def __init__(self, deadline):
+        self.deadline = deadline
+
+    @under_deadline
+    def call(self, fn, *args):
+        return fn(*args)
+
+
+def test_timeouts_on_a_forced_call_inside_a_run_are_reported_as_the_provider(
+        simple_model, tmp_path, monkeypatch):
+    """Three 300 s timeouts end the call well inside a 1500 s run: the user
+    is told the provider failed, not that the run hit its time limit."""
+    provider, requests = _openai_endpoint(
+        monkeypatch, lambda kwargs: openai.APITimeoutError(
+            request=httpx.Request("POST", "https://gateway.example.invalid")), 300.0)
+    deadline = Deadline(lambda: 1500.0 - llm_client.time.monotonic())
+    orch = LLMOrchestrator(llm_client=provider, domain_model=simple_model,
+                           output_dir=str(tmp_path), use_streaming=False)
+    orch._force_tool_next = "read_file"
+
+    with pytest.raises(UpstreamLLMError, match="timed out"):
+        _UnderDeadline(deadline).call(orch._chat_with_pending_force,
+                                      "system", [{"role": "user", "content": "go on"}])
+    assert len(requests) == 3
 
 
 def test_untruncated_edit_inputs_are_kept_beside_the_trace(simple_model, tmp_path):

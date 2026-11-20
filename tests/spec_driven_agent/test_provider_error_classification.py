@@ -20,7 +20,11 @@ import httpx
 import openai
 import pytest
 
-from besser.spec_driven_agent.errors import InvalidApiKeyError, UpstreamLLMError
+from besser.spec_driven_agent.errors import (
+    InvalidApiKeyError,
+    RequestRejectedError,
+    UpstreamLLMError,
+)
 from besser.spec_driven_agent.providers import llm_client
 from besser.spec_driven_agent.providers.llm_client import (
     ClaudeLLMClient,
@@ -154,6 +158,18 @@ class TestOpenAIChatPaths:
         with pytest.raises(UpstreamLLMError):
             client.chat("sys", [{"role": "user", "content": "hi"}], tools=[])
         assert messages.calls == 3
+
+    @pytest.mark.parametrize("status, cls, refused", [
+        (400, "BadRequestError", True), (503, "InternalServerError", False)])
+    def test_claude_marks_a_refused_request(self, monkeypatch, status, cls, refused):
+        anthropic = pytest.importorskip("anthropic")
+        client = ClaudeLLMClient(api_key="sk-ant-x")
+        messages = _RaisingCompletions(_status_error(getattr(anthropic, cls), status, "no"))
+        client._client = type("C", (), {"messages": messages})()
+        monkeypatch.setattr(llm_client.time, "sleep", lambda s: None)
+        with pytest.raises(UpstreamLLMError) as info:
+            client.chat("sys", [{"role": "user", "content": "hi"}], tools=[])
+        assert isinstance(info.value, RequestRejectedError) is refused
 
     def test_a_fast_transport_failure_gets_the_full_retry_budget(self, monkeypatch):
         """A refused connection costs milliseconds, not a 300s timeout."""

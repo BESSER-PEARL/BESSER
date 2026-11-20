@@ -5,6 +5,8 @@ import Broken from "./pages/Broken";
 import Blank from "./pages/Blank";
 import Report from "./pages/Report";
 import CustomerList from "./pages/CustomerList";
+import AdminLayout from "./pages/AdminLayout";
+import AuditLog from "./pages/AuditLog";
 
 export default function App() {
   return (
@@ -16,6 +18,9 @@ export default function App() {
         <Route path="/empty" element={<Blank />} />
         <Route path="/server-error" element={<Report />} />
         <Route path="/missing" element={<CustomerList />} />
+        <Route path="/admin" element={<AdminLayout />}>
+          <Route path="audit" element={<AuditLog />} />
+        </Route>
       </Routes>
     </BrowserRouter>
   );

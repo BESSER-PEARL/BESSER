@@ -3,8 +3,9 @@
 // Run by ui_probe.py inside the run sandbox: `node ui_probe_driver.mjs <config.json>`. Node 22's
 // standard library only (the global WebSocket speaks the DevTools protocol), so nothing is
 // installed and no browser is downloaded. It boots the app's backend, serves the build output
-// (index.html for page navigations, the backend for any other path the build does not hold),
-// opens every screen in a fresh tab and prints one report line prefixed with MARKER.
+// under its base path (index.html for page navigations, the backend for any other path the build
+// does not hold), opens every screen in a fresh tab and prints the report so far, prefixed with
+// MARKER, after each screen.
 
 import { spawn } from "node:child_process";
 import fs from "node:fs";
@@ -14,9 +15,11 @@ import path from "node:path";
 
 const MARKER = "BESSER_SCREEN_REPORT:";
 const QUIET_MS = 500;
+const RECHECK_MS = 250;
 const MAX_TEXT = 400;
 const MAX_REQUESTS = 40;
 const MAX_MESSAGES = 10;
+const MAX_LOG = 200000;
 const PROXY_HEADER = "x-besser-screen-proxied";
 const MIME = {
   ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".mjs": "text/javascript",
@@ -26,15 +29,18 @@ const MIME = {
   ".woff": "font/woff", ".woff2": "font/woff2", ".ttf": "font/ttf", ".wasm": "application/wasm",
   ".webmanifest": "application/manifest+json",
 };
-// What a screen shows once loaded: text, or an element that is visible without any.
+// What the page shows: text or a visible control anywhere in the body (a portal renders
+// outside the app's root), React Router's default error page and the links.
 const RENDERED_JS = `(() => {
-  const mount = document.getElementById("root") || document.getElementById("app") || document.body;
-  if (!mount) return { rendered: false, mount: "none", links: [] };
-  const text = (mount.innerText || "").trim();
-  const media = mount.querySelector("img,svg,canvas,video,input,button,select,textarea,iframe,table");
+  const body = document.body;
+  if (!body) return { rendered: false, links: [] };
+  const text = (body.innerText || "").trim();
+  const media = body.querySelector("img,svg,canvas,video,input,button,select,textarea,iframe,table");
+  const lines = text.split("\\n").map((line) => line.trim()).filter(Boolean);
+  const at = lines.indexOf("Unexpected Application Error!");
   return {
     rendered: text.length > 0 || media !== null,
-    mount: mount === document.body ? "body" : "#" + mount.id,
+    error_page: at >= 0 ? (lines[at + 1] || "") : null,
     links: Array.from(document.querySelectorAll("a[href]"), (a) => a.href).slice(0, 200),
   };
 })()`;
@@ -43,19 +49,24 @@ const cfg = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
 const deadline = Date.now() + cfg.total_ms;
 const children = [];
 const report = { backend: null, screens: [], unvisited: [], timed_out: false, error: null };
-let emitted = false;
+let backendLog = "";
 let browserProcess = null;
+let finished = false;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const cut = (text) => String(text ?? "").slice(0, MAX_TEXT);
 
+function emit() {
+  // ASCII only: the parent decodes this with the platform's locale encoding.
+  const line = JSON.stringify(report).replace(/[\u007f-\uffff]/g,
+    (c) => "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0"));
+  process.stdout.write(MARKER + line + "\n");
+}
+
 function finish(code = 0) {
-  if (!emitted) {
-    emitted = true;
-    // ASCII only: the parent decodes this with the platform's locale encoding.
-    const line = JSON.stringify(report).replace(/[\u007f-￿]/g,
-      (c) => "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0"));
-    process.stdout.write(MARKER + line + "\n");
+  if (!finished) {
+    finished = true;
+    emit();
   }
   for (const child of children) {
     try { child.kill("SIGKILL"); } catch { /* already gone */ }
@@ -93,20 +104,19 @@ async function startBackend(backend) {
     cwd: backend.cwd, env: { ...process.env, ...backend.env }, stdio: ["ignore", "pipe", "pipe"],
   });
   children.push(child);
-  let log = "";
   let exited = null;
-  const keep = (data) => { log = (log + data).slice(-2000); };
+  const keep = (data) => { backendLog = (backendLog + data).slice(-MAX_LOG); };
   child.stdout.on("data", keep);
   child.stderr.on("data", keep);
   child.on("exit", (code) => { exited = code ?? "signal"; });
   child.on("error", (error) => { exited = String(error); });
   const until = Math.min(Date.now() + backend.boot_ms, deadline);
   while (Date.now() < until) {
-    if (exited !== null) return { status: "exited", port: backend.port, log: cut(log.slice(-MAX_TEXT)) };
+    if (exited !== null) return { status: "exited", port: backend.port, log: cut(backendLog.slice(-MAX_TEXT)) };
     if (await answers(backend.port, backend.ready_path)) return { status: "up", port: backend.port };
     await sleep(200);
   }
-  return { status: "timeout", port: backend.port, log: cut(log.slice(-MAX_TEXT)) };
+  return { status: "timeout", port: backend.port, log: cut(backendLog.slice(-MAX_TEXT)) };
 }
 
 // The bundle may name several local API addresses (a build-time one and a fallback): each
@@ -160,17 +170,20 @@ function proxy(request, response, backendPort) {
   request.pipe(upstream);
 }
 
-function staticServer(site, backendPort) {
+function staticServer(site, base, backendPort) {
   const root = path.resolve(site);
+  const fileAt = (pathname) => {
+    const file = path.resolve(root, "." + pathname);
+    if (file !== root && !file.startsWith(root + path.sep)) return null;
+    try { return fs.statSync(file).isFile() ? file : null; } catch { return null; }
+  };
   return http.createServer((request, response) => {
     const url = new URL(request.url, "http://localhost");
     let pathname = url.pathname;
     try { pathname = decodeURIComponent(pathname); } catch { /* keep it encoded */ }
-    const file = path.resolve(root, "." + pathname);
-    const inside = file === root || file.startsWith(root + path.sep);
-    let isFile = false;
-    try { isFile = inside && fs.statSync(file).isFile(); } catch { /* not in the build */ }
-    if (isFile) {
+    // A build made for a base path (`vite build --base /app/`) asks for its files under it.
+    const file = (pathname.startsWith(base) && fileAt(pathname.slice(base.length - 1))) || fileAt(pathname);
+    if (file) {
       sendFile(response, file);
       return;
     }
@@ -197,6 +210,8 @@ async function launchBrowser() {
     "--no-first-run", "--no-default-browser-check", "--disable-extensions",
     "--disable-background-networking", "--disable-component-update", "--disable-sync",
     "--disable-default-apps", "--mute-audio", "--no-proxy-server",
+    // WebGL in software: the headless shell has no GPU to give it otherwise.
+    "--enable-unsafe-swiftshader",
     // The deployed frontend and API origins are unknown here, so CORS is not judged.
     "--disable-web-security",
     // Same result with or without a network: nothing outside this machine is reached.
@@ -279,7 +294,7 @@ function header(headers, name) {
 
 function isLocal(url) {
   try {
-    return ["localhost", "127.0.0.1", "[::1]"].includes(new URL(url).hostname);
+    return ["localhost", "127.0.0.1"].includes(new URL(url).hostname);
   } catch {
     return false;
   }
@@ -287,10 +302,11 @@ function isLocal(url) {
 
 async function visit(cdp, url, ownPorts) {
   const screen = {
-    url, exceptions: [], console_errors: [], requests: [], rendered: null, mount: null,
-    idle: false, loaded: false, ms: 0, links: [], error: null, request_count: 0,
+    url, exceptions: [], console_errors: [], requests: [], rendered: null, error_page: null,
+    idle: false, loaded: false, ms: 0, links: [], error: null, request_count: 0, backend_log: "",
   };
   const started = Date.now();
+  const logFrom = backendLog.length;
   const sent = new Map();
   const inflight = new Set();
   let last = Date.now();
@@ -310,8 +326,8 @@ async function visit(cdp, url, ownPorts) {
         break;
       case "Network.responseReceived": {
         const status = p.response.status;
+        const request = sent.get(p.requestId) || { method: "GET", type: p.type || "" };
         if (status >= 400) {
-          const request = sent.get(p.requestId) || { method: "GET", type: p.type || "" };
           note(screen.requests, {
             method: request.method, url: cut(p.response.url), type: request.type, status,
             own: own(p.response.url, p.response.headers),
@@ -366,13 +382,21 @@ async function visit(cdp, url, ownPorts) {
   };
   cdp.listeners.add(listener);
   let targetId = null;
+  const end = Math.min(started + cfg.screen_ms, deadline - 1000);
+  const look = async () => {
+    const evaluated = await cdp.send("Runtime.evaluate",
+      { expression: RENDERED_JS, returnByValue: true }, sessionId);
+    const value = evaluated.result?.value || {};
+    screen.rendered = value.rendered === true;
+    screen.error_page = value.error_page ?? null;
+    screen.links = value.links || [];
+  };
   try {
     ({ targetId } = await cdp.send("Target.createTarget", { url: "about:blank" }));
     ({ sessionId } = await cdp.send("Target.attachToTarget", { targetId, flatten: true }));
     for (const domain of ["Runtime", "Network", "Page", "Log"]) await cdp.send(`${domain}.enable`, {}, sessionId);
     const navigation = await cdp.send("Page.navigate", { url }, sessionId);
     if (navigation.errorText) screen.error = cut(navigation.errorText);
-    const end = Math.min(started + cfg.screen_ms, deadline - 1000);
     while (Date.now() < end) {
       if (screen.loaded && inflight.size === 0 && Date.now() - last >= QUIET_MS) {
         screen.idle = true;
@@ -380,17 +404,20 @@ async function visit(cdp, url, ownPorts) {
       }
       await sleep(50);
     }
-    const evaluated = await cdp.send("Runtime.evaluate", { expression: RENDERED_JS, returnByValue: true }, sessionId);
-    const value = evaluated.result?.value || {};
-    screen.rendered = value.rendered === true;
-    screen.mount = value.mount || null;
-    screen.links = value.links || [];
+    await look();
+    // A first render can come later than the network goes quiet (a timer, a lazy chunk):
+    // look again while the page is still empty, up to the screen's limit.
+    while (!screen.rendered && Date.now() + RECHECK_MS < end) {
+      await sleep(RECHECK_MS);
+      await look();
+    }
   } catch (error) {
     screen.error = cut(error.message);
   } finally {
     cdp.listeners.delete(listener);
     if (targetId) await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
     screen.ms = Date.now() - started;
+    screen.backend_log = backendLog.slice(logFrom).slice(-2000);
   }
   return screen;
 }
@@ -403,6 +430,9 @@ function routeOf(link, origin) {
   if (cfg.hash) {
     if (!url.hash.startsWith("#/")) return null;
     route = url.hash.slice(1).split("?")[0];
+  } else if (cfg.prefix) {
+    if (route !== cfg.prefix && !route.startsWith(cfg.prefix + "/")) return null;
+    route = route.slice(cfg.prefix.length);
   }
   if (/\.[A-Za-z0-9]{1,8}$/.test(route)) return null; // a file, not a screen
   route = route.replace(/\/+$/, "") || "/";
@@ -420,7 +450,7 @@ async function main() {
       await forward(cfg.own_ports, backendPort);
     }
   }
-  const server = staticServer(cfg.site, backendPort);
+  const server = staticServer(cfg.site, cfg.base, backendPort);
   const port = await listen(server);
   const origin = `http://127.0.0.1:${port}`;
   const ownPorts = new Set(cfg.own_ports.map(String));
@@ -434,7 +464,8 @@ async function main() {
       break;
     }
     const route = queue.shift();
-    const screen = await visit(cdp, origin + (cfg.hash ? "/#" + route : route), ownPorts);
+    const target = cfg.hash ? `${cfg.prefix}/#${route}` : cfg.prefix + (route === "/" && cfg.prefix ? "" : route);
+    const screen = await visit(cdp, origin + (target || "/"), ownPorts);
     screen.route = route;
     for (const link of screen.links) {
       const next = routeOf(link, origin);
@@ -445,6 +476,8 @@ async function main() {
     }
     delete screen.links;
     report.screens.push(screen);
+    report.unvisited = [...queue];
+    emit(); // what was observed so far survives the run being stopped
   }
   report.unvisited = queue;
   await cdp.send("Browser.close", {}, undefined, 3000).catch(() => {});

@@ -4817,10 +4817,14 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 
         Cached per tree like :meth:`_revision_cached`; a check that did not run
         is not, unless no edit can change that (no browser, turned off). The
-        report is kept as ``_screen_report`` (revision, report) for
-        ``ui_probe.screen_evidence``.
+        screens that threw and showed nothing go to the trace as blocker candidates.
         """
-        from besser.spec_driven_agent.validation.ui_probe import NOT_RUN_PREFIX, collect_screen_report, not_run
+        from besser.spec_driven_agent.validation.ui_probe import (
+            BLOCKER_CANDIDATES,
+            NOT_RUN_PREFIX,
+            collect_screen_report,
+            not_run,
+        )
 
         revision = self._workspace_revision()
         # A build verdict is keyed (folder, revision, install markers, script); None is a pass.
@@ -4838,9 +4842,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._trace.write(EVENT_PHASE_ENTER, phase="phase3_screens")
         report = collect_screen_report(self.output_dir, list(built), timeout=remaining)
         self._trace.write(EVENT_PHASE_EXIT, phase="phase3_screens", screens=len(report["screens"]),
-                          seconds=report["seconds"],
+                          seconds=report["seconds"], **{BLOCKER_CANDIDATES: report["candidates"]},
                           exit_reason=f"{len(report['screens'])} screen(s) opened in {report['seconds']}s")
-        self._screen_report = (revision, report)
         stable = (not_run("no browser available"), not_run("turned off on this server"))
         if all(not issue.startswith(NOT_RUN_PREFIX) or issue in stable for issue in report["issues"]):
             self._check_results[key] = list(report["issues"])

@@ -59,8 +59,8 @@ def test_nested_stringified_values_are_decoded_at_every_depth():
 def test_the_real_tools_that_take_arrays_get_real_arrays():
     methods = coerce_to_schema({"http_methods": '["GET", "POST"]'}, _tool("generate_fastapi_backend")["input_schema"])
     assert methods["http_methods"] == ["GET", "POST"]
-    ids = coerce_to_schema({"action": "done", "ids": "[1, 2]"}, _tool("task_list")["input_schema"])
-    assert ids["ids"] == [1, 2]
+    ids = coerce_to_schema({"done": "[1, 2]"}, _tool("task_list")["input_schema"])
+    assert ids["done"] == [1, 2]
     status = _tool("test_api")["input_schema"]
     request = {"requests": json.dumps([{"method": "GET", "path": "/x", "expected_status": "[200, 201]"}])}
     assert coerce_to_schema(request, status)["requests"][0]["expected_status"] == [200, 201]

@@ -34,6 +34,7 @@ from besser.spec_driven_agent.validation.endpoint_coherence import (
     _ROUTE_VALUE_RE,
     _calls_in_file,
     _parse_manifest,
+    typed_client_functions,
 )
 from besser.spec_driven_agent.validation.frontend_schema import (
     _FRONTEND_SUFFIXES,
@@ -318,12 +319,27 @@ def _sent_object(blanked: str, call) -> tuple[int, int] | None:
         config = _skip_space(blanked, blanked.find("(", call.start) + 1)
         value = _top_level_value(blanked, config, "data") if blanked.startswith("{", config) else None
         return _object_at(blanked, value) if value is not None else None
+    if call.client == "typed":
+        # ``create(body)`` / ``update(id, body)``: the last argument, cast or not.
+        close = _group_end(blanked, call.url_end)
+        if close is None:
+            return None
+        depth, last = 0, call.url_end + 1
+        for index in range(call.url_end + 1, close - 1):
+            depth += {"(": 1, "[": 1, "{": 1, ")": -1, "]": -1, "}": -1}.get(blanked[index], 0)
+            if blanked[index] == "," and depth == 0:
+                last = index + 1
+        return _object_at(blanked, last)
     index = _skip_space(blanked, call.url_end)
     if not blanked.startswith(",", index):
         return None
     index = _skip_space(blanked, index + 1)
     if call.client == "axios":
         return _object_at(blanked, index)
+    if call.client == "api-request":
+        # ``apiRequest("POST", path, { body: {...} })``: the body is sent as it is.
+        value = _top_level_value(blanked, index, "body") if blanked.startswith("{", index) else None
+        return _object_at(blanked, value) if value is not None else None
     if not blanked.startswith("{", index):
         return None
     value = _top_level_value(blanked, index, "body")
@@ -391,7 +407,7 @@ def _response_data(blanked: str, call):
             return (rf"(?<![\w$.]){re.escape(response)}\s*(?:\?\.|\.)\s*data(?![\w$])",
                     f"{response}.data", response, start, end)
         return rf"(?<![\w$.]){re.escape(data)}(?![\w$])", data, None, start, end
-    if call.client == "fetch-helper":
+    if call.client in {"fetch-helper", "api-request"}:
         # The wrapper already returns the parsed body.
         if response is None:
             return None
@@ -628,6 +644,7 @@ def collect_api_call_diagnostics(workspace, changed_path=None, content=None) -> 
     if not frontend:
         return []
     manifest = _parse_manifest(build_endpoint_manifest(str(workspace)))
+    typed = typed_client_functions(str(workspace))
     routes = _routes(sources) if manifest else {}
     if not routes:
         return []
@@ -641,7 +658,7 @@ def collect_api_call_diagnostics(workspace, changed_path=None, content=None) -> 
     findings, seen = [], set()
     for path, text in frontend:
         calls = _calls_in_file(path, text, ("axios", *sorted(instances.get(path, ()))),
-                               tuple(sorted(helpers.get(path, ()))))
+                               tuple(sorted(helpers.get(path, ()))), typed)
         if not calls:
             continue
         blanked = _blank(text)
@@ -658,12 +675,16 @@ def collect_api_call_diagnostics(workspace, changed_path=None, content=None) -> 
             fetch_like = call.client in {"fetch", "fetch-helper"}
             axios_like = not fetch_like and (imports_axios or not text.startswith("axios", call.start))
             messages = []
-            if route.body is not None and call.method in {"POST", "PUT", "PATCH"} and (fetch_like or axios_bodies):
+            # The typed client sends a create/update argument as the body; the others it wraps itself.
+            typed_body = call.client != "typed" or call.function.endswith((".create", ".update"))
+            if (route.body is not None and call.method in {"POST", "PUT", "PATCH"} and typed_body
+                    and (fetch_like or axios_bodies)):
                 literal = _sent_object(blanked, call)
                 sent = _object_keys(text, blanked, *literal) if literal else None
                 if sent is not None:
                     messages.append(_body_message(call, route_path, route, sent))
-            if route.returns is not None and (fetch_like or (axios_reads and axios_like)):
+            # The typed client returns the value it unwrapped from the response, not the response.
+            if route.returns is not None and call.client != "typed" and (fetch_like or (axios_reads and axios_like)):
                 data = _response_data(blanked, call)
                 if data is not None:
                     pattern, expression, guarded, start, end = data

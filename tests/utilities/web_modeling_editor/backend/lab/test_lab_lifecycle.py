@@ -73,7 +73,8 @@ def test_lifecycle_partly_merged_then_merged_and_closable(lab, lab_env):  # noqa
     notice = closed.thread[-1]
     assert notice.type == "notice" and notice.text == 'Change "Add a note element" was merged; the lab closed it.'
     assert ("change_closed", "merged") in _audit(service)
-    _refused("state", service.close(JORDI, change_id))  # once is enough
+    again = asyncio.run(service.close(JORDI, change_id))  # a second viewer's close answers the detail
+    assert (again.status, again.thread) == ("closed", closed.thread)
 
 
 def test_closed_unmerged_pull_requests_close_the_change_on_a_click(lab, lab_env):  # noqa: F811

@@ -1,0 +1,67 @@
+# BESSER Lab in one container, on this machine only (local mode). Linux, or Docker Desktop with WSL2.
+#
+#   cp .env.lab.example .env.lab        # then fill in its required values
+#   docker compose -f docker-compose.lab.yml up --build
+#
+# Then open http://localhost:8080. The first start clones BESSER, the web editor and the modeling agent into the
+# besser-lab volume and installs their environments (many minutes; check free disk first). The container runs the
+# lab backend, the lab's own editor and one preview slot, whose services each run in bubblewrap with a private
+# network: hence the security options and /dev/net/tun below. Every port is published on 127.0.0.1 only.
+# The preview has no https origin here, so Try it opens it in a new tab instead of a frame.
+services:
+  besser-lab:
+    image: besser-lab:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: lab
+      # The editor submodule, which the root .dockerignore leaves out of the context.
+      additional_contexts:
+        frontend: ./besser/utilities/web_modeling_editor/frontend
+    container_name: besser-lab
+    env_file:
+      - path: ./.env.lab
+        required: true
+    # The layout and addresses of local mode; .env.lab holds the rest.
+    environment:
+      BESSER_LAB_ENABLED: "true"
+      BESSER_LAB_WORKSPACE_ROOT: /srv/besser-lab/work
+      BESSER_LAB_GIT_ROOT: /srv/besser-lab/git
+      BESSER_LAB_STATE_DIR: /srv/besser-lab/state/lab
+      OAUTH_SESSIONS_PATH: /srv/besser-lab/state/sessions/oauth_states.enc
+      USER_TOKENS_PATH: /srv/besser-lab/state/sessions/user_tokens.enc
+      BESSER_LLM_RUN_STORE_PATH: /srv/besser-lab/state/spec_driven_runs.sqlite3
+      BESSER_LLM_RUN_WORKSPACE_ROOT: /srv/besser-lab/runs
+      # One preview slot on localhost ports; pasta forwards them from the container's interface.
+      BESSER_LAB_PREVIEW_ENABLED: "true"
+      BESSER_LAB_PREVIEW_URLS: ""
+      BESSER_LAB_PREVIEW_BIND: 0.0.0.0
+      BESSER_LLM_SHELL_NETWORK: private
+      DEPLOYMENT_URL: http://localhost:8080
+      CORS_ORIGINS: http://localhost:8080
+      GITHUB_REDIRECT_URI: http://localhost:9000/besser_api/github/auth/callback
+    ports:
+      - "127.0.0.1:8080:8080"   # the lab editor
+      - "127.0.0.1:9000:9000"   # the lab backend
+      - "127.0.0.1:9100:9100"   # preview backend
+      - "127.0.0.1:8180:8180"   # preview editor (Vite)
+      - "127.0.0.1:8865:8865"   # preview modeling agent
+    volumes:
+      - besser-lab:/srv/besser-lab
+    # Same as besser-wme-smartgen in docker-compose.prod.yml: bubblewrap needs an unprivileged user namespace,
+    # which Docker's default seccomp and AppArmor profiles refuse; on some kernels Docker's masked /proc paths
+    # make the kernel refuse bubblewrap's private /proc. No capability is added.
+    security_opt:
+      - seccomp=unconfined
+      - apparmor=unconfined
+      - systempaths=unconfined
+      - no-new-privileges:true
+    # pasta's tap device for each sandbox's private network.
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    # Reaps the sandboxes' orphans and forwards the stop signal.
+    init: true
+    restart: unless-stopped
+
+volumes:
+  besser-lab:

@@ -5,15 +5,26 @@ with the lab off, 401 without a valid session, 403 for another login). Every all
 any change; dropping one is for its owner or an admin. A refusal answers ``{"detail": {"code", "message"}}``
 (``LabRefusalResponse``) with the status of its code.
 
-The handlers answer 501 until the phase 2 lab service is built: the table, models and docstrings are final.
+The handlers parse the request and call ``LabService``; what runs git or reads files runs off the event loop.
 """
 
 # No ``from __future__ import annotations``: FastAPI resolves the endpoints' annotations at import.
-from typing import Annotated, Any, Optional
+import asyncio
+import contextlib
+import uuid
+from typing import Annotated, Any, Iterator, Optional
 
 from fastapi import APIRouter, HTTPException, Path, Query
 from fastapi.responses import StreamingResponse
+from pydantic import ValidationError
 
+from besser.spec_driven_agent.lab.memory import LabMemoryError
+from besser.spec_driven_agent.lab.workspace import LabWorkspaceError
+from besser.utilities.web_modeling_editor.backend.dependencies import (
+    LabServiceDep,
+    SettingsDep,
+    SpecDrivenRuntimeDep,
+)
 from besser.utilities.web_modeling_editor.backend.models.lab import (
     CHANGE_ID_PATTERN,
     LabAuditResponse,
@@ -44,16 +55,18 @@ from besser.utilities.web_modeling_editor.backend.models.lab import (
     LabUpdateBranchResponse,
 )
 from besser.utilities.web_modeling_editor.backend.routers.auth import LabUserDep
+from besser.utilities.web_modeling_editor.backend.services.lab.pull_requests import (
+    PullRequestError,
+    PullRequestSignInError,
+)
+from besser.utilities.web_modeling_editor.backend.services.lab.runner import LabRunner
+from besser.utilities.web_modeling_editor.backend.services.lab.service import (
+    REFUSAL_STATUS,
+    LabRefusal,
+    LabService,
+)
 
 router = APIRouter(prefix="/besser_api", tags=["lab"])
-
-NOT_BUILT_DETAIL = "Not built yet: BESSER Lab phase 2 is being built."
-
-# The HTTP status of each refusal code (R13).
-REFUSAL_STATUS = {
-    "change_busy": 409, "runs_full": 429, "user_cap": 409, "instance_cap": 409, "not_owner": 403,
-    "preview_full": 409, "not_found": 404, "state": 409,
-}
 
 # Preview log lines one request may read: a screen of context; the log file itself is not capped.
 DEFAULT_PREVIEW_LOG_LINES = 200
@@ -64,53 +77,82 @@ MAX_DIFF_PATH_CHARS = 1024
 ChangeIdQuery = Annotated[str, Query(pattern=CHANGE_ID_PATTERN, description="The change's id.")]
 NoteIdPath = Annotated[str, Path(pattern=r"^[A-Za-z0-9_-]{1,64}$", description="The note's id.")]
 
+_BAD_ISSUES = {400: {"description": "A ``closesIssues`` entry is not one of the change's issues."}}
 
-def _refusals(*codes: str) -> dict[int | str, dict[str, Any]]:
-    """The OpenAPI ``responses`` of a route that refuses with these codes."""
+
+def _refusals(*codes: str, extra: Optional[dict[int, dict[str, Any]]] = None) -> dict[int | str, dict[str, Any]]:
+    """The OpenAPI ``responses`` of a route that refuses with these codes (``extra``: other answers)."""
     by_status: dict[int, list[str]] = {}
     for code in codes:
         by_status.setdefault(REFUSAL_STATUS[code], []).append(code)
-    return {status: {"model": LabRefusalResponse, "description": "Refused: " + ", ".join(names)}
-            for status, names in by_status.items()}
+    responses: dict[int | str, dict[str, Any]] = {
+        status: {"model": LabRefusalResponse, "description": "Refused: " + ", ".join(names)}
+        for status, names in by_status.items()}
+    responses.update(extra or {})
+    return responses
 
 
-def _not_built() -> HTTPException:
-    return HTTPException(status_code=501, detail=NOT_BUILT_DETAIL)
+def _refused(refusal: LabRefusal) -> HTTPException:
+    return HTTPException(status_code=refusal.status, detail={"code": refusal.code, "message": refusal.message})
+
+
+@contextlib.contextmanager
+def _answers() -> Iterator[None]:
+    """The service's refusals and errors as HTTP answers (R13); every message is written for the user."""
+    try:
+        yield
+    except LabRefusal as refusal:
+        raise _refused(refusal) from None
+    except PullRequestSignInError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from None
+    except (LabWorkspaceError, PullRequestError) as exc:
+        raise HTTPException(status_code=409, detail={"code": "state", "message": str(exc)}) from None
+    except ValidationError:
+        raise  # a model the service built is a defect, not the user's request
+    except (ValueError, LabMemoryError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+
+
+async def _call(function, *args: Any) -> Any:
+    """A blocking service call (git, files) off the event loop, its refusals answered."""
+    with _answers():
+        return await asyncio.to_thread(function, *args)
 
 
 # -- Home and changes ---------------------------------------------------------------------------------------
 
 @router.get("/lab/home", response_model=LabHomeResponse)
-async def lab_home(user: LabUserDep) -> LabHomeResponse:
+async def lab_home(user: LabUserDep, lab: LabServiceDep) -> LabHomeResponse:
     """The signed-in user, the base of each repository, the runs in progress, this month's spending, the
     preview slots and the team memory's state."""
-    raise _not_built()
+    return await _call(lab.home, user)
 
 
 @router.get("/lab/changes", response_model=LabChangesResponse)
-async def lab_changes(user: LabUserDep) -> LabChangesResponse:
+async def lab_changes(user: LabUserDep, lab: LabServiceDep) -> LabChangesResponse:
     """Every open change and draft, most recently updated first, then the 10 most recently closed changes."""
-    raise _not_built()
+    return await _call(lab.changes)
 
 
 @router.post("/lab/change", response_model=LabChangeDetail, responses=_refusals("user_cap", "instance_cap"))
-async def lab_create_change(user: LabUserDep) -> LabChangeDetail:
+async def lab_create_change(user: LabUserDep, lab: LabServiceDep) -> LabChangeDetail:
     """Start a change as a draft owned by the user: a thread and no branches until its first plan is submitted.
 
     Refused when the user's or the lab's monthly budget is spent.
     """
-    raise _not_built()
+    return await _call(lab.create_change, user)
 
 
 @router.get("/lab/change", response_model=LabChangeDetail, responses=_refusals("not_found"))
-async def lab_get_change(user: LabUserDep, changeId: ChangeIdQuery) -> LabChangeDetail:
+async def lab_get_change(user: LabUserDep, lab: LabServiceDep, changeId: ChangeIdQuery) -> LabChangeDetail:
     """One change: its files, last run, branches, bases, thread and run records."""
-    raise _not_built()
+    return await _call(lab.change_detail, changeId)
 
 
 @router.post("/lab/message", response_class=StreamingResponse,
              responses=_refusals("change_busy", "runs_full", "user_cap", "instance_cap", "not_found", "state"))
-async def lab_message(body: LabMessageRequest, user: LabUserDep) -> StreamingResponse:
+async def lab_message(body: LabMessageRequest, user: LabUserDep, lab: LabServiceDep, runtime: SpecDrivenRuntimeDep,
+                      settings: SettingsDep) -> StreamingResponse:
     """Run the change's next step (plan or build) for the user's message, as Spec-Driven SSE events.
 
     The ``start`` event carries the run id that ``POST /spec-driven/cancel/{run_id}`` stops; the ``done``
@@ -119,49 +161,97 @@ async def lab_message(body: LabMessageRequest, user: LabUserDep) -> StreamingRes
     replays it. One run per change at a time, at most ``BESSER_LAB_MAX_CONCURRENT_RUNS`` across the lab; the
     run's cost cap is what is left of the per-run, the user's and the lab's monthly budgets.
     """
-    raise _not_built()
+    run_id = uuid.uuid4().hex
+    cancel_event = await runtime.active_runs.reserve(run_id)
+    if cancel_event is None:  # a fresh UUID is never taken
+        raise HTTPException(status_code=409, detail="Generated run ID is already active")
+    try:
+        ticket = await _call(lab.begin_run, body.changeId, run_id, user.login)
+    except HTTPException:
+        await runtime.active_runs.release(run_id, cancel_event)
+        raise
+    runner = LabRunner(body, user=user, lab=lab, runtime=runtime, settings=settings, ticket=ticket,
+                       cancel_event=cancel_event)
+    try:
+        await runtime.durable_runs.start(
+            run_id, runner.stream(), cancel=cancel_event.set,
+            on_abandoned=cancel_event.set if settings.llm_cancel_abandoned_runs else None,
+            disconnect_grace_seconds=settings.llm_disconnected_grace_seconds,
+        )
+    except Exception:
+        # The stream never started, so it gives nothing back: the run is given back here, recorded as failed.
+        await runner.abandon("The run could not be started.")
+        raise
+    return StreamingResponse(
+        runtime.durable_runs.subscribe(run_id),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache, no-transform", "Connection": "keep-alive",
+                 "X-Accel-Buffering": "no", "X-BESSER-Run-Id": run_id},
+    )
 
 
 @router.post("/lab/pull-request", response_model=LabPullRequestsResponse,
-             responses=_refusals("change_busy", "not_found", "state"))
-async def lab_pull_request(body: LabPullRequestRequest, user: LabUserDep) -> LabPullRequestsResponse:
+             responses=_refusals("change_busy", "not_found", "state", extra=_BAD_ISSUES))
+async def lab_pull_request(body: LabPullRequestRequest, user: LabUserDep, lab: LabServiceDep) -> LabPullRequestsResponse:
     """Push the change and open a draft pull request in each repository it touched, editor first, with the
     user's GitHub token; push to the pull requests already open.
 
     401 when GitHub refuses the user's sign-in, so the editor asks them to sign in again. The full test suites
     are not run first; ``checksNote`` tells the user which checks the change passed.
     """
-    raise _not_built()
+    await _check_closes_issues(lab, body)
+    with _answers():
+        opened, checks_note = await lab.open_pull_requests(user, body.changeId, title=body.title, body=body.body,
+                                                           closes_issues=body.closesIssues)
+    return LabPullRequestsResponse(pullRequests=opened, checksNote=checks_note)
+
+
+async def _check_closes_issues(lab: LabService, body: LabPullRequestRequest) -> None:
+    """400 when ``closesIssues`` names an issue the change did not start from: the request is wrong, not the
+    change's state. An unknown change is left to the service (``not_found``)."""
+    if not body.closesIssues:
+        return
+    try:
+        change = await asyncio.to_thread(lab.workspace.get_change, body.changeId)
+    except LabWorkspaceError:
+        return
+    known = {(issue.get("repo"), issue.get("number")) for issue in change.issues}
+    unknown = [f"{ref.repo}#{ref.number}" for ref in body.closesIssues if (ref.repo, ref.number) not in known]
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"{', '.join(unknown)} is not an issue of this change: its "
+                                                    "pull requests close only the issues it started from.")
 
 
 @router.post("/lab/change/drop", response_model=LabChangesResponse,
              responses=_refusals("not_owner", "change_busy", "not_found"))
-async def lab_drop_change(body: LabChangeRequest, user: LabUserDep) -> LabChangesResponse:
+async def lab_drop_change(body: LabChangeRequest, user: LabUserDep, lab: LabServiceDep) -> LabChangesResponse:
     """Delete the change: its working trees, branches, thread and notes. Pull requests already opened stay on
     GitHub. Only its owner or an admin may drop it."""
-    raise _not_built()
+    return await _call(lab.drop, user, body.changeId)
 
 
 @router.post("/lab/change/close", response_model=LabChangeDetail,
              responses=_refusals("change_busy", "not_found", "state"))
-async def lab_close_change(body: LabChangeRequest, user: LabUserDep) -> LabChangeDetail:
+async def lab_close_change(body: LabChangeRequest, user: LabUserDep, lab: LabServiceDep) -> LabChangeDetail:
     """Close the change, merged or not: its working trees and branches are removed, its state and thread kept.
 
     Refused while work is not pushed to its pull requests.
     """
-    raise _not_built()
+    with _answers():
+        return await lab.close(user, body.changeId)
 
 
 @router.post("/lab/change/update-base", response_model=LabUpdateBranchResponse,
              responses=_refusals("change_busy", "not_found", "state"))
-async def lab_update_base(body: LabUpdateBranchRequest, user: LabUserDep) -> LabUpdateBranchResponse:
+async def lab_update_base(body: LabUpdateBranchRequest, user: LabUserDep, lab: LabServiceDep) -> LabUpdateBranchResponse:
     """Bring one repository of the change up to its base branch.
 
     With an open pull request, GitHub updates the pull request's branch and the lab pulls it back; otherwise
     the lab merges the freshly fetched base into the change. Conflicts are left for a "Resolve conflicts"
     build step.
     """
-    raise _not_built()
+    with _answers():
+        return await lab.update_from_base(user, body.changeId, body.repo)
 
 
 # -- Review -------------------------------------------------------------------------------------------------
@@ -169,6 +259,7 @@ async def lab_update_base(body: LabUpdateBranchRequest, user: LabUserDep) -> Lab
 @router.get("/lab/diff", response_model=LabDiffResponse, responses=_refusals("not_found", "state"))
 async def lab_diff(
     user: LabUserDep,
+    lab: LabServiceDep,
     changeId: ChangeIdQuery,
     repo: Annotated[Optional[LabRepoKey], Query(description="Only this repository.")] = None,
     path: Annotated[Optional[str], Query(max_length=MAX_DIFF_PATH_CHARS,
@@ -179,113 +270,117 @@ async def lab_diff(
     Refused for a draft (no trees yet) and for a closed change (its branches are gone; the diff is on the pull
     request).
     """
-    raise _not_built()
+    return await _call(lab.diff, changeId, repo, path)
 
 
-@router.get("/lab/review", response_model=LabReviewResponse, responses=_refusals("not_found"))
-async def lab_review(user: LabUserDep, changeId: ChangeIdQuery) -> LabReviewResponse:
+@router.get("/lab/review", response_model=LabReviewResponse,
+            responses=_refusals("not_found"))
+async def lab_review(user: LabUserDep, lab: LabServiceDep, changeId: ChangeIdQuery) -> LabReviewResponse:
     """The change's pull requests as GitHub reports them: state, CI checks with failing log tails, reviews and
     comments, and when to ask again."""
-    raise _not_built()
+    with _answers():
+        return await lab.review(user, changeId)
 
 
 # -- Preview ------------------------------------------------------------------------------------------------
 
 @router.get("/lab/preview", response_model=LabPreviewView)
-async def lab_preview(user: LabUserDep) -> LabPreviewView:
+async def lab_preview(user: LabUserDep, lab: LabServiceDep) -> LabPreviewView:
     """Every preview slot: the change it shows, who used it last, and the state of its three services."""
-    raise _not_built()
+    return await _call(lab.preview_view)
 
 
 @router.post("/lab/preview/slot", response_model=LabPreviewSlot,
              responses=_refusals("preview_full", "not_found", "state"))
-async def lab_take_preview_slot(body: LabTakeSlotRequest, user: LabUserDep) -> LabPreviewSlot:
+async def lab_take_preview_slot(body: LabTakeSlotRequest, user: LabUserDep, lab: LabServiceDep) -> LabPreviewSlot:
     """Show the change in a preview slot: the slot already showing it, else a free one, else one nobody has
     used for 10 minutes. Answers at once; the slot's ``detail`` names the preparation step meanwhile."""
-    raise _not_built()
+    return await _call(lab.take_preview_slot, user, body.changeId)
 
 
 @router.post("/lab/preview/slot/touch", status_code=204, responses=_refusals("state"))
-async def lab_touch_preview_slot(body: LabTouchSlotRequest, user: LabUserDep) -> None:
+async def lab_touch_preview_slot(body: LabTouchSlotRequest, user: LabUserDep, lab: LabServiceDep) -> None:
     """Record that the user still uses the slot, so it is not taken over as idle."""
-    raise _not_built()
+    await _call(lab.touch_preview_slot, user, body.slot)
 
 
 @router.post("/lab/preview/restart", response_model=LabPreviewView, responses=_refusals("state"))
-async def lab_restart_preview(body: LabPreviewRestartRequest, user: LabUserDep) -> LabPreviewView:
+async def lab_restart_preview(body: LabPreviewRestartRequest, user: LabUserDep, lab: LabServiceDep) -> LabPreviewView:
     """Restart one service of a slot, or all three."""
-    raise _not_built()
+    return await _call(lab.restart_preview, user, body.slot, body.service)
 
 
 @router.get("/lab/preview/logs/{service}", response_model=LabPreviewLog, responses=_refusals("state"))
 async def lab_preview_log(
     service: LabPreviewServiceName,
     user: LabUserDep,
+    lab: LabServiceDep,
     slot: Annotated[int, Query(ge=0, description="The preview slot.")],
     lines: Annotated[int, Query(ge=1, le=MAX_PREVIEW_LOG_LINES,
                                 description="How many of the last lines to read.")] = DEFAULT_PREVIEW_LOG_LINES,
 ) -> LabPreviewLog:
     """The end of one preview service's log, secrets redacted."""
-    raise _not_built()
+    return await _call(lab.preview_log, slot, service, lines)
 
 
 # -- Settings and usage -------------------------------------------------------------------------------------
 
 @router.get("/lab/settings", response_model=LabSettingsResponse)
-async def lab_settings(user: LabUserDep) -> LabSettingsResponse:
+async def lab_settings(user: LabUserDep, lab: LabServiceDep) -> LabSettingsResponse:
     """The repositories and their bases, the lab's limits, its admins and this month's spending."""
-    raise _not_built()
+    return await _call(lab.settings_view, user)
 
 
 @router.post("/lab/settings/refresh-bases", response_model=LabSettingsResponse, responses=_refusals("state"))
-async def lab_refresh_bases(user: LabUserDep) -> LabSettingsResponse:
+async def lab_refresh_bases(user: LabUserDep, lab: LabServiceDep) -> LabSettingsResponse:
     """Fetch every repository's base branch now. Open changes keep the base they started from.
 
     Refused when a fetch fails; the message names the repository.
     """
-    raise _not_built()
+    return await _call(lab.refresh_bases, user)
 
 
 @router.get("/lab/audit", response_model=LabAuditResponse)
 async def lab_audit(
     user: LabUserDep,
+    lab: LabServiceDep,
     month: Annotated[Optional[str], Query(pattern=r"^\d{4}-(0[1-9]|1[0-2])$",
                                           description="``YYYY-MM``; the current UTC month when absent.")] = None,
 ) -> LabAuditResponse:
     """One UTC month of the lab's audit log: who did what to which change, and what it cost."""
-    raise _not_built()
+    return await _call(lab.audit_view, month)
 
 
 # -- Team memory --------------------------------------------------------------------------------------------
 
 @router.get("/lab/memory", response_model=LabMemoryResponse)
-async def lab_memory(user: LabUserDep) -> LabMemoryResponse:
+async def lab_memory(user: LabUserDep, lab: LabServiceDep) -> LabMemoryResponse:
     """The team notes the lab agent reads, and whether the memory is on."""
-    raise _not_built()
+    return await _call(lab.memory_view)
 
 
 @router.post("/lab/memory", response_model=LabNote, responses=_refusals("not_found", "state"))
-async def lab_add_note(body: LabNoteInput, user: LabUserDep) -> LabNote:
+async def lab_add_note(body: LabNoteInput, user: LabUserDep, lab: LabServiceDep) -> LabNote:
     """Add a team note, approved by the user; with ``fromProposal`` it approves that proposal.
 
     Refused while the memory is off or full.
     """
-    raise _not_built()
+    return await _call(lab.add_note, user, body)
 
 
 @router.put("/lab/memory/{note_id}", response_model=LabNote, responses=_refusals("not_found", "state"))
-async def lab_update_note(note_id: NoteIdPath, body: LabNoteInput, user: LabUserDep) -> LabNote:
+async def lab_update_note(note_id: NoteIdPath, body: LabNoteInput, user: LabUserDep, lab: LabServiceDep) -> LabNote:
     """Replace a team note's text and scope."""
-    raise _not_built()
+    return await _call(lab.update_note, user, note_id, body)
 
 
 @router.delete("/lab/memory/{note_id}", status_code=204, responses=_refusals("not_found", "state"))
-async def lab_delete_note(note_id: NoteIdPath, user: LabUserDep) -> None:
+async def lab_delete_note(note_id: NoteIdPath, user: LabUserDep, lab: LabServiceDep) -> None:
     """Delete a team note."""
-    raise _not_built()
+    await _call(lab.delete_note, user, note_id)
 
 
 @router.post("/lab/memory/proposals/dismiss", status_code=204, responses=_refusals("not_found"))
-async def lab_dismiss_note_proposal(body: LabProposalRef, user: LabUserDep) -> None:
+async def lab_dismiss_note_proposal(body: LabProposalRef, user: LabUserDep, lab: LabServiceDep) -> None:
     """Dismiss a note the lab agent proposed: it is not kept."""
-    raise _not_built()
+    await _call(lab.dismiss_proposal, user, body)

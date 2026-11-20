@@ -1,7 +1,7 @@
 """FastAPI dependencies that hand routes the state built in the app's lifespan."""
 
 import threading
-from typing import Annotated
+from typing import Annotated, Optional
 
 from fastapi import Depends, HTTPException, Request
 from starlette.requests import HTTPConnection
@@ -52,19 +52,27 @@ def get_semantic_check_slots(connection: HTTPConnection) -> threading.BoundedSem
 
 
 def get_lab_service(request: Request) -> LabService:
-    """BESSER Lab's service on ``app.state.lab``; 503 on a lab without a working copy configured.
+    """BESSER Lab's service on ``app.state.lab``; 503 on a lab that could not start, with the reason.
 
-    Lab routes take it after ``LabUserDep``, which already answers 404 when the lab is off.
+    Lab routes take it after ``LabUserDep``, which already answers 404 when the lab is off. The reason is what
+    the lifespan stored in ``app.state.lab_unavailable`` (``create_lab_service``'s ``LabUnavailableError``).
     """
     lab = getattr(request.app.state, "lab", None)
     if lab is None:
-        raise HTTPException(status_code=503,
-                            detail="BESSER Lab has no working copy configured (BESSER_LAB_WORKSPACE_ROOT).")
+        reason = getattr(request.app.state, "lab_unavailable", "")
+        raise HTTPException(status_code=503, detail=f"BESSER Lab cannot start: {reason}" if reason else
+                            "BESSER Lab has no working copy configured (BESSER_LAB_WORKSPACE_ROOT).")
     return lab
+
+
+def get_optional_lab_service(request: Request) -> Optional[LabService]:
+    """BESSER Lab's service, or None (the lab off or not started): for routes that also serve without it."""
+    return getattr(request.app.state, "lab", None)
 
 
 SpecDrivenRuntimeDep = Annotated[SpecDrivenRuntime, Depends(get_spec_driven_runtime)]
 LabServiceDep = Annotated[LabService, Depends(get_lab_service)]
+OptionalLabServiceDep = Annotated[Optional[LabService], Depends(get_optional_lab_service)]
 GitHubSessionsDep = Annotated[GitHubSessions, Depends(get_github_sessions)]
 AgentSimulatorDep = Annotated[AgentSimulatorState, Depends(get_agent_simulator)]
 KgConsistencySlotsDep = Annotated[threading.BoundedSemaphore, Depends(get_kg_consistency_slots)]

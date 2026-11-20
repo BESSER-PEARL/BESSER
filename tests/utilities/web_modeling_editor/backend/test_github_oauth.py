@@ -109,23 +109,93 @@ def test_logout_still_reads_the_old_query_parameter_with_a_warning(monkeypatch, 
     assert TestClient(app).post("/besser_api/github/auth/logout").status_code == 422
 
 
-def test_the_oauth_callback_hands_the_session_over_in_the_url_fragment(monkeypatch, tmp_path):
-    _store(monkeypatch, tmp_path)
+def _callback(monkeypatch, tmp_path, login: str = "octocat") -> list[httpx.Request]:
+    """``GET /auth/callback`` against a fake GitHub that signs in ``login``; the requests GitHub received."""
     states = SessionStore(store_path=str(tmp_path / "states.enc"), ttl=600)
     states.set("state-1", {"client_ip": "test"})
     monkeypatch.setattr(app.state.github_sessions, "oauth_states", states)
+    seen: list[httpx.Request] = []
 
     def github(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
         if request.url.path == "/login/oauth/access_token":
             return httpx.Response(200, json={"access_token": "gho_new"})
-        return httpx.Response(200, json={"login": "octocat", "avatar_url": ""})
+        if request.method == "DELETE":
+            return httpx.Response(204)
+        return httpx.Response(200, json={"login": login, "avatar_url": ""})
 
     real_client = httpx.AsyncClient
     monkeypatch.setattr(github_oauth.httpx, "AsyncClient",
                         lambda **kw: real_client(transport=httpx.MockTransport(github)))
     response = TestClient(app).get("/besser_api/github/auth/callback?code=c&state=state-1", follow_redirects=False)
+    seen.append(response)
+    return seen
+
+
+def test_the_oauth_callback_hands_the_session_over_in_the_url_fragment(monkeypatch, tmp_path):
+    _store(monkeypatch, tmp_path)
+    response = _callback(monkeypatch, tmp_path)[-1]
 
     location = response.headers["location"]
     base, _, fragment = location.partition("#")
     assert "github_session" not in base and fragment.startswith("github_session=")
     assert fragment.endswith("&username=octocat")
+
+
+def test_refusal_redirect_carries_login_in_fragment(monkeypatch, tmp_path, route_settings, caplog):
+    """D4 test 8: the refusal page names the account, which only the browser sees (never a server log)."""
+    route_settings.lab_enabled = True
+    route_settings.lab_allowed_logins = "jordi"
+    route_settings.deployment_url = "https://lab.example.org"
+    store = _store(monkeypatch, tmp_path)
+    kept = []
+    monkeypatch.setattr(store, "set", lambda key, value: kept.append(key))
+
+    with caplog.at_level(logging.WARNING, logger=github_oauth.logger.name):
+        seen = _callback(monkeypatch, tmp_path, login="Mallory Lee&x")
+    response = seen[-1]
+
+    assert response.status_code == 302
+    assert response.headers["location"] == "https://lab.example.org?error=not_allowed#login=Mallory%20Lee%26x"
+    # Nothing of the refused sign-in is kept, and its token is revoked.
+    assert kept == []
+    assert [r.method for r in seen[:-1]] == ["POST", "GET", "DELETE"]
+
+
+def test_a_public_instance_signs_in_any_login_unchanged(monkeypatch, tmp_path, route_settings):
+    route_settings.lab_enabled = False
+    route_settings.lab_allowed_logins = "jordi"
+    route_settings.deployment_url = "https://editor.example.org"
+    _store(monkeypatch, tmp_path)
+
+    response = _callback(monkeypatch, tmp_path, login="mallory")[-1]
+
+    location = response.headers["location"]
+    assert location.startswith("https://editor.example.org#github_session=")
+    assert location.endswith("&username=mallory") and "error" not in location
+
+
+def _login_redirect(route_settings, query: str = "") -> str:
+    route_settings.github_client_id = "client-id"
+    response = TestClient(app).get(f"/besser_api/github/auth/login{query}", follow_redirects=False)
+    assert response.status_code == 307, response.text
+    return response.headers["location"]
+
+
+def test_the_login_passes_prompt_select_account_to_github(route_settings):
+    """The lab's refusal page offers "Sign in with another account": GitHub must show its account picker."""
+    location = _login_redirect(route_settings, "?prompt=select_account")
+
+    assert location.startswith("https://github.com/login/oauth/authorize?")
+    assert "&prompt=select_account" in location
+
+
+def test_the_login_without_prompt_is_unchanged(route_settings):
+    assert "prompt" not in _login_redirect(route_settings)
+
+
+def test_the_login_refuses_any_other_prompt(route_settings):
+    route_settings.github_client_id = "client-id"
+    response = TestClient(app).get("/besser_api/github/auth/login?prompt=consent", follow_redirects=False)
+
+    assert response.status_code == 422

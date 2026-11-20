@@ -63,3 +63,6 @@ reviews/
 
 # Corporate proxy CA certs for building behind TLS inspection (site-internal, do not commit)
 ca-certs-extra/*.crt
+
+# Local BESSER Lab environment (holds the model key and the OAuth secret)
+.env.lab

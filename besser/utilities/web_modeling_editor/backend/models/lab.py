@@ -13,6 +13,7 @@ from typing import Annotated, Any, Literal, Optional, Union
 from pydantic import BaseModel, Field
 
 from besser.spec_driven_agent.lab.contracts import ChangeKind
+from besser.spec_driven_agent.lab.memory import MAX_BODY_CHARS, MAX_TITLE_CHARS
 from besser.spec_driven_agent.planning.specification import MAX_SPECIFICATION_CHARS
 from besser.utilities.web_modeling_editor.backend.models.project import ProjectInput
 from besser.utilities.web_modeling_editor.backend.models.responses import ResponseModel
@@ -47,9 +48,6 @@ _MAX_PR_BODY_CHARS = 65_536
 _MAX_ISSUES = 20
 # The ticked review comments one task acts on; a pull request's review threads are read 100 at a time.
 _MAX_REVIEW_COMMENTS = 100
-# The team memory's limits (``lab/memory.py``: MAX_TITLE_CHARS, MAX_BODY_CHARS): one screen, one idea.
-_MAX_NOTE_TITLE_CHARS = 100
-_MAX_NOTE_BODY_CHARS = 1_200
 # A repository-relative path (a diff's file, a note's docs target); far beyond any path in the repositories.
 _MAX_PATH_CHARS = 1_024
 # Ids the client echoes back: GraphQL node ids, note and proposal ids.
@@ -147,8 +145,9 @@ class LabNoteInput(BaseModel):
     """Body of ``POST`` and ``PUT /besser_api/lab/memory``: a team note as a lab user approves or edits it."""
 
     kind: LabNoteKind
-    title: str = Field(..., min_length=1, max_length=_MAX_NOTE_TITLE_CHARS)
-    body: str = Field(..., min_length=1, max_length=_MAX_NOTE_BODY_CHARS)
+    # The team memory's own limits (``lab/memory.py``): one screen, one idea.
+    title: str = Field(..., min_length=1, max_length=MAX_TITLE_CHARS)
+    body: str = Field(..., min_length=1, max_length=MAX_BODY_CHARS)
     #: Repositories the note applies to; empty: all.
     repos: list[LabRepoKey] = Field(default_factory=list)
     #: Kinds of change the note applies to; empty: every kind.
@@ -556,7 +555,7 @@ class LabFileDiff(ResponseModel):
 
 
 class LabRepoDiff(ResponseModel):
-    repo: str
+    repo: LabRepoKey
     branch: str
     base: str
     files: list[LabFileDiff]
@@ -616,7 +615,7 @@ class LabReview(ResponseModel):
 class LabPullRequestStatus(ResponseModel):
     """A pull request of the change as GitHub reports it now."""
 
-    repo: str
+    repo: LabRepoKey
     number: int
     url: str
     draft: bool
@@ -641,7 +640,8 @@ class LabReviewResponse(ResponseModel):
     changeId: str
     pullRequests: list[LabPullRequestStatus]
     lifecycle: Literal["open", "partly_merged", "merged", "closed"]
-    #: Every pull request is merged and nothing is unpushed: the change can close.
+    #: No pull request is open, each is merged or closed, and nothing is unpushed: the change can close (the
+    #: editor closes it by itself only when ``lifecycle`` is ``merged``; a closed one waits for a click).
     closable: bool
     #: Why it cannot close yet; "" otherwise.
     closableNote: str

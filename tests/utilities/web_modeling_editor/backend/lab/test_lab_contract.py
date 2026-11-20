@@ -1,7 +1,9 @@
 """The BESSER Lab phase 2 contract: every route of the table, its models, its gate, and the request limits.
 
-Until the lab service is rebuilt (W4-A) and wired (W5-A), every route answers 501 behind the lab gate. The
-editor's types are generated from this schema, so the names checked here are the editor's too.
+Behind the gate (404 with the lab off, 401 without a session, 403 for another login) every route is served by
+the lab service, and answers 503 with the reason when the lab could not start. The editor's types are generated
+from this schema, so the names checked here are the editor's too. What each route does is in
+``test_lab_router.py``.
 """
 
 import pytest
@@ -18,15 +20,17 @@ from besser.utilities.web_modeling_editor.backend.models.lab import (
     LabThreadPullRequests,
     LabThreadRun,
 )
+from besser.utilities.web_modeling_editor.backend.routers import lab_router
 from besser.utilities.web_modeling_editor.backend.services.lab.service import (
+    REFUSAL_STATUS,
     LabRefusal,
-    LabService,
+    LabUnavailableError,
     create_lab_service,
 )
 
 SESSION = {"X-GitHub-Session": "sess-octocat"}
 CHANGE_ID = "abcdef012345"
-NOT_BUILT = "Not built yet: BESSER Lab phase 2 is being built."
+UNAVAILABLE = "BESSER_LAB_WORKSPACE_ROOT is not set."
 
 # (method, OpenAPI path, query, JSON body, request model, answer: response model or status code)
 ROUTES = [
@@ -169,7 +173,7 @@ def test_phase_1_routes_are_gone(openapi, client, lab_on, method, path):
     assert client.request(method, path, json={}, headers=SESSION).status_code in (404, 405)
 
 
-# -- The gate and the 501 placeholder ------------------------------------------------------------------
+# -- The gate and a lab that could not start ------------------------------------------------------------
 
 @pytest.mark.parametrize("method, path, query, body, request_model, answer", ROUTES, ids=ROUTE_IDS)
 @pytest.mark.parametrize("headers", [SESSION, {}], ids=["signed-in", "anonymous"])
@@ -189,26 +193,46 @@ def test_every_route_needs_an_allowed_session(client, lab_on, method, path, quer
     assert _call(client, method, path, query, body, headers={"X-GitHub-Session": "sess-mallory"}).status_code == 403
 
 
+@pytest.fixture
+def lab_unavailable(lab_on):
+    """The lab on, but its service could not start: the lifespan kept the reason."""
+    app.state.lab, app.state.lab_unavailable = None, UNAVAILABLE
+    yield
+    del app.state.lab, app.state.lab_unavailable
+
+
 @pytest.mark.parametrize("method, path, query, body, request_model, answer", ROUTES, ids=ROUTE_IDS)
-def test_every_route_answers_501_until_the_lab_is_rebuilt(client, lab_on, method, path, query, body,
-                                                          request_model, answer):
+def test_every_route_is_served_by_the_lab_service(client, lab_unavailable, method, path, query, body,
+                                                  request_model, answer):
+    """No route answers 501 any more: each needs the service, so a lab that could not start says why."""
     response = _call(client, method, path, query, body)
 
-    assert response.status_code == 501, response.text
-    assert response.json() == {"detail": NOT_BUILT}
+    assert response.status_code == 503, response.text
+    assert response.json() == {"detail": f"BESSER Lab cannot start: {UNAVAILABLE}"}
 
 
-def test_a_bad_change_id_is_refused_before_the_placeholder(client, lab_on):
-    response = client.get("/besser_api/lab/change", params={"changeId": "../../etc"}, headers=SESSION)
+def test_no_placeholder_is_left_in_the_router():
+    assert not hasattr(lab_router, "NOT_BUILT_DETAIL") and not hasattr(lab_router, "_not_built")
+    # One source for the status of each refusal code: the service's.
+    assert lab_router.REFUSAL_STATUS is REFUSAL_STATUS
+
+
+def test_a_bad_change_id_is_refused_before_the_service_is_called(client, lab_on):
+    app.state.lab = object()  # never called: the query is refused first
+    try:
+        response = client.get("/besser_api/lab/change", params={"changeId": "../../etc"}, headers=SESSION)
+    finally:
+        del app.state.lab
     assert response.status_code == 422
 
 
-def test_the_service_placeholder_starts_no_lab(route_settings, caplog):
+def test_a_lab_that_cannot_start_says_why(route_settings, caplog):
     route_settings.lab_enabled = True
+    route_settings.lab_workspace_root = None
 
-    assert create_lab_service(route_settings) is None
-    assert "BESSER Lab is being rebuilt; its routes answer 501" in caplog.text
-    assert LabService.__doc__
+    with pytest.raises(LabUnavailableError, match=UNAVAILABLE):
+        create_lab_service(route_settings)
+    assert "cannot start; its routes answer 503" in caplog.text
 
 
 def test_a_refusal_carries_code_message_and_status():

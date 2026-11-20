@@ -1,0 +1,34 @@
+# BESSER Lab editor: the lab's own editor (built with LAB_BUILD=true by provision.sh from the lab's checkout),
+# served by the editor's Express server with the production CSP on port 8080, behind nginx's lab block.
+# Installed by provision.sh as /etc/systemd/system/besser-lab-editor.service. It holds no key and runs no lab code.
+
+[Unit]
+Description=BESSER Lab editor
+Documentation=file:///opt/besser-lab/app/scripts/lab/README.md
+After=network.target
+
+[Service]
+Type=simple
+# A user of its own, made for each start; nothing on disk belongs to it but its state directory.
+DynamicUser=yes
+StateDirectory=besser-lab-editor
+# The server rewrites its bundle's files when it starts, so it runs a fresh copy of the root-owned build.
+ExecStartPre=/bin/rm -rf /var/lib/besser-lab-editor/build
+ExecStartPre=/bin/cp -R /opt/besser-lab/app/besser/utilities/web_modeling_editor/frontend/build /var/lib/besser-lab-editor/build
+# "-": the folder exists only once the copy above is made. The server finds ../webapp from here.
+WorkingDirectory=-/var/lib/besser-lab-editor/build/server
+ExecStart=/opt/besser-lab/node/bin/node bundle.js
+Restart=on-failure
+RestartSec=5
+# The server listens on every interface (port 8080 is fixed in it); only loopback, i.e. nginx, may talk to it.
+IPAddressAllow=localhost
+IPAddressDeny=any
+ProtectHome=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -293,6 +293,8 @@ async def lifespan(app: FastAPI):
             await task
         except asyncio.CancelledError:
             pass
+        except Exception:  # a task that died earlier must not stop the lab's shutdown below
+            logger.exception("BESSER Lab task %s had failed", task.get_name())
     if app.state.lab is not None:
         await asyncio.to_thread(app.state.lab.shutdown)
     runtime.close()

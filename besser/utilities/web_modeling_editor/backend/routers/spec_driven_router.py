@@ -54,9 +54,11 @@ from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
 from besser.utilities.web_modeling_editor.backend.settings import BackendSettings, is_demo_token
 from besser.utilities.web_modeling_editor.backend.dependencies import (
     GitHubSessionsDep,
+    OptionalLabServiceDep,
     SettingsDep,
     SpecDrivenRuntimeDep,
 )
+from besser.utilities.web_modeling_editor.backend.services.lab.access import LabUser
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
     DurableRunManager,
     RunRecord,
@@ -280,13 +282,14 @@ def _lab_user_on_lab(
     settings: SettingsDep,
     github_sessions: GitHubSessionsDep,
     github_session: Optional[str] = Header(None, alias="X-GitHub-Session"),
-) -> None:
-    """On a BESSER Lab instance, a run route needs an allowed lab user, as the lab routes do; elsewhere nothing.
+) -> Optional[LabUser]:
+    """On a BESSER Lab instance, a run route needs an allowed lab user, as the lab routes do; elsewhere None.
 
     Every run there is a lab run: its events hold the model's text, file paths and check results.
     """
     if settings.lab_enabled:
-        require_lab_user(settings, github_sessions, github_session)
+        return require_lab_user(settings, github_sessions, github_session)
+    return None
 
 
 # The run routes: on a lab, the ``X-GitHub-Session`` of an allowed login (401 / 403 otherwise).
@@ -820,10 +823,12 @@ async def resume_smart_gen(
 # ---------------------------------------------------------------------
 
 
-@router.post("/spec-driven/cancel/{run_id}", dependencies=_LAB_RUN_ACCESS)
+@router.post("/spec-driven/cancel/{run_id}")
 @handle_endpoint_errors("cancel_smart_gen")
 async def cancel_smart_gen(
     runtime: SpecDrivenRuntimeDep,
+    lab: OptionalLabServiceDep,
+    lab_user: Optional[LabUser] = Depends(_lab_user_on_lab),
     run_id: str = Path(
         ...,
         pattern=r"^[a-f0-9]{32}$",
@@ -842,7 +847,14 @@ async def cancel_smart_gen(
     stream emits a final ``error(code="CANCELLED")`` event before
     closing so the frontend can show a definite "stopped by user"
     state instead of waiting for ``done``.
+
+    On a BESSER Lab instance a lab run stops only for the login that started it, the change's owner or a lab
+    admin; anyone else gets 403 and the run goes on.
     """
+    if lab is not None and lab_user is not None:
+        if await asyncio.to_thread(lab.can_stop, run_id, lab_user.login) is False:
+            raise HTTPException(status_code=403, detail="Only the login that started this run, the change's "
+                                                        "owner or a lab admin can stop it.")
     cancelled = await runtime.active_runs.request_cancellation(run_id)
     return {"status": "cancelled" if cancelled else "not_found", "runId": run_id}
 

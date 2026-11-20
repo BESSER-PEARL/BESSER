@@ -9,7 +9,9 @@ fallback to in-memory storage when the cryptography package is absent.
 
 import logging
 import secrets
-from typing import Optional
+from typing import Literal, Optional
+from urllib.parse import quote
+
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 
@@ -59,7 +61,13 @@ def github_session_id(
 
 
 @router.get("/auth/login")
-async def github_login(request: Request, settings: SettingsDep, github_sessions: GitHubSessionsDep):
+async def github_login(
+    request: Request,
+    settings: SettingsDep,
+    github_sessions: GitHubSessionsDep,
+    prompt: Optional[Literal["select_account"]] = Query(
+        None, description="``select_account``: GitHub shows its account picker (another account can sign in)."),
+):
     """
     Initiate GitHub OAuth flow.
 
@@ -89,6 +97,8 @@ async def github_login(request: Request, settings: SettingsDep, github_sessions:
         f"&scope={scopes}"
         f"&state={state}"
     )
+    if prompt:
+        auth_url += f"&prompt={prompt}"
 
     return RedirectResponse(url=auth_url)
 
@@ -154,13 +164,14 @@ async def github_callback(code: str, state: str, settings: SettingsDep, github_s
 
         username = user_data.get("login")
 
-        # A lab instance signs in only the logins on its list; nothing of a refused sign-in is kept.
+        # A lab instance signs in only the logins on its list; nothing of a refused sign-in is kept. The login
+        # rides in the fragment, which no server or proxy log records, for the refusal page to name it.
         if settings.lab_enabled and not is_login_allowed(settings, username):
             logger.warning("BESSER Lab sign-in refused for GitHub login %r: not on BESSER_LAB_ALLOWED_LOGINS",
                            username)
             await _revoke_github_token(settings, access_token)
             return RedirectResponse(
-                url=f"{settings.deployment_url}?error=not_allowed",
+                url=f"{settings.deployment_url}?error=not_allowed#login={quote(username or '', safe='')}",
                 status_code=302
             )
 

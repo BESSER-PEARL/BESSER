@@ -138,7 +138,7 @@ def test_a_private_network_plan_waits_for_its_network_then_runs_the_command():
     command = ["/venv/bin/uv", "pip", "install", "--", "x"]
     plan_argv = ["/usr/bin/bwrap", "--unshare-net", "--chdir", "/w", "--", *command]
 
-    argv = checks._network_wait_argv(plan_argv, command, info_fd=7)
+    argv = sandbox.network_wait_argv(plan_argv, command, info_fd=7)
 
     assert argv[:3] == ["/usr/bin/bwrap", "--info-fd", "7"]
     assert argv[3:7] == ["--unshare-net", "--chdir", "/w", "--"]

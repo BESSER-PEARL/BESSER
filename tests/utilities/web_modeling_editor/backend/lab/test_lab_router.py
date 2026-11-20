@@ -1,133 +1,88 @@
-"""The BESSER Lab routes over HTTP, on a real working copy of two git repositories under ``tmp_path``."""
+"""The BESSER Lab routes over HTTP, on the lab service of a real lab layout under ``tmp_path``.
 
-import copy
+Runs use the fake session of ``test_lab_runner.py`` (each outcome played exactly), except the issue test, which
+drives the real ``LabSession`` with a scripted model and a fake GitHub reader. The gate of every route (404 with
+the lab off, 401, 403, 503) and the route table are in ``test_lab_contract.py``.
+"""
+
+import asyncio
 import json
 import os
 import subprocess
 import sys
+import threading
+import time
+from dataclasses import replace
 
+import httpx
 import pytest
-from pydantic import SecretStr
+from fastapi import FastAPI
 
-from besser.spec_driven_agent.lab import checks as lab_checks
-from besser.spec_driven_agent.lab import session as session_module
-from besser.spec_driven_agent.lab.contracts import (
-    BuildOutcome,
-    ChangeKind,
-    CheckResult,
-    LoopResult,
-    Plan,
-    RepoSpec,
-    SessionOutcome,
-)
+import besser
+from besser.spec_driven_agent.lab.contracts import ChangeKind
 from besser.spec_driven_agent.lab.workspace import LabWorkspace
+from besser.utilities.web_modeling_editor.backend import backend
 from besser.utilities.web_modeling_editor.backend.backend import app
+from besser.utilities.web_modeling_editor.backend.models.lab import LabPreviewLog, LabPreviewView
 from besser.utilities.web_modeling_editor.backend.services.lab import runner as runner_module
-from besser.utilities.web_modeling_editor.backend.services.lab import service as service_module
-from besser.utilities.web_modeling_editor.backend.services.lab.model_proposal import proposal_from_plan
-from besser.utilities.web_modeling_editor.backend.services.lab.preview import PreviewService, PreviewSupervisor
+from besser.utilities.web_modeling_editor.backend.services.lab.audit import AuditEntry
+from besser.utilities.web_modeling_editor.backend.services.lab.preview import read_log_tail
 from besser.utilities.web_modeling_editor.backend.services.lab.pull_requests import (
     PullRequestError,
-    PullRequestInfo,
     PullRequestSignInError,
 )
-from besser.utilities.web_modeling_editor.backend.services.lab.service import LabService, create_lab_service
-from tests.spec_driven_agent.lab.conftest import ScriptedClient, StreamingScriptedClient, end_turn, tool_use
-from tests.utilities.web_modeling_editor.backend.lab.test_lab_runner import FakeClient, FakeSession
+from tests.spec_driven_agent.lab.conftest import (  # noqa: F401
+    ScriptedClient,
+    end_turn,
+    lab_layout,
+    lab_layout_template,
+)
+from tests.spec_driven_agent.lab.test_session import FakeReader, issue_data
+from tests.utilities.web_modeling_editor.backend.lab.test_lab_contract import ROUTES as CONTRACT_ROUTES
+from tests.utilities.web_modeling_editor.backend.lab.test_lab_lifecycle import quiet_lifespan  # noqa: F401
+from tests.utilities.web_modeling_editor.backend.lab.test_lab_runner import (  # noqa: F401
+    lab_settings,
+    plan_outcome,
+    session_script,
+)
+from tests.utilities.web_modeling_editor.backend.lab.test_lab_service import ADMIN, lab_env, make_service  # noqa: F401
+from tests.utilities.web_modeling_editor.backend.lab.test_lab_service import user as lab_user
 
-SESSION = {"X-GitHub-Session": "sess-octocat"}
-
-ROUTES = [
-    ("POST", "/besser_api/lab/message", {"message": "hi"}),
-    ("GET", "/besser_api/lab/state", None),
-    ("POST", "/besser_api/lab/pull-request", {}),
-    ("POST", "/besser_api/lab/change/park", {}),
-    ("POST", "/besser_api/lab/change/resume", {"changeId": "abcdef012345"}),
-    ("POST", "/besser_api/lab/change/drop", {}),
-    ("POST", "/besser_api/lab/preview/reset", {}),
-]
-
-
-def git(cwd, *args) -> str:
-    result = subprocess.run(["git", "-c", "user.name=setup", "-c", "user.email=setup@example.com",
-                             "-c", "core.autocrlf=false", *args], cwd=cwd, check=True, capture_output=True)
-    return result.stdout.decode("utf-8").strip()
+LOGINS = ("jordi", "ana", "ben", ADMIN)
+GITHUB_TOKEN = "gho_" + "Q7w8E9r0" * 4 + "Tt1Y"
 
 
-@pytest.fixture
-def lab_settings(route_settings):
-    route_settings.lab_enabled = True
-    route_settings.lab_allowed_logins = "octocat"
-    route_settings.lab_llm_api_key = SecretStr("sk-ant-lab-key-0123456789")
-    route_settings.lab_llm_model = "claude-test"
-    return route_settings
+def session(login: str) -> dict[str, str]:
+    return {"X-GitHub-Session": f"sess-{login}"}
 
 
 @pytest.fixture
-def workspace(tmp_path):
-    """BESSER and the modeling agent, each a git checkout on its base branch with one commit."""
-    root = tmp_path / "work"
-    repos = []
-    for key, name, base in (("besser", "besser", "development"), ("modeling_agent", "modeling-agent", "develop")):
-        path = root / name
-        path.mkdir(parents=True)
-        git(path, "init", "-q", "-b", base)
-        (path / "README.md").write_text(f"{name}\n", encoding="utf-8")
-        git(path, "add", "-A")
-        git(path, "commit", "-q", "-m", "initial")
-        repos.append(RepoSpec(key, str(path), base, "BESSER-PEARL", name))
-    return LabWorkspace(str(root), repos=repos)
+def signed_in(app_state):
+    """Every allowed login and mallory (not allowed) signed in."""
+    for login in (*LOGINS, "mallory"):
+        app_state.github_sessions.user_tokens.set(f"sess-{login}", {"access_token": f"gho_{login}", "username": login})
+    return app_state
 
 
 @pytest.fixture
-def lab(workspace, lab_settings, app_state):
-    """The lab service on ``app.state.lab``, and the signed-in users octocat (allowed) and mallory."""
-    service = LabService(workspace)
+def lab(lab_env, lab_settings, signed_in):  # noqa: F811
+    """The lab service on ``app.state.lab``."""
+    service = make_service(lab_env.workspace(), lab_settings)
     app.state.lab = service
-    app_state.github_sessions.user_tokens.set("sess-octocat", {"access_token": "gho_octo", "username": "octocat"})
-    app_state.github_sessions.user_tokens.set("sess-mallory", {"access_token": "gho_mal", "username": "mallory"})
     yield service
     del app.state.lab
 
 
-def start_change(lab, kind=ChangeKind.BUGFIX):
-    change = lab.workspace.start_change(user="octocat", title="Fix the note", kind=kind)
-    path = os.path.join(lab.workspace.repos["besser"].path, "besser", "note.py")
-    os.makedirs(os.path.dirname(path))
-    with open(path, "w", encoding="utf-8") as handle:
-        handle.write("NOTE = 1\n")
-    return change
+def post_message(client, change_id: str, login: str, text: str = "Add a note element", **fields):
+    return client.post("/besser_api/lab/message", json={"message": text, "changeId": change_id, **fields},
+                       headers=session(login))
 
 
-def call(client, method, path, body, headers=SESSION):
-    return client.request(method, path, json=body, headers=headers)
+def sse_events(body: str) -> list[dict]:
+    return [json.loads(line[len("data: "):]) for line in body.splitlines() if line.startswith("data: ")]
 
 
-def branch(lab, repo) -> str:
-    return git(lab.workspace.repos[repo].path, "branch", "--show-current")
-
-
-# -- The gate ------------------------------------------------------------------------------------------
-
-# Well-formed JSON that the request models refuse: with the lab off the gate answers before the body is validated.
-REFUSED_BODIES = [
-    ("POST", "/besser_api/lab/message", {}),
-    ("POST", "/besser_api/lab/message", ["not", "an", "object"]),
-    ("POST", "/besser_api/lab/change/resume", {"changeId": "../../etc"}),
-]
-
-
-@pytest.mark.parametrize("method, path, body", ROUTES + REFUSED_BODIES)
-@pytest.mark.parametrize("headers", [SESSION, {}], ids=["signed-in", "anonymous"])
-def test_every_lab_route_is_404_when_the_lab_is_off(client, app_state, lab_settings, method, path, body, headers):
-    # As on a public editor: no lab service on ``app.state`` (``get_lab_service`` would answer 503).
-    lab_settings.lab_enabled = False
-    assert getattr(app.state, "lab", None) is None
-
-    response = call(client, method, path, body, headers=headers)
-
-    assert response.status_code == 404 and response.json() == {"detail": "Not Found"}
-
+# -- The OpenAPI schema and a lab that cannot start ---------------------------------------------------------------
 
 _OPENAPI_OF_A_FRESH_APP = """
 import json
@@ -143,8 +98,10 @@ def _fresh_app(enabled: str | None) -> dict:
     env = {name: value for name, value in os.environ.items() if name.upper() != "BESSER_LAB_ENABLED"}
     if enabled:
         env["BESSER_LAB_ENABLED"] = enabled
+    # From the checkout under test: ``python -c`` imports from its working folder first, not an installed copy.
+    checkout = os.path.dirname(os.path.dirname(os.path.abspath(besser.__file__)))
     result = subprocess.run([sys.executable, "-c", _OPENAPI_OF_A_FRESH_APP], env=env, capture_output=True,
-                            text=True, encoding="utf-8", timeout=300)
+                            text=True, encoding="utf-8", timeout=300, cwd=checkout)
     assert result.returncode == 0, result.stderr[-2000:]
     return json.loads(result.stdout.strip().splitlines()[-1])
 
@@ -155,539 +112,426 @@ def test_the_openapi_schema_is_the_same_with_the_lab_on_or_off():
 
     assert json.dumps(off["openapi"], indent=2) == json.dumps(on["openapi"], indent=2)
     assert {path for path in off["openapi"]["paths"] if path.startswith("/besser_api/lab/")} == {
-        path for _, path, _ in ROUTES}
+        path for _, path, *_ in CONTRACT_ROUTES}
     # A body that is not JSON at all fails before the lab gate runs: 422 rather than 404, accepted.
     assert off["broken_json"] == on["broken_json"] == 422
 
 
-@pytest.mark.parametrize("method, path, body", ROUTES)
-def test_every_lab_route_needs_the_session_of_an_allowed_login(client, lab, method, path, body):
-    assert call(client, method, path, body, headers={}).status_code == 401
-    assert call(client, method, path, body, headers={"X-GitHub-Session": "sess-mallory"}).status_code == 403
-
-
-def test_a_lab_without_a_working_copy_answers_503(client, lab_settings, app_state):
-    app_state.github_sessions.user_tokens.set("sess-octocat", {"access_token": "gho_octo", "username": "octocat"})
+def test_a_lab_that_could_not_start_answers_503_with_the_reason(client, lab_settings, signed_in):  # noqa: F811
     app.state.lab = None
+    app.state.lab_unavailable = "The base clones are not ready: run scripts/lab/setup_workspace.sh."
     try:
-        response = client.get("/besser_api/lab/state", headers=SESSION)
+        response = client.get("/besser_api/lab/home", headers=session("ana"))
     finally:
-        del app.state.lab
+        del app.state.lab, app.state.lab_unavailable
 
     assert response.status_code == 503
-    assert "BESSER_LAB_WORKSPACE_ROOT" in response.json()["detail"]
+    assert response.json()["detail"] == ("BESSER Lab cannot start: The base clones are not ready: run "
+                                         "scripts/lab/setup_workspace.sh.")
 
 
-def test_no_lab_service_without_a_workspace_root(route_settings):
-    route_settings.lab_enabled = True
-    route_settings.lab_workspace_root = None
+def test_a_lab_task_that_failed_does_not_stop_the_shutdown(lab_env, quiet_lifespan, monkeypatch, caplog):  # noqa: F811
+    monkeypatch.setenv("BESSER_LAB_ENABLED", "true")
+    stopped = []
 
-    assert create_lab_service(route_settings) is None
+    class FailingLab:
+        preview = None
 
+        async def refresh_loop(self):
+            raise RuntimeError("the refresh died")
 
-def test_a_working_copy_that_is_not_ready_is_logged_and_kept(route_settings, tmp_path, caplog):
-    route_settings.lab_enabled = True
-    route_settings.lab_workspace_root = str(tmp_path / "empty")
+        def shutdown(self):
+            stopped.append(True)
 
-    service = create_lab_service(route_settings)
+    monkeypatch.setattr(backend, "create_lab_service", lambda settings: FailingLab())
 
-    assert service.workspace.root == str(tmp_path / "empty")
-    assert service.preview is None
-    assert any("not ready" in record.message for record in caplog.records)
+    async def main() -> None:
+        async with backend.lifespan(FastAPI()):
+            await asyncio.sleep(0.01)  # the task has died
 
+    asyncio.run(main())
 
-# -- State and change actions ----------------------------------------------------------------------------
-
-def test_the_state_of_a_lab_without_changes(client, lab):
-    response = client.get("/besser_api/lab/state", headers=SESSION)
-
-    assert response.status_code == 200, response.text
-    assert response.json() == {"enabled": True, "user": "octocat", "change": None, "parked": [],
-                               "preview": {"enabled": False, "services": []}, "run": None}
+    assert stopped == [True]
+    assert "lab-base-refresh had failed" in caplog.text and "the refresh died" in caplog.text
 
 
-def test_the_state_names_the_run_in_progress(client, lab):
-    """A client that lost its stream finds the run to follow (``/spec-driven/runs/{id}/events``) or stop."""
-    assert lab.try_begin_run("a" * 32)
-    try:
-        run = client.get("/besser_api/lab/state", headers=SESSION).json()["run"]
-    finally:
-        lab.end_run()
+# -- Changes ---------------------------------------------------------------------------------------------------
 
-    assert run["runId"] == "a" * 32 and isinstance(run["startedAt"], float)
-    assert client.get("/besser_api/lab/state", headers=SESSION).json()["run"] is None
+def test_home_new_change_detail_and_list(client, lab):
+    created = client.post("/besser_api/lab/change", headers=session("ana"))
+    assert created.status_code == 200, created.text
+    change_id = created.json()["changeId"]
+    assert (created.json()["status"], created.json()["owner"]) == ("draft", "ana")
 
-
-def test_the_state_shows_the_active_change_and_its_files_now(client, lab):
-    change = start_change(lab)
-
-    state = client.get("/besser_api/lab/state", headers=SESSION).json()
-
-    assert state["change"] == {
-        "step": "plan", "changeId": change.id, "title": "Fix the note", "kind": "bugfix",
-        "repoChanges": [{"repo": "besser", "branch": "lab/octocat/fix-the-note", "base": "development",
-                         "files": [{"path": "besser/note.py", "status": "added"}]}],
-        "checks": [], "checklist": [], "summary": "", "stopReason": "completed"}
+    home = client.get("/besser_api/lab/home", headers=session(ADMIN)).json()
+    assert (home["user"], home["runs"]["cap"]) == ({"login": ADMIN, "isAdmin": True}, 2)
+    assert client.get("/besser_api/lab/change", params={"changeId": change_id},
+                      headers=session("ben")).json()["changeId"] == change_id
+    assert [c["changeId"] for c in client.get("/besser_api/lab/changes", headers=session("ben")).json()["changes"]] \
+        == [change_id]
 
 
-def test_the_state_lists_the_preview_services(client, lab, tmp_path):
-    lab.preview = PreviewSupervisor([PreviewService(name="backend", argv=("python",), cwd=str(tmp_path), env={},
-                                                    watch=(), port=9100)], log_dir=str(tmp_path / "logs"))
+def test_an_unknown_change_is_404_with_the_refusal_shape(client, lab):
+    response = client.get("/besser_api/lab/change", params={"changeId": "0123456789ab"}, headers=session("ana"))
 
-    preview = client.get("/besser_api/lab/state", headers=SESSION).json()["preview"]
-
-    assert preview == {"enabled": True, "services": [{"name": "backend", "running": False, "detail": "not started"}]}
+    assert response.status_code == 404
+    assert response.json() == {"detail": {"code": "not_found", "message": "There is no change 0123456789ab."}}
 
 
-def test_park_resume_and_drop_move_the_working_copy(client, lab):
-    change = start_change(lab)
+def test_drop_by_a_non_owner_is_403_and_by_the_owner_or_an_admin_allowed(client, lab):
+    mine, other = (lab.workspace.create_draft(owner="ana") for _ in range(2))
 
-    parked = call(client, "POST", "/besser_api/lab/change/park", {})
-    assert parked.status_code == 200, parked.text
-    assert parked.json()["change"] is None
-    assert parked.json()["parked"] == [{"changeId": change.id, "title": "Fix the note", "kind": "bugfix",
-                                        "createdAt": change.created_at}]
-    assert branch(lab, "besser") == "development"
+    refused = client.post("/besser_api/lab/change/drop", json={"changeId": mine.id}, headers=session("ben"))
+    assert refused.status_code == 403 and refused.json()["detail"]["code"] == "not_owner"
+    assert "@ana" in refused.json()["detail"]["message"]
 
-    resumed = call(client, "POST", "/besser_api/lab/change/resume", {"changeId": change.id})
-    assert resumed.status_code == 200, resumed.text
-    assert resumed.json()["change"]["repoChanges"][0]["files"] == [{"path": "besser/note.py", "status": "added"}]
-    assert branch(lab, "besser") == "lab/octocat/fix-the-note"
-
-    dropped = call(client, "POST", "/besser_api/lab/change/drop", {})
-    assert dropped.status_code == 200, dropped.text
-    assert (dropped.json()["change"], dropped.json()["parked"]) == (None, [])
-    assert branch(lab, "besser") == "development"
-    assert git(lab.workspace.repos["besser"].path, "branch", "--list", "lab/*") == ""
+    by_admin = client.post("/besser_api/lab/change/drop", json={"changeId": other.id}, headers=session(ADMIN))
+    assert by_admin.status_code == 200 and [c["changeId"] for c in by_admin.json()["changes"]] == [mine.id]
+    by_owner = client.post("/besser_api/lab/change/drop", json={"changeId": mine.id}, headers=session("ana"))
+    assert by_owner.status_code == 200 and by_owner.json() == {"changes": []}
 
 
-@pytest.mark.parametrize("path, message", [
-    ("/besser_api/lab/change/park", "no active change to park"),
-    ("/besser_api/lab/change/drop", "no active change to drop"),
-    ("/besser_api/lab/pull-request", "no active change to open a pull request for"),
-])
-def test_an_action_on_no_active_change_is_409(client, lab, path, message):
-    response = call(client, "POST", path, {})
+def test_closing_a_change_another_viewer_closed_answers_its_detail(client, lab):
+    change = lab.workspace.create_draft(owner="ana")
+    lab.workspace.save_change(replace(change, title="Add a note", status="closed", outcome="merged",
+                                      closed_at=time.time()))
 
-    assert response.status_code == 409
-    assert message in response.json()["detail"]
-
-
-def test_resume_while_a_change_is_active_is_409_with_gits_reason(client, lab):
-    first = start_change(lab)
-    call(client, "POST", "/besser_api/lab/change/park", {})
-    lab.workspace.start_change(user="octocat", title="Another change", kind=ChangeKind.OTHER)
-
-    response = call(client, "POST", "/besser_api/lab/change/resume", {"changeId": first.id})
-
-    assert response.status_code == 409
-    assert "Another change" in response.json()["detail"]
-
-
-def test_resume_refuses_a_malformed_change_id(client, lab):
-    assert call(client, "POST", "/besser_api/lab/change/resume", {"changeId": "../../etc"}).status_code == 422
-
-
-def test_the_preview_reset_checks_out_the_base_branches_only_without_an_active_change(client, lab):
-    start_change(lab)
-    refused = call(client, "POST", "/besser_api/lab/preview/reset", {})
-    assert refused.status_code == 409
-    assert "park or drop it" in refused.json()["detail"]
-
-    call(client, "POST", "/besser_api/lab/change/park", {})
-    git(lab.workspace.repos["modeling_agent"].path, "switch", "-q", "-c", "someone-elses-branch")
-
-    reset = call(client, "POST", "/besser_api/lab/preview/reset", {})
-
-    assert reset.status_code == 200, reset.text
-    assert (branch(lab, "besser"), branch(lab, "modeling_agent")) == ("development", "develop")
-    assert len(reset.json()["parked"]) == 1
-
-
-@pytest.mark.parametrize("method, path, body", [
-    ("POST", "/besser_api/lab/message", {"message": "hi"}),
-    ("POST", "/besser_api/lab/change/park", {}),
-    ("POST", "/besser_api/lab/pull-request", {}),
-    ("POST", "/besser_api/lab/preview/reset", {}),
-])
-def test_one_run_or_action_at_a_time(client, lab, method, path, body):
-    assert lab.try_begin_run("f" * 32)
-    try:
-        response = call(client, method, path, body)
-    finally:
-        lab.end_run()
-
-    assert response.status_code == 409
-    assert "in progress" in response.json()["detail"]
-
-
-# -- Pull requests --------------------------------------------------------------------------------------
-
-def test_the_pull_request_route_opens_them_with_the_users_token(client, lab, monkeypatch):
-    change = start_change(lab)
-    seen = {}
-
-    async def fake_open(workspace, active, *, access_token, login, title, body):
-        seen.update(change=active.id, access_token=access_token, login=login, title=title, body=body)
-        return [PullRequestInfo("besser", 7, "https://github.com/BESSER-PEARL/BESSER/pull/7",
-                                "lab/octocat/fix-the-note", "development")]
-
-    monkeypatch.setattr(service_module, "open_pull_requests", fake_open)
-
-    response = call(client, "POST", "/besser_api/lab/pull-request", {"title": "fix: the note", "body": None})
+    response = client.post("/besser_api/lab/change/close", json={"changeId": change.id}, headers=session("ben"))
 
     assert response.status_code == 200, response.text
-    assert response.json() == {"pullRequests": [{
-        "repo": "besser", "number": 7, "url": "https://github.com/BESSER-PEARL/BESSER/pull/7",
-        "branch": "lab/octocat/fix-the-note", "base": "development"}],
-        "checksNote": "The lab ran no checks on this change. The repositories' full test suites did not run in "
-                      "the lab."}
-    assert seen == {"change": change.id, "access_token": "gho_octo", "login": "octocat", "title": "fix: the note",
-                    "body": None}
+    assert (response.json()["status"], response.json()["phase"]) == ("closed", "merged")
 
 
-def test_a_pull_request_from_the_card_of_a_change_that_is_no_longer_active_is_409(client, lab, monkeypatch):
-    # The card of the first change stays in the chat after it is parked and another change starts.
-    first = start_change(lab)
-    lab.workspace.park(first)
-    second = lab.workspace.start_change(user="octocat", title="Second change", kind=ChangeKind.BUGFIX)
+def test_a_draft_cannot_be_updated_from_its_base(client, lab):
+    draft = lab.workspace.create_draft(owner="ana")
+
+    response = client.post("/besser_api/lab/change/update-base", json={"changeId": draft.id, "repo": "besser"},
+                           headers=session("ana"))
+
+    assert response.status_code == 409 and response.json()["detail"]["code"] == "state"
+
+
+def test_the_diff_of_a_closed_change_is_refused_and_a_path_needs_its_repository(client, lab):
+    opened = lab.workspace.open_change(lab.workspace.create_draft(owner="ana"), title="Note",
+                                       kind=ChangeKind.EDITOR_ELEMENT)
+
+    assert client.get("/besser_api/lab/diff", params={"changeId": opened.id},
+                      headers=session("ana")).json()["changeId"] == opened.id
+    no_repo = client.get("/besser_api/lab/diff", params={"changeId": opened.id, "path": "README.md"},
+                         headers=session("ana"))
+    assert no_repo.status_code == 422
+
+    lab.workspace.close(lab.workspace.get_change(opened.id), outcome="merged")
+    closed = client.get("/besser_api/lab/diff", params={"changeId": opened.id}, headers=session("ana"))
+    assert closed.status_code == 409 and closed.json()["detail"]["code"] == "state"
+    assert "pull request" in closed.json()["detail"]["message"]
+
+
+# -- Pull requests -----------------------------------------------------------------------------------------------
+
+def test_closing_an_issue_the_change_did_not_start_from_is_400(client, lab, monkeypatch):
+    change = lab.workspace.open_change(lab.workspace.create_draft(owner="ana"), title="Note",
+                                       kind=ChangeKind.EDITOR_ELEMENT)
+    lab.workspace.save_change(replace(change, issues=[{"repo": "besser", "number": 744, "title": "t",
+                                                       "closes": False}]))
     pushed = []
 
-    async def fake_open(workspace, active, **kwargs):
-        pushed.append(active.id)
-        return []
+    async def open_pull_requests(user, change_id, *, title, body, closes_issues):
+        pushed.append([(ref.repo, ref.number) for ref in closes_issues])
+        return [], "No check ran."
 
-    monkeypatch.setattr(service_module, "open_pull_requests", fake_open)
+    monkeypatch.setattr(lab, "open_pull_requests", open_pull_requests)
 
-    response = call(client, "POST", "/besser_api/lab/pull-request", {"changeId": first.id, "title": None,
-                                                                      "body": None})
-
-    assert response.status_code == 409
-    assert response.json()["detail"] == "This change is not the active one: resume it on the lab page first."
+    refused = client.post("/besser_api/lab/pull-request", headers=session("ana"), json={
+        "changeId": change.id, "closesIssues": [{"repo": "besser", "number": 744}, {"repo": "frontend", "number": 12}]})
+    assert refused.status_code == 400 and "frontend#12 is not an issue of this change" in refused.json()["detail"]
     assert pushed == []
-    assert lab.try_begin_run("f" * 32)  # the lab is free again
-    lab.end_run()
-    ok = call(client, "POST", "/besser_api/lab/pull-request", {"changeId": second.id})
-    assert ok.status_code == 200, ok.text
-    assert pushed == [second.id]
+
+    allowed = client.post("/besser_api/lab/pull-request", headers=session("ana"), json={
+        "changeId": change.id, "closesIssues": [{"repo": "besser", "number": 744}]})
+    assert allowed.status_code == 200 and allowed.json() == {"pullRequests": [], "checksNote": "No check ran."}
+    assert pushed == [[("besser", 744)]]
 
 
-def test_a_refused_pull_request_is_409_with_its_message(client, lab, monkeypatch):
-    start_change(lab)
+@pytest.mark.parametrize("error, status, detail", [
+    (PullRequestError("This change has no modifications to open a pull request for."), 409,
+     {"code": "state", "message": "This change has no modifications to open a pull request for."}),
+    (PullRequestSignInError("GitHub refused your sign-in: sign in again."), 401,
+     "GitHub refused your sign-in: sign in again."),
+])
+def test_pull_request_failures_answer_409_state_or_401(client, lab, monkeypatch, error, status, detail):
+    change = lab.workspace.create_draft(owner="ana")
 
-    async def refuse(*args, **kwargs):
-        raise PullRequestError("This change touches .github/workflows/ci.yml, which the sign-in token cannot push.")
+    async def open_pull_requests(user, change_id, *, title, body, closes_issues):
+        raise error
 
-    monkeypatch.setattr(service_module, "open_pull_requests", refuse)
+    monkeypatch.setattr(lab, "open_pull_requests", open_pull_requests)
 
-    response = call(client, "POST", "/besser_api/lab/pull-request", {})
+    response = client.post("/besser_api/lab/pull-request", json={"changeId": change.id}, headers=session("ana"))
 
-    assert response.status_code == 409
-    assert ".github/workflows/ci.yml" in response.json()["detail"]
-    assert lab.try_begin_run("f" * 32)  # the lab is free again
-
-
-def test_a_pull_request_github_refused_the_sign_in_of_is_401(client, lab, monkeypatch):
-    """E2E A-6: the editor offers "Sign in again" on a 401 only; a rejected token is not a state refusal."""
-    start_change(lab)
-
-    async def refuse(*args, **kwargs):
-        raise PullRequestSignInError("GitHub did not accept your sign-in. Sign in to GitHub again, then open the "
-                                     "pull request again.")
-
-    monkeypatch.setattr(service_module, "open_pull_requests", refuse)
-
-    response = call(client, "POST", "/besser_api/lab/pull-request", {})
-
-    assert response.status_code == 401
-    assert response.json()["detail"].startswith("GitHub did not accept your sign-in.")
-    assert lab.try_begin_run("f" * 32)  # the lab is free again
+    assert (response.status_code, response.json()["detail"]) == (status, detail)
 
 
-# -- The run --------------------------------------------------------------------------------------------
+# -- Runs (D4 tests 5 and 6) -------------------------------------------------------------------------------------
 
-def sse_events(response) -> list[dict]:
-    return [json.loads(line[len("data: "):]) for line in response.text.split("\n") if line.startswith("data: ")]
-
-
-def test_a_message_streams_the_run_and_the_state_keeps_its_checks(client, lab, monkeypatch):
-    change = start_change(lab)
-    handled = []
-
-    def script(session, message):
-        session.callbacks.on_phase("build", "Building the change")
-        session.callbacks.on_phase("check", "Running the checks")
-        handled.append((message, session.workspace))
-        build = BuildOutcome(loop=LoopResult("completed", final_text="Fixed the note."),
-                             changes=lab.workspace.repo_changes(change),
-                             checks=[CheckResult("besser:lint", "besser", "Ruff", passed=False, summary="1 error")],
-                             summary="besser: 1 file added")
-        return SessionOutcome(step="build", change=change, build=build)
-
-    monkeypatch.setattr(runner_module, "create_llm_client", lambda provider, **kw: FakeClient())
-    monkeypatch.setattr(runner_module, "LabSession",
-                        lambda workspace, **kw: FakeSession(workspace, **kw, script=script, record=[]))
-
-    response = client.post("/besser_api/lab/message", json={"message": "Fix the note", "action": "build"},
-                           headers=SESSION)
-
-    assert response.status_code == 200, response.text
-    assert response.headers["content-type"].startswith("text/event-stream")
-    got = sse_events(response)
-    assert [e["event"] for e in got][0] == "start" and got[-1]["event"] == "done"
-    assert response.headers["X-BESSER-Run-Id"] == got[0]["runId"]
-    assert [e["phase"] for e in got if e["event"] == "phase"] == ["build", "check"]
-    assert got[-1]["changedFiles"] == ["besser/besser/note.py"]
-    # The model's own account of the build, for the card; the state does not keep it.
-    assert got[-1]["lab"]["finalText"] == "Fixed the note."
-    assert handled == [("Fix the note", lab.workspace)]
-
-    # A restart: the checks are kept with the change, not in the service's memory.
-    app.state.lab = LabService(lab.workspace)
-    state = client.get("/besser_api/lab/state", headers=SESSION).json()
-    assert state["change"]["step"] == "build"
-    assert state["change"]["checks"] == [{"id": "besser:lint", "repo": "besser", "title": "Ruff", "passed": False,
-                                          "skipped": False, "summary": "1 error", "durationSeconds": 0.0}]
-    assert state["change"]["summary"] == "besser: 1 file added"
-    assert "finalText" not in state["change"]
-    assert state["run"] is None
-    assert lab.try_begin_run("f" * 32)  # released at the end of the run
-
-    # The pull requests say that only these quick checks ran.
-    async def fake_open(*args, **kwargs):
-        return []
-
-    monkeypatch.setattr(service_module, "open_pull_requests", fake_open)
-    pull = call(client, "POST", "/besser_api/lab/pull-request", {}).json()
-    assert pull["checksNote"] == ("The lab's last build ran only the checks of the touched areas: 0 passed, "
-                                  "1 failed, 0 skipped. The repositories' full test suites did not run in the lab.")
+async def _until(event: threading.Event, seconds: float = 20.0) -> None:
+    deadline = time.monotonic() + seconds
+    while not event.is_set():
+        assert time.monotonic() < deadline, "the run did not start"
+        await asyncio.sleep(0.01)
 
 
-def test_the_real_lab_session_plans_a_change_through_the_route(client, lab, monkeypatch):
-    """The route, the runner and P6's LabSession with a scripted model: a plan step creates the change."""
-    plan = {"kind": "bugfix", "title": "Fix the README", "summary": "A typo in the README.",
-            "steps": ["Fix the typo"], "repos": ["besser"], "questions": ["Which spelling?"]}
-    model = StreamingScriptedClient([
-        tool_use("read_file", {"path": "besser/README.md"}, text="Reading the README."),
-        tool_use("submit_plan", plan),
-    ], cost_per_call=0.01)
+def test_two_runs_on_two_changes_stream_at_once_and_the_lab_refuses_a_third_and_a_busy_change(
+        lab, session_script):  # noqa: F811
+    changes = [lab.workspace.create_draft(owner=owner) for owner in ("jordi", "ana", "ben")]
+    started = {change.id: threading.Event() for change in changes}
+    release = threading.Event()
+
+    def script(fake, text):
+        change_id = fake.handled[-1]["change_id"]
+        fake.callbacks.on_phase("plan", "Planning the change")
+        started[change_id].set()
+        release.wait(30)
+        return plan_outcome(next(change for change in changes if change.id == change_id))
+
+    session_script(script)
+
+    async def main():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver", timeout=60) as ac:
+            def post(change, login):
+                return ac.post("/besser_api/lab/message", json={"message": "go", "changeId": change.id},
+                               headers=session(login))
+
+            first = asyncio.create_task(post(changes[0], "ana"))
+            await _until(started[changes[0].id])
+            second = asyncio.create_task(post(changes[1], "ben"))
+            await _until(started[changes[1].id])
+            both_running = not first.done() and not second.done()
+            third = await post(changes[2], "jordi")
+            busy = await post(changes[0], "jordi")
+            home = (await ac.get("/besser_api/lab/home", headers=session("jordi"))).json()
+            release.set()
+            return both_running, third, busy, home, await first, await second
+
+    both_running, third, busy, home, first, second = asyncio.run(main())
+
+    assert both_running
+    assert third.status_code == 429 and third.json()["detail"]["code"] == "runs_full"
+    assert "2 of 2" in third.json()["detail"]["message"] and "@ana" in third.json()["detail"]["message"]
+    assert busy.status_code == 409 and busy.json()["detail"]["code"] == "change_busy"
+    assert busy.json()["detail"]["message"].startswith("@ana's plan of this change is in progress")
+    assert sorted((run["login"], run["step"]) for run in home["runs"]["inProgress"]) == [("ana", "plan"),
+                                                                                        ("ben", "plan")]
+    for response in (first, second):
+        assert response.status_code == 200 and sse_events(response.text)[-1]["event"] == "done"
+    assert lab.home(lab_user("jordi")).runs.inProgress == []
+
+
+def test_a_spent_month_answers_409_user_cap(client, lab, session_script):  # noqa: F811
+    lab.audit.append(AuditEntry(at=time.time(), login="ana", action="run", cost_usd=74.9))
+    change = lab.workspace.create_draft(owner="ana")
+
+    response = post_message(client, change.id, "ana")
+
+    assert response.status_code == 409 and response.json()["detail"]["code"] == "user_cap"
+    assert session_script.sessions == []
+    assert client.post("/besser_api/lab/change", headers=session("ana")).json()["detail"]["code"] == "user_cap"
+
+
+def test_a_message_to_a_closed_or_unknown_change_is_refused(client, lab, session_script):  # noqa: F811
+    assert post_message(client, "0123456789ab", "ana").status_code == 404
+    change = lab.workspace.create_draft(owner="ana")
+    lab.workspace.save_change(replace(change, status="closed", outcome="closed", closed_at=time.time()))
+
+    response = post_message(client, change.id, "ana")
+
+    assert response.status_code == 409 and response.json()["detail"]["code"] == "state"
+
+
+def test_a_run_that_could_not_start_is_given_back(client, lab, spec_driven_runtime, monkeypatch):
+    change = lab.workspace.create_draft(owner="ana")
+
+    async def store_failed(*args, **kwargs):
+        raise RuntimeError("the run store is full")
+
+    monkeypatch.setattr(spec_driven_runtime.durable_runs, "start", store_failed)
+
+    with pytest.raises(RuntimeError, match="the run store is full"):
+        post_message(client, change.id, "ana")
+
+    [run] = lab.change_detail(change.id).thread
+    assert (run.status, run.error.message) == ("failed", "The run could not be started.")
+    assert lab.home(lab_user("ana")).runs.inProgress == [] and lab.budget.meters("ana").user.reservedUsd == 0
+
+
+def test_the_thread_after_a_run_holds_the_message_running_and_done(client, lab, session_script):  # noqa: F811
+    change = lab.workspace.create_draft(owner="jordi")
+    session_script(lambda fake, text: plan_outcome(change))
+
+    response = post_message(client, change.id, "ana")
+    run_id = response.headers["X-BESSER-Run-Id"]
+    detail = client.get("/besser_api/lab/change", params={"changeId": change.id}, headers=session("ben")).json()
+
+    assert sse_events(response.text)[-1]["event"] == "done"
+    sent, run = detail["thread"]
+    assert (sent["type"], sent["login"], sent["text"]) == ("message", "ana", "Add a note element")
+    assert (run["type"], run["runId"], run["status"], run["login"]) == ("run", run_id, "done", "ana")
+    assert run["lab"]["step"] == "plan" and run["lab"]["plan"]["title"] == "Add a note element"
+    assert [record["runId"] for record in detail["runs"]] == [run_id]
+
+
+def test_a_message_with_an_issue_reaches_the_plans_first_message(client, lab, monkeypatch):
+    """K7: the issue is read before the plan loop (fake reader) and recorded on the change."""
+    reader = FakeReader({("besser", 744): issue_data(744, "Auto-fix loop ignores ruff", "The loop skips ruff.")})
+    model = ScriptedClient([end_turn("Which part of the loop?"), end_turn("Which part of the loop?")])
+    readers = []
+
+    def make_reader(github, repos, loop, *, login=""):
+        readers.append((github.access_token, sorted(repos), login))
+        return reader
+
+    monkeypatch.setattr(runner_module, "LabGitHubReader", make_reader)
     monkeypatch.setattr(runner_module, "create_llm_client", lambda provider, **kw: model)
+    change = lab.workspace.create_draft(owner="ana")
 
-    response = client.post("/besser_api/lab/message", json={"message": "Fix the typo in the README"},
-                           headers=SESSION)
+    response = post_message(client, change.id, "ana", "Start from this issue", issue={"repo": "besser", "number": 744})
 
-    got = sse_events(response)
-    assert response.status_code == 200, response.text
-    assert got[0]["event"] == "start" and got[-1]["event"] == "done", got
-    assert {"event": "phase", "phase": "plan"}.items() <= next(e for e in got if e["event"] == "phase").items()
-    assert any(e["event"] == "tool_call" and e["tool"] == "read_file" for e in got)
-    assert "Reading the README." in "".join(e["delta"] for e in got if e["event"] == "text")
-    lab_payload = got[-1]["lab"]
-    change = lab.workspace.active_change()
-    assert (lab_payload["step"], lab_payload["changeId"], lab_payload["kind"]) == ("plan", change.id, "bugfix")
-    assert lab_payload["plan"]["questions"] == ["Which spelling?"] and lab_payload["modelProposal"] is None
-    assert branch(lab, "besser") == "lab/octocat/fix-the-readme"
-    assert client.get("/besser_api/lab/state", headers=SESSION).json()["change"]["step"] == "plan"
+    assert sse_events(response.text)[-1]["event"] == "done", response.text
+    first = model.calls[0][1][0]["content"]
+    assert "Auto-fix loop ignores ruff" in first and "The loop skips ruff." in first
+    assert first.index("The loop skips ruff.") < first.index("Start from this issue")
+    assert reader.calls == [("besser", 744)]
+    assert readers == [("gho_ana", sorted(lab.workspace.base_repos), "ana")]
+    assert [(i["repo"], i["number"]) for i in lab.workspace.get_change(change.id).issues] == [("besser", 744)]
 
 
-# -- A metamodel change from plan to build, with the user's review in the editor ----------------------------
+# -- Preview restart and logs (D1 test 11) ---------------------------------------------------------------------
 
-NOTE_PLAN = {
-    "kind": "metamodel", "title": "Add a Note metaclass", "summary": "A note metaclass.",
-    "steps": ["Add besser/BUML/metamodel/note.py"], "repos": ["besser"],
-    "model_spec": {"classes": [{"name": "Element", "is_abstract": True},
-                               {"name": "Note", "attributes": [{"name": "text", "type": "str"}]}],
-                   "generalizations": [{"child": "Note", "parent": "Element"}]},
-}
+class FakePool:
+    """A preview pool of one slot whose restarts are recorded; logs are read (and redacted) as the pool does."""
+
+    def __init__(self, log_dir: str):
+        self.log_dir = log_dir
+        self.restarts: list[tuple[int, object]] = []
+
+    def view(self) -> LabPreviewView:
+        return LabPreviewView(enabled=True, detail="", slots=[])
+
+    def restart(self, slot, service=None) -> LabPreviewView:
+        if slot != 0:
+            raise KeyError(slot)
+        self.restarts.append((slot, service))
+        return self.view()
+
+    def log_tail(self, slot, service, lines) -> LabPreviewLog:
+        if slot != 0:
+            raise KeyError(slot)
+        tail, truncated = read_log_tail(os.path.join(self.log_dir, f"{service}.log"), lines)
+        return LabPreviewLog(slot=slot, service=service, lines=tail, truncated=truncated)
+
+    def after_build(self, change_id):
+        pass
 
 
 @pytest.fixture
-def scripted_models(monkeypatch):
-    """Each run gets the next scripted model; the checks pass without running anything."""
-    queue = []
-    monkeypatch.setattr(runner_module, "create_llm_client", lambda provider, **kw: queue[0])
-    def passing(specs, repos, **kw):
-        return lab_checks.run_checks(specs, repos, **{**kw, "runner": lambda spec, cwd: (0, "ok")})
-
-    monkeypatch.setattr(session_module, "run_checks", passing)
-    return queue
+def pool(lab, tmp_path):
+    lab.preview = FakePool(str(tmp_path / "preview-logs"))
+    os.makedirs(lab.preview.log_dir)
+    return lab.preview
 
 
-def _diagram(diagram_id, title, model, **config):
-    return {"id": diagram_id, "title": title, "model": model, **({"config": config} if config else {})}
+def test_restart_restarts_the_named_service_of_the_slot(client, pool):
+    response = client.post("/besser_api/lab/preview/restart", json={"slot": 0, "service": "modeling_agent"},
+                           headers=session("ana"))
+    every = client.post("/besser_api/lab/preview/restart", json={"slot": 0}, headers=session("ana"))
+    unknown = client.post("/besser_api/lab/preview/restart", json={"slot": 3}, headers=session("ana"))
+
+    assert response.status_code == every.status_code == 200
+    assert response.json() == {"enabled": True, "detail": "", "slots": []}
+    assert pool.restarts == [(0, "modeling_agent"), (0, None)]
+    assert unknown.status_code == 404 and unknown.json()["detail"]["code"] == "not_found"
 
 
-def _project_of(diagrams, active):
-    return {"id": "p1", "type": "Project", "name": "lab", "createdAt": "2026-11-19T00:00:00Z",
-            "currentDiagramType": "ClassDiagram", "currentDiagramIndices": {"ClassDiagram": active},
-            "diagrams": {"ClassDiagram": diagrams}}
+def test_restart_is_gated_and_refused_with_the_preview_off(client, lab, route_settings):
+    body = {"slot": 0, "service": "backend"}
+    assert client.post("/besser_api/lab/preview/restart", json=body).status_code == 401
+    assert client.post("/besser_api/lab/preview/restart", json=body, headers=session("mallory")).status_code == 403
+
+    off = client.post("/besser_api/lab/preview/restart", json=body, headers=session("ana"))
+    assert off.status_code == 409 and off.json()["detail"]["code"] == "state"
+    assert "BESSER_LAB_PREVIEW_ENABLED" in off.json()["detail"]["message"]
+
+    route_settings.lab_enabled = False
+    assert client.post("/besser_api/lab/preview/restart", json=body, headers=session("ana")).status_code == 404
 
 
-def _corrected(model):
-    """The user's review in the editor: Note renamed to Memo, attribute ``b: int`` added."""
-    model = copy.deepcopy(model)
-    note = next(e for e in model["elements"].values() if e.get("name") == "Note")
-    note["name"] = "Memo"
-    attribute = copy.deepcopy(model["elements"][note["attributes"][0]])
-    attribute.update(id="attr-b", name="b", attributeType="int", owner=note["id"])
-    model["elements"]["attr-b"] = attribute
-    note["attributes"].append("attr-b")
-    return model
+def test_logs_are_redacted_bounded_and_of_known_services(client, pool):
+    with open(os.path.join(pool.log_dir, "backend.log"), "w", encoding="utf-8") as handle:
+        handle.write("".join(f"line {i}\n" for i in range(10)) + f"token {GITHUB_TOKEN}\n")
+
+    def logs(service: str, **params):
+        return client.get(f"/besser_api/lab/preview/logs/{service}", params={"slot": 0, **params},
+                          headers=session("ana"))
+
+    response = logs("backend", lines=3)
+    assert response.status_code == 200
+    body = response.json()
+    assert (body["slot"], body["service"], body["truncated"]) == (0, "backend", True)
+    assert body["lines"][:2] == ["line 8", "line 9"] and GITHUB_TOKEN not in body["lines"][2]
+    assert len(logs("backend").json()["lines"]) == 11  # 200 by default
+    assert logs("database").status_code == 422
+    assert logs("backend", lines=0).status_code == 422 and logs("backend", lines=2001).status_code == 422
+    assert logs("backend", lines=2000).status_code == 200
 
 
-def _users_own_model():
-    plan = Plan(kind=ChangeKind.OTHER, title="Library", summary="", steps=[], repos=[],
-                model_spec={"classes": [{"name": "Library", "attributes": [{"name": "name", "type": "str"}]}]})
-    return proposal_from_plan(plan)["model"]
+# -- Team memory (K7) ---------------------------------------------------------------------------------------------
+
+def test_memory_routes_with_the_memory_off_answer_409_state(client, lab_env, lab_settings, signed_in):  # noqa: F811
+    # A state folder inside the workspace root: code the agent runs could plant a note there.
+    workspace = LabWorkspace(lab_env.root, lab_env.specs(), state_dir=os.path.join(lab_env.root, "state"),
+                             git_root=lab_env.git_root)
+    app.state.lab = make_service(workspace, lab_settings)
+    note = {"kind": "decision", "title": "Keep notes short", "body": "One idea per note."}
+    try:
+        listed = client.get("/besser_api/lab/memory", headers=session("ana"))
+        added = client.post("/besser_api/lab/memory", json=note, headers=session("ana"))
+        mallory = client.post("/besser_api/lab/memory", json=note, headers=session("mallory"))
+        lab_settings.lab_enabled = False
+        off = client.get("/besser_api/lab/memory", headers=session("ana"))
+    finally:
+        del app.state.lab
+
+    assert listed.status_code == 200 and listed.json()["enabled"] is False
+    assert added.status_code == 409 and added.json()["detail"]["code"] == "state"
+    assert "BESSER_LAB_STATE_DIR" in added.json()["detail"]["message"]
+    assert mallory.status_code == 403 and off.status_code == 404
 
 
-@pytest.mark.parametrize("marker", ["labProposalChangeId", "labChangeId"])
-def test_the_build_follows_the_proposal_the_user_corrected_not_the_open_diagram(
-        client, lab, scripted_models, marker):
-    scripted_models[:] = [ScriptedClient([tool_use("submit_plan", NOTE_PLAN)])]
-    planned = sse_events(client.post("/besser_api/lab/message", json={"message": "add notes"}, headers=SESSION))
-    lab_payload = planned[-1]["lab"]
-    assert lab_payload["step"] == "plan" and lab_payload["modelProposal"] is not None, planned
+def test_memory_notes_round_trip(client, lab):
+    note = {"kind": "convention", "title": "Docs first", "body": "Write the docs with the code.",
+            "docsTarget": "CLAUDE.md"}
+    added = client.post("/besser_api/lab/memory", json=note, headers=session("ana"))
+    assert added.status_code == 200, added.text
+    note_id = added.json()["id"]
 
-    # The user corrected the proposal (kept or still pending), then went back to their own model's tab.
-    proposal = _diagram("d2", "Add a Note metaclass", _corrected(lab_payload["modelProposal"]["model"]),
-                        **{marker: lab_payload["changeId"]})
-    project = _project_of([_diagram("d1", "Library", _users_own_model()), proposal], active=0)
-    build_model = ScriptedClient([end_turn("Added the Memo metaclass.")])
-    scripted_models[:] = [build_model]
-    body = {"message": "build it", "action": "build", "project": project}
-    built = sse_events(client.post("/besser_api/lab/message", json=body, headers=SESSION))
-
-    assert built[-1]["event"] == "done" and built[-1]["lab"]["step"] == "build", built
-    first_message = build_model.calls[0][1][0]["content"]
-    assert "Memo" in first_message and "b: int" in first_message
-    assert "Library" not in first_message
+    edited = client.put(f"/besser_api/lab/memory/{note_id}", json={**note, "title": "Docs with the code"},
+                        headers=session("ben"))
+    assert edited.status_code == 200 and edited.json()["title"] == "Docs with the code"
+    assert client.delete(f"/besser_api/lab/memory/{note_id}", headers=session("ben")).status_code == 204
+    assert client.get("/besser_api/lab/memory", headers=session("ben")).json()["notes"] == []
+    gone = client.delete(f"/besser_api/lab/memory/{note_id}", headers=session("ben"))
+    assert gone.status_code == 404 and gone.json()["detail"]["code"] == "not_found"
+    dismissed = client.post("/besser_api/lab/memory/proposals/dismiss", json={"changeId": "0123456789ab", "id": "p"},
+                            headers=session("ben"))
+    assert dismissed.status_code == 404
 
 
-def test_a_plan_revision_starts_from_the_proposal_the_user_corrected(client, lab, scripted_models):
-    """E2E A-1: the user corrected the proposed diagram, then answered in the chat; the edit was lost."""
-    scripted_models[:] = [ScriptedClient([tool_use("submit_plan", NOTE_PLAN)])]
-    planned = sse_events(client.post("/besser_api/lab/message", json={"message": "add notes"}, headers=SESSION))
-    lab_payload = planned[-1]["lab"]
-    proposal = _diagram("d2", "Add a Note metaclass", _corrected(lab_payload["modelProposal"]["model"]),
-                        labProposalChangeId=lab_payload["changeId"])
-    revision_model = ScriptedClient([tool_use("submit_plan", NOTE_PLAN)])
-    scripted_models[:] = [revision_model]
+def test_settings_and_audit(client, lab):
+    settings = client.get("/besser_api/lab/settings", headers=session("ana")).json()
+    assert settings["admins"] == [ADMIN] and settings["limits"]["perRunUsd"] == 2.5
 
-    body = {"message": "Notes need no colour.", "action": "plan", "project": _project_of([proposal], active=0)}
-    revised = sse_events(client.post("/besser_api/lab/message", json=body, headers=SESSION))
-
-    assert revised[-1]["event"] == "done" and revised[-1]["lab"]["step"] == "plan", revised
-    first_message = revision_model.calls[0][1][0]["content"]
-    assert "Memo" in first_message and "b: int" in first_message
-
-
-def test_without_the_changes_diagram_the_build_reads_no_class_diagram(client, lab, scripted_models):
-    """The proposal was discarded (or never shown): the user's own model is not the extension's model."""
-    scripted_models[:] = [ScriptedClient([tool_use("submit_plan", NOTE_PLAN)])]
-    sse_events(client.post("/besser_api/lab/message", json={"message": "add notes"}, headers=SESSION))
-    build_model = ScriptedClient([end_turn("Added the Note metaclass.")])
-    scripted_models[:] = [build_model]
-    project = _project_of([_diagram("d1", "Library", _users_own_model(), labProposalChangeId="0123456789ab")],
-                          active=0)
-
-    body = {"message": "build it", "action": "build", "project": project}
-    built = sse_events(client.post("/besser_api/lab/message", json=body, headers=SESSION))
-
-    assert built[-1]["event"] == "done", built
-    assert "Library" not in build_model.calls[0][1][0]["content"]
-
-
-# -- The Spec-Driven run routes on a lab --------------------------------------------------------------------
-
-RUN_ID = "a" * 32
-RUN_ROUTES = [
-    ("POST", f"/besser_api/spec-driven/cancel/{RUN_ID}"),
-    ("GET", f"/besser_api/spec-driven/runs/{RUN_ID}"),
-    ("GET", f"/besser_api/spec-driven/runs/{RUN_ID}/events"),
-    ("GET", f"/besser_api/spec-driven/runs/{RUN_ID}/events.json"),
-]
-# What each run route answers for a run id it does not know.
-UNKNOWN_RUN = [(200, {"status": "not_found", "runId": RUN_ID}), (404, {"detail": "Spec-driven run not found"})]
-
-
-@pytest.mark.parametrize("method, path", RUN_ROUTES)
-def test_on_a_lab_the_run_routes_need_an_allowed_lab_user(client, lab, method, path):
-    """E2E C-D6: a lab run's stream (model text, paths, checks) was readable, and stoppable, without a session."""
-    assert client.request(method, path).status_code == 401
-    assert client.request(method, path, headers={"X-GitHub-Session": "sess-mallory"}).status_code == 403
-    # An allowed user reaches the route itself: the run is unknown.
-    allowed = client.request(method, path, headers=SESSION)
-    assert (allowed.status_code, allowed.json()) in UNKNOWN_RUN
-
-
-@pytest.mark.parametrize("method, path", RUN_ROUTES)
-def test_on_a_public_editor_the_run_routes_need_no_session(client, route_settings, method, path):
-    assert route_settings.lab_enabled is False
-
-    response = client.request(method, path)
-
-    assert (response.status_code, response.json()) in UNKNOWN_RUN
-
-
-# -- The config flag ------------------------------------------------------------------------------------
-
-def test_the_config_says_whether_this_instance_is_a_lab(client, route_settings):
-    assert client.get("/besser_api/spec-driven/config").json()["lab"] == {"enabled": False}
-
-    route_settings.lab_enabled = True
-
-    assert client.get("/besser_api/spec-driven/config").json()["lab"] == {"enabled": True}
-
-
-@pytest.mark.parametrize("path", ["/besser_api/spec-driven/generate", "/besser_api/spec-driven/resume/" + "a" * 32])
-def test_a_lab_instance_starts_no_spec_driven_run(client, route_settings, monkeypatch, path):
-    # nginx sends /spec-driven/ to the lab backend (the lab run's cancel route), and a run asks for no sign-in.
-    from tests.utilities.web_modeling_editor.backend.spec_driven.test_spec_driven_router import _build_project_body
-
-    monkeypatch.delenv("BESSER_DEMO_TOKEN", raising=False)
-    body = _build_project_body(provider="sponsored", llm_model="gpt-5.6-terra")
-    body.pop("api_key", None)
-
-    # Off: as before, the first gate refuses an unauthorised sponsored run.
-    assert client.post(path, json=body).status_code == 403
-
-    route_settings.lab_enabled = True
-
-    response = client.post(path, json=body)
-    assert response.status_code == 404 and response.json() == {"detail": "Not Found"}
-
-
-def test_the_lab_state_folder_comes_from_the_settings(route_settings, tmp_path):
-    route_settings.lab_enabled = True
-    route_settings.lab_workspace_root = str(tmp_path / "work")
-    route_settings.lab_state_dir = str(tmp_path / "state")
-
-    service = create_lab_service(route_settings)
-
-    assert service.workspace.state_dir == str(tmp_path / "state")
-    assert create_lab_service(route_settings.model_copy(update={"lab_state_dir": None})).workspace.state_dir == (
-        os.path.join(str(tmp_path / "work"), ".lab"))
-
-
-def test_the_last_run_is_kept_in_the_state_folder(tmp_path):
-    # Outside the working copy, the lab agent's shell cannot rewrite the checks the state shows.
-    root = tmp_path / "work2"
-    path = root / "besser"
-    path.mkdir(parents=True)
-    git(path, "init", "-q", "-b", "development")
-    (path / "README.md").write_text("besser\n", encoding="utf-8")
-    git(path, "add", "-A")
-    git(path, "commit", "-q", "-m", "initial")
-    workspace = LabWorkspace(str(root), repos=[RepoSpec("besser", str(path), "development", "o", "besser")],
-                             state_dir=str(tmp_path / "state2"))
-    service = LabService(workspace)
-    change = workspace.start_change(user="octocat", title="Fix", kind=ChangeKind.BUGFIX)
-
-    service.remember_run(runner_module.lab_done(SessionOutcome(
-        step="build", change=change,
-        build=BuildOutcome(loop=LoopResult("completed"), changes=[], checks=[], summary="nothing"))))
-
-    assert (tmp_path / "state2" / "changes" / change.id / "last_run.json").is_file()
-    assert not (root / ".lab").exists()
-    assert service.state("octocat").change.summary == "nothing"
+    client.post("/besser_api/lab/change", headers=session("ana"))
+    audit = client.get("/besser_api/lab/audit", headers=session("ana")).json()
+    assert [entry["action"] for entry in audit["entries"]] == ["change_created"]
+    assert client.get("/besser_api/lab/audit", params={"month": "2026-13"}, headers=session("ana")).status_code == 422

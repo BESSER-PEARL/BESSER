@@ -1,9 +1,13 @@
-# Two targets, both with the Alloy Analyzer and its JRE:
+# Targets, all with the Alloy Analyzer and its JRE:
 #   backend          the web editor backend: Python, its requirements and besser.
 #   smartgen-worker  the Spec-Driven Agent worker: backend plus the toolchains
 #                    Phase 3 compiles with and bubblewrap for run_command.
-# docker build --target backend|smartgen-worker. Without --target the last
-# stage (the worker) is built.
+#   lab              BESSER Lab in one container (local mode): the worker plus
+#                    git, uv, Python 3.11 and the lab editor (stage lab-editor).
+#                    Built by docker-compose.lab.yml, which passes the editor
+#                    submodule as the build context "frontend".
+# docker build --target backend|smartgen-worker. Without --target the worker
+# is built (the last stage, "default").
 
 # slim: 200MB smaller. 3.12 matches CI; 3.11+ is required for typing.Self
 # (NN metamodel, PEP 673).
@@ -152,3 +156,51 @@ ENV BESSER_BUILD_SHA=${GIT_SHA}
 EXPOSE 9000
 
 CMD ["python", "-m", "besser.utilities.web_modeling_editor.backend.backend"]
+
+
+# The lab's own editor (LAB_BUILD=true) for local mode. The editor submodule is
+# outside this build context (.dockerignore), so it comes in as the named
+# context "frontend": docker-compose.lab.yml passes it, as does
+#   docker build --build-context frontend=besser/utilities/web_modeling_editor/frontend --target lab .
+FROM node:22-alpine AS lab-editor
+
+ARG NPM_STRICT_SSL=true
+# Local mode's addresses: docker-compose.lab.yml publishes these ports.
+ARG DEPLOYMENT_URL=http://localhost:8080
+ARG BACKEND_URL=http://localhost:9000/besser_api
+WORKDIR /editor
+COPY --from=frontend . .
+RUN npm config set strict-ssl ${NPM_STRICT_SSL}     && npm ci --no-audit --no-fund        --fetch-retries=5 --fetch-retry-mintimeout=20000 --fetch-timeout=600000
+RUN LAB_BUILD=true DEPLOYMENT_URL=${DEPLOYMENT_URL} BACKEND_URL=${BACKEND_URL} npm run build
+
+
+FROM smartgen-worker AS lab
+
+# git for the lab's workspace; uv and Python 3.11 for the modeling agent's
+# venvs (3.12 is this image's own /usr/local/bin/python3.12). Both Pythons sit
+# outside the workspace, which every sandbox hides. Behind a TLS-inspecting
+# proxy (TRUST_EXTRA_CAS=1) its CAs are trusted for this step only, through a
+# bundle in /tmp removed in the same step: no layer holds them.
+ARG TRUST_EXTRA_CAS=0
+ARG UV_VERSION=0.5.11
+RUN --mount=type=bind,source=ca-certs-extra,target=/tmp/ca-certs-extra     bundle=/etc/ssl/certs/ca-certificates.crt;     if [ "$TRUST_EXTRA_CAS" = "1" ]; then         cat "$bundle" /tmp/ca-certs-extra/*.crt > /tmp/build-ca.pem && bundle=/tmp/build-ca.pem;     fi;     apt-get update     && apt-get install -y --no-install-recommends git     && rm -rf /var/lib/apt/lists/*     && PIP_CERT="$bundle" pip install --no-cache-dir "uv==${UV_VERSION}"     && SSL_CERT_FILE="$bundle" UV_PYTHON_INSTALL_DIR=/opt/python uv python install 3.11     && ln -s "$(UV_PYTHON_INSTALL_DIR=/opt/python uv python find --python-preference only-managed 3.11)"         /usr/local/bin/python3.11     && rm -f /tmp/build-ca.pem
+
+# Everything runs as the lab user; /app, the lab's own code, stays root-owned.
+# The editor server rewrites its bundle when it starts, so its copy is the
+# lab user's.
+RUN useradd --create-home --shell /bin/bash lab     && install -d -o lab -g lab -m 0750 /srv/besser-lab     && install -d -o lab -g lab /opt/besser-lab-editor
+COPY --from=lab-editor --chown=lab:lab /editor/build /opt/besser-lab-editor/build
+COPY --chmod=0755 scripts/lab/setup_workspace.sh /app/scripts/lab/setup_workspace.sh
+COPY --chmod=0755 docker/lab/entrypoint.sh /usr/local/bin/besser-lab-entrypoint
+
+ENV PYTHONUNBUFFERED=1
+USER lab
+# The lab editor, the lab backend, and preview slot 0's backend, editor and
+# modeling agent.
+EXPOSE 8080 9000 9100 8180 8865
+ENTRYPOINT ["besser-lab-entrypoint"]
+CMD []
+
+
+# Without --target, docker build builds the last stage: keep that the worker.
+FROM smartgen-worker AS default

@@ -185,7 +185,7 @@ def test_a_lab_refuses_the_sign_in_of_a_login_not_on_its_list(settings, github):
 
     location = _sign_in()
 
-    assert location == f"{settings.deployment_url}?error=not_allowed"
+    assert location == f"{settings.deployment_url}?error=not_allowed#login=mallory"
     assert _stored_sessions() == {}
     assert github.revoked == ["gho_new"]
 

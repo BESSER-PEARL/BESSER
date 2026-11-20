@@ -452,7 +452,7 @@ class LabService:
         """Close the change once GitHub has its pull requests merged or closed: trees and branches go, state stays.
 
         The outcome is ``merged`` when every pull request is merged, else ``closed``; a notice in the thread
-        says it to every viewer.
+        says it to every viewer. A change already closed (by another viewer) answers its detail unchanged.
 
         Raises:
             LabRefusal: ``not_found``; ``change_busy``; ``state`` while it may not close (a pull request open,
@@ -461,6 +461,9 @@ class LabService:
         """
         change = await asyncio.to_thread(self._change, change_id)
         with self._holding(change_id, user.login, "close", change.title):
+            change = await asyncio.to_thread(self._change, change_id)  # another close may have ended meanwhile
+            if change.status == "closed":
+                return await asyncio.to_thread(self.change_detail, change_id)
             status = await review.fetch_review(self.workspace, change, GitHubService(user.access_token),
                                                self.review_cache, fresh=True)
             if not status.closable:

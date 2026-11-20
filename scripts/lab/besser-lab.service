@@ -1,0 +1,43 @@
+# BESSER Lab backend: the editor backend with the lab switched on, from the lab's own checkout, on 127.0.0.1:9000.
+# Its child processes are the lab's sandboxes (shell, checks, installs) and the preview slots' services, each in
+# bubblewrap with a private network, plus the preview's LLM proxy (127.0.0.1:9300) inside this process; stopping
+# this unit stops them all. Installed by provision.sh as /etc/systemd/system/besser-lab.service.
+
+[Unit]
+Description=BESSER Lab backend
+Documentation=file:///opt/besser-lab/app/scripts/lab/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=besser-lab
+Group=besser-lab
+# The lab's own code, root-owned: neither the service nor anything it runs can change it.
+WorkingDirectory=/opt/besser-lab/app
+# Read by systemd as root before the service starts. lab.env is mode 0600 root:root, so neither the service user
+# nor a sandboxed command can read the keys in it from disk.
+EnvironmentFile=/etc/besser-lab/lab.env
+# BESSER_BUILD_SHA of the app checkout, rewritten by every provision.sh run.
+EnvironmentFile=/etc/besser-lab/build.env
+# Root-owned directories only, so `git` (which pushes with the user's token), uv, npm and the Pythons every venv
+# is made from never come from a directory the lab's sandboxes can write.
+Environment=PATH=/opt/besser-lab/bin:/opt/besser-lab/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/besser-lab/venv/bin/python -m besser.utilities.web_modeling_editor.backend.backend --host 127.0.0.1 --port 9000
+Restart=on-failure
+RestartSec=5
+# A running lab run and the preview services get this long to stop.
+TimeoutStopSec=90
+KillMode=control-group
+LimitNOFILE=8192
+UMask=0027
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+# More hardening (ProtectHome, ProtectKernel*, PrivateDevices, ...) may break bubblewrap or pasta: each is tried
+# on the host first (README, host checklist).
+
+[Install]
+WantedBy=multi-user.target

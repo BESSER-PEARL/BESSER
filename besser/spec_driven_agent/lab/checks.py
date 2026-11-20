@@ -47,12 +47,11 @@ from besser.spec_driven_agent.execution.process import (
     _kill_tree,
 )
 from besser.spec_driven_agent.execution.sandbox import (
-    NETWORK_WAIT_SECONDS,
-    NETWORK_WAIT_SOURCE,
     SANDBOX_POLICY_ENV,
     SandboxedCommand,
     SandboxMounts,
     SandboxUnavailable,
+    network_wait_argv,
     read_child_pid,
     sandboxed_command,
     start_pasta,
@@ -89,11 +88,6 @@ _INSTALL_SANDBOX_UNAVAILABLE = "the install sandbox is unavailable: "
 _INSTALL_TIMEOUT = 1_800.0
 #: How long bwrap may take to report its sandbox's pid (the shell session's start timeout).
 _SANDBOX_START_SECONDS = 30.0
-# Runs in the install sandbox before the install: wait for pasta's interface, then become the command.
-_NETWORK_WAIT_EXEC = ("import os, sys, time\n" + NETWORK_WAIT_SOURCE +
-                      "if not wait_for_network(float(sys.argv[1])):\n"
-                      "    sys.exit('the sandbox network did not come up')\n"
-                      "os.execvp(sys.argv[2], sys.argv[2:])\n")
 #: Exit code of a runner whose command ran past the spec's timeout.
 TIMED_OUT = 124
 #: Exit code of a runner whose command was killed because the run was stopped (the shell's code for Ctrl-C).
@@ -332,14 +326,6 @@ def _unconfined_note(plan: SandboxedCommand, what: str) -> str:
     return f"Note: this {what} ran without the sandbox ({reason}).\n"
 
 
-def _network_wait_argv(plan_argv: Sequence[str], command: Sequence[str], info_fd: int) -> list[str]:
-    """The bwrap ``plan_argv`` (ending with ``command``) reporting its pid on ``info_fd``, the command run once
-    pasta has configured the sandbox's interface."""
-    head = list(plan_argv[:len(plan_argv) - len(command)])
-    return [head[0], "--info-fd", str(info_fd), *head[1:],
-            sys.executable, "-I", "-S", "-c", _NETWORK_WAIT_EXEC, str(NETWORK_WAIT_SECONDS), *command]
-
-
 def _run_with_private_network(plan_argv: Sequence[str], command: Sequence[str], *, cwd: str,
                               env: dict[str, str], should_continue: Callable[[], bool]) -> tuple[int, str]:
     """:func:`_run_stoppable` for a plan with an unshared network: pasta attaches to the sandbox once bwrap
@@ -347,7 +333,7 @@ def _run_with_private_network(plan_argv: Sequence[str], command: Sequence[str], 
     info_r, info_w = os.pipe()
     with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
         try:
-            proc = subprocess.Popen(_network_wait_argv(plan_argv, command, info_w), cwd=cwd, env=env,
+            proc = subprocess.Popen(network_wait_argv(plan_argv, command, info_w), cwd=cwd, env=env,
                                     stdin=subprocess.DEVNULL, stdout=out, stderr=err, start_new_session=True,
                                     pass_fds=(info_w,))
         except OSError:

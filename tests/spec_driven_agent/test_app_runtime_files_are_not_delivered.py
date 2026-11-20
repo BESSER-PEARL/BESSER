@@ -506,3 +506,26 @@ def test_a_generated_name_another_file_of_the_command_names_is_kept(tmp_path):
     assert runbook.files_the_app_wrote(before, after, "python scripts/build_assets.py", str(tmp_path)) == {}
     del after["backend/static/manifest.json"]
     assert list(runbook.files_the_app_wrote(before, after, "python scripts/build_assets.py", str(tmp_path))) == [image]
+
+
+@pytest.mark.parametrize("database", ["backend/data/app.db", "backend/data/store.data"])
+def test_the_apps_database_naming_an_upload_does_not_keep_it(tmp_path, database):
+    """The app stores the upload's path in its own database: that is not a file the command built."""
+    import sqlite3
+
+    _backend(tmp_path)
+    before = runbook.backend_files(str(tmp_path))
+    _write(tmp_path, UPLOAD, '{"a": 1}')
+    path = tmp_path / database
+    with sqlite3.connect(path) as connection:
+        connection.execute("CREATE TABLE document (id INTEGER PRIMARY KEY, storage_path TEXT, body BLOB)")
+        connection.execute("INSERT INTO document (storage_path, body) VALUES (?, ?)", (UPLOAD, b"\0" * 6000))
+    connection.close()
+    assert path.stat().st_size >= 8000
+    after = runbook.backend_files(str(tmp_path))
+
+    recorded = runbook.files_the_app_wrote(before, after, "curl -s -F file=@sample.json http://127.0.0.1:8000/x",
+                                           str(tmp_path))
+
+    assert list(recorded) == [UPLOAD]
+    assert remove_app_runtime_files(str(tmp_path), set(), recorded).removed == (UPLOAD,)

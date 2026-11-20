@@ -814,8 +814,9 @@ def _apply_input_field_attributes(field: InputField, attrs: Dict[str, Any]) -> N
 
     Emits the ``data-*`` keys read by
     ``json_to_buml/gui_processors/component_parsers.parse_input_field`` (data-gui-type,
-    data-label, data-placeholder, data-required, data-default-checked, data-options,
-    data-min, data-max, data-step, data-multiple). Only non-empty values are emitted.
+    data-label, data-placeholder, data-required, data-default-checked, data-options
+    (the option values), data-option-labels (when they differ), data-min, data-max,
+    data-step, data-multiple). Only non-empty values are emitted.
     """
     attrs.setdefault("placeholder", field.description or "")
     field_type = getattr(field, "field_type", None)
@@ -835,13 +836,15 @@ def _apply_input_field_attributes(field: InputField, attrs: Dict[str, Any]) -> N
     if default_value is not None:
         # parse_input_field reads the boolean default from data-default-checked.
         attrs.setdefault("data-default-checked", default_value)
-    option_labels = [
-        str(getattr(opt, "label", None) or getattr(opt, "value", ""))
+    options = [
+        (str(getattr(opt, "value", None) or getattr(opt, "label", "")), str(getattr(opt, "label", None) or ""))
         for opt in (getattr(field, "options", None) or [])
     ]
-    option_labels = [label for label in option_labels if label]
-    if option_labels:
-        attrs.setdefault("data-options", ",".join(option_labels))
+    options = [(value, label or value) for value, label in options if value]
+    if options:
+        attrs.setdefault("data-options", ",".join(value for value, _ in options))
+        if any(value != label for value, label in options):
+            attrs.setdefault("data-option-labels", ",".join(label for _, label in options))
     if getattr(field, "min_value", None) is not None:
         attrs.setdefault("data-min", field.min_value)
     if getattr(field, "max_value", None) is not None:

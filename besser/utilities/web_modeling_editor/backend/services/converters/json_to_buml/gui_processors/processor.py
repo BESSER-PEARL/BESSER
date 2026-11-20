@@ -53,9 +53,11 @@ from .component_parsers import (
     parse_generic_component,
     parse_image,
     parse_input_field,
+    parse_label_around_input,
     parse_link,
     parse_menu,
     parse_text,
+    wraps_input,
 )
 from .constants import (
     CONTAINER_TAGS,
@@ -517,6 +519,13 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
             input_field = parse_input_field(component, styling, name, meta)
             attach_meta(input_field, meta)
             return input_field
+
+        # === LABEL AROUND AN INPUT (its input is kept, labelled with its text) ===
+        if "label" in (tag, comp_type) and wraps_input(component):
+            name = get_unique_name(component, "Container")
+            container = parse_label_around_input(component, styling, name, meta, parse_component_list)
+            attach_meta(container, meta)
+            return container
 
         # === TEXT PARSER ===
         if comp_type == "text" or tag in TEXT_TAGS:

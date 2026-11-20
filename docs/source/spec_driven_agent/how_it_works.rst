@@ -351,8 +351,8 @@ reading a trace and wondering why a run did what it did.
        decision, snapshot, rollback, regeneration and validation finding is
        appended to ``.besser_trace.jsonl`` in the workspace (events
        ``run_start``, ``phase_enter`` / ``phase_exit``, ``turn_start``,
-       ``tool_call``, ``cost_update``, ``llm_call``, ``checkpoint``, ``error``,
-       ``target``, ``snapshot``, ``rollback``, ``regeneration``,
+       ``tool_call``, ``cost_update``, ``llm_call``, ``compaction``, ``eviction``,
+       ``checkpoint``, ``error``, ``target``, ``snapshot``, ``rollback``, ``regeneration``,
        ``validation_issue``, ``requirement_cited``, ``run_end``). ``run_start`` holds the start of
        the user's own request, not the modeling agent's notes. Every Phase 2
        turn, the closing reply included, and every Phase 3 fix turn
@@ -365,9 +365,15 @@ reading a trace and wondering why a run did what it did.
        count per status, how many "implemented" citations the check verified
        (``citations``) and why each other failed (``failures``, by requirement
        id). Each also names ``model`` (and ``planning_model``, which gap analysis
-       and the judge try first). Compactions are counted in the checkpoint and the
-       recipe (``compactions``), not traced. A ``tool_call`` record holds
-       the input and a ``result`` excerpt (its length and the first 500
+       and the judge try first). A ``compaction`` record (the history's
+       estimated ``tokens_before`` and ``tokens_after``) or an ``eviction``
+       record (how many stale file bodies were ``stubbed``) names the ``turn``
+       whose request carried the rewritten history, so the cache miss that
+       turn pays is expected; compactions are also counted in the checkpoint
+       and the recipe (``compactions``). A ``tool_call`` record holds its
+       ``batch_index``, its place among the calls the model sent in that turn
+       (parallel calls are logged as each finishes), the input and a
+       ``result`` excerpt (its length and the first 500
        characters), with credential-shaped values redacted before the cut;
        each input value is cut at 500 characters, and the untruncated input
        of every write tool goes to ``.besser_tool_inputs.jsonl``. A

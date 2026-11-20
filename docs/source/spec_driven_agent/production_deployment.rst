@@ -31,8 +31,10 @@ stamped with the commit they were built from (``BESSER_BUILD_SHA``).
      - ``artefacts.list.lu/besser/web_modeling_editor/smartgen_worker:latest``
        (``smartgen-worker``)
      - Everything in the backend image, plus Node.js 22 with ``tsc``, JDK 21,
-       Rust (``cargo``), ``kotlinc``, ``build-essential``, bubblewrap, passt and
-       procps (``ps``); no ``git``.
+       Rust (``cargo``), ``kotlinc``, ``build-essential``, bubblewrap, passt,
+       procps (``ps``) and ``chromium-headless-shell`` for the screen check
+       (about 300 MB; ``--build-arg SCREEN_CHECK_BROWSER=0`` leaves it out); no
+       ``git``.
 
 The ``Dockerfile`` requires BuildKit (the default builder in current Docker
 releases; set ``DOCKER_BUILDKIT=1`` on older ones): the proxy certificates are
@@ -265,7 +267,8 @@ Run these on the host, in the directory of its compose file:
 
    # The worker has its toolchains, and bubblewrap can start
    docker compose exec -T besser-wme-smartgen sh -c \
-     'node --version && tsc -v && cargo --version && kotlinc -version && bwrap --version && ruff --version'
+     'node --version && tsc -v && cargo --version && kotlinc -version && bwrap --version && ruff --version \
+      && chromium-headless-shell --version'
    docker compose exec -T besser-wme-smartgen python -c \
      "from besser.spec_driven_agent.execution.sandbox import sandbox_selftest_error as e; print(e() or 'sandbox OK')"
    docker compose exec -T besser-wme-smartgen python -c \

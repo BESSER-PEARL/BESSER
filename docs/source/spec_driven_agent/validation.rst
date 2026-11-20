@@ -749,8 +749,8 @@ value) is refuted all the same: telling such a type from one that does not enfor
 the rule would take knowledge of particular types. The refuted verdict is judged once
 more on that revision, with the cited file shown whole and the reason its citation was
 rejected. It stays a blocker when that answer again says implemented citing nothing
-but such lines, or when no answer comes back; citing the enforcing declaration leaves
-it not confirmed.
+but such lines, says missing or partial, or does not come back; citing the enforcing
+declaration leaves it not confirmed.
 
 Two findings of the same "could not check" kind stay blockers. ``verification
 setup:`` asks the agent to install the project's declared dependencies, which it
@@ -1084,7 +1084,10 @@ requirement's files cannot crowd out another's. That focused answer replaces the
 verdict only when it is a verified "implemented"; otherwise a missing or partial
 from it proves no absence, so the checked verdict keeps its status, and it takes
 the focused judge's citation (when it gave one), note and inspection paths, which
-name the files that judge saw. An answer naming a file that round left out gets
+name the files that judge saw. The exception is a refuted citation (``requirement
+unsupported:``), whose file that round shows whole: a missing or partial answer about
+it becomes the requirement's status, a ``requirement:`` or ``requirement partial:``
+blocker. An answer naming a file that round left out gets
 one more round with that file shown, together with every other file the answer
 names (its citations, inspection paths and the files its note names), including
 those the round showed for another requirement. An inspection path may be a glob

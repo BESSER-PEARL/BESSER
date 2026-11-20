@@ -521,6 +521,8 @@ def parse_input_field(component: Dict[str, Any], styling, name: str, meta: Dict)
             if len(labels) != len(values):
                 labels = values
             options = [SelectOption(value=value, label=label or value) for value, label in zip(values, labels)]
+        if not options and "select" in (tag, str(component.get("type") or "").lower()):
+            options = _select_options(component)
 
     else:
         multiple = False
@@ -549,6 +551,25 @@ def parse_input_field(component: Dict[str, Any], styling, name: str, meta: Dict)
     _attach_component_metadata(input_field, component, meta)
 
     return input_field
+
+
+def _select_options(component: Dict[str, Any]) -> List[SelectOption]:
+    """The choices of a ``<select>``'s options (optgroups included) in document
+    order: the value, else the text, shown with the text. A blank (placeholder)
+    or disabled option is no choice."""
+    options = []
+    for child in component.get("components") or []:
+        if not isinstance(child, dict):
+            continue
+        if "option" not in (str(child.get("tagName") or "").lower(), str(child.get("type") or "").lower()):
+            options.extend(_select_options(child))
+            continue
+        attrs = child.get("attributes") if isinstance(child.get("attributes"), dict) else {}
+        text = extract_text_content(child).strip()
+        value = text if attrs.get("value") is None else str(attrs["value"]).strip()
+        if value and attrs.get("disabled") in (None, False, "false"):
+            options.append(SelectOption(value=value, label=text or value))
+    return options
 
 
 def parse_alert(component: Dict[str, Any], styling, name: str, meta: Dict) -> Alert:
@@ -680,6 +701,9 @@ def parse_form(component: Dict[str, Any], styling, name: str, meta: Dict,
 
     _bind_form(form, inputs, attributes.get("data-source"), class_model, domain_model)
     form.inputFields = form.inputFields - _group_radios(inputs, captions)
+    for input_field in form.inputFields:
+        if input_field.field_type == InputFieldType.Dropdown and not input_field.options:
+            input_field.options = _enumeration_options(input_field)
 
     # Create OnSubmit event if form has submit button
     submit_button = None
@@ -757,16 +781,24 @@ def _is_native_radio(input_field) -> bool:
     """An ``<input type="radio">``: one choice of the group its ``name`` forms."""
     return (
         input_field.field_type == InputFieldType.RadioGroup
-        and not input_field.options
         and str((input_field.custom_attributes or {}).get("type") or "").lower() == "radio"
     )
 
 
+def _enumeration_options(input_field) -> Optional[List[SelectOption]]:
+    """The literals of the enumeration the input is bound to, as options."""
+    attribute_type = getattr(getattr(input_field.data_binding, "data_field", None), "type", None)
+    if not isinstance(attribute_type, Enumeration):
+        return None
+    return [SelectOption(value=lit.name, label=lit.name) for lit in sort_by_timestamp(attribute_type.literals)]
+
+
 def _group_radios(inputs, captions: Dict[InputField, str]) -> set:
     """Make the radio buttons of a form that share a ``name`` one RadioGroup,
-    the first of them: its options are their values (shown with their labels)
-    in document order, or the literals of the enumeration it is bound to when
-    no button has a value. Returns the other buttons, merged away."""
+    the first of them: its options are their values (shown with their labels),
+    or their ``data-options``, in document order and each once; or the literals
+    of the enumeration it is bound to when no button has a value. Returns the
+    other buttons, merged away."""
     groups: Dict[Any, List[InputField]] = {}
     for input_field in inputs:
         if _is_native_radio(input_field):
@@ -774,19 +806,19 @@ def _group_radios(inputs, captions: Dict[InputField, str]) -> set:
     merged = set()
     for radios in groups.values():
         group = radios[0]
-        values = [str((radio.custom_attributes or {}).get("value") or "") for radio in radios]
-        attribute_type = getattr(getattr(group.data_binding, "data_field", None), "type", None)
-        if not any(values) and isinstance(attribute_type, Enumeration):
-            options = [SelectOption(value=lit.name, label=lit.name) for lit in sort_by_timestamp(attribute_type.literals)]
-        else:
+        options: Dict[str, SelectOption] = {}
+        for radio in radios:
+            value = str((radio.custom_attributes or {}).get("value") or "")
             # A button without a value submits what it shows
-            options = [
-                SelectOption(value=value or radio.label, label=radio.label or value)
-                for radio, value in zip(radios, values)
-                if value or radio.label
-            ]
-        group.options = options
-        group.label = captions.get(group)
+            choices = radio.options or (
+                [SelectOption(value=value or radio.label, label=radio.label or value)] if value or radio.label else []
+            )
+            for choice in choices:
+                options.setdefault(choice.value, choice)
+        has_values = any(radio.options or (radio.custom_attributes or {}).get("value") for radio in radios)
+        # A button with data-options carries the group's own label
+        group.label = captions.get(group) or next((radio.label for radio in radios if radio.options), None)
+        group.options = (None if has_values else _enumeration_options(group)) or list(options.values())
         if not group.required and any(radio.required for radio in radios):
             group.required = True
             group.validationRules = ",".join(filter(None, ["required", group.validationRules]))

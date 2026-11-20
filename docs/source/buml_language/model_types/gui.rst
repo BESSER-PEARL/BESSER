@@ -107,7 +107,10 @@ buttons of a form that share a ``name`` become one ``RadioGroup`` field: one
 ``SelectOption`` per button in document order (its ``value``, shown with its label),
 ``required`` when any button is, and captioned by the label before the group. When
 no button has a value and the group is bound to an enumeration attribute, its
-options are the enumeration's literals. The React generator
+options are the enumeration's literals. A ``<select>`` without ``data-options``
+takes its options from its ``<option>`` children (the ``value``, else the text,
+shown with the text); a blank or disabled option is not a choice, and a bound
+select without options offers the literals of its enumeration attribute. The React generator
 renders a bound form as a ``FormBlock`` that POSTs to ``/<class>/`` (see
 :doc:`../../generators/react`).
 

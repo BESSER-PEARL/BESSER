@@ -23,8 +23,9 @@ from .utils_gui_binding_tests import class_diagram, import_gui
 
 
 def _task_classes():
-    """Task(title: str, status: Status, priority: str [0..1]) with Status = Open | Closed."""
+    """Task(title: str, status: Status [0..1], priority: str [0..1]) with Status = Open | Closed."""
     class_json = class_diagram("Task", [("title", "str"), ("status", "Status"), ("priority", "str")])
+    class_json["elements"]["attr-Task-status"]["isOptional"] = True
     class_json["elements"]["attr-Task-priority"]["isOptional"] = True
     class_json["elements"].update({
         "enum-Status": {"id": "enum-Status", "name": "Status", "type": "Enumeration", "owner": None,
@@ -161,6 +162,16 @@ def test_a_radio_group_block_with_data_options_is_unchanged():
 
     group, = _radio_groups(form)
     assert _options(group) == [("Low", "Low"), ("High", "High")]
+    assert group.label == "Priority"
+
+
+def test_radios_of_one_name_that_each_carry_data_options_list_them_once():
+    radios = [_radio("priority", value, **{"data-options": "low,high", "data-label": "Priority"})
+              for value in ("low", "high")]
+    form, = _forms(import_gui([_form(*radios)], _task_classes()))
+
+    group, = _radio_groups(form)
+    assert _options(group) == [("low", "low"), ("high", "high")]
     assert group.label == "Priority"
 
 

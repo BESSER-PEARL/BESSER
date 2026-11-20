@@ -214,3 +214,90 @@ def test_a_long_run_of_letters_is_redacted_in_linear_time():
     assert redact_shared_file("app.js", "y" * 100_000)[1] == 0
     assert time.perf_counter() - started < 5
     assert redact_shared_file("app.js", 'const apiKey = "wk_4f8a9b2c7d1e6f3a";')[0] == 'const apiKey = "[REDACTED]";'
+
+
+@pytest.mark.parametrize("text", [
+    "\n" * 20_000,
+    "\r\n" * 10_000,
+    (" " * 50 + "\n") * 400,
+    "TOKEN" * 4_000,
+    "API_KEY=" + "\n" * 20_000,
+    "TOKEN=" + " " * 20_000 + "\r\n",
+], ids=["newlines", "crlf-lines", "blank-lines", "repeated-name", "empty-value-then-newlines",
+        "spaces-then-crlf"])
+def test_env_assignments_are_redacted_in_linear_time(text):
+    """Blank lines before a line tried each line start against all the whitespace after it."""
+    import time
+
+    started = time.perf_counter()
+    redact_text(text)
+    assert time.perf_counter() - started < 2
+
+
+# The .env assignment rule before it was made linear: the reference for its matches.
+_ENV_RULE_BEFORE = (
+    r"(?im)^(\s*[A-Za-z0-9_]*"
+    r"(?:API[_-]?KEY|SECRET|TOKEN|PASSWORD|PASSWD|PRIVATE[_-]?KEY|ACCESS[_-]?KEY)"
+    r"[A-Za-z0-9_]*\s*=\s*)([^\r\n]+)$"
+)
+
+ENV_EDGE_CASES = [
+    "API_KEY=abc123\n",
+    "  API_KEY=abc123\n",
+    "\n\n\nAPI_KEY=abc123\n",
+    "\n  \n\t\nAPI_KEY=abc123",
+    "API_KEY=abc123\r\nSECRET=def456\r\n",
+    "API_KEY=abc123\r\nSECRET=def456",
+    "\tSECRET_TOKEN\t=\tvalue with spaces  \n",
+    "export API_KEY=abc123\nexport DB_PASSWORD='p@ss w0rd'\n",
+    "MY_API-KEY_X=1\nAPI_KEY-X=2\nTOKEN-foo=3\nXAPI-KEYZ=4\nPRIVATE-KEY=5\n",
+    "A_TOKEN=\nB_TOKEN=x\n",
+    "A_TOKEN=   \n\n",
+    "A_TOKEN=   \r\n  \n",
+    "A_TOKEN= \t",
+    "A_TOKEN=\n   \nnext\n",
+    "API_KEY\n=split\n",
+    "API_KEY =\n\n  value\n",
+    "config:\n  api_key: abc\n  secret_key = xyz\n  token=\n",
+    "TOKENTOKEN=1\nsecretsecret = 2\n",
+    "API_KEY=changeme\nSECRET=${SECRET}\nTOKEN=your-key-here\n",
+    "\r\rTOKEN=a\r\n",
+    " API_KEY=abc\n SECRET=x\n",
+    "",
+    "TOKEN=",
+    "=TOKEN\n",
+]
+
+
+def _env_rule_before(text):
+    import re
+
+    def replace(match):
+        return match.group(0) if match.group(2).strip().lower() in ("", "changeme") else match.group(1) + "[R]"
+    return re.compile(_ENV_RULE_BEFORE).sub(replace, text)
+
+
+def _env_rule_now(text):
+    from besser.utilities.secret_redaction import _SECRET_ENV_ASSIGNMENT_RE as rule
+
+    def replace(match):
+        value = match.group("value") if match.group("value") is not None else match.group("blank")
+        prefix = match.string[match.start():match.start("value" if match.group("value") is not None else "blank")]
+        return match.group(0) if value.strip().lower() in ("", "changeme") else prefix + "[R]"
+    return rule.sub(replace, text)
+
+
+@pytest.mark.parametrize("text", ENV_EDGE_CASES)
+def test_the_env_rule_matches_as_before(text):
+    assert _env_rule_now(text) == _env_rule_before(text)
+
+
+def test_the_env_rule_matches_as_before_on_random_text():
+    import random
+
+    pieces = [" ", "\t", "\r", "\n", "\r\n", "=", " = ", "A", "x9", "_", "-", "#", "export ", " ",
+              "TOKEN", "api_key", "API-KEY", "private-key", "Secret", "passwd", "value", "'v'", ":"]
+    rng = random.Random(20261120)
+    for _ in range(20_000):
+        text = "".join(rng.choice(pieces) for _ in range(rng.randint(0, 14)))
+        assert _env_rule_now(text) == _env_rule_before(text), repr(text)

@@ -41,10 +41,16 @@ _MAX_TEXT_FILE_BYTES = 2 * 1024 * 1024
 # placeholders. They are still scanned and redacted if a real token appears.
 _ENV_SAFE_SUFFIXES = (".example", ".sample", ".template", ".dist")
 
+# ``NAME = value`` where NAME holds a credential word. The value runs to the line end,
+# which must be a bare LF or the end: a CRLF line is not matched. After ``=``, blank
+# space may span lines, and when no value follows, the last blank before a line end
+# is the value (``TOKEN=`` then a line of spaces). Every part matches one way only,
+# so the rule is linear in time: the name starts on its own line, the name and the
+# spaces after it are atomic, and only a one-character blank value is backtracked to.
 _SECRET_ENV_ASSIGNMENT_RE = re.compile(
-    r"(?im)^(\s*[A-Za-z0-9_]*"
+    r"(?im)^[^\S\n]*+(?>[A-Za-z0-9_]*"
     r"(?:API[_-]?KEY|SECRET|TOKEN|PASSWORD|PASSWD|PRIVATE[_-]?KEY|ACCESS[_-]?KEY)"
-    r"[A-Za-z0-9_]*\s*=\s*)([^\r\n]+)$"
+    r"[A-Za-z0-9_]*)\s*+=(?:\s*+(?P<value>[^\r\n]++)$|\s*(?P<blank>[^\S\r\n])$)"
 )
 
 # Provider tokens with sufficiently specific prefixes to avoid redacting
@@ -350,10 +356,11 @@ def redact_text(
 
     def _assignment_replacement(match: re.Match[str]) -> str:
         nonlocal findings
-        if _is_placeholder(match.group(2)):
+        group = "value" if match.group("value") is not None else "blank"
+        if _is_placeholder(match.group(group)):
             return match.group(0)
         findings += 1
-        return match.group(1) + REDACTED_SECRET
+        return match.string[match.start():match.start(group)] + REDACTED_SECRET
 
     # .env-family content ONLY - see the docstring.
     redacted = value

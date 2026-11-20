@@ -266,3 +266,86 @@ def test_a_router_prefix_in_the_cited_file_is_part_of_its_routes(tmp_path):
                                      "def orders(customer_id: int):\n    return []\n", encoding="utf-8")
     assert level(customer, ("GET", "/supplier/3/orders")) == "unverified"
     assert level(customer, ("GET", "/customer/3/orders")) == "verified"
+
+
+def test_an_abridged_citation_with_a_part_too_short_to_check_confirms_no_route(tmp_path):
+    """The part left out of the check (too short to locate) is what told the two handlers apart."""
+    source = """from fastapi import APIRouter, HTTPException
+
+router = APIRouter(prefix="/items")
+
+
+@router.post("/small/")
+def create_small(q: int):
+    if q<1:
+        raise HTTPException(status_code=422, detail="Invalid")
+    return {}
+
+
+@router.post("/large/")
+def create_large(count: int):
+    if count > 9:
+        raise HTTPException(status_code=422, detail="Invalid")
+    return {}
+"""
+    quote = 'if q<1: ... raise HTTPException(status_code=422, detail="Invalid")'
+    for index, calls in enumerate(([("POST", "/items/large/")], [("POST", "/items/small/")])):
+        item = _orders_level(tmp_path / str(index), quote, calls, rel="backend/routers/items.py", source=source)
+        assert item["verification"] == "unverified", calls
+        assert "API: not run (a part of the abridged citation is too short to tell its route)" in item[
+            "verification_note"], calls
+    # Every part long enough to check: the route that runs both parts is confirmed.
+    item = _orders_level(tmp_path / "whole", 'if count > 9: ... raise HTTPException(status_code=422, detail="Invalid")',
+                         [("POST", "/items/large/")], rel="backend/routers/items.py", source=source)
+    assert item["verification"] == "verified"
+
+
+def test_a_local_named_like_a_module_function_is_not_a_call_of_it(tmp_path):
+    source = """from fastapi import APIRouter, HTTPException
+
+router = APIRouter(prefix="/orders")
+
+
+def validate(order: dict):
+    if order["total"] > 1000:
+        raise HTTPException(status_code=422, detail="order total over the limit")
+
+
+@router.get("/")
+def list_orders(checks: list = []):
+    for validate in checks:
+        validate({})
+    return []
+
+
+@router.get("/count/")
+def count_orders(validate=None):
+    validate()
+    return 0
+
+
+@router.get("/first/")
+def first_order():
+    def validate(order):
+        return order
+    validate({})
+    return {}
+
+
+@router.get("/last/")
+def last_order():
+    validate = print
+    validate({})
+    return {}
+
+
+@router.post("/")
+def create_order(order: dict):
+    validate(order)
+    return order
+"""
+    line = 'if order["total"] > 1000:'
+    for path in ("/orders/", "/orders/count/", "/orders/first/", "/orders/last/"):
+        item = _orders_level(tmp_path / path.strip("/").replace("/", "_"), line, [("GET", path)], source=source)
+        assert item["verification"] == "unverified", path
+    assert _orders_level(tmp_path / "post", line, [("POST", "/orders/")], source=source)["verification"] == "verified"

@@ -251,8 +251,8 @@ def test_this_runs_own_requirement_or_fix_task_keeps_the_failure_unconfirmed(tmp
     orch._is_fix_run = True
     orch._fix_target = parse_reported_target(_EXCEPTION_INSTR, orch.domain_model, "Order")
     earlier, requirement = _earlier_and_own_requirements(orch)
-    task = ValidationIssue("blocker", "task unverified: task 2 remains unresolved: refuse an Order "
-                                      "without a quantity")
+    task = ValidationIssue("blocker", "task incomplete: task 2 is not done: refuse an Order "
+                                      "without a quantity. Its deterministic check fails")
     orch._validation_issues = [earlier, requirement if own == "requirement" else task]
 
     orch._evaluate_fix_target_gate()
@@ -271,6 +271,21 @@ def test_requirement_findings_of_earlier_runs_are_never_promoted(tmp_path):
     issue = ValidationIssue("warning", message)
 
     assert orch._promote_fix_target_findings([issue]) == [issue]
+
+
+def test_a_checklist_item_nothing_confirmed_is_never_promoted(tmp_path):
+    """An open item naming the entity says nothing was confirmed, not that the failure persists."""
+    orch = _orch(tmp_path, _domain("Order"))
+    orch._is_fix_run = True
+    orch._fix_target = parse_reported_target(_EXCEPTION_INSTR, orch.domain_model, "Order")
+    orch.executor.set_tasks(["Refuse an Order without a quantity"])
+    issues = [ValidationIssue("warning", message) for message in orch._collect_task_issues()]
+    assert issues and issues[0].message.startswith("task unverified:")
+
+    assert orch._promote_fix_target_findings(issues) == issues
+    orch._validation_issues = issues
+    orch._evaluate_fix_target_gate()
+    assert orch._fix_target_resolved is True
 
 
 def test_a_runtime_finding_on_the_entity_still_keeps_the_failure_unconfirmed(tmp_path):
@@ -367,3 +382,21 @@ def test_run_never_detects_a_fix_target(tmp_path, monkeypatch):
     assert orch._is_fix_run is False
     assert orch._fix_target is None
     assert orch._fix_target_message is None
+
+
+def test_a_screen_check_finding_is_never_promoted(tmp_path):
+    """The screen check reports warnings only: a fix run must not turn one into a blocker."""
+    orch = _orch(tmp_path, _domain("Order"))
+    orch._is_fix_run = True
+    orch._fix_target = parse_reported_target(_EXCEPTION_INSTR, orch.domain_model, "Order")
+    issues = [ValidationIssue("warning", message) for message in (
+        "screen warning: [frontend] created an Order through the API (POST /order/) and the API lists it, "
+        "but its text was not found in the page text of any of the 3 opened screen(s)",
+        "screen warning: [frontend] route /orders (frontend/src/pages/OrderList.jsx): the page showed nothing",
+        "screens: not run ([frontend] Order screens: the shell sandbox is unavailable on this server)",
+    )]
+
+    assert orch._promote_fix_target_findings(issues) == issues
+    orch._validation_issues = issues
+    orch._evaluate_fix_target_gate()
+    assert orch._fix_target_resolved is True

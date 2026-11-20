@@ -59,7 +59,8 @@ The three phases
    ``.besser_recipe.json``, so a resume or a later modify run of the same app
    keeps it. Every modify run makes the same call once, on the primary model
    rather than the cheap planning one (its answer can rebuild the whole app),
-   with the recorded target and the model's class names, and it answers three
+   with the recorded target, the model's class names, and the request as
+   context with the user's newest message as the change, and it answers three
    more questions:
    whether the request changes the target (``changes_target``: "turn it into a
    Flutter app", "I only need the REST API now"; new features and a reworded
@@ -358,8 +359,8 @@ reading a trace and wondering why a run did what it did.
        turn, the closing reply included, and every Phase 3 fix turn
        (``phase: "phase3_fix"``) writes a ``turn_start`` and a ``cost_update``
        with the cumulative token counters. Each paid call outside those loops
-       writes one ``llm_call`` with its ``purpose`` (``routing``,
-       ``routing_target``, ``gap_analysis``, ``requirements_extraction``,
+       writes one ``llm_call`` with its ``purpose`` (``routing``, a modify
+       run's ``model_sync``, ``routing_target``, ``gap_analysis``, ``requirements_extraction``,
        ``requirements_judge``, ``requirements_rejudge``), ``outcome``, the
        calls, tokens and ``cost_usd`` it added, and for a judge the verdict
        count per status, how many "implemented" citations the check verified

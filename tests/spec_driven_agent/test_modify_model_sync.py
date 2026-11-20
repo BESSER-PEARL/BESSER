@@ -564,3 +564,56 @@ def test_model_sync_falls_back_to_the_primary_when_the_key_cannot_reach_the_plan
     assert orch._model_sync_error is None
     assert any("retrying on the primary" in r.getMessage() for r in caplog.records
                if r.levelno == logging.WARNING)
+
+
+# ----------------------------------------------------------------------
+# (f) the newest message is the change; both pre-turn calls are traced
+# ----------------------------------------------------------------------
+
+
+class _CountingClient(_DeltaClient):
+    """Counts its calls in ``usage`` and keeps each prompt."""
+
+    def __init__(self, new_classes):
+        super().__init__(new_classes)
+        self.prompts = []
+        self.usage.summary = lambda: {"api_calls": self.chat_calls, "cost_usd": 0.0}
+
+    def chat(self, **kwargs):
+        self.prompts.append(kwargs["messages"][-1]["content"])
+        return super().chat(**kwargs)
+
+
+_FOLLOW_UP = (
+    "## The user's original request, verbatim\n\nA library app where members borrow books."
+    "\n\n## Subsequent user request, verbatim\n\n"
+    "This later request takes precedence where it changes earlier requirements.\n\nAdd a login page"
+)
+
+
+def test_model_sync_reads_the_newest_message_as_the_change(tmp_path):
+    """Live runs showed the whole hand-off (notes, original request, every earlier
+    follow-up) quoted as "this instruction", with nothing saying which part is new."""
+    client = _CountingClient([])
+    orch = _make_orchestrator(tmp_path, client, source_export=_source_export())
+
+    orch._derive_and_apply_model_deltas(_FOLLOW_UP)
+
+    [prompt] = client.prompts
+    change, context = prompt.split("The conversation so far (context only):", 1)
+    assert "newest message:\n\n'Add a login page'" in change
+    assert "members borrow books" not in change and "members borrow books" in context
+
+
+def test_modify_routing_and_model_sync_calls_are_traced(tmp_path):
+    """Both calls run before Phase 2; without an llm_call event their tokens had no purpose."""
+    client = _CountingClient([])
+    orch = _make_orchestrator(tmp_path, client, source_export=_source_export())
+    events = []
+    orch._trace.write = lambda event, **payload: events.append((event, payload.get("purpose")))
+    orch._instructions = _FOLLOW_UP
+
+    orch._route_modify_request()
+    orch._derive_and_apply_model_deltas(_FOLLOW_UP)
+
+    assert [purpose for event, purpose in events if event == "llm_call"] == ["routing", "model_sync"]

@@ -560,7 +560,8 @@ class ModifyRunMixin:
         seed = self._seed_target
         routing = None
         if self._can_route():
-            routing = self._select_generator_structured(self._modify_routing_prompt(seed), [], modify=True)
+            with self._traced_llm_call("routing"):
+                routing = self._select_generator_structured(self._modify_routing_prompt(seed), [], modify=True)
         if routing is None or routing.target is None:
             logger.warning(
                 "Modify run: the routing call failed; keeping the existing target (%s) "
@@ -585,7 +586,7 @@ class ModifyRunMixin:
         except Exception:
             classes = []
         return (
-            f"User request: {user_request(instructions)}\n\n"
+            f"Conversation so far (context only): {user_request(instructions)}\n\n"
             f"Newest user message: {latest_user_message(instructions)}\n\n"
             f"{TARGET_RULES}\n{STACK_RULES}\n{MODIFY_RULES}\n\n"
             f"{existing}Model classes: {', '.join(classes) or 'none'}\n"
@@ -906,7 +907,8 @@ class ModifyRunMixin:
             return
 
         try:
-            new_classes = self._request_model_deltas(instructions)
+            with self._traced_llm_call("model_sync"):
+                new_classes = self._request_model_deltas(instructions)
         except Exception as exc:
             logger.warning(
                 "modify: model-sync LLM call failed; proceeding without "
@@ -987,10 +989,10 @@ class ModifyRunMixin:
                 "required": ["new_classes"],
             },
         }
-        request = user_request(instructions)
         prompt = (
-            "An existing app is being MODIFIED with this instruction:\n\n"
-            f"'{request}'\n\n"
+            "An existing app is being MODIFIED. The change is the user's newest message:\n\n"
+            f"'{latest_user_message(instructions)}'\n\n"
+            f"The conversation so far (context only):\n\n{user_request(instructions)}\n\n"
             "The app's current domain model has these classes: "
             f"{', '.join(existing) if existing else '(none)'}.\n\n"
             "List ONLY genuinely NEW domain entities the MODEL should gain "

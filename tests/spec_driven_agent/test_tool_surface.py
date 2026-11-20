@@ -46,3 +46,17 @@ def test_installs_go_through_run_command(tmp_path):
     payload = ToolExecutor(workspace=str(tmp_path), allow_shell=True).execute_typed(
         "install_dependencies", {}).payload
     assert payload == {"error": "Unknown tool: install_dependencies"}
+
+
+def test_the_install_hints_use_the_probes_own_interpreter(tmp_path, monkeypatch):
+    """A bare ``pip`` on PATH can belong to another Python than the ``python`` the probe boots with."""
+    from besser.spec_driven_agent.agent import runbook
+
+    monkeypatch.setattr(runbook, "runbook_enabled", lambda: True)
+    for name in ("main_api.py", "sql_alchemy.py"):
+        (tmp_path / name).write_text("app = None\n", encoding="utf-8")
+    section = runbook.runbook_section(str(tmp_path))
+    assert section, "the runbook section should render for a backend"
+    for text in (section, runbook._PROBE_TEMPLATE):
+        assert "python -m pip install -r requirements.txt" in text
+        assert "'pip install" not in text

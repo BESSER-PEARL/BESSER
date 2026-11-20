@@ -447,8 +447,8 @@ create whatever it needs at startup.
 1. `up`. If it prints **BOOT_FAILED**, the traceback printed under it is the
    real error: fix that file and line, then run `up` again. Nothing else you
    do matters until it prints BOOT_OK. If it prints **MISSING_DEPENDENCY**,
-   install that directory's requirements with run_command (working_dir that
-   directory, timeout=300), then `up` again.
+   run `python -m pip install -r requirements.txt` with working_dir that
+   directory and timeout=300, then `up` again.
 2. `routes`. Use the paths and field names it prints for every request below.
    Do not use the paths you remember writing - `routes` is the live truth.
    A frontend caller you write sends the body exactly as `<-` shows it (a
@@ -777,7 +777,7 @@ def boot(quiet=False):
             print("--- the server died on startup; this is the real error ---")
             print(tail)
             if kind == "MISSING_DEPENDENCY":
-                print("NEXT: run_command('pip install -r requirements.txt', working_dir='%s', "
+                print("NEXT: run_command('python -m pip install -r requirements.txt', working_dir='%s', "
                       "timeout=300), then rerun `up`." % rel)
             else:
                 print("NEXT: fix the file and line named in the traceback above, "

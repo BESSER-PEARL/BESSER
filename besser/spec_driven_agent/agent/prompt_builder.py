@@ -90,19 +90,6 @@ DROPPED_RULES_NOTE = (
     "what they used."
 )
 
-# The model-query tools exist only with a domain model (tools._TOOL_MODEL_REQUIREMENTS).
-# Names and purpose only: each tool's own description, sent with every
-# request, already lists its predicates and return value.
-_MODEL_TOOLS_SECTION = """\
-## Tools for deeper model inspection
-
-When the JSON below is not enough, ask the model rather than re-reading or
-guessing: `query_class(name)` for one class in full, `list_classes_with(predicate)`
-to filter classes, `get_constraints_for(class_name)` for a class's OCL
-constraints (Rule 6: each one becomes a runtime validator - the generator
-does not enforce them for you).
-"""
-
 def build_system_prompt(
     domain_model,
     gui_model,
@@ -159,7 +146,7 @@ def build_system_prompt(
             "quantum". Used to
             frame the LLM's task (e.g. "this is a state-machine-driven
             run — emit the transition code").
-        allow_shell: Whether ``run_command`` / ``install_dependencies`` are
+        allow_shell: Whether ``run_command`` is
             in this run's tool list. Only then is the runtime-verification
             runbook rendered — a procedure built on commands the model
             cannot issue is worse than no procedure at all.
@@ -461,8 +448,6 @@ def build_system_prompt(
     # The idiom blocks assume a web / server project.
     builds_other = target is not None and target.kind == OTHER
     idiom_section = "" if builds_other else idiom_guidance_section(instructions, routed_stack)
-    # Named only when offered: tools.py withholds these without a domain model.
-    model_tools_section = _MODEL_TOOLS_SECTION if domain_model is not None else ""
 
     # The HARD-CONSTRAINTS header below is deliberately forceful: weaker
     # models (e.g. the free qwen tier) ignore softer wording and delete the
@@ -684,7 +669,7 @@ Keep the plan short (a few lines), then proceed with surgical edits.
    atomically; do not partially persist an aggregate before validation succeeds.
 {hygiene_rule}
 8. **Read before modify** - the WHOLE function or class you intend to change, in
-   one call (read_file's description says when and how to paginate).
+   one call; a file read without offset and limit comes back whole.
 9. **Be efficient. Batch tool calls in one turn.** Issue every
    independent tool call you can in the SAME turn — read multiple files
    in one turn, edit multiple files in one turn. Each turn is a separate
@@ -723,7 +708,7 @@ Keep the plan short (a few lines), then proceed with surgical edits.
     security path, find the cause (dependency, configuration, test input)
     and fix that.
 {crud_rule}
-{model_tools_section}"""
+"""
 
     # What the scaffold holds is listed above; naming parts here claimed some a generator never makes.
     request_intro = (
@@ -756,8 +741,7 @@ When done, briefly summarize what you changed.
             "that already works; make the smallest change that satisfies the "
             "request; prefer `modify_file` over `write_file`; do NOT "
             "regenerate untouched files. `write_file` on an existing file "
-            "is REJECTED in this run until you have tried two targeted "
-            "`modify_file` edits on it.\n\n"
+            "is refused when the rewrite drops code the file has.\n\n"
         )
 
     return f"{modify_directive}{stable_header}{variable_tail}"
@@ -862,7 +846,7 @@ def _render_gap_section(gap_tasks: list[str] | None) -> str:
         "This list is loaded into the `task_list` tool (its description covers "
         "done, blocked and add). Work through it, marking each item "
         "done as you complete it. If an item is wrong or out of scope for the user "
-        "request, close it with task_list(action='drop', id=N, reason=...) - never "
+        "request, close it with task_list(drop=[{id, reason}]) - never "
         "mark undone work done.\n\n"
         f"{bullets}\n"
     )

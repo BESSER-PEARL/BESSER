@@ -184,8 +184,5 @@ def test_the_tool_schema_advertises_mixed(executor):
     from besser.spec_driven_agent.agent.tools import VALIDATION_TOOLS
     spec = next(t for t in VALIDATION_TOOLS if t["name"] == "task_list")
 
-    assert "mixed" in spec["input_schema"]["properties"]["action"]["enum"]
-    for key in ("done_ids", "add_texts", "drop", "blocked"):
-        assert key in spec["input_schema"]["properties"], key
-    assert "done_ids" in spec["description"]
-    assert "add_texts" in spec["description"]
+    assert set(spec["input_schema"]["properties"]) == {"done", "add", "drop", "blocked"}
+    assert "one call may combine them" in spec["description"]

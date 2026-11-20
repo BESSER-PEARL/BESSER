@@ -486,14 +486,6 @@ def test_unconfined_exit_codes_survive_the_state_capture(tmp_path, unconfined):
     assert _run(session, chained).returncode == 5
 
 
-def test_install_dependencies_leaves_the_shell_where_it_was(tmp_path, unconfined):
-    (tmp_path / "sub").mkdir()
-    ex = te.ToolExecutor(workspace=str(tmp_path), allow_shell=True)
-    ex._run_command({"command": "cd sub"})
-    ex._install_dependencies({"command": "cd .."})
-    assert ex._shell.relative_cwd() == "sub"
-
-
 # --------------------------------------------------------------------------- #
 # Harness-side state limits
 # --------------------------------------------------------------------------- #
@@ -573,12 +565,11 @@ def test_the_tool_text_describes_one_terminal_per_run():
     tools = {t["name"]: t for t in get_tools_for(has_domain_model=True, allow_shell=True)}
     doc = tools["run_command"]["description"]
     assert "does not outlive" not in doc
-    for fact in ("`cd`", "keeps running", "one-off sandbox", "restarted", "cwd"):
+    for fact in ("`cd`", "keeps running", "one-off sandbox", "restarted", "workspace root"):
         assert fact in doc
+    assert "cd_hint" not in doc and "ran_in" not in doc
     working_dir = tools["run_command"]["input_schema"]["properties"]["working_dir"]
-    assert "default" not in working_dir, "a filled-in default would pin every command to the root"
-    assert "does not move" in working_dir["description"]
-    assert "leaves the shell's directory" in tools["install_dependencies"]["description"]
+    assert "Default: the workspace root" in working_dir["description"]
 
 
 def test_the_runbook_says_the_server_stays_up(tmp_path):

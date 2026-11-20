@@ -59,7 +59,7 @@ a half-written tool call included, is dropped. A call stopped by the cap or a
 cancellation is reported as such, not as a provider error, and never moves the
 run to a fallback model; a provider error (an exhausted quota, an unknown model)
 stays one. Every command a run starts (``run_command``,
-``install_dependencies``, the scaffold's install, the validators, the build and
+the scaffold's install, the validators, the build and
 type checks) ends by the cap at the latest, and a check or a tool cut by the cap
 says so rather than reporting its own timeout. Those last 30 seconds are left to
 formatting the output and to Phase 3's checks, which start while at least 10

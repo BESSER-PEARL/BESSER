@@ -14,12 +14,11 @@ import os
 from types import SimpleNamespace
 
 import httpx
-import openai
 import pytest
 
 from besser.BUML.metamodel.structural import Class, DomainModel, PrimitiveDataType, Property
-from besser.spec_driven_agent.errors import DeadlineReached, InvalidApiKeyError, UpstreamLLMError
-from besser.spec_driven_agent.execution.deadline import Deadline, under_deadline
+from besser.spec_driven_agent.errors import DeadlineReached
+from besser.spec_driven_agent.execution.deadline import under_deadline
 from besser.spec_driven_agent.providers import llm_client
 from besser.spec_driven_agent.providers.llm_client import OpenAIProvider, UsageTracker
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
@@ -83,23 +82,12 @@ def _run(simple_model, tmp_path, max_turns=20):
     return orch, client
 
 
-def test_two_refusals_escalate_to_a_rewrite_then_force_a_fresh_read(simple_model, tmp_path):
-    """Renamed from ``test_two_refusals_force_a_fresh_read_on_the_next_turn``.
-
-    Two refusals still change the strategy on the very next turn, and the
-    new strategy still starts with a read - but it is now carried as the
-    tool result's ``edit_recovery`` rather than as a forced ``read_file``.
-    The orchestrator only forces a tool for ``read_file`` /
-    ``replace_file_lines`` / ``modify_file`` (see the allowlist beside
-    ``_force_tool_next``), and ``write_file`` is deliberately not forceable
-    - forcing it would order a rewrite before the read the instruction
-    requires.
-
-    So the hard steer arrives one refusal later, from the orchestrator's
-    own ``_REPEAT_FORCE_AT = 3``: turn 4 instead of turn 3. Both halves are
-    asserted, because dropping either one is how this escalation could
-    silently stop happening. That reminder used to name ``replace_file_lines``
-    while the executor named the rewrite; it now quotes the executor's step.
+def test_two_refusals_escalate_to_a_rewrite_and_no_tool_is_forced(simple_model, tmp_path):
+    """Two refusals change the strategy on the very next turn, carried as the
+    tool result's ``edit_recovery``; the reminder at ``_REPEAT_FORCE_AT`` quotes
+    the executor's step. The next tool is the model's choice: a forced call
+    (a named tool_choice) drops the conversation cache on providers that cache
+    by tool_choice, and replaced the model's own batch with one call.
     """
     orch, client = _run(simple_model, tmp_path)
 
@@ -111,9 +99,7 @@ def test_two_refusals_escalate_to_a_rewrite_then_force_a_fresh_read(simple_model
                 if isinstance(c, str) and '"next_tool": "write_file"' in c)
     assert "read_file on the WHOLE file" in hint
 
-    forced = [n for n, f in client.turns if f == "read_file"]
-    assert forced, client.turns
-    assert forced[0] == 4, "the hard steer is _REPEAT_FORCE_AT, one refusal later"
+    assert all(force is None for _, force in client.turns), client.turns
     assert any("read_file on the WHOLE file" in t and "app.py" in t for t in client.texts_seen)
 
 
@@ -197,79 +183,12 @@ def _status_error(cls, status, message):
                response=httpx.Response(status, request=request), body=None)
 
 
-def test_a_rejected_forced_tool_choice_resends_the_turn_unforced(simple_model, tmp_path, monkeypatch):
-    """The force only steers. An endpoint that rejects a named tool_choice
-    must not end the phase as 'this model can't run the agent'."""
-    rejected = _status_error(openai.BadRequestError, 400,
-                             "tool_choice of type 'function' is not supported")
-    provider, requests = _openai_endpoint(
-        monkeypatch, lambda kwargs: rejected if "tool_choice" in kwargs else None)
-    orch = LLMOrchestrator(llm_client=provider, domain_model=simple_model,
-                           output_dir=str(tmp_path), use_streaming=False)
-    orch._force_tool_next = "read_file"
-
-    reply = orch._chat_with_pending_force("system", [{"role": "user", "content": "go on"}])
-
-    assert reply["stop_reason"] == "end_turn"
-    assert [("tool_choice" in kwargs) for kwargs in requests] == [True, False]
-    assert orch._force_tool_next is None
 
 
-def test_a_rejected_key_on_a_forced_call_is_not_resent(simple_model, tmp_path, monkeypatch):
-    provider, requests = _openai_endpoint(
-        monkeypatch, lambda kwargs: _status_error(openai.AuthenticationError, 401, "bad key"))
-    orch = LLMOrchestrator(llm_client=provider, domain_model=simple_model,
-                           output_dir=str(tmp_path), use_streaming=False)
-    orch._force_tool_next = "read_file"
-
-    with pytest.raises(InvalidApiKeyError):
-        orch._chat_with_pending_force("system", [{"role": "user", "content": "go on"}])
-    assert len(requests) == 1
 
 
-def test_a_rejected_forced_call_on_a_streaming_run_resends_through_the_stream(
-        simple_model, tmp_path, monkeypatch):
-    rejected = _status_error(openai.BadRequestError, 400,
-                             "tool_choice of type 'function' is not supported")
-    provider, requests = _openai_endpoint(
-        monkeypatch, lambda kwargs: rejected if "tool_choice" in kwargs else None)
-    streamed = []
-    orch = LLMOrchestrator(llm_client=provider, domain_model=simple_model,
-                           output_dir=str(tmp_path), use_streaming=True, on_text=streamed.append)
-    orch._force_tool_next = "read_file"
-
-    reply = orch._chat_with_pending_force("system", [{"role": "user", "content": "go on"}])
-
-    assert reply["stop_reason"] == "end_turn"
-    assert [(("tool_choice" in kw), bool(kw.get("stream"))) for kw in requests] == [
-        (True, False), (False, True)]
-    assert streamed == ["done"]
 
 
-@pytest.mark.parametrize("error, seconds, expected", [
-    # A timeout costs the full SDK timeout: capped at 3 requests, not 6.
-    (openai.APITimeoutError(request=httpx.Request("POST", "https://gateway.example.invalid")),
-     300.0, 3),
-    (openai.APIConnectionError(request=httpx.Request("POST", "https://gateway.example.invalid")),
-     0.0, 5),
-    (_status_error(openai.InternalServerError, 503, "overloaded"), 0.0, 5),
-    (_status_error(openai.RateLimitError, 429, "insufficient_quota: you exceeded your quota"),
-     0.0, 1),
-    (_status_error(openai.BadRequestError, 400, "insufficient credits"), 0.0, 1),
-], ids=["slow-timeout", "fast-refused", "503", "quota-429", "credits-400"])
-def test_a_forced_call_the_endpoint_could_not_serve_is_not_resent(
-        simple_model, tmp_path, monkeypatch, error, seconds, expected):
-    """Only a request the endpoint answered and refused is resent unforced. A
-    failure that already spent the retry budget is not paid for twice."""
-    provider, requests = _openai_endpoint(monkeypatch, lambda kwargs: error, seconds)
-    orch = LLMOrchestrator(llm_client=provider, domain_model=simple_model,
-                           output_dir=str(tmp_path), use_streaming=False)
-    orch._force_tool_next = "read_file"
-
-    with pytest.raises(UpstreamLLMError):
-        orch._chat_with_pending_force("system", [{"role": "user", "content": "go on"}])
-    assert len(requests) == expected
-    assert all("tool_choice" in kwargs for kwargs in requests)
 
 
 class _UnderDeadline:
@@ -281,22 +200,6 @@ class _UnderDeadline:
         return fn(*args)
 
 
-def test_timeouts_on_a_forced_call_inside_a_run_are_reported_as_the_provider(
-        simple_model, tmp_path, monkeypatch):
-    """Three 300 s timeouts end the call well inside a 1500 s run: the user
-    is told the provider failed, not that the run hit its time limit."""
-    provider, requests = _openai_endpoint(
-        monkeypatch, lambda kwargs: openai.APITimeoutError(
-            request=httpx.Request("POST", "https://gateway.example.invalid")), 300.0)
-    deadline = Deadline(lambda: 1500.0 - llm_client.time.monotonic())
-    orch = LLMOrchestrator(llm_client=provider, domain_model=simple_model,
-                           output_dir=str(tmp_path), use_streaming=False)
-    orch._force_tool_next = "read_file"
-
-    with pytest.raises(UpstreamLLMError, match="timed out"):
-        _UnderDeadline(deadline).call(orch._chat_with_pending_force,
-                                      "system", [{"role": "user", "content": "go on"}])
-    assert len(requests) == 3
 
 
 class _CutClient:
@@ -312,15 +215,6 @@ class _CutClient:
         raise DeadlineReached("the run's time limit is reached")
 
 
-def test_a_deadline_cut_on_a_forced_call_is_not_resent(simple_model, tmp_path):
-    client = _CutClient()
-    orch = LLMOrchestrator(llm_client=client, domain_model=simple_model,
-                           output_dir=str(tmp_path), use_streaming=False)
-    orch._force_tool_next = "read_file"
-
-    with pytest.raises(DeadlineReached):
-        orch._chat_with_pending_force("system", [{"role": "user", "content": "go on"}])
-    assert client.calls == ["read_file"]
 
 
 def test_untruncated_edit_inputs_are_kept_beside_the_trace(simple_model, tmp_path):
@@ -527,3 +421,27 @@ def test_successful_edits_never_escalate_to_a_rewrite(tmp_path):
         "a landed edit must reset the refusal count, or an ordinary "
         "miss-fix-miss rhythm escalates to a rewrite"
     )
+
+
+def test_a_located_miss_names_the_range_edit_without_forcing_it(simple_model, tmp_path):
+    """The miss's result carries the located range; the next call is the model's choice."""
+    source = "".join(f"def f{i}(a):\n    total = a + {i}\n    return total\n\n" for i in range(12))
+    quote = "def f3(a):\n    total = a+3\n    return total"
+
+    class Stop(StuckClient):
+        def chat(self, system, messages, tools, force_tool=None, model_override=None):
+            self.turns.append((len(self.turns) + 1, force_tool))
+            return {"stop_reason": "end_turn", "content": [MockBlock("text", text="done")]}
+
+    (tmp_path / "svc.py").write_text(source, encoding="utf-8")
+    client = Stop()
+    orch = LLMOrchestrator(llm_client=client, domain_model=simple_model,
+                           output_dir=str(tmp_path), max_turns=4)
+    orch.executor.execute_typed("read_file", {"path": "svc.py"})
+    miss = orch._execute_tool_blocks([MockBlock("tool_use", name="modify_file", id="m0", input={
+        "path": "svc.py", "old_text": quote, "new_text": quote.replace("total", "t")})], turn=0)
+    assert '"located_range"' in miss[0]["content"], miss
+
+    orch._chat_turn("system", [{"role": "user", "content": "go"}])
+
+    assert client.turns == [(1, None)], client.turns

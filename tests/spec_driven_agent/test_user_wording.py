@@ -119,7 +119,7 @@ CASES = [
      "The operation POST /order/{order_id}/methods/ship/ of the model is not implemented."),
     ("requirement unverified: requirement extraction failed; the original specification has not been checked.",
      "Your request could not be turned into checkable requirements, so the result was not checked against it."),
-    ("verification setup: the frontend build requires installed project dependencies. Use install_dependencies.",
+    ("verification setup: the frontend build requires installed project dependencies. Use run_command.",
      "The app's dependencies were not installed, so some checks could not run."),
     ("ruff: backend/main_api.py:3:1: F821 Undefined name `Order`",
      "The backend code uses a name that is undefined or defined twice, so it fails when that code runs."),

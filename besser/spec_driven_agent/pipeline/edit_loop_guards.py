@@ -18,7 +18,6 @@ import logging
 from besser.spec_driven_agent.agent.history_eviction import (
     without_rejected_edit_drafts,
 )
-from besser.spec_driven_agent.errors import RequestRejectedError
 from besser.spec_driven_agent.pipeline.constants import _EDIT_TOOLS
 
 logger = logging.getLogger(__name__)
@@ -27,23 +26,10 @@ logger = logging.getLogger(__name__)
 class EditLoopGuardsMixin:
     """_apply_edit_loop_guards and friends; see the module docstring."""
 
-    def _chat_with_pending_force(self, system: str, messages: list[dict]) -> dict:
-        """One chat call. When an escalation asked for a specific tool, make
-        that request non-streaming with ``force_tool`` (only clients whose
-        ``chat`` accepts it; a plain client just gets the message). The force
-        only steers: when the endpoint refuses the forced request (one that
-        rejects a named ``tool_choice``), the turn is resent unforced."""
+    def _chat_turn(self, system: str, messages: list[dict]) -> dict:
+        """One chat call of the agent loop. No tool is forced: a recovery step
+        rides in the refused call's result, and the model chooses its next call."""
         messages = without_rejected_edit_drafts(messages)
-        force = self._force_tool_next
-        self._force_tool_next = None
-        if force and self._client_supports_structured_chat():
-            try:
-                return self.client.chat(
-                    system=system, messages=messages, tools=self.tools, force_tool=force,
-                )
-            except RequestRejectedError as exc:
-                logger.warning("The call forcing %s was refused (%s); resending it unforced",
-                               force, exc)
         if self.use_streaming and self.on_text and hasattr(self.client, "chat_stream"):
             return self._call_streaming(system, messages)
         return self.client.chat(system=system, messages=messages, tools=self.tools)
@@ -102,14 +88,8 @@ class EditLoopGuardsMixin:
                 self._phase2_stop_reason = "stuck_edit_loop"
             return True
         if seen >= self._REPEAT_FORCE_AT:
-            # Name the executor's own next step, never a second ladder. Its
-            # rewrite step starts with a whole-file read, so force that read.
-            # _force_tool_next is a single slot the executor's recovery ladder
-            # also writes, earlier in the same turn. The executor saw the
-            # actual refusal, so never overwrite its choice.
+            # Name the executor's own next step, never a second ladder.
             step = self.executor.rewrite_step(path)
-            if step and self._force_tool_next is None:
-                self._force_tool_next = "read_file"
             text = (
                 f"<system-reminder>{tool} on `{path}` was rejected {seen} times "
                 f"with the same arguments; the executor will not apply it. {step or ''} "

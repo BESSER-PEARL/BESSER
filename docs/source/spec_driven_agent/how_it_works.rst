@@ -153,8 +153,9 @@ The three phases
    prompt states what create, update and get-by-id return. The relationship
    mutation coverage block is left out only when the requirements ledger is
    known to be empty and the model has no constraint. The shell is
-   one session for the whole run, like a terminal: ``cd`` and exported
-   variables carry over between commands, and on Linux, where the run has a
+   one session for the whole run: every command starts in the workspace
+   root (or its ``working_dir``), exported variables carry over between
+   commands, and on Linux, where the run has a
    sandbox, a server started in one command answers requests in the next,
    until the run ends.
 
@@ -313,11 +314,11 @@ reading a trace and wondering why a run did what it did.
        blocker from its static frontend checks is sent back to the model once
        before Phase 2 ends. The harness closes an item itself when its check
        passes, and refuses ``done`` while the check fails; the model closes
-       an item without a check with ``task_list(action='done')``, without
+       an item without a check with ``task_list(done=[...])``, without
        quoting code. An edit to a file the item names never closes it. Work
-       the model cannot finish is recorded with ``action='blocked'`` and
+       the model cannot finish is recorded with ``blocked`` and
        stops holding the gate. An item the user did not ask for is closed
-       honestly with ``task_list(action='drop', id=N, reason=...)`` rather
+       honestly with ``task_list(drop=[{id, reason}])`` rather
        than marked done. In Phase 3 only an item whose check fails is a
        blocker; an item nothing closed is listed in the run report as not
        confirmed.

@@ -4,8 +4,8 @@ Some packages break at runtime against a newer release of a dependency they do
 not pin themselves. pip resolves these without complaint, so neither a dry-run
 nor an install catches them; the app only fails when the code path runs.
 ``KNOWN_INCOMPATIBLE_DEPENDENCIES`` records each pair once, and every stage
-that writes or installs a ``requirements.txt`` applies it: scaffold repair,
-``install_dependencies`` and the Phase 3 dependency check.
+that writes a ``requirements.txt`` applies it: scaffold repair, the agent's
+write tools and the Phase 3 dependency check.
 """
 
 from __future__ import annotations

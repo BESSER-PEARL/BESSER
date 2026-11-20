@@ -43,8 +43,9 @@ that was already broken is never refused, so it can be repaired.
   hashes, so every password hash fails). Each ``requirements.txt`` that
   declares the first package gets the second pinned, unless its declared range
   is already compatible. The same table is applied when scaffold repair writes
-  a ``requirements.txt`` and by ``install_dependencies`` before it installs,
-  so the delivered file is pinned even when Phase 3 is skipped.
+  a ``requirements.txt`` and after every agent write to a ``requirements.txt``
+  (the write's result lists the change under ``pinned`` and says that packages
+  installed from the file before no longer match it), so the delivered file is pinned even when Phase 3 is skipped.
 - Local-import resolution — an import naming a module the app does not ship
   where it is used. ``ruff`` is structurally blind to this (a star import
   excuses every name), and it is fatal at startup. Imports the app starts
@@ -960,7 +961,7 @@ is always the last one kept, so a retry can cost one more attempt but never
 stacks a regression on the shipped tree.
 An attempt that edits nothing is checked again when it moved evidence (a
 checklist item, a corrected scenario, an accepted citation) or dependencies (a
-successful ``install_dependencies`` or ``run_command``, or a change in a
+successful ``run_command``, or a change in a
 project's installed ``node_modules``). It continues the loop only if that check
 meets the same five conditions; having no edit to undo, it otherwise ends the
 loop. An attempt whose every write was refused gets one more attempt, with the
@@ -972,7 +973,7 @@ A fix turn whose reply is cut off at the output-token limit is retried with
 an instruction to emit less, up to four times per attempt, rather than
 applying a half-written edit.
 
-No tool is forced in a fix attempt: it ends when the model ends its turn or
+No tool is forced in a fix attempt, as in Phase 2: it ends when the model ends its turn or
 its ten turns are spent, and an attempt without a successful edit is logged as
 ``ended with no successful edit``. Phase 3 tool calls are recorded in the trace
 and the recipe exactly like Phase 2's.

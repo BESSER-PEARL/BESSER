@@ -5,7 +5,7 @@ Four categories:
 1. **Generator tools** — BESSER's built-in code generators
 2. **File tools** — read, write, modify, search files in the workspace
 3. **Execution tools** — run commands, install deps, test code
-4. **Validation tools** — check model validity and code syntax
+4. **Validation tools** — check the application, test its API, keep the checklist
 """
 
 import json
@@ -58,20 +58,11 @@ FILE_TOOLS: list[dict[str, Any]] = [
     {
         "name": "read_file",
         "description": (
-            "Read a file from the workspace. Every line comes back prefixed with "
-            "its line number, as 'N| '. When quoting a region as modify_file's "
-            "old_text, drop that prefix and quote the code itself; a quote that "
-            "keeps the prefix is accepted too. "
-            "Read the WHOLE function or class you intend to change in one call. "
-            "A 600-line file fits in a single read; crawling it in 10-line windows "
-            "spends one turn per window and still leaves you without the enclosing "
-            "block. Only paginate a file too large to read at once, and then in "
-            "large slices. "
-            "Returns read_id for revision-bound replace_file_lines edits. "
-            "offset is a 0-BASED SKIP; the numbers printed beside each line are "
-            "1-based. offset=50, limit=30 displays lines 51-80, so a following "
-            "replace_file_lines uses start_line=51, not 50 - or simply copy the "
-            "start_line/end_line this call returns."
+            "Read a workspace file; without offset and limit, the whole file. Every line "
+            "comes back as 'N| code' with N its 1-based line number (quote the code without "
+            "the prefix). offset is a 0-based skip: offset=50, limit=30 shows lines 51-80. "
+            "Returns start_line, end_line and a read_id for replace_file_lines on the lines "
+            "shown."
         ),
         "input_schema": {
             "type": "object",
@@ -93,13 +84,13 @@ FILE_TOOLS: list[dict[str, Any]] = [
     {
         "name": "write_file",
         "description": (
-            "Create a new file, or replace an existing file's full contents. "
-            "Use it for NEW files (configs, new modules, pages), and to rewrite "
-            "the whole of any existing file you have just read in full - a "
-            "first-class way to change a file here, not a last resort: it is "
-            "the most reliable write tool. Use modify_file for a small edit to a file you would "
-            "rather not reproduce in full. Do not rewrite a file you have not "
-            "read this run."
+            "Create a new file, or replace an existing file's whole content. An existing "
+            "file must have been read in full (or written) this run. Refused, the file "
+            "unchanged, when a parseable file would no longer parse or import, or when "
+            "a rewrite of a file this run did not create (generated and over 200 lines; "
+            "in a modify run, over 15 lines) drops its code: over 40% of its lines, a "
+            "top-level declaration or class member, a route or registration, or code left as "
+            "a placeholder. For a small change to a large file, modify_file is cheaper."
         ),
         "input_schema": {
             "type": "object",
@@ -113,22 +104,17 @@ FILE_TOOLS: list[dict[str, Any]] = [
     {
         "name": "modify_file",
         "description": (
-            "Apply a targeted search-and-replace edit to an existing file. "
-            "This is the tool for changing existing files: one modify_file "
-            "per change site, as many as the file needs, issued together in "
-            "the SAME turn. Keep old_text short - just the lines that change "
-            "plus a few neighbours so it matches exactly one place; do not "
-            "quote long unchanging runs. Calls on DIFFERENT files run in "
-            "parallel; several calls on the SAME file are applied in the "
-            "order you list them, so each one must match the file as the "
-            "previous one left it. old_text must match exactly, including "
-            "indentation. Completed replacement regions are skipped on replay, "
-            "including insertions that retain old_text. An already_applied result "
-            "requires a receipt for this exact edit and unchanged post-edit file; "
-            "it confirms the edit only, not the whole requirement. A possible_replay "
-            "result refuses a duplicate-looking insertion without claiming success. "
-            "After a miss, use its located_range with replace_file_lines; after two refused "
-            "edits, read the whole file and write_file it back. Do not keep retyping a failing old_text."
+            "Replace old_text with new_text in an existing file. old_text must match exactly "
+            "one place (indentation included) unless replace_all; keep it short, the lines "
+            "that change plus enough neighbours to be unique, one call per change site, all "
+            "in the same turn. Calls on one file apply in the order given, each to the file "
+            "the previous left; calls on different files run in parallel. A miss changes "
+            "nothing and returns the nearest lines (did_you_mean) or the span it located "
+            "(located_range, with a read_id for replace_file_lines). already_applied: this "
+            "exact edit landed before and the file is unchanged since; possible_replay: a "
+            "duplicate-looking insertion, refused. An edit that would leave a parseable file "
+            "unparseable or unimportable is refused; new code spanning 90% or more of a file "
+            "is held to write_file's rewrite rule."
         ),
         "input_schema": {
             "type": "object",
@@ -151,15 +137,14 @@ FILE_TOOLS: list[dict[str, Any]] = [
     {
         "name": "replace_file_lines",
         "description": (
-            "Replace a specific range of an existing file WITHOUT quoting old_text. "
-            "Use this with the located_range a refused edit returns, or for a complete function/block replacement. "
-            "First call read_file on the target block; copy its read_id and select the displayed "
-            "1-based start_line and end_line (both inclusive). new_text is the complete literal "
-            "replacement, with correct indentation and no numbered prefixes or omitted code. "
-            "Use an empty new_text to delete the selected lines. For insertion, include the selected "
-            "anchor line in new_text. Only the selected lines change. Unread ranges, stale reads "
-            "and syntax-breaking replacements are refused. After each successful edit, read again "
-            "before another range edit on the same file; do not batch same-file edits using one read_id."
+            "Replace lines start_line..end_line (1-based, inclusive) of a file with new_text, "
+            "without quoting them. read_id comes from a read_file or a located_range that "
+            "showed those lines; once the file changes it is stale and refused, so read again "
+            "before another range edit on the same file. new_text is the complete literal "
+            "replacement (empty deletes the lines; to insert, include the anchor line). "
+            "Refused, the file unchanged, for unseen lines, abbreviated code, or a replacement "
+            "that breaks the file's syntax or import; new code spanning 90% or more of a file "
+            "is held to write_file's rewrite rule."
         ),
         "input_schema": {
             "type": "object",
@@ -199,14 +184,9 @@ FILE_TOOLS: list[dict[str, Any]] = [
     {
         "name": "delete_file",
         "description": (
-            "Delete a file from the workspace. Use it only for a file YOU "
-            "created this run and no longer want — a scratch module, a "
-            "duplicate you superseded. Never delete a generated scaffold "
-            "file: the framework is fixed, and a protected run refuses it. "
-            "To change a generated file, edit it with modify_file (or "
-            "write_file after reading it in full). "
-            "Only deletes regular files (not directories). Path must be "
-            "relative to the workspace root."
+            "Delete one regular file (not a directory), by its path relative to the "
+            "workspace root. The result lists imports of a top-level module the delete "
+            "removed (still_imported). To change a generated file, edit it instead."
         ),
         "input_schema": {
             "type": "object",
@@ -227,8 +207,9 @@ EXECUTION_TOOLS: list[dict[str, Any]] = [
         "name": "run_command",
         "description": (
             "Run a shell command in this run's shell and return stdout + stderr. Use it to "
-            "test code, run linters and verify builds. The shell is one session for the "
-            "whole run, like a terminal: `cd` and exported variables (`export X=1`, "
+            "test code, run linters and verify builds. Every command starts in the workspace "
+            "root, or in working_dir: a `cd` lasts for its own command only. The shell is one "
+            "session for the whole run: exported variables (`export X=1`, "
             "`source .venv/bin/activate`) carry over to the next command, and a process "
             "started in the background (`python app.py > app.log 2>&1 &`) keeps running "
             "after its command returns, so a server started in one command can be tested "
@@ -239,10 +220,7 @@ EXECUTION_TOOLS: list[dict[str, Any]] = [
             "started in the foreground blocks for the full timeout: start servers in the "
             "background instead. When a result's notes "
             "say the session was restarted or the command ran in a one-off sandbox, earlier "
-            "background processes are gone. A result's cwd field is the shell's directory "
-            "when it is not the workspace root; ran_in, the result's first field, names it when an "
-            "earlier cd left the shell there, and cd_hint gives the path from there when a cd failed "
-            "on a path that exists from the root. A result's note says when exit_code is only that of the "
+            "background processes are gone. A result's note says when exit_code is only that of the "
             "last of several commands joined with ';' and an earlier one failed. Destructive or exfiltrating commands "
             "are refused with an error. stdout/stderr are truncated (~15k chars total); "
             "when cut, full_output_path names a file holding the complete log. A command "
@@ -257,48 +235,20 @@ EXECUTION_TOOLS: list[dict[str, Any]] = [
                 "command": {"type": "string"},
                 "working_dir": {
                     "type": "string",
-                    "description": (
-                        "Directory for this command only, relative to the workspace root; "
-                        "the shell's own directory does not move. Default: the shell's "
-                        "current directory (the workspace root until a command cd's elsewhere)."
-                    ),
+                    "description": "Directory for this command, relative to the workspace root. "
+                                   "Default: the workspace root.",
                 },
                 "timeout": {
                     "type": "integer",
                     "description": (
                         "Seconds before this command is killed: max 600, and never past "
                         "the run's remaining time. Raise it only for a command known to be "
-                        "slow (a long build: cargo build, gradle; a first npm install)."
+                        "slow (a long build: cargo build, gradle; a first npm or pip install: "
+                        "300)."
                     ),
                 },
             },
             "required": ["command"],
-        },
-    },
-    {
-        "name": "install_dependencies",
-        "description": (
-            "Install dependencies for a project. Detects the package manager automatically: "
-            "if requirements.txt exists, runs pip install -r requirements.txt; "
-            "if package.json exists, runs npm install (both, when both exist). "
-            "Returns an error when neither file is found. A custom command runs through "
-            "run_command instead of auto-detection. Every install has a 300-second timeout, "
-            "shares run_command's shell session, and leaves the shell's directory and "
-            "environment as they were."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "working_dir": {
-                    "type": "string",
-                    "description": "Subdirectory containing the project (relative to workspace)",
-                    "default": ".",
-                },
-                "command": {
-                    "type": "string",
-                    "description": "Custom install command",
-                },
-            },
         },
     },
 ]
@@ -306,6 +256,11 @@ EXECUTION_TOOLS: list[dict[str, Any]] = [
 # ======================================================================
 # Validation tools
 # ======================================================================
+
+# One drop or blocked entry: drop says why the user did not ask for the item,
+# blocked what remains unresolved and why.
+_TASK_REASON = {"type": "object", "required": ["id", "reason"],
+                "properties": {"id": {"type": "integer"}, "reason": {"type": "string"}}}
 
 VALIDATION_TOOLS: list[dict[str, Any]] = [
     {
@@ -383,154 +338,24 @@ VALIDATION_TOOLS: list[dict[str, Any]] = [
                            "line": {"type": "string"}}}}}},
     },
     {
-        "name": "validate_model",
-        "description": "Run structural validation on the domain model. Returns errors and warnings.",
-        "input_schema": {"type": "object", "properties": {}},
-    },
-    {
-        "name": "check_syntax",
-        "description": (
-            "Parse a Python file and report the first syntax error with its line. "
-            "Python only; it does not import or execute the file, so missing imports and "
-            "undefined names are not detected (validate_app checks those)."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "path": {"type": "string", "description": "Path to Python file to check"},
-            },
-            "required": ["path"],
-        },
-    },
-    {
         "name": "task_list",
         "description": (
-            "Your work checklist for this run. action='list' shows every item "
-            "with its status; action='done' marks items complete — pass "
-            "`ids=[1,2,3]` for SEVERAL AT ONCE, or `id` for one; "
-            "action='add' appends items you discovered — pass `texts=[...]` "
-            "for SEVERAL AT ONCE, or `text` for one. "
-            "action='drop' closes an item the user did NOT ask for (pass `id` and "
-            "`reason`: why it was not requested) — never mark such an item done. "
-            "action='blocked' records required but unresolved work (pass `id` or "
-            "`ids` and `reason`: what remains unresolved and why); use this when you "
-            "cannot implement or verify it. "
-            "action='mixed' does SEVERAL OF THE ABOVE IN ONE CALL — the turn "
-            "you finish two items AND discover a new one AND drop one you didn't "
-            "need should be ONE task_list call, not four. Pass any combination of "
-            "`done_ids` (same as action='done' `ids`), "
-            "`add_texts` (same as action='add' `texts`), `drop` (a list of "
-            "{id, reason} objects), and `blocked` (a list of {id, reason} objects). "
-            "The reply nests each verb's own result under `results` — check every "
-            "key you used; a mixed call can succeed on one verb and be refused on "
-            "another in the same response. "
-            "Mark items done as you complete them — the run does not finish "
-            "while items are open. Batch them: one task per call wastes a turn "
-            "each, and you have a limited number of turns. An item with a machine "
-            "check closes by itself once the check passes, and done is refused while "
-            "it fails. Any other item closes only when you mark it done. Closing an "
-            "item is bookkeeping: the harness still checks the app."
+            "Your checklist for this run. Every field is optional and one call may combine "
+            "them: done marks items complete, add appends items you found, drop closes an "
+            "item the user did not ask for, blocked records required work you cannot finish. "
+            "A call with no fields lists every item. Every result lists the open items. The "
+            "run does not finish while items are open. An item with a machine check closes "
+            "by itself once the check passes, and done on it is refused while it fails; any "
+            "other item closes when you mark it done."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "action": {
-                    "type": "string",
-                    "enum": ["list", "done", "add", "drop", "blocked", "mixed"],
-                },
-                "id": {"type": "integer"},
-                "reason": {"type": "string"},
-                "ids": {"type": "array", "items": {"type": "integer"}},
-                "text": {"type": "string"},
-                "texts": {"type": "array", "items": {"type": "string"}},
-                "done_ids": {"type": "array", "items": {"type": "integer"}},
-                "add_texts": {"type": "array", "items": {"type": "string"}},
-                "drop": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {"id": {"type": "integer"}, "reason": {"type": "string"}},
-                        "required": ["id", "reason"],
-                    },
-                },
-                "blocked": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {"id": {"type": "integer"}, "reason": {"type": "string"}},
-                        "required": ["id", "reason"],
-                    },
-                },
+                "done": {"type": "array", "items": {"type": "integer"}},
+                "add": {"type": "array", "items": {"type": "string"}},
+                "drop": {"type": "array", "items": _TASK_REASON},
+                "blocked": {"type": "array", "items": _TASK_REASON},
             },
-            "required": ["action"],
-        },
-    },
-]
-
-
-# ======================================================================
-# Model query tools — lightweight random-access into the domain model
-# so the LLM doesn't have to keep the full JSON in context.
-# ======================================================================
-
-MODEL_QUERY_TOOLS: list[dict[str, Any]] = [
-    {
-        "name": "query_class",
-        "description": (
-            "Return the full definition of a single class from the domain "
-            "model: attributes, methods (with inheritance flattened), "
-            "parents, and association ends. Use this when you need deeper "
-            "detail on one class than the system-prompt summary provides."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "name": {
-                    "type": "string",
-                    "description": "Class name (case-sensitive).",
-                },
-            },
-            "required": ["name"],
-        },
-    },
-    {
-        "name": "list_classes_with",
-        "description": (
-            "List every class in the domain model matching a simple "
-            "predicate. Keeps context small when the model has dozens of "
-            "classes."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "predicate": {
-                    "type": "string",
-                    "description": (
-                        "One of: is_abstract | is_root (no parents) | has_constraint | "
-                        "has_attribute:<name> | has_method:<name> | "
-                        "extends:<parent_name>"
-                    ),
-                },
-            },
-            "required": ["predicate"],
-        },
-    },
-    {
-        "name": "get_constraints_for",
-        "description": (
-            "Return all constraints (OCL expressions) whose context is the "
-            "given class. Use this to translate OCL constraints into "
-            "runtime validators (Pydantic / Zod / serializers)."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "class_name": {
-                    "type": "string",
-                    "description": "Class name to look up constraints for.",
-                },
-            },
-            "required": ["class_name"],
         },
     },
 ]
@@ -542,7 +367,6 @@ def get_all_tools_including_generators() -> list[dict[str, Any]]:
         GENERATOR_TOOLS
         + FILE_TOOLS
         + EXECUTION_TOOLS
-        + MODEL_QUERY_TOOLS
         + VALIDATION_TOOLS
     )
 
@@ -554,11 +378,6 @@ def get_all_tools_including_generators() -> list[dict[str, Any]]:
 _TOOL_MODEL_REQUIREMENTS: dict[str, frozenset[str]] = {
     # Generators: from their registry entry
     **{tool.name: tool.requires for tool in agent_tools()},
-    # Model-query tools need the domain model
-    "query_class":              frozenset({"domain"}),
-    "list_classes_with":        frozenset({"domain"}),
-    "get_constraints_for":      frozenset({"domain"}),
-    "validate_model":           frozenset({"domain"}),
 }
 
 
@@ -604,7 +423,7 @@ def get_available_generator_names(
     ]
 
 
-_SHELL_TOOLS = frozenset({"run_command", "install_dependencies"})
+_SHELL_TOOLS = frozenset({"run_command"})
 
 # A provider whose tool-call arguments fail to parse passes
 # ``{INVALID_ARGUMENTS_KEY: "<parse error>"}`` instead of ``{}``, so the

@@ -301,7 +301,7 @@ def required_dependency_setup(check: str, project: str) -> str:
     return (
         f"verification setup: {check} requires installed project dependencies. "
         f"Toolchain and shell tools are enabled and npm is available. Use "
-        f"install_dependencies with working_dir={project!r} to install the declared "
+        f"run_command with working_dir={project!r} and timeout=300 to install the declared "
         "dependencies, then call validate_app to run the required checks. "
         "Do not edit application code solely to satisfy this verification prerequisite."
     )

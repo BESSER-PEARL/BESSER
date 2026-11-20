@@ -2009,8 +2009,7 @@ class SmartGenerationRunner:
             # Disable the arbitrary-shell tools by default — they are
             # user-steerable RCE / secret-exfil on a shared BYOK host. OFF by
             # default (BESSER_LLM_ENABLE_SHELL_TOOLS). The agent keeps every
-            # static tool; only arbitrary `run_command`/`install_dependencies`
-            # are withheld.
+            # static tool; only arbitrary `run_command` is withheld.
             allow_shell_tools=settings.llm_enable_shell_tools,
             per_write_diagnostics=settings.llm_per_write_diagnostics,
             enable_import_smoke_check=settings.llm_enable_import_smoke_check,

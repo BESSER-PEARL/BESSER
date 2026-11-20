@@ -797,7 +797,7 @@ def test_a_resume_after_packaging_says_the_dependencies_must_be_installed_again(
 
     system = _resume_recording_the_prompt(simple_model, tmp_path)
 
-    assert DEPENDENCIES_REMOVED_NOTE in system and "install_dependencies" in DEPENDENCIES_REMOVED_NOTE
+    assert DEPENDENCIES_REMOVED_NOTE in system and "run_command" in DEPENDENCIES_REMOVED_NOTE
     assert [r for r in caplog.records if "dependencies were removed" in r.getMessage()]
 
 

@@ -249,8 +249,7 @@ a request shaped for them, which the client does automatically:
        tool-capable model.
    * - ``claude-fable-5-1``, ``claude-fable-5-2``, ``claude-mythos-5-1``,
        ``claude-mythos-5-2``, ``claude-opus-5-5``, ``claude-sonnet-5-5``
-     - A forced tool call (planning, gap analysis, requirements ledger,
-       recovery steps) is sent as ``tool_choice: auto`` with an instruction
+     - A forced tool call (planning, gap analysis, requirements ledger) is sent as ``tool_choice: auto`` with an instruction
        naming the tool, plus ``strict: true`` when it is the only tool, and is
        asked again once if the reply skips the tool. ``thinking`` is never
        sent.

@@ -83,8 +83,8 @@ declined reply or the turn limit stops it, ``response`` starts with
 .. note::
    ``allow_shell_tools`` and ``enable_toolchain_validation`` both default to
    ``False``, on every path — library, CLI and hosted alike. A library run does
-   **not** get ``run_command`` / ``install_dependencies`` unless you ask for
-   them, and the refusal is enforced when the tool is called, not merely by
+   **not** get ``run_command`` unless you ask for
+   it, and the refusal is enforced when the tool is called, not merely by
    leaving it out of the advertised list. Opt in deliberately, and only where
    running model-authored commands on that machine is acceptable::
 

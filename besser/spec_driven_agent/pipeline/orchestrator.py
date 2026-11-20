@@ -97,7 +97,6 @@ from besser.spec_driven_agent.planning.gap_analyzer import (
 from besser.spec_driven_agent.planning.action_inventory import (
     collect_action_endpoints, action_gap_tasks, action_implementation_issues, merge_action_tasks,
 )
-from besser.llm.pricing import is_free_local_model
 from besser.spec_driven_agent.providers.llm_client import (
     ClaudeLLMClient,
     FROM_SCRATCH_MAX_TOKENS,
@@ -146,7 +145,7 @@ from besser.spec_driven_agent.agent.runbook import (
     remove_run_folder_bound_files,
 )
 from besser.spec_driven_agent.agent.tool_executor import ToolExecutor, ends_shell_session
-from besser.spec_driven_agent.agent.tools import dumps_for_model
+from besser.spec_driven_agent.agent.tools import _SHELL_TOOLS, dumps_for_model
 from besser.spec_driven_agent.execution.deadline import Deadline, under_deadline
 from besser.spec_driven_agent.execution.process import _safe_subprocess_env, timeout_cause
 from besser.spec_driven_agent.execution.sandbox import SandboxUnavailable, run_confined
@@ -330,7 +329,7 @@ _HISTORY_EVICTION_ENABLED = AgentSettings().llm_history_eviction
 # Told to a run resumed after packaging removed what it had installed.
 DEPENDENCIES_REMOVED_NOTE = (
     "The installed dependencies (node_modules, virtual environments, build output) were removed after "
-    "the previous run finished; install them again with the install_dependencies tool before validating."
+    "the previous run finished; install them again with run_command before validating."
 )
 
 
@@ -389,7 +388,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # Given every trace record with its uncut tool inputs and results (the
         # backend keeps them server-side); None writes nothing besides the trace.
         run_evidence: Callable[[dict], None] | None = None,
-        # Both default OFF: they enable run_command / install_dependencies, the
+        # Both default OFF: they enable run_command, the
         # arbitrary-shell capability the hosted gate exists to withhold. Opt in
         # explicitly; generation does not need them.
         enable_toolchain_validation: bool = False,
@@ -454,11 +453,6 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # Phase 3 reports each validation round: (attempt, issues, restored=False).
         self.on_findings = on_findings
         self.use_streaming = use_streaming
-        # Weak / free-tier open models (e.g. qwen3-coder) ignore "don't switch
-        # frameworks" and delete the whole deterministic scaffold to rebuild it.
-        # Make that scaffold delete-proof for them only; capable cloud models are
-        # unaffected and keep full delete_file.
-        _model_name = (getattr(self.client, "model", "") or "").lower()
         self.executor = ToolExecutor(
             workspace=self.output_dir,
             domain_model=domain_model,
@@ -469,7 +463,6 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             object_model=object_model,
             bpmn_model=bpmn_model,
             nn_model=nn_model,
-            protect_scaffold=is_free_local_model(_model_name),
             per_write_diagnostics=per_write_diagnostics,
             # The executor enforces this too. Hiding the tools from the
             # advertised list is not a gate: the model can name a tool it was
@@ -497,7 +490,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # that need a domain model (pydantic/sqlalchemy/django/react/…)
         # are hidden when there isn't one so the LLM doesn't waste turns
         # calling generators that will just error. See tools.get_tools_for.
-        # ``allow_shell_tools=False`` drops run_command/install_dependencies —
+        # ``allow_shell_tools=False`` drops run_command —
         # the arbitrary-shell tools. On a hosted, multi-tenant, BYOK box those
         # are user-steerable RCE (the cwd lock + denylist are UX, not a
         # sandbox), so the web runner disables them; trusted local/CLI/bench
@@ -601,9 +594,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._last_modify_warning_path: str | None = None
         self._phase2_inspection_handoff = ""
         # Escalation for an edit the executor has already rejected and the
-        # model sends again (see _escalate_repeat_rejection): the tool the
-        # next request must call, and per path the repeat count already acted on.
-        self._force_tool_next: str | None = None
+        # model sends again (see _escalate_repeat_rejection): per path the
+        # repeat count already acted on.
         self._repeat_escalations: dict[str, int] = {}
         self._compaction_count = 0
         self._generator_used: str | None = None
@@ -2208,7 +2200,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             messages = self._maybe_compact(messages)
 
             try:
-                response = self._chat_with_pending_force(system, messages)
+                response = self._chat_turn(system, messages)
             except InvalidApiKeyError:
                 # Auth failures must PROPAGATE so the runner reports INVALID_KEY,
                 # not a misleading INTERNAL/api_error or a fake "incomplete
@@ -2305,12 +2297,11 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                             "are still OPEN:\n"
                             f"{listing}\n"
                             "Finish each one now. If an item is already "
-                            "complete, mark it with task_list(action='done', "
-                            "ids=[...]). If required work cannot be finished, "
-                            "record task_list(action='blocked', id=N, reason=...). "
-                            "If the user did not ask for it, close it "
-                            "honestly with task_list(action='drop', id=N, "
-                            "reason=...) - never mark undone work done. End "
+                            "complete, mark it with task_list(done=[...]). If "
+                            "required work cannot be finished, record "
+                            "task_list(blocked=[{id, reason}]). If the user did "
+                            "not ask for it, close it honestly with "
+                            "task_list(drop=[{id, reason}]) - never mark undone work done. End "
                             "the turn only when every item is closed."
                         )
                     messages.append({
@@ -2616,7 +2607,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         args = getattr(block, "input", None)
         # Shell calls share the workspace, its venv and the probe's state file;
         # run in parallel they killed each other's processes and crossed ports.
-        if name in ("run_command", "install_dependencies"):
+        if name in _SHELL_TOOLS:
             return "shell"
         if name in self._WRITE_TOOLS and isinstance(args, dict):
             path = args.get("path")
@@ -2670,6 +2661,19 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             results.extend(self._execute_single_tool(b, turn) for b in validations)
             order = {b.id: index for index, b in enumerate(tool_blocks)}
             return sorted(results, key=lambda result: order[result["tool_use_id"]])
+
+        # A shell call sees every write the model emitted before it, and no
+        # write runs during it: the batch is cut into stages at each shell call
+        # that has a write before or after it. Reads stay parallel within a stage.
+        names = [getattr(b, "name", None) for b in tool_blocks]
+        first_shell = next((i for i, name in enumerate(names) if name in _SHELL_TOOLS), None)
+        if first_shell is not None and any(name in self._WRITE_TOOLS for name in names):
+            if first_shell:
+                return (self._run_tool_blocks(tool_blocks[:first_shell], turn)
+                        + self._run_tool_blocks(tool_blocks[first_shell:], turn))
+            next_write = next((i for i, name in enumerate(names) if name in self._WRITE_TOOLS), len(names))
+            return (self._run_tool_blocks(tool_blocks[:next_write], turn)
+                    + self._run_tool_blocks(tool_blocks[next_write:], turn))
 
         groups: dict[str, list] = {}
         for block in tool_blocks:
@@ -2801,9 +2805,6 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 execution.payload["checklist_closed"] = closed
                 logger.info("Auto-closed %d verified checklist item(s): %s",
                             len(closed), [item["id"] for item in closed])
-        recovery = execution.payload.get("edit_recovery", {})
-        if recovery.get("next_tool") in {"read_file", "replace_file_lines", "modify_file"}:
-            self._force_tool_next = recovery["next_tool"]
         result = execution.to_json()
         success = execution.succeeded
 
@@ -3609,7 +3610,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 
         # Dependency resolution may execute untrusted build backends and
         # access the network. Keep it behind the same explicit shell-tools
-        # trust gate as run_command/install_dependencies, and in the same
+        # trust gate as run_command, and in the same
         # sandbox: network on (pip must reach the index), everything else
         # confined like run_command.
         if self.allow_shell_tools:
@@ -3791,8 +3792,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         the workspace, not change it -- see ``test_validation_honesty``), so
         this belongs here, at scaffold time, where writing files is the point.
 
-        Best-effort and silent on failure: the model keeps its own
-        ``install_dependencies`` tool, and ``collect_frontend_build_issues``
+        Best-effort and silent on failure: the model can still install
+        through ``run_command``, and ``collect_frontend_build_issues``
         still reports an uninstalled frontend.
         """
         import subprocess
@@ -5144,7 +5145,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             self.total_turns += 1
 
             try:
-                response = self._chat_with_pending_force(system, messages)
+                response = self._chat_turn(system, messages)
             except InvalidApiKeyError:
                 # The caller must report the bad key, not a fix summary.
                 raise

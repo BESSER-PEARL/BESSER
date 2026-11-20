@@ -235,15 +235,15 @@ def test_modify_guard_off_by_default(tmp_path):
     assert result["status"] == "written"
 
 
-def test_modify_guard_blocks_rewrite_of_existing_file(tmp_path):
+def test_modify_guard_blocks_a_lossy_rewrite_of_existing_file(tmp_path):
     _existing_file(tmp_path)
     executor = ToolExecutor(workspace=str(tmp_path))
-    executor._read_file({"path": "app.py"})     # seen: it is the MODIFY-run guard that fires
+    executor._read_file({"path": "app.py"})     # seen: it is the MODIFY-run rule that fires
     executor.enable_modify_guard()
     result = json.loads(executor.execute("write_file", {
         "path": "app.py", "content": "rewritten",
     }))
-    assert "MODIFY run" in result["error"]
+    assert "existed before this run" in result["error"]
     assert "modify_file" in result["error"]
     # File untouched.
     assert (tmp_path / "app.py").read_text(encoding="utf-8").startswith("line0")
@@ -264,28 +264,28 @@ def test_modify_guard_allows_new_and_trivial_files(tmp_path):
     assert tiny["status"] == "written"
 
 
-def test_modify_guard_unlocks_after_two_targeted_edits(tmp_path):
+def test_modify_guard_does_not_unlock_after_two_targeted_edits(tmp_path):
+    """Edits are not a read: the rewrite still needs the whole file shown, and its code kept."""
     _existing_file(tmp_path)
     executor = ToolExecutor(workspace=str(tmp_path))
     executor.enable_modify_guard()
     # NB: the fixture writes line0..line29, so a bare "line1" also matches
-    # line10-line19 (11 occurrences). _modify_file now refuses a short
-    # ambiguous anchor rather than silently editing whichever came first, so
-    # these anchors carry their line ending to be unique - which is exactly
-    # the guidance the tool description gives the model.
+    # line10-line19 (11 occurrences); the anchors carry their line ending.
     for old, new_text in (("line1\n", "line1_edited\n"),
                           ("line2\n", "line2_edited\n")):
         r = json.loads(executor.execute("modify_file", {
             "path": "app.py", "old_text": old, "new_text": new_text,
         }))
         assert r["status"] == "modified", r
-    # Valid Python: a rewrite that would leave a parseable
-    # .py file unparseable is refused, and "rewritten as last resort" is not
-    # Python.
-    result = json.loads(executor.execute("write_file", {
-        "path": "app.py", "content": "rewritten = 'as last resort'\n",
+    unread = json.loads(executor.execute("write_file", {
+        "path": "app.py", "content": "rewritten = 'from memory'\n",
     }))
-    assert result["status"] == "written", result
+    assert "read only part" in unread["error"], unread
+    executor._read_file({"path": "app.py"})
+    lossy = json.loads(executor.execute("write_file", {
+        "path": "app.py", "content": "rewritten = 'from memory'\n",
+    }))
+    assert "existed before this run" in lossy["error"], lossy
 
 
 def test_modify_run_enables_the_guard(tmp_path, monkeypatch):

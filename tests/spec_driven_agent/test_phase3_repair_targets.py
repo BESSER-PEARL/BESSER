@@ -215,7 +215,6 @@ def test_a_frontend_file_brings_its_folder_and_the_apps_routing_and_entry_files(
 def test_no_request_in_a_repair_attempt_carries_a_forced_tool(tmp_path):
     client = _Client(_tools(("read_file", {"path": "backend/routers/order.py"})))
     orch = _build(tmp_path, client)
-    orch._force_tool_next = "replace_file_lines"  # left by the executor's recovery ladder
 
     assert orch._invoke_phase3_fix_loop([IN_ORDER], is_first_attempt=True) == 0
 

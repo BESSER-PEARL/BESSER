@@ -13,7 +13,7 @@ import pytest
 from besser.BUML.metamodel.structural import (
     AssociationClass, BinaryAssociation, BooleanType, Class, DateTimeType, DomainModel, Enumeration,
     EnumerationLiteral, FloatType, Generalization, IntegerType, Method, MethodImplementationType,
-    Multiplicity, Parameter, Property, StringType,
+    Multiplicity, Parameter, PrimitiveDataType, Property, StringType,
 )
 from besser.generators.backend import BackendGenerator
 from besser.generators.backend.api_contract import build_api_contract
@@ -114,11 +114,22 @@ def _abstract_parent_model():
                                         Generalization(general=vehicle, specific=truck)})
 
 
+def _concrete_root_model():
+    """An abstract Shape with no association, so mapped without a table of its own."""
+    shape = Class(name="Shape", is_abstract=True, attributes={Property(name="label", type=StringType)})
+    circle = Class(name="Circle", attributes={Property(name="radius", type=FloatType)})
+    square = Class(name="Square", attributes={Property(name="side", type=FloatType)})
+    return DomainModel(name="Shapes", types={shape, circle, square},
+                       generalizations={Generalization(general=shape, specific=circle),
+                                        Generalization(general=shape, specific=square)})
+
+
 _MODELS = {
     "tasks": _task_model,
     "enrollment": _enrollment_model,
     "methods": _methods_model,
     "abstract_parent": _abstract_parent_model,
+    "concrete_root": _concrete_root_model,
 }
 _FIXTURES = ("library_book_author_model", "employee_self_assoc_model", "library_model_with_enum",
              "library_model_with_inheritance", "custom_role_name_model", "non_navigable_assoc_model",
@@ -196,3 +207,21 @@ def test_api_md_lists_every_route(tmp_path):
     assert "`project` (int, required)" in text
     assert "`project_id`" in text
     assert '"LOW" | "HIGH"' in text
+
+
+def test_method_parameters_are_described_as_the_route_reads_them():
+    """Every parameter is optional (the route reads them with ``params.get``); an enumeration and a
+    duration are values, a class is sent as the id of one of its records."""
+    level = Enumeration(name="Level", literals={EnumerationLiteral(name="LOW")})
+    owner = Class(name="Owner", attributes={Property(name="name", type=StringType)})
+    item = Class(name="Item", attributes={Property(name="label", type=StringType)})
+    item.methods = {Method(name="plan", parameters={
+        Parameter(name="to", type=level), Parameter(name="after", type=PrimitiveDataType("timedelta")),
+        Parameter(name="by", type=owner)})}
+    contract = build_api_contract(DomainModel(name="Plans", types={level, owner, item}))
+    [route] = [route for route in contract["routes"] if route["group"] == "method"]
+    params = {param["name"]: param for param in route["parameters"]}
+    assert not any(param["required"] for param in params.values())
+    assert params["to"] == {"name": "to", "type": "Level", "required": False, "enum": True}
+    assert params["after"] == {"name": "after", "type": "timedelta", "required": False}
+    assert params["by"] == {"name": "by", "type": "int", "required": False, "record": "Owner"}

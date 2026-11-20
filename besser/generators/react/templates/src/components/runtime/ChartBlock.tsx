@@ -8,7 +8,7 @@ import { RadialBarChartComponent } from "../charts/RadialBarChartComponent";
 import { aggregate, normalizeAggregation } from "./aggregate";
 import {
   applyFilter,
-  buildFilteredUrl,
+  buildFilteredRequest,
   extractRows,
   getNestedValue,
   isNestedField,
@@ -115,13 +115,13 @@ export const ChartBlock: React.FC<ChartBlockProps> = ({
       const parsedFilter = parseFilterExpression(s.filter);
       const needsDetailed =
         isNestedField(s.labelField) || isNestedField(s.dataField) || Boolean(parsedFilter?.hasNestedFields);
-      const url = buildFilteredUrl(endpoint, {
+      const { path, query } = buildFilteredRequest(endpoint, {
         detailed: needsDetailed,
         filter: parsedFilter,
         preferSearch: !!parsedFilter?.serverCompatible && !needsDetailed,
         custom: Boolean(s.customEndpoint),
       });
-      return apiRequest<unknown>("GET", url)
+      return apiRequest<unknown>("GET", path, { query })
         .then((body) => {
           const data = applyFilter(extractRows(body), parsedFilter);
           return { seriesName, data };
@@ -152,14 +152,14 @@ export const ChartBlock: React.FC<ChartBlockProps> = ({
       isNestedField(dataBinding?.label_field) ||
       isNestedField(dataBinding?.data_field) ||
       Boolean(parsedFilter?.hasNestedFields);
-    const url = buildFilteredUrl(endpoint, {
+    const { path, query } = buildFilteredRequest(endpoint, {
       detailed: needsDetailed,
       filter: parsedFilter,
       preferSearch: !!parsedFilter?.serverCompatible && !needsDetailed,
       custom: Boolean(dataBinding?.custom_endpoint),
     });
 
-    apiRequest<unknown>("GET", url)
+    apiRequest<unknown>("GET", path, { query })
       .then((body) => {
         const data = applyFilter(extractRows(body), parsedFilter);
         setChartData(data);

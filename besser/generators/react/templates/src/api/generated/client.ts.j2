@@ -1,18 +1,53 @@
-// The typed client of the backend API, generated from the domain model "[[ api_contract.model ]]"
-// with the backend (its api_contract.json and API.md list the same routes).
-// Regenerating rewrites this file: put your own calls elsewhere.
+// The typed client of the backend API, generated from the domain model "[[ api_contract.model ]]".
+// The backend generated with every HTTP method (as the web app generator does) serves exactly these
+// routes; its api_contract.json and API.md describe them. Regenerating rewrites this file: put your
+// own calls elsewhere.
 //
 // Every function returns the plain value: a record, an array of records, a count. The
 // backend's wrappers (`{"task": ..., "tag_ids": [...]}`, `{"tags_count": ..., "tags": [...]}`,
 // `{"params": {...}}`) never reach the caller. Every failure is thrown as one ApiError.
+// Requests go through axios, so the app's axios defaults and interceptors apply to them.
+//
+// The names this file fixes start with "api"/"Api"/"API" and never end in "Api"; the objects
+// generated per class end in "Api" (`taskApi`), so no class name can collide with them.
+import axios from "axios";
 import type * as T from "./types";
 
 /** The backend's address (VITE_API_URL, without a trailing slash): the one place it is defined. */
 export const API_BASE_URL: string = String(import.meta.env.VITE_API_URL || "[[ api_contract.base_url.default ]]").replace(/\/+$/, "");
 
+/** GET /<class>/paginated/. */
+export interface ApiPage<Item> {
+  total: number;
+  skip: number;
+  limit: number;
+  data: Item[];
+}
+
+/** POST /<class>/bulk/. */
+export interface ApiBulkCreateResult<Id> {
+  created_count: number;
+  created_ids: Id[];
+  message: string;
+}
+
+/** DELETE /<class>/bulk/. */
+export interface ApiBulkDeleteResult<Id> {
+  deleted_count: number;
+  not_found: Id[];
+  message: string;
+}
+
+/** What a method route returns: its result and anything it printed. */
+export interface ApiMethodResult<Result> {
+  result: Result;
+  output: string | null;
+}
+
 /**
  * A failed request. `status` is the HTTP status (0 when the backend was not reached),
- * `message` what to show the user, `fields` the message per invalid body field (422).
+ * `message` what to show the user, `fields` the message per invalid body field (422),
+ * `body` the response body as the backend sent it.
  */
 export class ApiError extends Error {
   status: number;
@@ -29,10 +64,10 @@ export class ApiError extends Error {
   }
 }
 
-const describe = (value: unknown): string => (typeof value === "string" ? value : JSON.stringify(value));
+const apiDescribe = (value: unknown): string => (typeof value === "string" ? value : JSON.stringify(value));
 
-/** Both error bodies the backend sends: {error, message, detail} and FastAPI's 422 {detail: [...]}. */
-const errorFromResponse = (status: number, body: unknown): ApiError => {
+/** Every error body the backend sends: {error, message, detail}, FastAPI's 422 {detail: [...]}, plain text. */
+const apiErrorFromResponse = (status: number, body: unknown): ApiError => {
   const data = (body && typeof body === "object" ? body : {}) as Record<string, any>;
   const detail = data.detail;
   if (Array.isArray(detail)) {
@@ -45,7 +80,7 @@ const errorFromResponse = (status: number, body: unknown): ApiError => {
     return new ApiError(status, parts.join("; "), fields, body);
   }
   if (detail !== undefined && detail !== null && detail !== "") {
-    const message = typeof detail === "object" && typeof detail.message === "string" ? detail.message : describe(detail);
+    const message = typeof detail === "object" && typeof detail.message === "string" ? detail.message : apiDescribe(detail);
     return new ApiError(status, message, {}, body);
   }
   if (typeof data.message === "string" && data.message) return new ApiError(status, data.message, {}, body);
@@ -53,45 +88,38 @@ const errorFromResponse = (status: number, body: unknown): ApiError => {
   return new ApiError(status, `Request failed with status ${status}`, {}, body);
 };
 
-/** A path joined to API_BASE_URL (an http(s) URL is kept), with its query parameters. */
+/**
+ * A path joined to API_BASE_URL, with its query parameters. An http(s) URL, or a path that
+ * already starts with API_BASE_URL, is kept as it is.
+ */
 export const apiUrl = (path: string, query?: object): string => {
-  const base = /^https?:\/\//i.test(path) ? path : API_BASE_URL + (path.startsWith("/") ? path : `/${path}`);
+  const joined = /^https?:\/\//i.test(path) || path === API_BASE_URL || path.startsWith(`${API_BASE_URL}/`)
+    ? path
+    : API_BASE_URL + (path.startsWith("/") ? path : `/${path}`);
   const params = Object.entries(query || {})
     .filter(([, value]) => value !== undefined && value !== null && value !== "")
     .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`);
-  if (!params.length) return base;
-  return base + (base.includes("?") ? "&" : "?") + params.join("&");
+  if (!params.length) return joined;
+  return joined + (joined.includes("?") ? "&" : "?") + params.join("&");
 };
 
-/** One request to the backend: the parsed JSON body, or an ApiError. */
+/** One request to the backend: the response body, or an ApiError. */
 export async function apiRequest<R>(method: string, path: string, options: { query?: object; body?: unknown } = {}): Promise<R> {
-  let response: Response;
   try {
-    response = await fetch(apiUrl(path, options.query), {
-      method,
-      headers: options.body === undefined ? undefined : { "Content-Type": "application/json" },
-      body: options.body === undefined ? undefined : JSON.stringify(options.body),
-    });
-  } catch (cause) {
-    throw new ApiError(0, "Network error. Please try again.", {}, cause);
+    const response = await axios.request<R>({ method, url: apiUrl(path, options.query), data: options.body });
+    return response.data;
+  } catch (err) {
+    if (!axios.isAxiosError(err)) throw err;
+    if (err.response) throw apiErrorFromResponse(err.response.status, err.response.data);
+    throw new ApiError(0, "Network error. Please try again.", {}, err);
   }
-  const text = await response.text();
-  let data: unknown = null;
-  if (text) {
-    try {
-      data = JSON.parse(text);
-    } catch {
-      data = text;
-    }
-  }
-  if (!response.ok) throw errorFromResponse(response.status, data);
-  return data as R;
 }
 
-const seg = (value: string | number): string => encodeURIComponent(String(value));
+const apiSegment = (value: string | number): string => encodeURIComponent(String(value));
 {% macro params(route) %}{% for p in route.path_params %}[[ p.name ]]: [[ p.type | ts_type ]][[ ", " if not loop.last else "" ]]{% endfor %}{% endmacro %}
-{% macro record_call(route, entity, method, extra="") %}{% if route.response.kind == "wrapped_record" %}(await apiRequest<{ [[ route.response.key ]]: T.[[ entity.name ]] }>("[[ method ]]", [[ route.path | ts_path ]][[ extra ]])).[[ route.response.key ]]{% else %}apiRequest<T.[[ entity.name ]]>("[[ method ]]", [[ route.path | ts_path ]][[ extra ]]){% endif %}{% endmacro %}
+{% macro record_call(route, record, method, extra="") %}{% if route.response.kind == "wrapped_record" %}(await apiRequest<{ [[ route.response.key ]]: T.[[ record ]] }>("[[ method ]]", [[ route.path | ts_path ]][[ extra ]])).[[ route.response.key ]]{% else %}apiRequest<T.[[ record ]]>("[[ method ]]", [[ route.path | ts_path ]][[ extra ]]){% endif %}{% endmacro %}
 {% for entity in api_contract.entities %}
+{% set names = type_names[entity.name] %}
 {% set routes = api_routes[entity.name] %}
 {% set crud = routes.crud %}
 {% set get_route, update_route = crud.get("get"), crud.get("update") %}
@@ -100,11 +128,11 @@ const seg = (value: string | number): string => encodeURIComponent(String(value)
 export const [[ entity.name | api_name ]] = {
 {% if crud.list %}
   /** GET [[ crud.list.path ]] */
-  list: (): Promise<T.[[ entity.name ]][]> => apiRequest<T.[[ entity.name ]][]>("GET", "[[ crud.list.path ]]"),
+  list: (): Promise<T.[[ names.record ]][]> => apiRequest<T.[[ names.record ]][]>("GET", "[[ crud.list.path ]]"),
 {% if entity.detailed %}
   /** GET [[ crud.list.path ]]?detailed=true: each record with its related records. */
-  listDetailed: (): Promise<T.[[ entity.name ]]Detailed[]> =>
-    apiRequest<T.[[ entity.name ]]Detailed[]>("GET", "[[ crud.list.path ]]", { query: { detailed: true } }),
+  listDetailed: (): Promise<T.[[ names.detailed ]][]> =>
+    apiRequest<T.[[ names.detailed ]][]>("GET", "[[ crud.list.path ]]", { query: { detailed: true } }),
 {% endif %}
 {% endif %}
 {% if crud.count %}
@@ -113,43 +141,43 @@ export const [[ entity.name | api_name ]] = {
 {% endif %}
 {% if crud.page %}
   /** GET [[ crud.page.path ]]: `limit` records from `skip` on (defaults 0 and 100). */
-  page: (query: { skip?: number; limit?: number } = {}): Promise<T.ApiPage<T.[[ entity.name ]]>> =>
-    apiRequest<T.ApiPage<T.[[ entity.name ]]>>("GET", "[[ crud.page.path ]]", { query: { skip: query.skip, limit: query.limit } }),
+  page: (query: { skip?: number; limit?: number } = {}): Promise<ApiPage<T.[[ names.record ]]>> =>
+    apiRequest<ApiPage<T.[[ names.record ]]>>("GET", "[[ crud.page.path ]]", { query: { skip: query.skip, limit: query.limit } }),
 {% endif %}
 {% if crud.search %}
   /** GET [[ crud.search.path ]] */
-  search: (filters: T.[[ entity.name ]]Search): Promise<T.[[ entity.name ]][]> =>
-    apiRequest<T.[[ entity.name ]][]>("GET", "[[ crud.search.path ]]", { query: filters }),
+  search: (filters: T.[[ names.search ]]): Promise<T.[[ names.record ]][]> =>
+    apiRequest<T.[[ names.record ]][]>("GET", "[[ crud.search.path ]]", { query: filters }),
 {% endif %}
 {% if get_route %}
   /** GET [[ get_route.path ]] */
-  get: async ([[ params(get_route) ]]): Promise<T.[[ entity.name ]]> =>
-    [[ record_call(get_route, entity, "GET") ]],
+  get: async ([[ params(get_route) ]]): Promise<T.[[ names.record ]]> =>
+    [[ record_call(get_route, names.record, "GET") ]],
 {% endif %}
 {% if crud.create %}
   /** POST [[ crud.create.path ]] */
-  create: async (body: T.[[ entity.name ]]Create): Promise<T.[[ entity.name ]]> =>
-    [[ record_call(crud.create, entity, "POST", ", { body }") ]],
+  create: async (body: T.[[ names.create ]]): Promise<T.[[ names.record ]]> =>
+    [[ record_call(crud.create, names.record, "POST", ", { body }") ]],
 {% endif %}
 {% if crud.bulkCreate %}
   /** POST [[ crud.bulkCreate.path ]] */
-  bulkCreate: (items: T.[[ entity.name ]]Create[]): Promise<T.ApiBulkCreateResult<[[ entity.id_type | ts_type ]]>> =>
-    apiRequest<T.ApiBulkCreateResult<[[ entity.id_type | ts_type ]]>>("POST", "[[ crud.bulkCreate.path ]]", { body: items }),
+  bulkCreate: (items: T.[[ names.create ]][]): Promise<ApiBulkCreateResult<[[ entity.id_type | ts_type ]]>> =>
+    apiRequest<ApiBulkCreateResult<[[ entity.id_type | ts_type ]]>>("POST", "[[ crud.bulkCreate.path ]]", { body: items }),
 {% endif %}
 {% if update_route %}
   /** PUT [[ update_route.path ]]: replaces every field. */
-  update: async ([[ params(update_route) ]], body: T.[[ entity.name ]]Create): Promise<T.[[ entity.name ]]> =>
-    [[ record_call(update_route, entity, "PUT", ", { body }") ]],
+  update: async ([[ params(update_route) ]], body: T.[[ names.create ]]): Promise<T.[[ names.record ]]> =>
+    [[ record_call(update_route, names.record, "PUT", ", { body }") ]],
 {% endif %}
 {% if crud.delete %}
   /** DELETE [[ crud.delete.path ]]: returns the deleted record. */
-  delete: ([[ params(crud.delete) ]]): Promise<T.[[ entity.name ]]> =>
-    apiRequest<T.[[ entity.name ]]>("DELETE", [[ crud.delete.path | ts_path ]]),
+  delete: ([[ params(crud.delete) ]]): Promise<T.[[ names.record ]]> =>
+    apiRequest<T.[[ names.record ]]>("DELETE", [[ crud.delete.path | ts_path ]]),
 {% endif %}
 {% if crud.bulkDelete %}
   /** DELETE [[ crud.bulkDelete.path ]] */
-  bulkDelete: (ids: [[ entity.id_type | ts_type ]][]): Promise<T.ApiBulkDeleteResult<[[ entity.id_type | ts_type ]]>> =>
-    apiRequest<T.ApiBulkDeleteResult<[[ entity.id_type | ts_type ]]>>("DELETE", "[[ crud.bulkDelete.path ]]", { body: ids }),
+  bulkDelete: (ids: [[ entity.id_type | ts_type ]][]): Promise<ApiBulkDeleteResult<[[ entity.id_type | ts_type ]]>> =>
+    apiRequest<ApiBulkDeleteResult<[[ entity.id_type | ts_type ]]>>("DELETE", "[[ crud.bulkDelete.path ]]", { body: ids }),
 {% endif %}
 {% if routes.relations %}
   relations: {
@@ -167,7 +195,7 @@ export const [[ entity.name | api_name ]] = {
 {% endif %}
 {% if relation.add %}
       /** POST [[ relation.add.path ]] */
-      add: async ([[ params(relation.add) ]][[ ", attributes?: T." ~ relation.add.link ~ "LinkAttributes" if relation.add.link else "" ]]): Promise<void> => {
+      add: async ([[ params(relation.add) ]][[ ", attributes?: T." ~ type_names[relation.add.link].link_attributes if relation.add.link else "" ]]): Promise<void> => {
         await apiRequest("POST", [[ relation.add.path | ts_path ]][[ ", { body: attributes }" if relation.add.link else "" ]]);
       },
 {% endif %}
@@ -185,10 +213,9 @@ export const [[ entity.name | api_name ]] = {
   methods: {
 {% for method in routes.methods %}
 {% set result = "string | null" if method.response.result == "str" else "unknown" %}
-{% set optional = method.parameters | selectattr("required") | list | length == 0 %}
     /** POST [[ method.path ]][[ "" if method.implemented else " (answers 501 until it is implemented)" ]] */
-    [[ method.op ]]: ([[ params(method) ]][[ ", " if method.path_params and method.parameters else "" ]]{% if method.parameters %}args: { {% for p in method.parameters %}[[ p.name ]][[ "" if p.required else "?" ]]: [[ ("T." ~ p.type) if p.enum else (p.type | ts_type) ]][[ "; " if not loop.last else "" ]]{% endfor %} }[[ " = {}" if optional else "" ]]{% endif %}): Promise<T.ApiMethodResult<[[ result ]]>> =>
-      apiRequest<T.ApiMethodResult<[[ result ]]>>("POST", [[ method.path | ts_path ]][[ ", { body: { params: args } }" if method.parameters else "" ]]),
+    [[ method.op ]]: ([[ params(method) ]][[ ", " if method.path_params and method.parameters else "" ]]{% if method.parameters %}args: { {% for p in method.parameters %}[[ p.name ]]?: [[ ("T." ~ p.type) if p.enum else (p.type | ts_type) ]][[ "; " if not loop.last else "" ]]{% endfor %} } = {}{% endif %}): Promise<ApiMethodResult<[[ result ]]>> =>
+      apiRequest<ApiMethodResult<[[ result ]]>>("POST", [[ method.path | ts_path ]][[ ", { body: { params: args } }" if method.parameters else "" ]]),
 {% endfor %}
   },
 {% endif %}
@@ -196,7 +223,7 @@ export const [[ entity.name | api_name ]] = {
 {% endfor %}
 
 /** The routes every generated backend has. */
-export const systemApi = {
+export const apiSystem = {
   /** GET / */
   root: (): Promise<{ name: string; version: string; status: string }> => apiRequest("GET", "/"),
   /** GET /health */

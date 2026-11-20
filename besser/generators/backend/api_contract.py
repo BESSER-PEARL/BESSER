@@ -16,6 +16,7 @@ schemas and columns of generated apps.
 
 from __future__ import annotations
 
+import logging
 from typing import Dict, List, Optional
 
 from besser.BUML.metamodel.structural import AssociationClass, Class, DomainModel, Enumeration, Property
@@ -31,6 +32,8 @@ from besser.generators.structural_utils import (
 )
 from besser.utilities.utils import sort_by_timestamp
 
+logger = logging.getLogger(__name__)
+
 #: Version of the contract's own layout; bumped when a key changes meaning.
 API_CONTRACT_VERSION = 1
 
@@ -43,8 +46,8 @@ ALL_HTTP_METHODS = ("GET", "POST", "PUT", "DELETE")
 # Attribute types the /search/ route filters on (router.py.j2, ns_search).
 _SEARCH_TYPES = {"str": "str", "string": "str", "int": "int", "integer": "int", "float": "float",
                  "bool": "bool", "boolean": "bool"}
-# Method parameter types read as plain values (router_methods.py.j2); any other is a class.
-_PLAIN_PARAM_TYPES = {"str", "int", "float", "bool", "date", "datetime", "time", "any"}
+# Method parameter types read as values (router_methods.py.j2); an enumeration is too, any other is a class.
+_PLAIN_PARAM_TYPES = {"str", "int", "float", "bool", "date", "datetime", "time", "timedelta", "any"}
 
 ERROR_SHAPES = [
     {"status": "4xx/5xx raised by a route",
@@ -201,6 +204,9 @@ class _ContractBuilder:
         for owner in [cls] + sorted(cls.all_parents(), key=lambda c: c.name):
             for column in self._own_columns(owner):
                 fields.setdefault(column["name"], column)
+        if cls.name in self.concrete_parents:
+            # The discriminator of the polymorphic union mapped for an abstract root without a table.
+            fields.setdefault("type", _field("type", "str", nullable=True))
         return list(fields.values())
 
     # -- request bodies (the <Class>Create schema) ----------------------------------------------
@@ -423,12 +429,13 @@ class _ContractBuilder:
         routes = []
         for method in sorted(getattr(cls, "methods", None) or (), key=lambda m: m.name):
             method_name = clean_method_name(method.name)
-            code = method_route_code(self.model, cls, method, self.nn_modules)
+            code = self._method_code(cls, method)
             class_level = bool(code) and "(self" not in code
+            implemented = code is None or bool(code)
             params = [self._method_param(parameter) for parameter in sort_by_timestamp(method.parameters)]
             route = {"entity": name, "group": "method", "op": method_name, "method": "POST",
                      "query": [], "parameters": params,
-                     "implemented": bool(code), "class_level": class_level}
+                     "implemented": implemented, "class_level": class_level}
             if class_level:
                 route.update(path=f"/{lower}/methods/{method_name}/", path_params=[],
                              body={"kind": "method_params"} if params else None,
@@ -441,10 +448,25 @@ class _ContractBuilder:
             routes.append(route)
         return routes
 
+    def _method_code(self, cls: Class, method) -> Optional[str]:
+        """The method's route body, or None for a BAL body that does not parse (routed per instance).
+
+        The backend generator refuses such a body (``parse_bal`` raises), so no route serves it
+        until the body is fixed; every BAL body that parses is an instance route.
+        """
+        try:
+            return method_route_code(self.model, cls, method, self.nn_modules)
+        except Exception as exc:  # parse_bal and bal_to_rest raise no common base class
+            if method.implementation_type.name != "BAL":
+                raise
+            logger.warning("BAL body of %s.%s does not parse (%s); its route is listed per instance",
+                           cls.name, method.name, exc)
+            return None
+
     def _method_param(self, parameter) -> dict:
         type_name = parameter.type.name
-        param = {"name": parameter.name, "type": type_name,
-                 "required": parameter.default_value is None}
+        # The route reads each parameter with params.get(...), so none is enforced.
+        param = {"name": parameter.name, "type": type_name, "required": False}
         if parameter.default_value is not None:
             param["default"] = str(parameter.default_value)
         if type_name not in _PLAIN_PARAM_TYPES:
@@ -593,10 +615,10 @@ def _body_text(body: Optional[dict], route: dict, contract: dict) -> str:
         return f"body (optional) {_body_keys(attributes, contract['enums'])}"
     params = ", ".join(
         f"`{p['name']}` ({p.get('record', '') + ' id' if p.get('record') else _value_type(p, contract['enums'])}"
-        f"{'' if p['required'] else ', default ' + p['default']})"
+        f"{', default ' + p['default'] if 'default' in p else ''})"
         for p in route["parameters"]
     )
-    return f'body `{{"params": {{...}}}}` with {params}'
+    return f'body `{{"params": {{...}}}}` with {params}, each optional (the route does not enforce them)'
 
 
 def render_api_markdown(contract: dict) -> str:

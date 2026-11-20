@@ -354,42 +354,46 @@ const canUseSearchEndpoint = (pathname: string): boolean => {
 };
 
 /**
- * The URL a chart fetches. For the class's CRUD list it may ask for detailed rows
- * and send a server-compatible filter as query parameters (to `/<class>/search/`
- * when `preferSearch`). A custom endpoint (`DataBinding.endpoint`, flagged
- * `custom`) is fetched as written: its route knows neither, so the filter is only
- * applied to the rows it returns.
+ * The request a chart sends: the endpoint's path and its query parameters, for
+ * apiRequest (which joins the backend's base URL once). For the class's CRUD list it
+ * may ask for detailed rows and send a server-compatible filter as query parameters
+ * (to `/<class>/search/` when `preferSearch`). A custom endpoint (`DataBinding.endpoint`,
+ * flagged `custom`) is fetched as written: its route knows neither, so the filter is
+ * only applied to the rows it returns.
  */
-export const buildFilteredUrl = (
+export const buildFilteredRequest = (
   endpoint: string,
   options: { detailed?: boolean; filter?: ParsedFilter | null; preferSearch?: boolean; custom?: boolean }
-): string => {
-  const isRelative = !/^https?:\/\//i.test(endpoint);
-  const baseUrl = backendUrl(endpoint);
-  if (options.custom) return baseUrl;
-  let url: URL;
-  try {
-    url = new URL(baseUrl);
-  } catch {
-    return baseUrl;
-  }
-
+): { path: string; query: Record<string, string> } => {
+  const query: Record<string, string> = {};
+  if (options.custom) return { path: endpoint, query };
+  let path = endpoint;
   if (options.detailed) {
-    url.searchParams.set("detailed", "true");
+    query.detailed = "true";
   }
 
   const filter = options.filter;
   const shouldAttachFilters = !!filter?.serverCompatible && Object.keys(filter.queryParams).length > 0;
   if (shouldAttachFilters) {
-    if (options.preferSearch && isRelative && canUseSearchEndpoint(url.pathname)) {
-      url.pathname = normalizeSearchPath(url.pathname);
+    const isRelative = !/^https?:\/\//i.test(endpoint);
+    const [pathname, search = ""] = endpoint.split(/(?=\?)/);
+    if (options.preferSearch && isRelative && canUseSearchEndpoint(pathname)) {
+      path = normalizeSearchPath(pathname) + search;
     }
     Object.entries(filter.queryParams).forEach(([key, value]) => {
       if (value !== "") {
-        url.searchParams.set(key, value);
+        query[key] = value;
       }
     });
   }
+  return { path, query };
+};
 
-  return url.toString();
+/** The URL of `buildFilteredRequest`'s request. */
+export const buildFilteredUrl = (
+  endpoint: string,
+  options: { detailed?: boolean; filter?: ParsedFilter | null; preferSearch?: boolean; custom?: boolean }
+): string => {
+  const { path, query } = buildFilteredRequest(endpoint, options);
+  return apiUrl(path, query);
 };

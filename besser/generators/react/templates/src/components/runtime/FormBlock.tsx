@@ -40,8 +40,19 @@ const toValue = (type: string | undefined, raw: FormDataEntryValue | null): any 
   }
 };
 
-const errorText = (err: unknown): string =>
-  err instanceof ApiError && err.status > 0 ? err.message : "Network error. Please try again.";
+const errorText = (err: unknown): string => {
+  if (err instanceof ApiError && err.status > 0) {
+    const data = err.body as any;
+    const detail = data?.detail;
+    if (Array.isArray(detail)) {
+      return detail.map((e: any) => `${e.loc ? e.loc[e.loc.length - 1] : "field"}: ${e.msg}`).join("; ");
+    }
+    if (typeof detail === "string") return detail;
+    if (detail) return JSON.stringify(detail);
+    return data?.message || "Could not save. Please check your input.";
+  }
+  return "Network error. Please try again.";
+};
 
 /**
  * A GUI form bound to a class: submitting it creates a record (POST to the

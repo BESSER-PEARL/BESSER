@@ -4,47 +4,50 @@
 //
 // A relation is written and read under different keys: a create/update body WRITES the
 // association end with ids (`<Class>Create`), a record READ back carries the foreign-key
-// column `<end>_id` of the side that holds it (`<Class>`).
+// column `<end>_id` of the side that holds it (`<Class>`). A name this file derives that is
+// already a class or enumeration of the model gets a number (`TaskCreate2`).
 {% for name, literals in api_contract.enums.items() %}
 
 export type [[ name ]] = {% for literal in literals %}"[[ literal ]]"[[ " | " if not loop.last else ";" ]]{% endfor %}
 {% endfor %}
 {% for name, link in api_contract.links.items() %}
+{% set names = type_names[name] %}
 
 /** Attributes of one [[ name ]] link, sent when two records are linked. */
-export interface [[ name ]]LinkAttributes {
+export interface [[ names.link_attributes ]] {
 {% for field in link.attributes %}
-  [[ field.name ]][[ "" if field.required else "?" ]]: [[ field | ts_field ]];
+  [[ field.name ]][[ "" if field.required else "?" ]]: [[ field | ts_field(type_names) ]];
 {% endfor %}
 }
 
 /** One [[ name ]] link in a create body: the linked record's id and the link's attributes. */
-export interface [[ name ]]Link extends [[ name ]]LinkAttributes {
+export interface [[ names.link ]] extends [[ names.link_attributes ]] {
   target: {% for type in link.target %}[[ type | ts_type ]][[ " | " if not loop.last else ";" ]]{% endfor %}
 
 }
 {% endfor %}
 {% for entity in api_contract.entities %}
+{% set names = type_names[entity.name] %}
 
 /** [[ entity.name ]] as every read returns it. */
-export interface [[ entity.name ]] {
+export interface [[ names.record ]] {
 {% for field in entity.read %}
-  [[ field.name ]]: [[ field | ts_field ]];
+  [[ field.name ]]: [[ field | ts_field(type_names) ]];
 {% endfor %}
 }
 
 /** The body that creates or updates [[ entity.name ]] (PUT replaces every field). */
-export interface [[ entity.name ]]Create {
+export interface [[ names.create ]] {
 {% for field in entity.write %}
-  [[ field.name ]][[ "" if field.required else "?" ]]: [[ field | ts_field ]];
+  [[ field.name ]][[ "" if field.required else "?" ]]: [[ field | ts_field(type_names) ]];
 {% endfor %}
 }
 {% if entity.detailed %}
 
 /** [[ entity.name ]] with its related records (GET [[ entity.path ]]?detailed=true). */
-export interface [[ entity.name ]]Detailed extends [[ entity.name ]] {
+export interface [[ names.detailed ]] extends [[ names.record ]] {
 {% for field in entity.detailed %}
-  [[ field.name ]]: [[ field | ts_field ]];
+  [[ field.name ]]: [[ field | ts_field(type_names) ]];
 {% endfor %}
 }
 {% endif %}
@@ -52,38 +55,10 @@ export interface [[ entity.name ]]Detailed extends [[ entity.name ]] {
 {% if search %}
 
 /** Filters of GET [[ search.path ]]: text matches a substring, any other value exactly. */
-export interface [[ entity.name ]]Search {
+export interface [[ names.search ]] {
 {% for param in search.query %}
   [[ param.name ]]?: [[ param.type | ts_type ]];
 {% endfor %}
 }
 {% endif %}
 {% endfor %}
-
-/** GET /<class>/paginated/. */
-export interface ApiPage<T> {
-  total: number;
-  skip: number;
-  limit: number;
-  data: T[];
-}
-
-/** POST /<class>/bulk/. */
-export interface ApiBulkCreateResult<Id> {
-  created_count: number;
-  created_ids: Id[];
-  message: string;
-}
-
-/** DELETE /<class>/bulk/. */
-export interface ApiBulkDeleteResult<Id> {
-  deleted_count: number;
-  not_found: Id[];
-  message: string;
-}
-
-/** What a method route returns: its result and anything it printed. */
-export interface ApiMethodResult<R> {
-  result: R;
-  output: string | null;
-}

@@ -27,8 +27,12 @@ exactly the routes the backend serves. Per class, an object such as ``taskApi`` 
 function per route: ``list``, ``listDetailed`` (``?detailed=true``), ``count``, ``page``
 (``skip``/``limit``), ``search``, ``get``, ``create``, ``bulkCreate``, ``update``,
 ``delete``, ``bulkDelete``, ``relations.<end>.list``/``add``/``remove`` (and ``links``
-for an association class) and ``methods.<name>``. ``systemApi`` covers ``/``,
-``/health`` and ``/statistics``.
+for an association class) and ``methods.<name>``. ``apiSystem`` covers ``/``,
+``/health`` and ``/statistics``. The names ``client.ts`` fixes (``API_BASE_URL``,
+``ApiError``, ``apiRequest``, ``apiUrl``, ``apiSystem``, ``ApiPage``, ...) start with
+``api`` and never end in ``Api``, so no class's object can take one; a type ``types.ts``
+derives that is already a class or enumeration of the model gets a number
+(``TaskCreate2`` when the model has a class ``TaskCreate``).
 
 The client hides the backend's response wrappers: ``get``, ``create`` and ``update``
 return the record, a relation reader returns an array, and a method takes its arguments
@@ -36,13 +40,16 @@ flat and adds the ``{"params": ...}`` body itself. ``types.ts`` states the keys 
 writes (``TaskCreate``: the association end, such as ``project``) apart from the keys a
 record reads (``Task``: the foreign key column, such as ``project_id``), with
 enumerations as literal unions, so ``tsc`` rejects a call that guesses a key or a shape.
-Every failure is thrown as one ``ApiError`` (``status``, ``message``, ``fields``) for
-both error bodies the backend sends; ``status`` is ``0`` when the backend was not reached.
+Every failure is thrown as one ``ApiError`` (``status``, ``message``, ``fields``, and the
+response ``body``) for every error body the backend sends; ``status`` is ``0`` when the
+backend was not reached. Requests go through axios, so the app's ``axios.defaults`` and
+interceptors (an ``Authorization`` header, for instance) apply to every call.
 
 ``API_BASE_URL`` in ``client.ts`` is the one place the backend's address is read
-(``VITE_API_URL``, default ``http://localhost:8000``); the runtime blocks and
-``MethodButton`` use it, and the runtime blocks' requests go through the client's
-``apiRequest``. The client assumes the backend generated with every HTTP method, as the
+(``VITE_API_URL``, default ``http://localhost:8000``; a relative one such as ``/api``
+behind a same-origin proxy works too); the runtime blocks and ``MethodButton`` use it,
+and the runtime blocks' requests go through the client's ``apiRequest``, which joins it
+once (a path that already starts with it is kept). The client assumes the backend generated with every HTTP method, as the
 :doc:`full_web_app` generator does.
 
 Generated Components

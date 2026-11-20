@@ -68,7 +68,6 @@ from besser.spec_driven_agent.state.tracing import (
 )
 from besser.spec_driven_agent.validation.api_probe import confirmed_create_paths
 from besser.spec_driven_agent.validation.issues import (
-    RUNTIME_CHECK_UNVERIFIED,
     ValidationIssue,
     _classify_issue,
     _hard_blockers,
@@ -336,9 +335,10 @@ class Phase3RepairMixin:
         if stop_reason:
             logger.warning("Skipping Phase 3 -- %s", stop_reason)
             self._phase3_exit_reason = f"skipped: {stop_reason}"
-            self._validation_issues.append(ValidationIssue(
-                "blocker", f"requirement unverified: Phase 3 validation did not run: {stop_reason}. "
-                "The current application has not completed final verification.",
+            # Not confirmed: nothing was checked, so nothing was seen to fail.
+            self._validation_issues.append(_classify_issue(
+                f"requirement unverified: Phase 3 validation did not run: {stop_reason}. "
+                "The current application has not completed final verification."
             ))
             if self._checkpoint_phase == "phase3":
                 self._save_phase3_checkpoint()
@@ -856,8 +856,14 @@ class Phase3RepairMixin:
         rule legitimately refuses (e.g. a correct 409) is the normal answer
         from a correct app, so an app can pass acceptance while its create
         routes come back ``create unverified:``. Those
-        routes stay reported through their own ``runtime unverified:`` blocker;
+        routes stay reported through their own ``runtime unverified:`` finding;
         they are not grounds for the gate to refuse a working application.
+
+        An app nothing started on this tree (no probe boot, no workflow that
+        booted it or passed; the probe timed out, a dependency was missing, or
+        no check ran) has no runtime evidence at all. That is not a failure:
+        the finding is ``validation unverified:`` and the run reports it as not
+        verified (``verification_gaps``), never as incomplete.
         """
         if not self._probeable_backends():
             return None
@@ -880,15 +886,12 @@ class Phase3RepairMixin:
                 f"proven to accept a record - {what}, so this run is NOT complete: "
                 + "; ".join(sorted(observed or fatal_source)[:3])[:1200]
             )
-        if verdict is None and not any(
-            i.message.lower().startswith(("runtime unverified:", RUNTIME_CHECK_UNVERIFIED))
-            for i in self._validation_issues
-        ):
+        if self._never_started():
             return (
-                f"{self._RUNTIME_GATE_PREFIX} the delivered application has no runtime "
-                "evidence at all - the boot-and-create probe did not produce a "
-                "verdict for this source revision and no test_api workflow was run, "
-                "so this run is NOT complete. An unrun check is not a passing check."
+                f"validation unverified: {self._RUNTIME_GATE_PREFIX} the delivered application has no "
+                "runtime evidence at all - nothing started it on this source revision (no "
+                "boot-and-create probe verdict, no test_api workflow that booted it), so it is "
+                "not verified. An unrun check is not a passing check."
             )
         return None
 
@@ -915,11 +918,11 @@ class Phase3RepairMixin:
             return
         if not finding:
             return
-        if any(i.message.startswith(self._RUNTIME_GATE_PREFIX)
+        if any(i.message == finding or i.message.startswith(self._RUNTIME_GATE_PREFIX)
                for i in self._validation_issues):
             return
-        logger.warning("Phase 3 runtime gate refused completion: %s", finding[:300])
-        self._validation_issues.append(ValidationIssue("blocker", finding))
+        logger.warning("Phase 3 runtime gate: %s", finding[:300])
+        self._validation_issues.append(_classify_issue(finding))
         self._trace.write(
             EVENT_VALIDATION_ISSUE, phase="phase3_runtime_gate", message=finding[:1000],
         )

@@ -93,11 +93,12 @@ def test_no_blockers_stays_complete(monkeypatch, required_check):
     monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _FakeClient())
     try:
         done = _done_event(SmartGenerationRunner(_build_request(), runtime=current_runtime()))
-        # A check that could not RUN is not confirmed, not a defect: it neither
-        # sets the verdict nor counts in blockerCount; it shows in the
-        # report's could-not-verify bucket.
+        # A check that could not RUN is not confirmed, not a defect: it does not
+        # set the verdict. On a finished run blockerCount keeps the released
+        # editors' meaning, "could not be verified", so it counts there.
         assert done["incomplete"] is False
-        assert done["blockerCount"] == 0
+        assert done["notConfirmedCount"] == int(required_check)
+        assert done["blockerCount"] == int(required_check)
     finally:
         _cleanup()
 
@@ -229,12 +230,79 @@ def test_findings_that_are_not_confirmed_never_block_or_count(monkeypatch, with_
     try:
         done = _done_event(SmartGenerationRunner(_build_request(), runtime=current_runtime()))
         assert done["incomplete"] is False
-        assert done["blockerCount"] == int(with_missing)
+        assert done["notConfirmedCount"] == 2
+        # The legacy count of a finished run: blockers plus findings not confirmed.
+        assert done["blockerCount"] == 2 + int(with_missing)
         run = done["recipe"]["run"]
         assert run["counts"]["not_confirmed"] == 2
+        assert run["counts"]["blockers"] == int(with_missing)
         if not with_missing:
             assert run["outcome"] == "completed"
             assert run["stop_message"] == ("The app was generated; 2 finding(s) could not be confirmed "
                                            "and are listed for review.")
+    finally:
+        _cleanup()
+
+
+@pytest.mark.parametrize("findings, defect", [((), False), (("runtime",), False), ((), True)])
+def test_a_class_of_checks_that_never_ran_is_not_verified(monkeypatch, findings, defect):
+    """No backend was ever started: not "Application ready", and not "incomplete" either."""
+    from besser.spec_driven_agent.validation.issues import _classify_issue, runtime_check_unverified
+
+    messages = [runtime_check_unverified("backend startup", "timed out") for _ in findings]
+    if defect:
+        messages.append("Syntax error in backend/main_api.py: line 3")
+
+    class NeverStarted(_StubOrchestrator):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self._validation_issues = [_classify_issue(m) for m in messages]
+
+        def verification_gaps(self):
+            return [("runtime", "its startup timed out")]
+
+    monkeypatch.setattr(runner_module, "LLMOrchestrator", NeverStarted)
+    monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _FakeClient())
+    try:
+        done = _done_event(SmartGenerationRunner(_build_request(), runtime=current_runtime()))
+        run = done["recipe"]["run"]
+        assert done["notConfirmedCount"] == len(findings)
+        assert run["not_verified"] == [{"check": "runtime", "reason": "its startup timed out"}]
+        if defect:
+            # A known defect keeps its own headline; the state is not reported twice.
+            assert done["incomplete"] is True and done["unverified"] is False
+            assert done["unverifiedReason"] is None and done["blockerCount"] == 1
+            assert run["outcome"] == "completed_with_blockers"
+        else:
+            assert done["incomplete"] is False and done["unverified"] is True
+            assert done["unverifiedReason"] == ("The app was generated, but it was never started, so "
+                                                "nothing shows it runs (its startup timed out).")
+            # Released editors show "· N could not be verified" from this: never 0 here.
+            assert done["blockerCount"] == 1
+            assert run["outcome"] == "completed_unverified"
+            assert run["stop_message"] == done["unverifiedReason"]
+    finally:
+        _cleanup()
+
+
+def test_a_dependency_install_left_undone_is_not_an_unresolved_blocker(monkeypatch):
+    from besser.spec_driven_agent.validation.issues import _classify_issue, required_dependency_setup
+
+    class SetupOpen(_StubOrchestrator):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self._validation_issues = [_classify_issue(required_dependency_setup("tsc", "frontend"))]
+
+        def verification_gaps(self):
+            return [("build", "its dependencies were not installed")]
+
+    monkeypatch.setattr(runner_module, "LLMOrchestrator", SetupOpen)
+    monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _FakeClient())
+    try:
+        done = _done_event(SmartGenerationRunner(_build_request(), runtime=current_runtime()))
+        run = done["recipe"]["run"]
+        assert done["incomplete"] is False and done["unverified"] is True
+        assert run["counts"]["blockers"] == 0 and run["counts"]["not_confirmed"] == 1
+        assert run["outcome"] == "completed_unverified"
     finally:
         _cleanup()

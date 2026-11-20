@@ -142,10 +142,9 @@ def test_phase3_spends_no_repair_round_on_checks_that_did_not_run(orch, monkeypa
 
 
 def test_a_stale_verdict_beside_a_check_that_did_not_run_stays_unverified(orch):
-    """Parity with the ``runtime unverified:`` finding this replaces: with no
-    verdict for the shipped tree, a did-not-run finding already says why, so
-    the gate does not add a "no runtime evidence" refusal that would turn an
-    unknown into an incomplete run."""
+    """With no verdict for the shipped tree, the gate's "no runtime evidence" is
+    the same unknown as the did-not-run finding beside it: not confirmed, so it
+    never turns the run incomplete (the run reports it as not verified)."""
     from besser.spec_driven_agent.validation.issues import runtime_check_unverified
 
     orch._runtime_probe_verdict = None
@@ -154,7 +153,8 @@ def test_a_stale_verdict_beside_a_check_that_did_not_run_stays_unverified(orch):
 
     orch._apply_runtime_gate()
 
-    assert orch._validation_issues == [unrun]
+    assert orch._validation_issues[0] == unrun
+    assert all(is_not_confirmed(i) and not is_completion_issue(i) for i in orch._validation_issues)
 
 
 def test_validate_app_does_not_call_an_unrun_probe_verified(orch, monkeypatch):

@@ -434,9 +434,12 @@ files and the files of a modify run keep their own layout. A formatter that
 could not run is reported under *Not confirmed*. The download's
 ``BESSER_GENERATION.md`` gains a *This run* section: what was built, the base
 generator and the verification counts (confirmed by running the app's API, found
-in the code but not run, not confirmed, missing in the code), with up to eight lines each for what was
-found missing in the code or not confirmed (a check that could not run, a
-requirement whose evidence did not verify), and how many more there are. A list
+in the code but not run, not confirmed, checked and not met, and test workflows that ran and
+failed), a *Not verified* line when a whole
+class of checks left no evidence, with up to eight lines each for what was
+checked and not met (a rule missing in the code, cited code that does not do it), what ran and
+failed (a test workflow the agent wrote) or not confirmed (a check that could not run, a
+requirement whose citation was not located), and how many more there are. A list
 of more than five lines puts findings of one kind on one line ("5 create
 operations could not be tested automatically, because each needs an existing
 record first: ..."). These items, the run card's verification report and the

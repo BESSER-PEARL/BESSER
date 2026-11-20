@@ -480,7 +480,8 @@ class _RunTraceBuilder:
                 note(f"Error ({payload.get('phase')}): {payload.get('reason')}", LogType.ERROR, when)
             elif event == EVENT_PHASE_EXIT:
                 details = [f"{key}={payload[key]}" for key in ("stop_reason", "stop_detail", "exit_reason",
-                                                                "unresolved_blockers", "generator_used")
+                                                                "unresolved_blockers", "not_confirmed",
+                                                                "generator_used")
                            if payload.get(key) not in (None, "")]
                 if details:
                     note(f"{payload.get('phase')} ended: {', '.join(map(str, details))}", LogType.INFO, when)

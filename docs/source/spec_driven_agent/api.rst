@@ -375,13 +375,18 @@ SSE event types
        which model answered).
    * - ``done``
      - Success. Carries ``downloadUrl``, ``fileName``, the run recipe, a file
-       count and top-level listing, ``tokensUsed``, ``blockerCount`` (unfixed
-       blockers; findings that are not confirmed, see
-       :ref:`spec-driven-not-confirmed`, are not counted), ``verification`` (what the run confirmed
+       count and top-level listing, ``tokensUsed``, ``blockerCount``,
+       ``notConfirmedCount`` (findings that are not confirmed, see
+       :ref:`spec-driven-not-confirmed`), ``unverified`` / ``unverifiedReason``,
+       ``verification`` (what the run confirmed
        by running the app (``verified``), found cited in the code without
-       running it (``foundInCode``), could not verify (``notVerified``) and
-       shipped unenforced (``shippedUnenforced``), with true totals in
-       ``counts``), ``incomplete`` / ``incompleteReason``, ``cancelled`` (true
+       running it (``foundInCode``), could not verify (``notVerified``),
+       checked and found not met (``shippedUnenforced``: a rule missing in the
+       code, a cited implementation that does not do it) and ran and saw fail
+       (``failed``, additive: a test workflow the agent wrote, which is not a
+       rule from the request), with true totals in
+       ``counts``; a finding counted as a blocker is never in ``notVerified``),
+       ``incomplete`` / ``incompleteReason``, ``cancelled`` (true
        when a cancel request was honoured after the run had written files, so
        the output is what it had made by then; a run the server stopped because
        nobody followed it reads the same; it is stored with the event, so a
@@ -398,6 +403,25 @@ SSE event types
        the model change regeneration wrote, merged, moved (new path) or
        removed (the recipe's ``regenerated_files``), and ``modelChanges`` how the model
        differs from the one the base app was built from (modify runs).
+
+       ``blockerCount`` is 0 on a run cut short (by a limit, an error or a
+       cancel). On an ``incomplete`` run it is the unresolved blockers. On a run
+       that is not ``incomplete`` it keeps the meaning released editors give it,
+       "could not be verified": the blockers that do not make a run incomplete
+       (a requirement found missing, partial or unsupported, a failed test
+       workflow) plus ``notConfirmedCount``, and at least one per class of
+       checks that never ran when ``unverified`` is true. ``unverified`` is true
+       when the run is not ``incomplete`` but a whole class of checks left no
+       evidence on the delivered app: it was not checked against the request
+       (no requirement verdict: the extraction or the judge failed, or a limit
+       stopped the judge), it was never started (no probe boot and no test
+       workflow that booted it or passed), it started but no record could be
+       created through its API, or its frontend (a ``package.json``) was never
+       built. ``unverifiedReason`` is then the sentence to show, for example
+       ``The app was generated, but it was never started, so nothing shows it
+       runs (its startup timed out).``; it is ``null`` otherwise. Both fields,
+       and ``notConfirmedCount``, are additive: a client that ignores them
+       still reads ``blockerCount`` as before.
        ``trace`` is the run's trace, a trace-file fragment (``projectId``
        null) the editor merges into the project trace (see
        :ref:`spec-driven-run-trace`); ``null`` when the request did not set

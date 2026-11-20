@@ -259,9 +259,8 @@ class ModifyRunMixin:
         self._trace.write(
             EVENT_PHASE_EXIT,
             phase="phase3",
-            unresolved_blockers=sum(
-                1 for i in self._validation_issues if i.severity == "blocker"
-            ),
+            unresolved_blockers=sum(1 for i in self._validation_issues if is_completion_issue(i)),
+            not_confirmed=sum(1 for i in self._validation_issues if is_not_confirmed(i)),
             exit_reason=self._phase3_exit_reason,
         )
 
@@ -746,10 +745,10 @@ class ModifyRunMixin:
         earlier = self._earlier_requirement_findings()
         promoted: list[ValidationIssue] = []
         for issue in issues:
-            # A check that reached no conclusion is not the reported failure persisting.
+            # A finding not confirmed on its own (a guessed create refused, a check
+            # that did not run) is corroborated when it matches what the user reported.
             if (
                 issue.severity != "blocker"
-                and not is_not_confirmed(issue)
                 and issue.message not in earlier
                 # A checklist item nothing confirmed is not an observed failure.
                 and not issue.message.startswith((self._FIX_TARGET_PREFIX, "task unverified:"))
@@ -794,9 +793,12 @@ class ModifyRunMixin:
         from besser.spec_driven_agent.planning.fix_target import finding_matches_target
 
         earlier = self._earlier_requirement_findings()
+        # A not-confirmed finding that matches the report is the failure persisting too,
+        # except a checklist item nothing closed, which is never promoted either.
         unresolved = [
             i for i in self._validation_issues
-            if is_completion_issue(i) and i.message not in earlier
+            if (is_completion_issue(i) or is_not_confirmed(i) and not i.message.startswith("task unverified:"))
+            and i.message not in earlier
             and (
                 i.message.startswith(self._FIX_TARGET_PREFIX)
                 or finding_matches_target(i.message, self._fix_target)

@@ -274,10 +274,12 @@ def _classify_issue(message: str) -> ValidationIssue:
 
     # The ORM module failed to import or to configure its mappers in the import
     # smoke check: every request that touches the database is a 500. A workflow
-    # that ran against the app and failed is an observed failure too.
+    # that ran against the app and failed is an observed failure too, and so is
+    # the runtime gate's refusal (its "no runtime evidence" finding is
+    # ``validation unverified:``, not confirmed, above).
     if lower.startswith((
         "mapper config:", "application startup:", "python contract:",
-        "api scenario:",
+        "api scenario:", "runtime gate:",
     )):
         return ValidationIssue("blocker", text)
 

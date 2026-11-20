@@ -248,12 +248,14 @@ def test_conversion_losses_remain_obligations_until_current_code_evidence(orch, 
     ], str(tmp_path))
     assert verdict[0]["status"] == "implemented"
 
-    # Exhausted runtime must not bypass the completion gate silently, either.
+    # Exhausted runtime must not bypass the completion gate silently, either: nothing was
+    # checked, so the run is reported as not verified (not as a defect to repair).
     orch._start_time = 0
     orch.max_runtime_seconds = 1
     orch._run_phase3_validation()
-    assert any(item.severity == "blocker" and "validation did not run" in item.message
+    assert any(is_not_confirmed(item) and "validation did not run" in item.message
                for item in orch._validation_issues)
+    assert ("requirements", "too little time was left") in orch.verification_gaps()
 
 
 def test_core_rejects_oversized_spec_before_work(orch):

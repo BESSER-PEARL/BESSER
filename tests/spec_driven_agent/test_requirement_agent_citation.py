@@ -244,6 +244,9 @@ def test_the_blocker_offers_citing_only_where_a_line_can_be_cited(orch):
     by_id = {v["id"]: v for v in orch._requirement_verdicts}
     [table] = ledger.ledger_issues([by_id[1]])
     assert f"({PAGE}:6): validate_app citations=[{{requirement: 1, path, line}}]" in table
-    for rid in (4, 5, 6):
+    for rid in (5, 6):
         [issue] = ledger.ledger_issues([by_id[rid]])
         assert "validate_app" not in issue and "re-judged automatically" in issue, rid
+    # A cited stub is refuted, not unlocated: a blocker that asks for the behaviour or a real citation.
+    [stub] = ledger.ledger_issues([by_id[4]])
+    assert stub.startswith("requirement unsupported:") and "implement the behaviour" in stub

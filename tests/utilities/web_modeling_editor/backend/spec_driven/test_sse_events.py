@@ -172,10 +172,12 @@ class TestDoneEventVerification:
         assert ev.verification.foundInCode == []
         assert ev.verification.notVerified == []
         assert ev.verification.shippedUnenforced == []
-        # All four counts always present, so a client never reads undefined.
+        # All counts always present, so a client never reads undefined.
         assert ev.verification.counts.model_dump() == {
-            "verified": 0, "foundInCode": 0, "notVerified": 0, "shippedUnenforced": 0,
+            "verified": 0, "foundInCode": 0, "notVerified": 0, "shippedUnenforced": 0, "failed": 0,
         }
+        # The done event's additive fields default to "nothing to say".
+        assert (ev.notConfirmedCount, ev.unverified, ev.unverifiedReason) == (0, False, None)
 
     def test_frame_carries_the_lists_and_what_was_run(self):
         ev = DoneEvent(

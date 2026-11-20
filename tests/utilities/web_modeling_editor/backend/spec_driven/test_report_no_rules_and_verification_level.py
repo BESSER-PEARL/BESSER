@@ -61,7 +61,7 @@ def test_a_verdict_only_found_in_the_source_is_not_counted_as_confirmed():
     assert (report.counts.verified, report.counts.foundInCode) == (2, 1)
     assert report.verified[1].how.startswith("a test the agent wrote passed: 1 request(s) run against the app")
     assert ("- Verification: 2 confirmed by running the app's API, 1 found in the code but not run, "
-            "0 not confirmed, 0 checked and missing in the code") in _markdown(recipe)
+            "0 not confirmed, 0 checked and not met") in _markdown(recipe)
 
 
 def test_note_survives_a_long_citation():

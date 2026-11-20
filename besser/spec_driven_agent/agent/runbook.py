@@ -163,15 +163,25 @@ _GENERATED_NAME_RE = re.compile(
     re.I)
 
 
-def backend_files(output_dir: str) -> dict[str, list[int]]:
+# Bounds on the listing around a shell command: past the first, nothing is recorded for that command.
+_MAX_COMMAND_LISTING = 5000
+# Files left by the same command read for a name (each only when small: see _read_small_text).
+_MAX_REFERRERS = 50
+
+
+def backend_files(output_dir: str) -> dict[str, list[int]] | None:
     """``{path: [size, mtime_ns]}`` of the files under the generated backend, as the probe
-    lists them (no dot-folder, no run record); empty without a backend below the root."""
+    lists them (no dot-folder, no virtualenv, no run record); empty without a backend below
+    the root, None past ``_MAX_COMMAND_LISTING`` files."""
     root = os.path.realpath(output_dir)
     backend = _find_backend(root)
     if backend in (None, "."):
         return {}
     found: dict[str, list[int]] = {}
     for folder, dirs, names in walk_plain(os.path.join(root, backend)):
+        if "pyvenv.cfg" in names:  # a virtualenv under any name
+            dirs[:] = []
+            continue
         dirs[:] = [d for d in dirs if d not in WORKSPACE_SKIP_DIRS and d != "htmlcov" and not d.startswith(".")]
         for name in names:
             if name.startswith(".besser_"):
@@ -181,23 +191,41 @@ def backend_files(output_dir: str) -> dict[str, list[int]]:
             except OSError:
                 continue
             if stat.S_ISREG(info.st_mode):
+                if len(found) >= _MAX_COMMAND_LISTING:
+                    logger.info("runbook: the backend holds more than %d files; files a command leaves "
+                                "are not recorded", _MAX_COMMAND_LISTING)
+                    return None
                 rel = os.path.relpath(os.path.join(folder, name), root).replace(os.sep, "/")
                 found[rel] = [info.st_size, info.st_mtime_ns]
     return found
 
 
-def files_the_app_wrote(before: dict[str, list[int]], after: dict[str, list[int]],
-                        command: str) -> dict[str, list[int]]:
+def _named_by(root: str, name: str, referrers: list[str]) -> bool:
+    """Whether one of ``referrers`` (small text files) contains ``name``."""
+    return any(name in (_read_small_text(root, rel) or "") for rel in referrers)
+
+
+def files_the_app_wrote(before: dict[str, list[int]] | None, after: dict[str, list[int]] | None,
+                        command: str, root: str) -> dict[str, list[int]]:
     """The files a shell command left under the backend that the running app wrote there:
     new since ``before``, of a data kind (not code, configuration or docs), named by a
-    generated id (``_GENERATED_NAME_RE``), and named nowhere in ``command``. A file the
-    command itself creates (``> seed.json``, ``cp``, a migration) is not one of them."""
+    generated id (``_GENERATED_NAME_RE``), named nowhere in ``command`` and in no other file
+    the command created or changed (a script writing an image and the manifest naming it).
+    A file the command itself creates (``> seed.json``, ``cp``, a migration) is not one of them."""
+    if before is None or after is None:
+        return {}
     text = command or ""
-    return {rel: seen for rel, seen in after.items()
-            if rel not in before
-            and os.path.splitext(rel)[1].lower() not in _NOT_DATA_SUFFIXES
-            and _GENERATED_NAME_RE.search(rel.rsplit("/", 1)[-1])
-            and rel not in text and rel.rsplit("/", 1)[-1] not in text}
+    candidates = {rel: seen for rel, seen in after.items()
+                  if rel not in before
+                  and os.path.splitext(rel)[1].lower() not in _NOT_DATA_SUFFIXES
+                  and _GENERATED_NAME_RE.search(rel.rsplit("/", 1)[-1])
+                  and rel not in text and rel.rsplit("/", 1)[-1] not in text}
+    if not candidates:
+        return {}
+    referrers = sorted(rel for rel, seen in after.items()
+                       if rel not in candidates and before.get(rel) != seen)[:_MAX_REFERRERS]
+    return {rel: seen for rel, seen in candidates.items()
+            if not _named_by(root, rel.rsplit("/", 1)[-1], referrers)}
 
 
 def remove_app_runtime_files(output_dir: str, keep: Iterable[str],

@@ -479,3 +479,30 @@ def test_a_recorded_upload_the_agent_then_edited_or_that_was_there_at_start_stay
 
     assert _recipe(orchestrator, tmp_path)["runtime_files_removed"] == []
     assert (tmp_path / UPLOAD).exists() and (tmp_path / other).exists()
+
+
+def test_a_virtualenv_under_any_name_is_not_listed_and_a_large_backend_is_not_recorded(tmp_path, monkeypatch):
+    from besser.spec_driven_agent.agent.runbook import backend_files
+
+    _backend(tmp_path)
+    _write(tmp_path, "backend/env/pyvenv.cfg", "home = /usr\n")
+    _write(tmp_path, "backend/env/lib/site.py", "x = 1\n")
+    assert sorted(backend_files(str(tmp_path))) == ["backend/main_api.py", "backend/sql_alchemy.py"]
+
+    monkeypatch.setattr(runbook, "_MAX_COMMAND_LISTING", 1)
+    assert backend_files(str(tmp_path)) is None
+    assert runbook.files_the_app_wrote(None, {UPLOAD: [1, 1]}, "curl ...", str(tmp_path)) == {}
+
+
+def test_a_generated_name_another_file_of_the_command_names_is_kept(tmp_path):
+    """A script writing an image under a generated name and the manifest that names it."""
+    image = "backend/static/media/0b5e1c3a-7d9f-4e2b-8a6c-1f3e5d7b9a0c.png"
+    before = {"backend/main_api.py": [1, 1]}
+    _write(tmp_path, image, "png")
+    _write(tmp_path, "backend/static/manifest.json", '{"logo": "media/0b5e1c3a-7d9f-4e2b-8a6c-1f3e5d7b9a0c.png"}')
+    after = {**before, image: _stat(tmp_path, image),
+             "backend/static/manifest.json": _stat(tmp_path, "backend/static/manifest.json")}
+
+    assert runbook.files_the_app_wrote(before, after, "python scripts/build_assets.py", str(tmp_path)) == {}
+    del after["backend/static/manifest.json"]
+    assert list(runbook.files_the_app_wrote(before, after, "python scripts/build_assets.py", str(tmp_path))) == [image]

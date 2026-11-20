@@ -3841,7 +3841,8 @@ class ToolExecutor:
             return {"error": f"Failed to run command: {e}"}
 
         extra: dict = {}
-        self.command_app_files.update(files_the_app_wrote(before, backend_files(self.workspace), command))
+        self.command_app_files.update(
+            files_the_app_wrote(before, backend_files(self.workspace), command, self.workspace))
         restored, not_restored = self._restore_guarded_records(records)
         if restored:
             extra["run_records_restored"] = restored

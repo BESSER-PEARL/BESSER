@@ -501,11 +501,18 @@ under the backend folder, outside dot-folders; it is a data file (``.json``,
 ``.pdf``, an image), not code, configuration or docs (``.py``, ``.ts``,
 ``.toml``, ``.txt``, ``.yaml``, ``.sql``, ``.html`` ...); its name holds a
 generated id, 32 hex digits or a UUID, as an app names a stored upload; and the
-command names neither its path nor its name. Those are removed by the same
-rules as the probe's record. A file the agent creates on purpose through the
-shell is kept: one the command names (``cat > data/seed.json``, ``cp a b``),
-code such as a migration ``alembic`` names with a hex id, and data a script
-writes under a plain name (``fixtures.json``).
+command names neither its path nor its name, nor does another file the same
+command created or changed (a script writing an image under a generated name
+and the manifest naming it; text files up to 1 MB, at most 50 are read). Those
+are removed by the same rules as the probe's record. A file the agent creates on
+purpose through the shell is kept: one the command names (``cat >
+data/seed.json``, ``cp a b``), code such as a migration ``alembic`` names with a
+hex id, data a script writes under a plain name (``fixtures.json``), and a
+generated name another file of that command names. A file of the app's data that
+the agent's own script writes under a generated name that nothing names is still
+taken for the app's and removed. The listing skips virtualenvs (a folder holding
+``pyvenv.cfg``, under any name) and stops at 5,000 files, in which case nothing is
+recorded for that command.
 
 Only the name-based exclusions (databases, logs, caches) apply, and a generated
 key or upload is delivered with the app, when the file is:

@@ -330,6 +330,15 @@ SSE event types
      - Extra detail for the current phase (e.g. the gap task list); for
        ``validate``, the first check's result as ``message``
        (``"2 blockers / 5 total"``).
+   * - ``step``
+     - What the current phase is doing now, sent during ``validate`` because
+       one check round, requirement judge call or fix attempt can take
+       minutes: ``phase``, ``message`` (for example ``"First check: checking
+       35 requirements against the code"``, ``"Fix attempt 2: fixing 24
+       blockers (20 about requirements)"``, ``"Packaging the result"``) and
+       ``elapsedSeconds``, the run's elapsed time when the step started. A
+       step lasts until the next ``step``, ``phase`` or terminal event; the
+       ``cost`` ticks tell how long it has been running.
    * - ``findings``
      - One Phase 3 validation round: ``attempt`` (0 for the first check, n for
        the re-check after fix attempt n), ``blockers`` (at most 20 messages,

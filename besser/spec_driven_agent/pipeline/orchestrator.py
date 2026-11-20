@@ -282,7 +282,7 @@ from besser.spec_driven_agent.pipeline.constants import (  # noqa: F401
 
 from besser.spec_driven_agent.pipeline.edit_loop_guards import EditLoopGuardsMixin
 from besser.spec_driven_agent.pipeline.modify_run import ModifyRunMixin
-from besser.spec_driven_agent.pipeline.phase3_repair import Phase3RepairMixin, clip_finding
+from besser.spec_driven_agent.pipeline.phase3_repair import Phase3RepairMixin, clip_finding, counted
 from besser.spec_driven_agent.pipeline.regeneration import Regeneration
 from besser.spec_driven_agent.settings import AgentSettings
 
@@ -667,6 +667,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # blockers fixed"). Traced so a run's exit can be attributed without
         # replaying the loop by hand. Report-only.
         self._phase3_exit_reason: str = "not reached"
+        # The Phase 3 round its steps are reported under ("First check",
+        # "Re-check after fix attempt 2"); see _report_round_step.
+        self._validation_round: str = "Validation"
         self._repair_progress: dict = {}
         # ``True`` once Phase 2 exits via end_turn (LLM said it's done).
         # Anything else — API error, cost cap, timeout, cancellation —
@@ -3062,6 +3065,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         cached = getattr(self, "_runtime_probe_cache", None)
         if cached and cached[0] == revision:
             return list(cached[1])
+        self._report_round_step("starting the app's backend and creating test records")
         issues: list[str] = []
         mapper_issues = _import_smoke_issues(self.output_dir)
         issues.extend(mapper_issues)
@@ -3625,6 +3629,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         build_verdicts = self._frontend_build_verdicts
         remaining = self.max_runtime_seconds - (
             time.monotonic() - self._start_time if self._start_time is not None else 0)
+        if self.enable_toolchain_validation and self.allow_shell_tools:
+            self._report_round_step("building the frontend")
         raw_issues.extend(collect_frontend_build_issues(
             self.output_dir, enabled=self.enable_toolchain_validation,
             allow_shell=self.allow_shell_tools, source_revision=self._workspace_revision,
@@ -4215,6 +4221,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             )
             return findings
         if self._requirements is None:
+            self._report_round_step("listing the requirements in the request")
             self._extract_requirements(self._instructions)
         if self._requirements is None:
             if (_requirements_ledger._is_real_provider(self.client)
@@ -4255,6 +4262,11 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                         "revisions and is not asked again this run."]
             kept = self._requirements_still_verified(scope, imports)
             to_judge = [item for item in requirements if item["id"] not in kept]
+            if to_judge:
+                self._report_round_step(
+                    f"checking {len(to_judge)} of {counted(len(requirements), 'requirement')} against the code "
+                    f"({len(kept)} unchanged since the last check)" if kept else
+                    f"checking {counted(len(to_judge), 'requirement')} against the code")
             with self._traced_llm_call("requirements_judge") as call:
                 verdicts = _requirements_ledger.judge_coverage(
                     to_judge, digest, self.client, original_spec=self._instructions,
@@ -4380,6 +4392,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             focused_digest, gaps, shown = _requirements_ledger.build_app_digest_details(
                 self.output_dir, focus_paths=focus_paths)
             to_rejudge = [item for item in requirements if item["id"] in focus]
+            self._report_round_step(
+                f"checking {counted(len(to_rejudge), 'requirement')} again with the relevant files shown")
             with self._traced_llm_call("requirements_rejudge") as call:
                 repair = _requirements_ledger.judge_coverage(
                     to_rejudge, focused_digest, self.client, original_spec=self._instructions,
@@ -4687,12 +4701,16 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             for folder in sorted({rel.rpartition("/")[0] for rel in self._workspace_file_list()
                                   if rel.rpartition("/")[2] == "tsconfig.json"}))
         tools = tuple(shutil.which(name) for name in ("tsc", "tsc.cmd", "npm", "npm.cmd"))
-        return self._revision_cached(
-            "tsc", (self.allow_shell_tools, self.enable_toolchain_validation, tools, installs),
-            lambda: _collect_tsc_issues(
+
+        def type_check() -> list[str]:
+            if installs:
+                self._report_round_step("type-checking the TypeScript code")
+            return _collect_tsc_issues(
                 self.output_dir, self.allow_shell_tools,
                 self.enable_toolchain_validation, _RECIPE_EXCLUDED_DIRS,
-            ))
+            )
+        return self._revision_cached(
+            "tsc", (self.allow_shell_tools, self.enable_toolchain_validation, tools, installs), type_check)
 
     @classmethod
     def _collapse_repeated_names(cls, err_lines: list[str]) -> list[str]:

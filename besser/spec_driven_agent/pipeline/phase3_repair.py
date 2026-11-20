@@ -175,6 +175,18 @@ def _no_edit_exit_reason(attempt: int, calls: list[dict]) -> str:
             f"none an edit{failed_note}: {tools})")
 
 
+def counted(count: int, noun: str) -> str:
+    """``1 blocker`` / ``3 blockers``: a count as the run card's progress line says it."""
+    return f"{count} {noun}{'' if count == 1 else 's'}"
+
+
+def _fixing_blockers(blockers: list[ValidationIssue]) -> str:
+    """A fix attempt's step: what it faces, by count, never by internal ids."""
+    about_requirements = sum(1 for issue in blockers if issue.message.startswith("requirement "))
+    return (f"fixing {counted(len(blockers), 'blocker')}"
+            + (f" ({about_requirements} about requirements)" if about_requirements else ""))
+
+
 def _judge_left_unverified(verdict: dict) -> bool:
     """The judge gave no citation to reject, or only a malformed one (real code misquoted):
     no rejected citation of absent or role-failing code."""
@@ -252,12 +264,24 @@ class Phase3RepairMixin:
             self.phase3_started_at = time.monotonic()
         # Announced before the first check, which can take minutes (npm, tsc), so
         # that time is counted as validation, not as the phase before it.
-        if self.on_progress:
-            self.on_progress(self.total_turns, "__validating__", "")
+        self._emit_progress(self.total_turns, "__validating__", "")
         try:
             self._run_phase3_repair_cycle()
         finally:
             self._apply_runtime_gate()
+        self._report_validation_step("Packaging the result")
+
+    def _report_validation_step(self, message: str) -> None:
+        """Name what Phase 3 is doing now on the run card: one check or LLM call can take minutes."""
+        self._emit_progress(self.total_turns, "__validation_step__", message)
+
+    def _report_round_step(self, step: str) -> None:
+        """A step of the current validation round, e.g. "First check: building the frontend"."""
+        self._report_validation_step(f"{self._validation_round}: {step}")
+
+    def _begin_validation_round(self, label: str) -> None:
+        self._validation_round = label
+        self._report_round_step("checking the code for errors")
 
     def _report_findings(self, attempt: int, issues: list[ValidationIssue], restored: bool = False) -> None:
         """Hand one validation round to ``on_findings`` (the run card's findings-and-repairs view).
@@ -309,6 +333,7 @@ class Phase3RepairMixin:
                 self._save_phase3_checkpoint()
             return
 
+        self._begin_validation_round("First check")
         issues = self._collect_validation_issues()
 
         if not issues:
@@ -337,12 +362,11 @@ class Phase3RepairMixin:
         if self._checkpoint_phase == "phase3":
             self._save_phase3_checkpoint()
 
-        if self.on_progress:
-            self.on_progress(
-                self.total_turns,
-                "validation",
-                f"{len(blockers_before)} blockers / {len(issues)} total",
-            )
+        self._emit_progress(
+            self.total_turns,
+            "validation",
+            f"{len(blockers_before)} blockers / {len(issues)} total",
+        )
         self._report_findings(0, issues)
 
         # Auto-fix is opt-in (default off). Industry pattern: report by
@@ -452,6 +476,8 @@ class Phase3RepairMixin:
             is_first_attempt = attempts_run == 0
             attempts_run += 1
             faced_last = self._blocker_identity(current_blockers)
+            self._validation_round = f"Fix attempt {attempts_run}"
+            self._report_round_step(_fixing_blockers(current_blockers))
             self._trace.write(
                 EVENT_PHASE_ENTER,
                 phase="phase3_fix_attempt",
@@ -506,6 +532,7 @@ class Phase3RepairMixin:
                 break
             # Re-validate: re-running the checks is the only evidence that
             # the repair actually compiles.
+            self._begin_validation_round(f"Re-check after fix attempt {attempts_run}")
             issues_after = self._collect_validation_issues()
             blockers_after = [i for i in issues_after if i.severity == "blocker"]
             if (self._phase3_tree_score(blockers_after)[1] > best_score[1]
@@ -996,6 +1023,7 @@ class Phase3RepairMixin:
                 "Phase 3 rollback discarded the implementation of %d checklist "
                 "item(s), now reopened: %s", len(reopened), reopened,
             )
+        self._begin_validation_round("Check of the restored earlier version")
         restored = self._collect_validation_issues()
         # Only what the DISCARDED tree added. Printing the whole final set
         # listed findings that describe the tree that just shipped - the one

@@ -83,6 +83,22 @@ class PhaseUpdateEvent(BaseSseEvent):
     message: Optional[str] = None
 
 
+class StepEvent(BaseSseEvent):
+    """What the current phase is doing now, while one of its steps runs.
+
+    Emitted during ``validate``: each check round, requirement judge call and
+    fix attempt, where one step can take minutes. A step lasts until the next
+    step, phase or terminal event. ``elapsedSeconds`` is the run's elapsed
+    time when the step started, measured like the ``cost`` event, so a client
+    can show how long the step has been running from the ``cost`` ticks.
+    """
+
+    event: Literal["step"] = "step"
+    phase: PhaseName
+    message: str
+    elapsedSeconds: Optional[float] = None
+
+
 class TextDeltaEvent(BaseSseEvent):
     """A streaming text delta from the underlying LLM response.
 

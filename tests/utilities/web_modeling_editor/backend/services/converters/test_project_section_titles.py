@@ -54,3 +54,16 @@ def test_a_title_is_not_carried_past_a_section_of_another_kind():
     )
 
     assert _extract_all_sections(content, "STRUCTURAL") == [(None, "a = 1")]
+
+
+def test_an_owner_holding_the_definition_header_words_still_imports(tmp_path):
+    project = Project(name="p", models=[_domain_model("Library", "Book")], owner="Ada # PROJECT DEFINITION #",
+                      metadata=Metadata(description="d"))
+    path = tmp_path / "project.py"
+    project_to_code(project, str(path))
+
+    imported = project_to_json(path.read_text(encoding="utf-8"))
+
+    assert imported["owner"] == "Ada # PROJECT DEFINITION #"
+    (diagram,) = imported["diagrams"]["ClassDiagram"]
+    assert [e["name"] for e in diagram["model"]["elements"].values() if e["type"] == "Class"] == ["Book"]

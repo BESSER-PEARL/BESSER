@@ -1,8 +1,8 @@
 import logging
 import os
-from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.deployment import DeploymentModel, IPRangeType, ServiceType, Protocol
 from besser.generators import GeneratorInterface
+from besser.utilities.generation_trace import trace_source, traced_environment
 from besser.utilities.template_escaping import register_escaping_filters
 
 logger = logging.getLogger(__name__)
@@ -15,6 +15,11 @@ class TerraformGenerator(GeneratorInterface):
     Args:
         deployment_model (DeploymentModel): The deployment model containing multiple public clusters.
         output_dir (str, optional): The output directory where the generated code will be saved. Defaults to None.
+
+    Attributes:
+        traced_files (dict[str, FileTrace]): After ``generate()``, each file written (``<provider>_<cluster>/<file>``)
+            with its cluster as source, and the lines rendered from each deployment, container, service, ingress,
+            network and subnetwork that has an ``id``.
     """
 
     def __init__(self, deployment_model: DeploymentModel, output_dir: str = None):
@@ -28,7 +33,7 @@ class TerraformGenerator(GeneratorInterface):
         Sets up the Jinja2 environment and adds custom filters.
         """
         templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
-        env = Environment(loader=FileSystemLoader(templates_path), trim_blocks=True, lstrip_blocks=True)
+        env = traced_environment(templates_path, trim_blocks=True, lstrip_blocks=True)
         env.filters['class_name'] = self.get_class_name
         env.filters['to_str'] = self.convert_type
         env.filters['set_dict_item'] = self.set_dict_item
@@ -104,10 +109,11 @@ class TerraformGenerator(GeneratorInterface):
                     logger.exception("Error loading template %s", template_name)
                     raise
 
-                generated_code = template.render(public_cluster=public_cluster, config_lines=config_lines)
+                rendered = template.render(public_cluster=public_cluster, config_lines=config_lines)
                 try:
-                    with open(file_path, mode="w") as f:
-                        f.write(generated_code)
+                    self._write_traced(os.path.relpath(file_path, output_base_dir), rendered,
+                                       trace_source(public_cluster, f"{template_name}#cluster"),
+                                       output_dir=output_base_dir)
                 except OSError:
                     logger.exception("Error writing to file %s", file_path)
                     raise

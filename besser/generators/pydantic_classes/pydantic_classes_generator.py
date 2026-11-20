@@ -2,7 +2,6 @@ import logging
 import os
 import re
 import unicodedata
-from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.structural import DomainModel, AssociationClass
 from besser.generators.default_literals import register_default_literals
 from besser.generators import GeneratorInterface
@@ -16,6 +15,7 @@ from besser.generators.structural_utils import (
 )
 from besser.generators.pydantic_classes.ocl_utils import build_constraints_map
 from besser.utilities.utils import sort_by_timestamp
+from besser.utilities.generation_trace import traced_environment
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +33,10 @@ class PydanticGenerator(GeneratorInterface):
                                             are enabled. If set to False, only the ID of the linked entity will be used.
                                             The default value is False.
         output_dir (str, optional): The output directory where the generated code will be saved. Defaults to None.
+
+    Attributes:
+        traced_files (dict[str, FileTrace]): After ``generate()``, ``pydantic_classes.py`` with the lines rendered
+            from each class and enumeration that has an ``id``.
     """
     regenerable = True
 
@@ -52,7 +56,6 @@ class PydanticGenerator(GeneratorInterface):
             None, but store the generated code as a file named pydantic_classes.py
         """
         require_valid_identifiers(self.model)
-        file_path = self.build_generation_path(file_name="pydantic_classes.py")
         templates_path = os.path.join(os.path.dirname(
             os.path.abspath(__file__)), "templates")
         def ascii_identifier(name: str) -> str:
@@ -63,12 +66,12 @@ class PydanticGenerator(GeneratorInterface):
                 ascii_name = f"_{ascii_name}"
             return ascii_name
 
-        env = Environment(
-            loader=FileSystemLoader(templates_path),
+        env = traced_environment(
+            templates_path,
             trim_blocks=True,
             lstrip_blocks=True,
             keep_trailing_newline=True,
-            extensions=['jinja2.ext.do']
+            extensions=['jinja2.ext.do'],
         )
         env.filters["ascii_identifier"] = ascii_identifier
         env.globals["is_server_owned_attribute"] = is_server_owned_attribute
@@ -122,21 +125,20 @@ class PydanticGenerator(GeneratorInterface):
                 for end in sorted(cls.association.ends, key=lambda e: e.name)
             ]
 
-        with open(file_path, mode="w", newline='\n', encoding="utf-8") as f:
-            generated_code = template.render(
-                domain=self.domain_model,
-                sorted_classes=sorted_classes,
-                backend=self.backend,
-                nested_creations=self.nested_creations,
-                constraints_map=constraints_map,
-                fkeys=get_foreign_keys(self.domain_model),
-                deferred_fks=get_deferred_fk_associations(self.domain_model),
-                class_names=class_names,
-                pk_types=pk_types,
-                assoc_by_association=assoc_by_association,
-                assoc_link_meta=assoc_link_meta,
-                assoc_end_fields=assoc_end_fields,
-                sort_by_timestamp=sort_by_timestamp,
-            )
-            f.write(generated_code)
-            logger.info("Code generated in the location: %s", file_path)
+        rendered = template.render(
+            domain=self.domain_model,
+            sorted_classes=sorted_classes,
+            backend=self.backend,
+            nested_creations=self.nested_creations,
+            constraints_map=constraints_map,
+            fkeys=get_foreign_keys(self.domain_model),
+            deferred_fks=get_deferred_fk_associations(self.domain_model),
+            class_names=class_names,
+            pk_types=pk_types,
+            assoc_by_association=assoc_by_association,
+            assoc_link_meta=assoc_link_meta,
+            assoc_end_fields=assoc_end_fields,
+            sort_by_timestamp=sort_by_timestamp,
+        )
+        self._write_traced("pydantic_classes.py", rendered)
+        logger.info("Code generated in the location: %s", self.build_generation_path(file_name="pydantic_classes.py"))

@@ -249,3 +249,23 @@ The ``JSONSchemaGenerator`` constructor accepts the following parameters:
 - ``output_dir`` (str, optional): The output directory where the generated code will be saved. Defaults to ``<<current_directory>>/output`` in ``regular`` mode. In ``smart_data`` mode it is **required** — the per-class directories are created from it directly, so leaving it unset raises a ``TypeError``.
 - ``mode`` (str, optional): The generation mode, either ``'regular'`` or ``'smart_data'``. Defaults to ``'regular'``.
 
+
+Trace Links
+-----------
+
+The generator records which lines of its files come from which model element: after ``generate()``,
+``generator.traced_files`` lists, per written file, the line ranges rendered from every element that has an
+``id`` (as every element drawn in the web editor does). The schema is dumped from a Python structure rather than a
+template block, so the ranges are derived from the structure (``besser.generators.json.json_trace``), and the files
+are not changed.
+
+- ``regular`` mode, ``json_schema.json``: each class (``class``; it is dumped under both ``properties`` and
+  ``definitions``, so it has two ranges), its attributes (``attribute``), navigable association ends
+  (``association_end``) with their association (``association``), the generalizations (``generalization``), and each
+  enumeration (``enumeration``) with its literals (``literal``). An element's lines lie within its class's.
+- ``smart_data`` mode: ``<Class>/schema.json`` and the four ``<Class>/examples/*`` files record the class they were
+  generated from as a whole (``sources``), and the ranges of its attributes and association ends. The constant
+  ``ADOPTERS.yaml`` and ``notes.yaml`` are left untraced.
+
+``build_generation_trace`` in ``besser.utilities.generation_trace`` turns them into a :doc:`traceability model
+<../buml_language/model_types/traceability>`; the web editor shows them on its *Traceability* page.

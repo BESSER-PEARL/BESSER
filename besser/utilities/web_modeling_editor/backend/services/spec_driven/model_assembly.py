@@ -68,6 +68,24 @@ _PRIMARY_KIND_PREFERENCE: tuple[tuple[str, str], ...] = (
 )
 
 
+# The kind of model each diagram type gives, as a run's trace names it
+# (``besser.spec_driven_agent.state.trace_model.MODEL_KINDS``).
+_DIAGRAM_KINDS = {
+    "ClassDiagram": "domain", "GUINoCodeDiagram": "gui", "AgentDiagram": "agent", "ObjectDiagram": "object",
+    "BPMN": "bpmn", "NNDiagram": "nn", "QuantumCircuitDiagram": "quantum", "StateMachineDiagram": "state_machine",
+}
+
+
+@dataclass(frozen=True)
+class AssembledDiagram:
+    """A diagram a run reads: the kind of model, the diagram's editor id and title, and the model."""
+
+    kind: str
+    diagram_id: Optional[str]
+    title: str
+    model: Any
+
+
 @dataclass(frozen=True)
 class AssembledModels:
     """BUML models ready to be passed to ``LLMOrchestrator``.
@@ -91,6 +109,7 @@ class AssembledModels:
     bpmn_model: Optional[Any] = None                    # BPMNModel or None
     nn_model: Optional[Any] = None                      # NN model or None
     assembly_issues: List[dict[str, str]] = field(default_factory=list)
+    diagrams: List[AssembledDiagram] = field(default_factory=list)  # what each model was converted from
 
     def summary(self) -> dict[str, Any]:
         """Shape suitable for the preview endpoint response.
@@ -157,8 +176,11 @@ def _assembly_issue(diagram: DiagramInput, diagram_type: str, diagnostic: str) -
             "diagram_type": diagram_type, "diagnostic": diagnostic[:160]}
 
 
-def _convert_diagram(diagram, diagram_type, issues, convert):
-    """Keep conversion failures explicit; never expose arbitrary exception text."""
+def _convert_diagram(diagram, diagram_type, issues, reads, convert):
+    """Keep conversion failures explicit; never expose arbitrary exception text.
+
+    A model converted from the diagram is added to ``reads`` (when given) with the diagram it
+    came from, so the run's trace can name the diagram by its id."""
     diagnostic = "no_model_returned"
     try:
         result = convert()
@@ -181,6 +203,9 @@ def _convert_diagram(diagram, diagram_type, issues, convert):
     if result is None:
         logger.warning("Model assembly failed: %s [%s]: %s", diagram_type,
                        issue["diagram_id"], diagnostic)
+    elif reads is not None:
+        reads.append(AssembledDiagram(_DIAGRAM_KINDS[diagram_type], getattr(diagram, "id", None),
+                                      (getattr(diagram, "title", None) or "").strip(), result))
     return result
 
 
@@ -227,25 +252,26 @@ def assemble_models_from_project(
         If the project contains no usable modeling artifacts at all.
     """
     assembly_issues: List[dict[str, str]] = []
+    reads: List[AssembledDiagram] = []
     class_diagram = _pick_class_diagram(project)
     domain_model = None
     if class_diagram is not None:
-        domain_model = _convert_diagram(class_diagram, "ClassDiagram", assembly_issues,
+        domain_model = _convert_diagram(class_diagram, "ClassDiagram", assembly_issues, reads,
                                        lambda: process_class_diagram(class_diagram.model_dump()))
 
     gui_model, agent_model, agent_config = _assemble_gui_and_agent(
-        project, class_diagram, domain_model, assembly_issues
+        project, class_diagram, domain_model, assembly_issues, reads
     )
     if agent_model is None:
         agent_model, agent_config = _assemble_standalone_agent(
-            project, agent_config, assembly_issues
+            project, agent_config, assembly_issues, reads
         )
 
-    object_model = _assemble_object_model(project, domain_model, assembly_issues)
-    state_machines = _assemble_state_machines(project, assembly_issues)
-    quantum_circuit = _assemble_quantum_circuit(project, assembly_issues)
-    bpmn_model = _assemble_bpmn_model(project, assembly_issues)
-    nn_model = _assemble_nn_model(project, assembly_issues)
+    object_model = _assemble_object_model(project, domain_model, assembly_issues, reads)
+    state_machines = _assemble_state_machines(project, assembly_issues, reads)
+    quantum_circuit = _assemble_quantum_circuit(project, assembly_issues, reads)
+    bpmn_model = _assemble_bpmn_model(project, assembly_issues, reads)
+    nn_model = _assemble_nn_model(project, assembly_issues, reads)
 
     primary_kind = _resolve_primary_kind(
         override=primary_kind_override,
@@ -269,6 +295,9 @@ def assemble_models_from_project(
             "or QuantumCircuitDiagram)" + (f". Model assembly failed: {loss_details}" if loss_details else "")
         )
 
+    # A model converted and then dropped (a GUI's agent replaced by the stand-alone one) was not read.
+    used = [domain_model, gui_model, agent_model, object_model, quantum_circuit, bpmn_model, nn_model,
+            *state_machines]
     return AssembledModels(
         primary_kind=primary_kind,
         domain_model=domain_model,
@@ -281,6 +310,7 @@ def assemble_models_from_project(
         bpmn_model=bpmn_model,
         nn_model=nn_model,
         assembly_issues=assembly_issues,
+        diagrams=[read for read in reads if any(read.model is model for model in used)],
     )
 
 
@@ -330,6 +360,7 @@ def _assemble_standalone_agent(
     project: ProjectInput,
     agent_config: Optional[dict],
     issues: Optional[list[dict[str, str]]] = None,
+    reads: Optional[list] = None,
 ) -> tuple[Optional[Any], Optional[dict]]:
     """Process an AgentDiagram even when no GUI is present.
 
@@ -341,7 +372,7 @@ def _assemble_standalone_agent(
     if agent_diagram is None or not getattr(agent_diagram, "model", None):
         return None, agent_config
     agent_diagram_dict = agent_diagram.model_dump()
-    agent_model = _convert_diagram(agent_diagram, "AgentDiagram", issues,
+    agent_model = _convert_diagram(agent_diagram, "AgentDiagram", issues, reads,
                                    lambda: process_agent_diagram(agent_diagram_dict))
     if agent_model is None:
         return None, agent_config
@@ -368,6 +399,7 @@ def _assemble_gui_and_agent(
     class_diagram: DiagramInput,
     domain_model: Any,
     issues: Optional[list[dict[str, str]]] = None,
+    reads: Optional[list] = None,
 ) -> tuple[Optional[Any], Optional[Any], Optional[dict]]:
     """Process GUI and (conditionally) agent diagrams.
 
@@ -386,7 +418,7 @@ def _assemble_gui_and_agent(
         if issues is not None:
             issues.append(_assembly_issue(gui_diagram, "GUINoCodeDiagram", "missing_domain_model"))
     else:
-        gui_model = _convert_diagram(gui_diagram, "GUINoCodeDiagram", issues,
+        gui_model = _convert_diagram(gui_diagram, "GUINoCodeDiagram", issues, reads,
                                      lambda: process_gui_diagram(gui_diagram.model, class_diagram.model, domain_model))
 
     if gui_model is not None and has_agent_components(gui_model):
@@ -397,7 +429,7 @@ def _assemble_gui_and_agent(
             agent_diagram = project.get_active_diagram("AgentDiagram")
         if agent_diagram is not None and agent_diagram.model:
             agent_diagram_dict = agent_diagram.model_dump()
-            agent_model = _convert_diagram(agent_diagram, "AgentDiagram", issues,
+            agent_model = _convert_diagram(agent_diagram, "AgentDiagram", issues, reads,
                                            lambda: process_agent_diagram(agent_diagram_dict))
             if agent_model is not None:
                 project_settings = project.settings if isinstance(project.settings, dict) else {}
@@ -418,6 +450,7 @@ def _assemble_gui_and_agent(
 
 def _assemble_object_model(
     project: ProjectInput, domain_model: Any, issues: Optional[list[dict[str, str]]] = None,
+    reads: Optional[list] = None,
 ) -> Optional[Any]:
     """Process the active ObjectDiagram into an ObjectModel.
 
@@ -427,27 +460,30 @@ def _assemble_object_model(
     object_diagram = project.get_active_diagram("ObjectDiagram")
     if object_diagram is None or not getattr(object_diagram, "model", None):
         return None
-    return _convert_diagram(object_diagram, "ObjectDiagram", issues,
+    return _convert_diagram(object_diagram, "ObjectDiagram", issues, reads,
                             lambda: process_object_diagram(object_diagram.model_dump(), domain_model))
 
 
-def _assemble_bpmn_model(project: ProjectInput, issues: Optional[list[dict[str, str]]] = None) -> Optional[Any]:
+def _assemble_bpmn_model(project: ProjectInput, issues: Optional[list[dict[str, str]]] = None,
+                         reads: Optional[list] = None) -> Optional[Any]:
     """Process the active BPMN diagram into a ``BPMNModel`` (best-effort)."""
     diagram = project.get_active_diagram("BPMN")
     if diagram is None or not getattr(diagram, "model", None):
         return None
-    return _convert_diagram(diagram, "BPMN", issues, lambda: process_bpmn_diagram(diagram.model_dump()))
+    return _convert_diagram(diagram, "BPMN", issues, reads, lambda: process_bpmn_diagram(diagram.model_dump()))
 
 
-def _assemble_nn_model(project: ProjectInput, issues: Optional[list[dict[str, str]]] = None) -> Optional[Any]:
+def _assemble_nn_model(project: ProjectInput, issues: Optional[list[dict[str, str]]] = None,
+                         reads: Optional[list] = None) -> Optional[Any]:
     """Process the active NNDiagram into a BUML NN model (best-effort)."""
     diagram = project.get_active_diagram("NNDiagram")
     if diagram is None or not getattr(diagram, "model", None):
         return None
-    return _convert_diagram(diagram, "NNDiagram", issues, lambda: process_nn_diagram(diagram.model_dump()))
+    return _convert_diagram(diagram, "NNDiagram", issues, reads, lambda: process_nn_diagram(diagram.model_dump()))
 
 
-def _assemble_state_machines(project: ProjectInput, issues: Optional[list[dict[str, str]]] = None) -> List[Any]:
+def _assemble_state_machines(project: ProjectInput, issues: Optional[list[dict[str, str]]] = None,
+                         reads: Optional[list] = None) -> List[Any]:
     """Process every StateMachineDiagram in the project.
 
     Unlike the other single-active-diagram types, state machines are
@@ -459,19 +495,20 @@ def _assemble_state_machines(project: ProjectInput, issues: Optional[list[dict[s
     for diagram in diagrams:
         if not getattr(diagram, "model", None):
             continue
-        sm = _convert_diagram(diagram, "StateMachineDiagram", issues,
+        sm = _convert_diagram(diagram, "StateMachineDiagram", issues, reads,
                               lambda: process_state_machine(diagram.model_dump()))
         if sm is not None:
             results.append(sm)
     return results
 
 
-def _assemble_quantum_circuit(project: ProjectInput, issues: Optional[list[dict[str, str]]] = None) -> Optional[Any]:
+def _assemble_quantum_circuit(project: ProjectInput, issues: Optional[list[dict[str, str]]] = None,
+                         reads: Optional[list] = None) -> Optional[Any]:
     """Process the active QuantumCircuitDiagram into a QuantumCircuit."""
     diagram = project.get_active_diagram("QuantumCircuitDiagram")
     if diagram is None or not getattr(diagram, "model", None):
         return None
-    return _convert_diagram(diagram, "QuantumCircuitDiagram", issues,
+    return _convert_diagram(diagram, "QuantumCircuitDiagram", issues, reads,
                             lambda: process_quantum_diagram(diagram.model_dump()))
 
 

@@ -1,12 +1,15 @@
 """Run the generator a request names on the diagram(s) it needs.
 
 ``generate_from_diagram`` serves ``/generate-output`` and
-``generate_from_project`` serves ``/generate-output-from-project``. Both
-dispatch on the generator's registry entry (``category``,
-``required_diagram_type``, ``output_type``); the generators that read their
-own options from the request config have a builder in
-``_CLASS_DIAGRAM_BUILDERS``. Bad input raises ``ValidationError`` /
-``ConversionError`` (HTTP 400, see ``routers/error_handler.py``).
+``generate_from_project`` serves ``/generate-output-from-project``; the traced
+endpoints (``services/traceability``) call the same two functions, so a traced
+delivery is the plain one. Both dispatch on the generator's registry entry
+(``category``, ``required_diagram_type``, ``output_type``); the generators that
+read their own options from the request config have a builder in
+``_CLASS_DIAGRAM_BUILDERS``. Every path returns a :class:`Generation`: the
+download, whose packaging (``downloads.py``) carries the traces the generators
+recorded, and the diagrams it was generated from. Bad input raises
+``ValidationError`` / ``ConversionError`` (HTTP 400, see ``routers/error_handler.py``).
 """
 
 import asyncio
@@ -17,8 +20,9 @@ import re
 import shutil
 import tempfile
 import uuid
-from typing import Optional
+from typing import Optional, Tuple
 
+from besser.BUML.metamodel.state_machine.agent import Agent
 from besser.utilities.secret_redaction import sanitize_config
 from besser.utilities.web_modeling_editor.backend.config import (
     SUPPORTED_GENERATORS,
@@ -69,9 +73,11 @@ from besser.utilities.web_modeling_editor.backend.services.generation.agents imp
     has_agent_components,
 )
 from besser.utilities.web_modeling_editor.backend.services.generation.downloads import (
+    DiagramRead,
     GeneratedOutput,
+    Generation,
     file_output,
-    with_version_comment,
+    single_file_output,
     zip_output,
 )
 from besser.utilities.web_modeling_editor.backend.services.governance.swarm_bindings import (
@@ -91,7 +97,7 @@ from besser.utilities.web_modeling_editor.backend.services.utils.user_profile_ut
 
 logger = logging.getLogger(__name__)
 
-async def generate_from_project(input_data: ProjectInput) -> GeneratedOutput:
+async def generate_from_project(input_data: ProjectInput) -> Generation:
     """Generate from a project: generators that need several diagrams (Web App,
     Docker Compose, the backend) or a non-class diagram, else the active diagram."""
     generator_type = input_data.settings.get("generator") if input_data.settings else None
@@ -170,7 +176,7 @@ async def generate_from_project(input_data: ProjectInput) -> GeneratedOutput:
     return await generate_from_diagram(diagram_input)
 
 
-async def generate_from_diagram(input_data: DiagramInput) -> GeneratedOutput:
+async def generate_from_diagram(input_data: DiagramInput) -> Generation:
     """Generate from one diagram with the generator ``input_data.generator`` names."""
     with tempfile.TemporaryDirectory(prefix=f"{TEMP_DIR_PREFIX}{uuid.uuid4().hex}_") as temp_dir:
         json_data = input_data.model_dump()
@@ -191,9 +197,11 @@ async def generate_from_diagram(input_data: DiagramInput) -> GeneratedOutput:
                 f"{_get_diagram_type(json_data) or 'diagram'}: it needs {missing}."
             )
 
-        # Handle agent generators (different diagram type)
+        # Handle agent generators (different diagram type). The agent helpers convert the
+        # diagram themselves, once per variant, so the read records the diagram alone.
         if generator_info.category == "ai_agent":
-            return await generate_agent_output(json_data)
+            output = await generate_agent_output(json_data)
+            return Generation(output, (DiagramRead(input_data.id, input_data.title, Agent.__name__),))
 
         # Handle quantum generators
         if generator_info.category == "quantum":
@@ -237,7 +245,7 @@ async def generate_from_diagram(input_data: DiagramInput) -> GeneratedOutput:
         )
 
 
-async def _handle_backend_project_generation(input_data: ProjectInput, generator_info) -> GeneratedOutput:
+async def _handle_backend_project_generation(input_data: ProjectInput, generator_info) -> Generation:
     """Generate the FastAPI backend from the project's active ClassDiagram, with
     NN-implemented methods linked to the project's NNDiagrams."""
     class_diagram = input_data.get_active_diagram("ClassDiagram")
@@ -246,13 +254,26 @@ async def _handle_backend_project_generation(input_data: ProjectInput, generator
 
     with tempfile.TemporaryDirectory(prefix=f"{TEMP_DIR_PREFIX}{uuid.uuid4().hex}_") as temp_dir:
         buml_model = process_class_diagram(class_diagram.model_dump())
-        link_method_neural_networks(buml_model, input_data.diagrams.get("NNDiagram", []))
-        return await _generate_standard(
-            buml_model, generator_info.generator_class, "backend", generator_info, temp_dir
+        networks = _link_networks(buml_model, input_data)
+        generation = await _generate_standard(
+            buml_model, generator_info.generator_class, "backend", generator_info, temp_dir,
+            DiagramRead.of(class_diagram.id, class_diagram.title, buml_model),
         )
+        return Generation(generation.output, generation.diagrams + networks)
 
 
-async def _handle_web_app_project_generation(input_data: ProjectInput, generator_info, config: dict) -> GeneratedOutput:
+def _link_networks(domain_model, input_data: ProjectInput) -> Tuple[DiagramRead, ...]:
+    """Link the methods of ``domain_model`` implemented by a network to the project's NNDiagrams
+    (``link_method_neural_networks``), and return the reads of the diagrams linked."""
+    nn_diagrams = input_data.diagrams.get("NNDiagram", [])
+    networks: dict = {}
+    link_method_neural_networks(domain_model, nn_diagrams, networks)
+    by_id = {d.id: d for d in nn_diagrams if d.id}
+    return tuple(DiagramRead.of(key, by_id[key].title, network)
+                 for key, network in networks.items() if key in by_id)
+
+
+async def _handle_web_app_project_generation(input_data: ProjectInput, generator_info, config: dict) -> Generation:
     """Handle Web App generation from a complete project with both ClassDiagram and GUINoCodeDiagram.
     Optionally includes AgentDiagram if agent components are present in the GUI."""
     # Extract active GUINoCodeDiagram first — it drives which other diagrams are used
@@ -280,14 +301,19 @@ async def _handle_web_app_project_generation(input_data: ProjectInput, generator
 
     multi = len(version_specs) > 1
     generator_class = generator_info.generator_class
+    generators = []
+    reads: dict = {}  # diagram id (or a placeholder) -> its read, the last version's
 
     with tempfile.TemporaryDirectory(prefix=TEMP_DIR_PREFIX) as temp_dir:
         for slug, gui_json in version_specs:
             # Re-derive the class BUML per version so the generator can't leak
             # mutations from one version into the next.
             buml_model = process_class_diagram(class_diagram.model_dump())
-            link_method_neural_networks(buml_model, input_data.diagrams.get("NNDiagram", []))
+            networks = _link_networks(buml_model, input_data)
             gui_model = process_gui_diagram(gui_json, class_diagram.model, buml_model)
+            for read in (DiagramRead.of(class_diagram.id, class_diagram.title, buml_model),
+                         DiagramRead.of(gui_diagram.id, gui_diagram.title, gui_model), *networks):
+                reads[read.diagram_id or f"#{len(reads)}"] = read
 
             # Collect every AgentDiagram in the project if this version's GUI uses
             # agent components. The frontend dropdown enumerates all agents, so the
@@ -299,10 +325,21 @@ async def _handle_web_app_project_generation(input_data: ProjectInput, generator
             if has_agent_components(gui_model):
                 project_agent_config = config.get('agentConfig') if isinstance(config, dict) else None
                 default_cfg = project_agent_config or config
+                agent_diagram_ids: dict = {}
                 agent_models, agent_configs, agent_config_yamls = collect_agents_from_diagrams(
                     input_data.diagrams.get("AgentDiagram", []),
                     default_config=default_cfg,
+                    diagram_ids=agent_diagram_ids,
                 )
+                # Each agent's read holds its model, so its traced elements are placed under its diagram.
+                titles = {diagram.id: diagram.title for diagram in input_data.diagrams.get("AgentDiagram", [])}
+                for agent_model in agent_models:
+                    agent_diagram_id = agent_diagram_ids.get(agent_model.name)
+                    reads[agent_diagram_id or f"#{len(reads)}"] = DiagramRead.of(
+                        agent_diagram_id, titles.get(agent_diagram_id), agent_model)
+                for agent_diagram in input_data.diagrams.get("AgentDiagram", []):
+                    reads.setdefault(agent_diagram.id or f"#{len(reads)}",
+                                     DiagramRead(agent_diagram.id, agent_diagram.title, Agent.__name__))
                 for name, cfg in agent_configs.items():
                     logger.debug("[WebApp agent] resolved config for %s: %s",
                                  name,
@@ -320,19 +357,20 @@ async def _handle_web_app_project_generation(input_data: ProjectInput, generator
                 out_dir = _safe_path(temp_dir, os.path.basename(slug))
                 os.makedirs(out_dir, exist_ok=True)
 
-            await _run_web_app_generator(
+            generators.append(await _run_web_app_generator(
                 buml_model, gui_model, generator_class, out_dir,
                 agent_models=agent_models, agent_configs=agent_configs,
                 agent_config_yamls=agent_config_yamls, app_name=input_data.name,
-            )
+            ))
 
         options = {"versions": ", ".join(slug for slug, _ in version_specs)} if multi else None
-        return await zip_output(temp_dir, "web_app", options)
+        output = await zip_output(temp_dir, "web_app", options, generators=generators)
+        return Generation(output, tuple(reads.values()))
 
 
 async def _handle_deployment_project_generation(
     input_data: ProjectInput, generator_info, generator_type: str
-) -> GeneratedOutput:
+) -> Generation:
     """Generate Docker Compose output with the project's AgentDiagrams in scope.
 
     Resolves ``Artifact.agent_model_ref`` values against AgentDiagram ids, so each
@@ -347,6 +385,7 @@ async def _handle_deployment_project_generation(
 
     with tempfile.TemporaryDirectory(prefix=f"{TEMP_DIR_PREFIX}{uuid.uuid4().hex}_") as temp_dir:
         deployment_model = _process_deployment_payload(deployment_diagram.model_dump())
+        reads = [DiagramRead.of(deployment_diagram.id, deployment_diagram.title, deployment_model)]
 
         # AgentDiagram id -> BUML Agent. Keyed by diagram id (the value of
         # Artifact.agent_model_ref), not by agent name: agent names may repeat.
@@ -366,11 +405,13 @@ async def _handle_deployment_project_generation(
             # generator prefers over the to_/from_ state-name convention.
             annotate_agent_with_a2a(agent_model, entry_dict)
             agent_models_by_id[entry_dict["id"]] = agent_model
+            reads.append(DiagramRead.of(entry_dict["id"], entry_dict.get("title"), agent_model))
             agent_configs_by_id[entry_dict["id"]] = agent_config
             agent_config_yamls_by_id[entry_dict["id"]] = entry_dict.get("configYaml")
 
         for bpmn_diagram in input_data.diagrams.get("BPMN", []):
             bpmn_model = process_bpmn_diagram(bpmn_diagram.model_dump())
+            reads.append(DiagramRead.of(bpmn_diagram.id, bpmn_diagram.title, bpmn_model))
             attach_governance_to_agents(bpmn_model, agent_models_by_id)
             attach_entry_role_to_agents(bpmn_model, agent_models_by_id)
 
@@ -381,7 +422,8 @@ async def _handle_deployment_project_generation(
             agent_config_yamls_by_id=agent_config_yamls_by_id,
         )
         await asyncio.to_thread(generator_instance.generate)
-        return await zip_output(temp_dir, generator_type)
+        output = await zip_output(temp_dir, generator_type, generators=[generator_instance])
+        return Generation(output, tuple(reads))
 
 
 def _process_deployment_payload(json_data: dict):
@@ -398,18 +440,24 @@ async def _handle_class_diagram_generation(
     generator_info,
     config: dict,
     temp_dir: str
-) -> GeneratedOutput:
+) -> Generation:
     """Handle class diagram based generation."""
     # Process the class diagram JSON data
     buml_model = process_class_diagram(json_data)
     generator_class = generator_info.generator_class
     logger.info("Generator type %s", generator_type)
+    read = _read_of(json_data, buml_model)
 
     builder = _CLASS_DIAGRAM_BUILDERS.get(generator_type)
     if builder:
-        return await builder(buml_model, generator_class, config, temp_dir)
+        return Generation(await builder(buml_model, generator_class, config, temp_dir), (read,))
 
-    return await _generate_standard(buml_model, generator_class, generator_type, generator_info, temp_dir)
+    return await _generate_standard(buml_model, generator_class, generator_type, generator_info, temp_dir, read)
+
+
+def _read_of(json_data: dict, model) -> DiagramRead:
+    """The read of the one diagram of a ``/generate-output`` request, converted to ``model``."""
+    return DiagramRead.of(json_data.get("id"), json_data.get("title"), model)
 
 
 async def _handle_object_diagram_generation(
@@ -418,7 +466,7 @@ async def _handle_object_diagram_generation(
     generator_info,
     config: dict,
     temp_dir: str,
-) -> GeneratedOutput:
+) -> Generation:
     """Handle generators that operate on object diagrams."""
     reference_payload = _extract_reference_class_diagram(json_data)
     if not reference_payload:
@@ -431,7 +479,7 @@ async def _handle_object_diagram_generation(
     generator_instance = generator_class(object_model, output_dir=temp_dir)
     await asyncio.to_thread(generator_instance.generate)
 
-    return file_output(temp_dir, generator_type)
+    return Generation(file_output(temp_dir, generator_type, [generator_instance]), (_read_of(json_data, object_model),))
 
 
 async def _handle_user_diagram_generation(
@@ -440,7 +488,7 @@ async def _handle_user_diagram_generation(
     generator_info,
     config: dict,
     temp_dir: str,
-) -> GeneratedOutput:
+) -> Generation:
     """Handle user diagram generation using the preset user reference domain."""
     try:
         object_model = process_object_diagram(json_data, user_reference_domain_model)
@@ -454,9 +502,11 @@ async def _handle_user_diagram_generation(
     generator_instance = generator_class(object_model, output_dir=temp_dir)
     await asyncio.to_thread(generator_instance.generate)
 
+    # The output is rewritten after the generator ran, so what the generator recorded no longer
+    # holds: the download keeps file-level links only.
     _normalize_user_model_output(object_model, temp_dir, _user_criteria_comparators(json_data))
 
-    return file_output(temp_dir, generator_type)
+    return Generation(file_output(temp_dir, generator_type), (_read_of(json_data, object_model),))
 
 
 def _extract_reference_class_diagram(json_data: dict):
@@ -536,7 +586,7 @@ async def _generate_django(buml_model, generator_class, config: dict, temp_dir: 
 
     return await zip_output(project_dir, "django", {
         "project_name": project_name, "app_name": app_name, "containerization": containerization,
-    })
+    }, generators=[generator_instance])
 
 
 async def _generate_spring(buml_model, generator_class, config: dict, temp_dir: str) -> GeneratedOutput:
@@ -577,7 +627,7 @@ async def _generate_spring(buml_model, generator_class, config: dict, temp_dir: 
     return await zip_output(project_dir, "spring", {
         "project_name": project_name, "app_name": app_name, "spring_boot_version": spring_boot_version,
         "java_version": java_version, "package_name": package_name,
-    })
+    }, generators=[generator_instance])
 
 
 async def _generate_sql(buml_model, generator_class, config: dict, temp_dir: str) -> GeneratedOutput:
@@ -591,7 +641,7 @@ async def _generate_sql(buml_model, generator_class, config: dict, temp_dir: str
     )
     await asyncio.to_thread(generator_instance.generate)
 
-    return file_output(temp_dir, "sql")
+    return file_output(temp_dir, "sql", [generator_instance])
 
 
 _SUPABASE_USER_ROOT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,62}$")
@@ -618,7 +668,7 @@ async def _generate_supabase(buml_model, generator_class, config: dict, temp_dir
     )
     await asyncio.to_thread(generator_instance.generate)
 
-    return file_output(temp_dir, "supabase")
+    return file_output(temp_dir, "supabase", [generator_instance])
 
 
 async def _generate_sqlalchemy(buml_model, generator_class, config: dict, temp_dir: str) -> GeneratedOutput:
@@ -630,7 +680,7 @@ async def _generate_sqlalchemy(buml_model, generator_class, config: dict, temp_d
     generator_instance = generator_class(buml_model, output_dir=temp_dir)
     await asyncio.to_thread(generator_instance.generate, dbms=dbms)
 
-    return file_output(temp_dir, "sqlalchemy")
+    return file_output(temp_dir, "sqlalchemy", [generator_instance])
 
 
 async def _generate_jsonschema(buml_model, generator_class, config: dict, temp_dir: str) -> GeneratedOutput:
@@ -646,13 +696,15 @@ async def _generate_jsonschema(buml_model, generator_class, config: dict, temp_d
         # For smart_data mode, we create a zip file with a specific name
         return await zip_output(
             temp_dir, "jsonschema", {"mode": mode}, file_name="smart_data_schemas.zip",
+            generators=[generator_instance],
         )
     else:
-        return file_output(temp_dir, "jsonschema")
+        return file_output(temp_dir, "jsonschema", [generator_instance])
 
 
 # Class-diagram generators that take options from the request config; every
 # other one is built with ``(model, output_dir=...)`` by ``_generate_standard``.
+# A builder returns the download, packaged with its generator's traces.
 _CLASS_DIAGRAM_BUILDERS = {
     "django": _generate_django,
     "spring": _generate_spring,
@@ -668,7 +720,7 @@ async def _handle_deployment_diagram_generation(
     generator_type: str,
     generator_info,
     temp_dir: str,
-) -> GeneratedOutput:
+) -> Generation:
     """Generate Docker Compose from a single UML DeploymentDiagram.
 
     Single-diagram generation has no project-level AgentDiagram resolver, so the
@@ -678,14 +730,12 @@ async def _handle_deployment_diagram_generation(
     deployment_model = _process_deployment_payload(json_data)
     generator_instance = generator_info.generator_class(deployment_model, output_dir=temp_dir)
     await asyncio.to_thread(generator_instance.generate)
-
-    if generator_info.output_type == "zip":
-        return await zip_output(temp_dir, generator_type)
-    return file_output(temp_dir, generator_type)
+    return Generation(await _package(temp_dir, generator_type, generator_info, generator_instance),
+                      (_read_of(json_data, deployment_model),))
 
 
 async def _generate_nn(json_data: dict, generator_type: str, generator_class, config: dict,
-                       temp_dir: str) -> GeneratedOutput:
+                       temp_dir: str) -> Generation:
     """Generate neural network code (PyTorch or TensorFlow)."""
     if generator_class is None:
         raise ConversionError(
@@ -703,8 +753,9 @@ async def _generate_nn(json_data: dict, generator_type: str, generator_class, co
     # cycles, unresolved NNReferences, ...) is caught and mapped to 400 by
     # @handle_endpoint_errors — no explicit re-raise needed here.
 
+    read = _read_of(json_data, nn_model)
     if generator_type == "forecaster":
-        return await _generate_forecaster(nn_model, generator_class, config, temp_dir)
+        return Generation(await _generate_forecaster(nn_model, generator_class, config, temp_dir), (read,))
 
     generation_type = config.get("generation_type", "subclassing") if config else "subclassing"
     if generator_type == "tensorflow":
@@ -728,11 +779,8 @@ async def _generate_nn(json_data: dict, generator_type: str, generator_class, co
             f"{generator_type} generation failed: expected output "
             f"{download_filename!r} was not produced."
         )
-    with open(output_file_path, "rb") as f:
-        file_content = f.read()
-    file_content = with_version_comment(file_content, download_filename)
-
-    return GeneratedOutput(file_content, download_filename, is_zip=False)
+    return Generation(single_file_output(temp_dir, download_filename, download_filename, [generator_instance]),
+                      (read,))
 
 
 async def _generate_forecaster(nn_model, generator_class, config: dict, temp_dir: str) -> GeneratedOutput:
@@ -761,10 +809,10 @@ async def _generate_forecaster(nn_model, generator_class, config: dict, temp_dir
         raise ValidationError(str(exc)) from exc
     await asyncio.to_thread(generator_instance.generate)
     # one file, forecaster_<model name>.py, shipped under that name (keep_generated_filename)
-    return file_output(temp_dir, "forecaster")
+    return file_output(temp_dir, "forecaster", [generator_instance])
 
 
-async def _generate_bpmn(json_data: dict, generator_type: str, generator_class, temp_dir: str) -> GeneratedOutput:
+async def _generate_bpmn(json_data: dict, generator_type: str, generator_class, temp_dir: str) -> Generation:
     """Generate vendor-neutral BPMN 2.0 XML.
 
     Processes the BPMN diagram JSON via ``process_bpmn_diagram`` (re-wrapping
@@ -779,10 +827,10 @@ async def _generate_bpmn(json_data: dict, generator_type: str, generator_class, 
     generator_instance = generator_class(bpmn_model, output_dir=temp_dir)
     await asyncio.to_thread(generator_instance.generate)
 
-    return file_output(temp_dir, generator_type)
+    return Generation(file_output(temp_dir, generator_type, [generator_instance]), (_read_of(json_data, bpmn_model),))
 
 
-async def _generate_qiskit(json_data: dict, generator_class, config: dict, temp_dir: str) -> GeneratedOutput:
+async def _generate_qiskit(json_data: dict, generator_class, config: dict, temp_dir: str) -> Generation:
     """Generate Qiskit code."""
     # Validate that this is a quantum diagram (has 'cols' in model)
     model_data = json_data.get('model', {})
@@ -809,13 +857,13 @@ async def _generate_qiskit(json_data: dict, generator_class, config: dict, temp_
     )
     await asyncio.to_thread(generator_instance.generate)
 
-    return file_output(temp_dir, "qiskit")
+    return Generation(file_output(temp_dir, "qiskit", [generator_instance]), (_read_of(json_data, quantum_model),))
 
 
 async def _run_web_app_generator(buml_model, gui_model, generator_class, out_dir: str,
                                  agent_models=None, agent_configs=None, agent_config_yamls=None,
                                  app_name=None):
-    """Run the web app generator into ``out_dir`` WITHOUT zipping.
+    """Run the web app generator into ``out_dir`` WITHOUT zipping, and return it (its traces).
 
     Each personalization version is generated into its own subdirectory
     before a single zip is built. ``agent_models`` is a list; each is emitted
@@ -827,16 +875,19 @@ async def _run_web_app_generator(buml_model, gui_model, generator_class, out_dir
         agent_config_yamls=agent_config_yamls, app_name=app_name,
     )
     await asyncio.to_thread(generator_instance.generate)
+    return generator_instance
 
 
 async def _generate_standard(buml_model, generator_class, generator_type: str, generator_info,
-                             temp_dir: str) -> GeneratedOutput:
+                             temp_dir: str, read: DiagramRead) -> Generation:
     """Generate standard files (non-Django, non-SQL)."""
     generator_instance = generator_class(buml_model, output_dir=temp_dir)
     await asyncio.to_thread(generator_instance.generate)
+    return Generation(await _package(temp_dir, generator_type, generator_info, generator_instance), (read,))
 
-    # Return ZIP or single file based on generator info
+
+async def _package(temp_dir: str, generator_type: str, generator_info, generator_instance) -> GeneratedOutput:
+    """The ZIP or single-file download of what ``generator_instance`` wrote to ``temp_dir``, per its registry entry."""
     if generator_info.output_type == "zip":
-        return await zip_output(temp_dir, generator_type)
-    else:
-        return file_output(temp_dir, generator_type)
+        return await zip_output(temp_dir, generator_type, generators=[generator_instance])
+    return file_output(temp_dir, generator_type, [generator_instance])

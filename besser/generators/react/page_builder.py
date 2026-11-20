@@ -6,6 +6,10 @@ import os
 import re
 from typing import Any, Dict, List, Optional, Set
 
+from jinja2 import DictLoader
+
+from besser.utilities.generation_trace import trace_source, traced_environment
+
 from .routes import page_route
 
 logger = logging.getLogger(__name__)
@@ -18,6 +22,13 @@ _SVG_TAGS = {name.lower(): name for name in (
     "filter", "feGaussianBlur", "feOffset", "feDropShadow", "feFlood", "feComposite",
     "feColorMatrix", "feBlend", "feMerge", "feMergeNode",
 )}
+
+
+# Wraps text built in Python in the trace markers of the element it renders: the pages are built from strings
+# rather than templates, but their regions are recorded by the same tag.
+_TRACED_TEXT = traced_environment(
+    DictLoader({"page_builder.py": "{% trace element, label %}{{ text }}{% endtrace %}"})
+).get_template("page_builder.py")
 
 
 class _PageRenderContext:
@@ -93,12 +104,12 @@ class PageBuilderMixin:
                 + f"export default {component_name};\n"
             )
 
-            file_path = os.path.join(pages_dir, f"{component_name}.tsx")
-            with open(file_path, "w", encoding="utf-8", newline="\n") as f:
-                f.write(file_contents)
+            self._write_traced(f"src/pages/{component_name}.tsx", file_contents,
+                               trace_source(self._element_of(page), "page_builder.py#screen"))
 
             page_infos.append(
                 {
+                    "element": self._element_of(page),
                     "component_name": component_name,
                     "file_name": f"./pages/{component_name}",
                     "route_path": page.get("route_path") or "/",
@@ -209,9 +220,18 @@ class PageBuilderMixin:
         rendered = []
         for component in components:
             rendered.append(
-                self._render_component(component, selector_style_map, context, indent)
+                self._traced_component(
+                    component, self._render_component(component, selector_style_map, context, indent)
+                )
             )
         return "\n".join([line for line in rendered if line])
+
+    def _traced_component(self, node: Dict[str, Any], jsx: str) -> str:
+        """``jsx`` inside the trace markers of the GUI element ``node`` was serialized from, if it has an id."""
+        element = self._element_of(node)
+        if element is None or not jsx:
+            return jsx
+        return _TRACED_TEXT.render(element=element, label="component", text=jsx)
 
     def _render_component(
         self,
@@ -1351,13 +1371,19 @@ class PageBuilderMixin:
         import_lines = []
         for page in page_infos:
             import_lines.append(
-                f"import {page['component_name']} from \"{page['file_name']}\";"
+                _TRACED_TEXT.render(
+                    element=page.get("element"), label="import",
+                    text=f"import {page['component_name']} from \"{page['file_name']}\";",
+                )
             )
         imports = "\n".join(import_lines)
 
         routes = "\n".join(
             [
-                f"            <Route path={json.dumps(p['route_path'])} element={{<{p['component_name']} />}} />"
+                _TRACED_TEXT.render(
+                    element=p.get("element"), label="route",
+                    text=f"            <Route path={json.dumps(p['route_path'])} element={{<{p['component_name']} />}} />",
+                )
                 for p in page_infos
             ]
         )
@@ -1387,9 +1413,7 @@ class PageBuilderMixin:
             "export default App;\n"
         )
 
-        app_path = self.build_generation_path("src/App.tsx")
-        with open(app_path, "w", encoding="utf-8", newline="\n") as f:
-            f.write(app_contents)
+        self._write_traced("src/App.tsx", app_contents)
     # --------------------------------------------------------------------- #
     # Context builders
     # --------------------------------------------------------------------- #

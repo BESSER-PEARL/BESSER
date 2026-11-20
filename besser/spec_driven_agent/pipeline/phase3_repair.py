@@ -62,6 +62,7 @@ from besser.spec_driven_agent.state.tracing import (
     EVENT_PHASE_EXIT,
     EVENT_ROLLBACK,
     EVENT_SNAPSHOT,
+    EVENT_TURN_END,
     EVENT_TURN_START,
     EVENT_VALIDATION_ISSUE,
 )
@@ -1274,6 +1275,7 @@ class Phase3RepairMixin:
             # Repair calls can trigger the outage fallback too, as in Phase 2.
             self._notify_model_switch()
             self._trace_cost_update(self.total_turns, phase="phase3_fix")
+            self._trace.write(EVENT_TURN_END, turn=self.total_turns, phase="phase3_fix")
             # A stop can arrive while a provider request is in flight. Do not
             # apply its returned mutations after cancellation. The final allowed
             # turn may still execute its tools; it is not a new provider call.

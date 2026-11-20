@@ -1,10 +1,10 @@
 import logging
 import os
 
-from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.structural import DomainModel
 from besser.generators import GeneratorInterface
 from besser.utilities import sort_by_timestamp
+from besser.utilities.generation_trace import trace_source, traced_environment
 
 logger = logging.getLogger(__name__)
 
@@ -20,26 +20,24 @@ class JavaGenerator(GeneratorInterface):
     def generate(self):
         templates_path = os.path.join(os.path.dirname(
             os.path.abspath(__file__)), "templates")
-        env = Environment(loader=FileSystemLoader(
-            templates_path), trim_blocks=True, lstrip_blocks=True, extensions=['jinja2.ext.do'])
+        env = traced_environment(templates_path, trim_blocks=True, lstrip_blocks=True, extensions=['jinja2.ext.do'])
         env.globals["sort_by_timestamp"] = sort_by_timestamp
 
         package_name = self.package_name
 
         for enum_obj in self.model.get_enumerations():
-            file_path = self.build_generation_path(file_name=enum_obj.name + ".java")
+            file_name = enum_obj.name + ".java"
             template = env.get_template('java_enum_template.py.j2')
-            with open(file_path, mode="w") as f:
-                f.write(template.render(enum_obj=enum_obj, package_name=package_name))
-                logger.info("Code generated in the location: %s", file_path)
+            self._write_traced(file_name, template.render(enum_obj=enum_obj, package_name=package_name),
+                               trace_source(enum_obj, "java_enum_template.py.j2#file"))
+            logger.info("Code generated in the location: %s", self.build_generation_path(file_name=file_name))
 
         processed_associations = []
         for class_obj in self.model.classes_sorted_by_inheritance():
-            file_path = self.build_generation_path(file_name=class_obj.name + ".java")
+            file_name = class_obj.name + ".java"
             template = env.get_template('java_template.py.j2')
-            with open(file_path, mode="w") as f:
-                generated_code = template.render(class_obj=class_obj,
-                                                 processed_associations=processed_associations,
-                                                 package_name=package_name)
-                f.write(generated_code)
-                logger.info("Code generated in the location: %s", file_path)
+            generated_code = template.render(class_obj=class_obj,
+                                             processed_associations=processed_associations,
+                                             package_name=package_name)
+            self._write_traced(file_name, generated_code, trace_source(class_obj, "java_template.py.j2#file"))
+            logger.info("Code generated in the location: %s", self.build_generation_path(file_name=file_name))

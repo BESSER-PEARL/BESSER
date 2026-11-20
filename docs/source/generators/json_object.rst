@@ -171,3 +171,10 @@ Using it from the Web Modeling Editor
 The generator is registered as ``jsonobject`` in the editor's generator
 registry. It reads the project's object diagram rather than the class diagram,
 and the editor downloads the result as ``object_model.json``.
+
+Trace Links
+-----------
+
+The generator is traced at file level only: the traced endpoints link the object diagram to the ``.json`` file it
+wrote, but ``traced_files`` stays empty. An ``Object`` of the object metamodel cannot carry an ``id`` (it rejects
+attributes that are not slots), so there is no element id to record for the lines of each object.

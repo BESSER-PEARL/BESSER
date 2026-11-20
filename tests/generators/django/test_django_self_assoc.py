@@ -13,7 +13,7 @@ These tests verify:
 """
 import os
 import pytest
-from jinja2 import Environment, FileSystemLoader
+from besser.utilities.generation_trace import traced_environment
 
 from besser.BUML.metamodel.structural import (
     DomainModel,
@@ -94,7 +94,7 @@ def _render_models_template(
     )
     templates_path = os.path.normpath(templates_path)
 
-    env = Environment(loader=FileSystemLoader(templates_path))
+    env = traced_environment(templates_path)
     env.tests["is_primitive_data_type"] = DjangoGenerator.is_primitive_data_type
     template = env.get_template("models.py.j2")
     return template.render(

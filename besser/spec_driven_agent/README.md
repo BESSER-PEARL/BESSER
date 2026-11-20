@@ -85,7 +85,7 @@ is capped at `MAX_SPILL_SIZE` so a runaway command cannot fill the disk.
 | Deterministic repair (no model, no LLM) | `repair/import_repair.py`, `repair/scaffold_repair.py` |
 | Runtime probes | `validation/constructibility.py`, `validation/api_probe.py`, `validation/authorization_probe.py` (two accounts and an anonymous caller against an app with accounts) |
 | Requirements and scoped acceptance | `planning/requirements_ledger.py`, `planning/fix_target.py`, `validation/acceptance.py` |
-| Persistence, tracing, context | `state/checkpoint.py`, `state/tracing.py`, `agent/compaction.py`, `agent/history_eviction.py`, `run_report.py` |
+| Persistence, tracing, context | `state/checkpoint.py`, `state/tracing.py`, `state/agent_trace.py`, `state/trace_model.py`, `agent/compaction.py`, `agent/history_eviction.py`, `run_report.py` |
 | Providers, routing, usage | `providers/llm_client.py`, `providers/model_settings.py`, `providers/tool_input.py`; prices and model catalog in `besser/llm/` (`pricing.py`, `catalog.py`, `data/`) |
 
 The shared `validation/` and `execution/` modules do not import the orchestrator
@@ -101,6 +101,29 @@ The web runner/event handling live in
 `besser/utilities/web_modeling_editor/backend/services/spec_driven/`, the HTTP
 router in `.../routers/spec_driven_router.py`, and request models in
 `.../models/spec_driven.py`.
+
+## Three records of a run
+
+A run records itself three ways; keep the names apart:
+
+- **run log** — `.besser_trace.jsonl` (`state/tracing.py`, `TraceWriter`): JSON
+  lines of phases, turns, tool calls, token counters (`usage` on run, phase and
+  turn records), generator outputs (`generator_output`: files, SHA-256, traced
+  line ranges, via `ToolExecutor.on_generated`), the requirements ledger and
+  findings. Debugging, and the source of the run trace.
+- **Agent Trace record** — `.agent-trace/<run id>.json`, kept in
+  `.besser_attribution.json` (`state/agent_trace.py`): who wrote each line, in
+  the agent-trace.dev format.
+- **run trace** — `state/trace_model.py`, `build_run_trace_model`: a
+  `TraceModel` fragment of the project trace (B-UML traceability metamodel),
+  built at packaging from the two above, the recipe and the delivered files, so
+  it needs nothing threaded through the orchestrator and survives `resume()`.
+  When the request sets `traceabilityEnabled` (recording is opt-in), the web
+  runner builds it and serialises it (`trace_buml_to_json`) onto the `done`
+  event (`trace`) and into the ZIP (`.besser_trace_model.json`). Its mapping (one
+  `CodeGeneration` per run, a tool call per generator run and LLM turn,
+  revisions for edited generated files, judge verdicts as requirement → code
+  links) is in the module docstring and `docs/source/spec_driven_agent/runs.rst`.
 
 ## Providers and compatibility
 

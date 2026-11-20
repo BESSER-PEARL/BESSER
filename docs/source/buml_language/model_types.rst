@@ -19,3 +19,4 @@ Model types
   model_types/nn
   model_types/quantum
   model_types/knowledge_graph
+  model_types/traceability

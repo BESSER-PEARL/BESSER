@@ -1,6 +1,7 @@
 """Writes the Spring Data JPA repository interfaces of a generated project."""
 
 from besser.BUML.metamodel.structural import Class, DomainModel
+from besser.utilities.generation_trace import trace_source
 from besser.generators.spring._sub_generator import SpringSubGenerator, build_environment
 from besser.generators.spring.java_types import (
     get_id_attribute,
@@ -47,4 +48,5 @@ class SpringRepositoryGenerator(SpringSubGenerator):
             "id_type": java_type_for(id_attr.type, self.model_type_names),
         }
 
-        self.write(f"I{class_name}Repository.java", repository_template.render(**context))
+        self.write(f"I{class_name}Repository.java", repository_template.render(**context),
+                   trace_source(cls, "irepository.java.j2#class"))

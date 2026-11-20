@@ -1,0 +1,382 @@
+{
+  "version": "3.0.0",
+  "type": "StateMachineDiagram",
+  "size": { "width": 1080, "height": 400 },
+  "interactive": { "elements": {}, "relationships": {} },
+  "elements": {
+            "bb23ddd6-3870-4ec8-914e-6d1ab24aa834": {
+                "id": "bb23ddd6-3870-4ec8-914e-6d1ab24aa834",
+                "name": "",
+                "type": "StateInitialNode",
+                "owner": null,
+                "bounds": {
+                    "x": -850,
+                    "y": -280,
+                    "width": 45,
+                    "height": 45
+                }
+            },
+            "435d3409-1e4c-4a00-94b7-d70238304594": {
+                "id": "435d3409-1e4c-4a00-94b7-d70238304594",
+                "name": "Red",
+                "type": "State",
+                "owner": null,
+                "bounds": {
+                    "x": -550,
+                    "y": -300,
+                    "width": 160,
+                    "height": 100
+                },
+                "bodies": [
+                    "6ad4504f-9589-456e-96e4-65446b921ae9"
+                ],
+                "fallbackBodies": [
+                    "6bc3cb72-fc37-48c2-bdf9-a5a2a6e33db1"
+                ]
+            },
+            "6ad4504f-9589-456e-96e4-65446b921ae9": {
+                "id": "6ad4504f-9589-456e-96e4-65446b921ae9",
+                "name": "light_body",
+                "type": "StateBody",
+                "owner": "435d3409-1e4c-4a00-94b7-d70238304594",
+                "bounds": {
+                    "x": -549.5,
+                    "y": -259.5,
+                    "width": 159,
+                    "height": 30
+                }
+            },
+            "6bc3cb72-fc37-48c2-bdf9-a5a2a6e33db1": {
+                "id": "6bc3cb72-fc37-48c2-bdf9-a5a2a6e33db1",
+                "name": "fallback_body",
+                "type": "StateFallbackBody",
+                "owner": "435d3409-1e4c-4a00-94b7-d70238304594",
+                "bounds": {
+                    "x": -549.5,
+                    "y": -229.5,
+                    "width": 159,
+                    "height": 30
+                }
+            },
+            "9a0496ca-26be-473e-bd98-f27a916ed8fd": {
+                "id": "9a0496ca-26be-473e-bd98-f27a916ed8fd",
+                "name": "Green",
+                "type": "State",
+                "owner": null,
+                "bounds": {
+                    "x": -70,
+                    "y": -150,
+                    "width": 160,
+                    "height": 100
+                },
+                "bodies": [
+                    "2cc41e70-e864-4cf8-9c93-f037ee2da9dd"
+                ],
+                "fallbackBodies": [
+                    "970541a6-dfef-4bd4-88a7-16cd3f17de9f"
+                ]
+            },
+            "2cc41e70-e864-4cf8-9c93-f037ee2da9dd": {
+                "id": "2cc41e70-e864-4cf8-9c93-f037ee2da9dd",
+                "name": "light_body",
+                "type": "StateBody",
+                "owner": "9a0496ca-26be-473e-bd98-f27a916ed8fd",
+                "bounds": {
+                    "x": -69.5,
+                    "y": -109.5,
+                    "width": 159,
+                    "height": 30
+                }
+            },
+            "970541a6-dfef-4bd4-88a7-16cd3f17de9f": {
+                "id": "970541a6-dfef-4bd4-88a7-16cd3f17de9f",
+                "name": "fallback_body",
+                "type": "StateFallbackBody",
+                "owner": "9a0496ca-26be-473e-bd98-f27a916ed8fd",
+                "bounds": {
+                    "x": -69.5,
+                    "y": -79.5,
+                    "width": 159,
+                    "height": 30
+                }
+            },
+            "557a86bb-d3ef-46bb-b766-0d8f7e785613": {
+                "id": "557a86bb-d3ef-46bb-b766-0d8f7e785613",
+                "name": "Amber",
+                "type": "State",
+                "owner": null,
+                "bounds": {
+                    "x": 430,
+                    "y": -300,
+                    "width": 160,
+                    "height": 100
+                },
+                "bodies": [
+                    "cb38bcab-92d0-4051-afdd-408e422bd01d"
+                ],
+                "fallbackBodies": [
+                    "54829163-af16-487e-b383-2e5c3d6fbbd4"
+                ]
+            },
+            "cb38bcab-92d0-4051-afdd-408e422bd01d": {
+                "id": "cb38bcab-92d0-4051-afdd-408e422bd01d",
+                "name": "light_body",
+                "type": "StateBody",
+                "owner": "557a86bb-d3ef-46bb-b766-0d8f7e785613",
+                "bounds": {
+                    "x": 430.5,
+                    "y": -259.5,
+                    "width": 159,
+                    "height": 30
+                }
+            },
+            "54829163-af16-487e-b383-2e5c3d6fbbd4": {
+                "id": "54829163-af16-487e-b383-2e5c3d6fbbd4",
+                "name": "fallback_body",
+                "type": "StateFallbackBody",
+                "owner": "557a86bb-d3ef-46bb-b766-0d8f7e785613",
+                "bounds": {
+                    "x": 430.5,
+                    "y": -229.5,
+                    "width": 159,
+                    "height": 30
+                }
+            },
+            "59edd02e-7c85-40f1-90c0-e6313d8aed1f": {
+                "id": "59edd02e-7c85-40f1-90c0-e6313d8aed1f",
+                "name": "chronometer_finished",
+                "type": "StateCodeBlock",
+                "owner": null,
+                "bounds": {
+                    "x": -970,
+                    "y": 80,
+                    "width": 580,
+                    "height": 200
+                },
+                "code": "def chronometer_finished(session: Session, event_params: dict):\n    # Python code here\n    # Return Boolean value\n    # Session can be read/written\n    seconds = event_params['seconds']\n    last_light_change_timestamp = session.get('last_light_change_timestamp')\n    current_timestamp = datetime.datetime.now()\n    if current_timestamp > (last_light_change_timestamp + seconds):\n        return True\n    return False",
+                "language": "python"
+            },
+            "45d50e34-4bad-4f3f-8b41-bb46e43152a0": {
+                "id": "45d50e34-4bad-4f3f-8b41-bb46e43152a0",
+                "name": "light_body",
+                "type": "StateCodeBlock",
+                "owner": null,
+                "bounds": {
+                    "x": -360,
+                    "y": 80,
+                    "width": 580,
+                    "height": 200
+                },
+                "code": "def light_body(session: Session):\n    # Python code here\n    session.set('last_light_change_timestamp', datetime.datetime.now())\n    # Example actions with the session\n    # session.set('x', 555)\n    # x = session.get('x')\n    # session.delete('x')\n    # Write anything else...\n    # The return is ignored",
+                "language": "python"
+            },
+            "f9fcaea7-342a-4365-860c-37c412e1deec": {
+                "id": "f9fcaea7-342a-4365-860c-37c412e1deec",
+                "name": "fallback_body",
+                "type": "StateCodeBlock",
+                "owner": null,
+                "bounds": {
+                    "x": 250,
+                    "y": 80,
+                    "width": 580,
+                    "height": 200
+                },
+                "code": "def fallback_body(session: Session):\n    # Python code here\n    print('Something went wrong')\n    # The return is ignored",
+                "language": "python"
+            }
+        },
+        "relationships": {
+            "8c4bd931-7ce2-412d-9104-527c407ca2fb": {
+                "id": "8c4bd931-7ce2-412d-9104-527c407ca2fb",
+                "name": "",
+                "type": "StateTransition",
+                "owner": null,
+                "bounds": {
+                    "x": -805,
+                    "y": -257.5,
+                    "width": 255,
+                    "height": 1
+                },
+                "path": [
+                    {
+                        "x": 0,
+                        "y": 0
+                    },
+                    {
+                        "x": 255,
+                        "y": 0
+                    }
+                ],
+                "source": {
+                    "direction": "Right",
+                    "element": "bb23ddd6-3870-4ec8-914e-6d1ab24aa834",
+                    "bounds": {
+                        "x": -805,
+                        "y": -257.5,
+                        "width": 0,
+                        "height": 0
+                    }
+                },
+                "target": {
+                    "direction": "Left",
+                    "element": "435d3409-1e4c-4a00-94b7-d70238304594",
+                    "bounds": {
+                        "x": -550,
+                        "y": -265,
+                        "width": 0,
+                        "height": 0
+                    }
+                },
+                "isManuallyLayouted": false
+            },
+            "93a19abe-c9da-4e5b-ba66-1f3a4bc788f5": {
+                "id": "93a19abe-c9da-4e5b-ba66-1f3a4bc788f5",
+                "name": "chronometer_finished",
+                "type": "StateTransition",
+                "owner": null,
+                "bounds": {
+                    "x": -390,
+                    "y": -250,
+                    "width": 320,
+                    "height": 150
+                },
+                "path": [
+                    {
+                        "x": 0,
+                        "y": 0
+                    },
+                    {
+                        "x": 160,
+                        "y": 0
+                    },
+                    {
+                        "x": 160,
+                        "y": 150
+                    },
+                    {
+                        "x": 320,
+                        "y": 150
+                    }
+                ],
+                "source": {
+                    "direction": "Right",
+                    "element": "435d3409-1e4c-4a00-94b7-d70238304594",
+                    "bounds": {
+                        "x": -390,
+                        "y": -250,
+                        "width": 0,
+                        "height": 0
+                    }
+                },
+                "target": {
+                    "direction": "Left",
+                    "element": "9a0496ca-26be-473e-bd98-f27a916ed8fd",
+                    "bounds": {
+                        "x": -60,
+                        "y": -250,
+                        "width": 0,
+                        "height": 0
+                    }
+                },
+                "isManuallyLayouted": false,
+                "params": "{60}"
+            },
+            "ffdc4d9d-fb7e-4332-bb95-4249c423f5b7": {
+                "id": "ffdc4d9d-fb7e-4332-bb95-4249c423f5b7",
+                "name": "chronometer_finished",
+                "type": "StateTransition",
+                "owner": null,
+                "bounds": {
+                    "x": 90,
+                    "y": -250,
+                    "width": 340,
+                    "height": 150
+                },
+                "path": [
+                    {
+                        "x": 0,
+                        "y": 150
+                    },
+                    {
+                        "x": 170,
+                        "y": 150
+                    },
+                    {
+                        "x": 170,
+                        "y": 0
+                    },
+                    {
+                        "x": 340,
+                        "y": 0
+                    }
+                ],
+                "source": {
+                    "direction": "Right",
+                    "element": "9a0496ca-26be-473e-bd98-f27a916ed8fd",
+                    "bounds": {
+                        "x": 100,
+                        "y": -250,
+                        "width": 0,
+                        "height": 0
+                    }
+                },
+                "target": {
+                    "direction": "Left",
+                    "element": "557a86bb-d3ef-46bb-b766-0d8f7e785613",
+                    "bounds": {
+                        "x": 430,
+                        "y": -250,
+                        "width": 0,
+                        "height": 0
+                    }
+                },
+                "isManuallyLayouted": false,
+                "params": "{20}"
+            },
+            "5a968a7c-6237-4786-9002-19c051498aba": {
+                "id": "5a968a7c-6237-4786-9002-19c051498aba",
+                "name": "chronometer_finished",
+                "type": "StateTransition",
+                "owner": null,
+                "bounds": {
+                    "x": -390,
+                    "y": -290,
+                    "width": 820,
+                    "height": 41
+                },
+                "path": [
+                    {
+                        "x": 820,
+                        "y": 40
+                    },
+                    {
+                        "x": 0,
+                        "y": 40
+                    }
+                ],
+                "source": {
+                    "direction": "Left",
+                    "element": "557a86bb-d3ef-46bb-b766-0d8f7e785613",
+                    "bounds": {
+                        "x": 430,
+                        "y": -250,
+                        "width": 0,
+                        "height": 0
+                    }
+                },
+                "target": {
+                    "direction": "Right",
+                    "element": "435d3409-1e4c-4a00-94b7-d70238304594",
+                    "bounds": {
+                        "x": -390,
+                        "y": -250,
+                        "width": 0,
+                        "height": 0
+                    }
+                },
+                "isManuallyLayouted": false,
+                "params": "{3}"
+            }
+        },
+        "assessments": {}
+}

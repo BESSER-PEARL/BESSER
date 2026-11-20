@@ -15,6 +15,7 @@ from besser.generators.spring.spring_entity_generator import SpringEntityGenerat
 from besser.generators.spring.spring_http_generator import SpringHttpGenerator
 from besser.generators.spring.spring_repository_generator import SpringRepositoryGenerator
 from besser.generators.spring.spring_service_generator import SpringServiceGenerator
+from besser.utilities.generation_trace import prefixed_traces
 
 #: Defaults for the generated project. They live here rather than in the web
 #: editor's constants module so that the generator never has to import the web
@@ -136,10 +137,7 @@ class SpringBackendGenerator(GeneratorInterface):
     def _render(self, template_name: str, relative_path: Path | str, **context):
         env = build_environment()
         content = env.get_template(template_name).render(**context)
-        file_path = self.project_dir / relative_path
-        file_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(file_path, mode="w", encoding="utf-8", newline="\n") as file:
-            file.write(content)
+        self._write_traced(Path(relative_path).as_posix(), content)
 
     def _generate_pom_file(self):
         self._render(
@@ -212,43 +210,51 @@ class SpringBackendGenerator(GeneratorInterface):
     def _source_dir(self, sub_package: str) -> Path:
         return self.project_dir / Path("src", "main", "java") / self.package_dir / sub_package
 
+    def _run_sub_generator(self, sub_generator):
+        """Generate with ``sub_generator`` and take over the traces of the files it wrote."""
+        sub_generator.generate()
+        # Its traces are relative to its own folder: put them under that folder of the project. A
+        # sub-generator is not a GeneratorInterface and has no LLM step, so only its traces are merged.
+        folder = sub_generator.output_dir.relative_to(self.project_dir).as_posix()
+        self.traced_files.update(prefixed_traces(sub_generator.traced_files, folder))
+
     def _generate_entities(self):
-        SpringEntityGenerator(
+        self._run_sub_generator(SpringEntityGenerator(
             self.model,
             output_dir=self._source_dir("entity"),
             package_name=f"{self.package_name}.entity",
-        ).generate()
+        ))
 
     def _generate_repositories(self):
-        SpringRepositoryGenerator(
+        self._run_sub_generator(SpringRepositoryGenerator(
             self.model,
             f"{self.package_name}.entity",
             output_dir=self._source_dir("repository"),
             package_name=f"{self.package_name}.repository",
-        ).generate()
+        ))
 
     def _generate_services(self):
-        SpringServiceGenerator(
+        self._run_sub_generator(SpringServiceGenerator(
             self.model,
             f"{self.package_name}.entity",
             f"{self.package_name}.repository",
             output_dir=self._source_dir("service"),
             package_name=f"{self.package_name}.service",
-        ).generate()
+        ))
 
     def _generate_controllers(self):
-        SpringControllerGenerator(
+        self._run_sub_generator(SpringControllerGenerator(
             self.model,
             f"{self.package_name}.entity",
             f"{self.package_name}.service",
             output_dir=self._source_dir("controller"),
             package_name=f"{self.package_name}.controller",
-        ).generate()
+        ))
 
     def _generate_http(self):
         # Scratch request files are test resources, not compilation units: they
         # must stay out of ``src/main/java``.
-        SpringHttpGenerator(
+        self._run_sub_generator(SpringHttpGenerator(
             self.model,
             output_dir=self.project_dir / Path("src", "test", "resources", "http"),
-        ).generate()
+        ))

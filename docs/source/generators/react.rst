@@ -306,3 +306,23 @@ app imports (``index.css``) removes them. ``design.css`` therefore starts with a
 block in Tailwind's ``base`` layer that restores, inside the pages, the size and
 weight of headings and the look of a plain button. The design's own rules and
 utility classes take precedence over it.
+
+Trace Links
+-----------
+
+After ``generate()``, ``generator.traced_files`` maps each file the generator wrote (path relative to the output
+directory) to what it was generated from, for every GUI element that has an ``id``. Each page file
+``src/pages/<Page>.tsx`` is generated as a whole from its screen; every component rendered in a page is a line
+range (region) of its own, nested in its container's, and ``src/App.tsx`` records the import and the route of
+each page as regions of the screen. The other files (the Jinja templates, copied runtime blocks and
+assets) are file-level only. The generator writes no per-class files: the classes of the domain model only
+appear in the pages through the data bindings of their components, which are not traced separately.
+
+.. note::
+
+   The web editor's GUI converter (``process_gui_diagram``) gives each screen its page id and each component the
+   editor's trace records (tables, charts, metric cards, maps, agent components, forms, inputs, buttons, menus) its
+   persistent ``attributes.id``, the ids the editor records them by. Text, images, links and layout containers get
+   none: they render untraced, inside the region of the traced component that holds them, if any.
+
+Recording traces does not change the generated files; see :doc:`traceable_generator`.

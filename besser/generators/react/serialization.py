@@ -95,6 +95,7 @@ class GuiSerializationMixin:
         pages: List[Dict[str, Any]] = []
         pages_meta: List[Dict[str, str]] = []
         self._style_map = {}
+        self._node_elements = {}
 
         modules = self._sorted_by_name(self.gui_model.modules)
         module_name = modules[0].name if modules else "AppModule"
@@ -158,7 +159,7 @@ class GuiSerializationMixin:
         for element in elements:
             node["components"].append(self._serialize_component(element))
 
-        return self._clean_dict(node)
+        return self._remember_element(self._clean_dict(node), screen)
 
     def _serialize_component(self, element: ViewComponent) -> Dict[str, Any]:
         component_type = self._map_component_type(element)
@@ -753,7 +754,20 @@ class GuiSerializationMixin:
         if binding_data:
             node["data_binding"] = binding_data
 
-        return self._clean_dict(node)
+        return self._remember_element(self._clean_dict(node), element)
+
+    def _remember_element(self, node: Dict[str, Any], element: ViewComponent) -> Dict[str, Any]:
+        """Note which GUI element a serialized node came from, so that the page built from it can be traced.
+
+        The node is kept alongside the element so that its ``id()`` stays its own.
+        """
+        self._node_elements[id(node)] = (node, element)
+        return node
+
+    def _element_of(self, node: Dict[str, Any]) -> Optional[ViewComponent]:
+        """The GUI element ``node`` was serialized from (None for any other dict)."""
+        entry = self._node_elements.get(id(node))
+        return entry[1] if entry and entry[0] is node else None
 
     def _settable_ends(self, domain_concept) -> List[Any]:
         """The association ends a create/edit form of the class can set, oldest first."""

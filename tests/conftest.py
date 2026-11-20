@@ -207,3 +207,56 @@ def player_team_domain_model(player_class, team_class):
         name="TestModel",
         types={player_class, team_class},
     )
+
+
+# ---------------------------------------------------------------------------
+# Scaling: whether work grows linearly with its input, without a wall-clock bound
+# ---------------------------------------------------------------------------
+
+# time(4n) / time(n) is about 4 for linear work and 16 for quadratic work. Under xdist on a busy
+# host the larger input misses the caches more and linear work measured up to 9, so the bound is
+# 10 (doubling, 2 against 4, could not be told apart at all). A ratio, not a duration, so a slow
+# host does not fail the test either.
+SCALING_FACTOR = 4
+LINEAR_SCALING_MAX_RATIO = 10.0
+# The smaller input is grown until its work takes this long: a few milliseconds are mostly noise.
+SCALING_MIN_SECONDS = 0.05
+
+
+@pytest.fixture
+def assert_scales_linearly():
+    """``check(make, n)``: assert time(4n) / time(n) of the work ``make(size)`` returns is at most
+    ``LINEAR_SCALING_MAX_RATIO``.
+
+    ``make(size)`` builds the input (not timed) and returns a no-argument callable doing the
+    work (timed); ``n`` is doubled until that work takes ``SCALING_MIN_SECONDS``. Each size keeps its best of ``repeats`` runs, so a slow run does not count;
+    the garbage collector is off while timing (as in ``timeit``), since a collection costs what
+    the whole process holds, not what the work does.
+    """
+    import gc
+    import time
+
+    def timed(make, size):
+        work = make(size)
+        gc.collect()
+        gc.disable()
+        try:
+            started = time.perf_counter()
+            work()
+            return time.perf_counter() - started
+        finally:
+            gc.enable()
+
+    def check(make, n, repeats=5):
+        while timed(make, n) < SCALING_MIN_SECONDS:
+            n *= 2
+        # The two sizes alternate, so a burst of load on a shared host slows both alike.
+        small, large = float("inf"), float("inf")
+        for _ in range(repeats):
+            small = min(small, timed(make, n))
+            large = min(large, timed(make, SCALING_FACTOR * n))
+        assert large / small <= LINEAR_SCALING_MAX_RATIO, (
+            f"{SCALING_FACTOR}x the input ({n}) took {large / small:.1f}x as long ({small:.3f}s -> {large:.3f}s): "
+            "not linear")
+
+    return check

@@ -135,9 +135,9 @@ def test_the_editor_passes_the_project_name(_isolate_cwd):
         settings={"generator": "web_app", "config": {}},
     )
 
-    output = asyncio.run(generate_from_project(project))
+    generation = asyncio.run(generate_from_project(project))
 
-    with zipfile.ZipFile(io.BytesIO(output.content.getvalue())) as archive:
+    with zipfile.ZipFile(io.BytesIO(generation.output.content.getvalue())) as archive:
         assert "<title>Reading List</title>" in archive.read("frontend/index.html").decode("utf-8")
         assert archive.read("README.md").decode("utf-8").startswith("# Reading List\n")
         assert "title='Reading List API'," in archive.read("backend/main_api.py").decode("utf-8")

@@ -13,7 +13,7 @@ from besser.BUML.metamodel.quantum.quantum import (
     SwapGate, SGate, TGate, RXGate, RYGate, RZGate, PhaseGate,
     ControlState, RXXGate, RZZGate, RZXGate, RYYGate, BellGate, iSwapGate, SqrtSwapGate,
     CXGate, CYGate, CZGate, CHGate, CRXGate, CRYGate, CRZGate, CPhaseGate,
-    FunctionGate
+    FunctionGate, CNOT,
 )
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._safe_buml_loader import (
     safe_load_buml,
@@ -152,7 +152,8 @@ def _get_gate_symbol(op: QuantumOperation) -> str:
         return "Bell"
 
     # === Controlled Gates (Map to base symbol) ===
-    if isinstance(op, CXGate):
+    # A CNOT is an X with a control, as the editor draws it (• and X); "CNOT" would read back as a custom gate.
+    if isinstance(op, (CXGate, CNOT)):
         return "X"
     if isinstance(op, CYGate):
         return "Y"

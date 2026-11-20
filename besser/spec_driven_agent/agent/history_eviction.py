@@ -48,6 +48,9 @@ logger = logging.getLogger(__name__)
 _FILE_WRITE_TOOLS = frozenset({"write_file", "modify_file", "replace_file_lines"})
 # Input keys that hold a file body (never elide ``path`` — the model needs it).
 _BODY_INPUT_KEYS = frozenset({"content", "new_content", "file_text", "text", "new_str", "old_text", "new_text"})
+# Shown in place of a refused edit's body; the write tools refuse it as content.
+REJECTED_DRAFT_PLACEHOLDER = (
+    "[Rejected draft omitted; NOT applied. Read current source and write a corrected replacement.]")
 
 # Don't bother eliding anything smaller than this — the stub itself costs tokens,
 # and small results (a write ack, a short file) aren't the problem.
@@ -103,7 +106,7 @@ def without_rejected_edit_drafts(messages: list[dict]) -> list[dict]:
                     continue
                 blocks.append({"type": "tool_use", "id": _block_get(block, "id"),
                     "name": _block_get(block, "name"), "input": {
-                        key: "[Rejected draft omitted; NOT applied. Read current source and write a corrected replacement.]"
+                        key: REJECTED_DRAFT_PLACEHOLDER
                         if key in _BODY_INPUT_KEYS else value for key, value in args.items()}})
             elif (_block_type(block) == "tool_result"
                   and (index - 1, _block_get(block, "tool_use_id")) in rejected):

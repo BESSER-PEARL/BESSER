@@ -38,6 +38,7 @@ from besser.BUML.metamodel.structural import DomainModel
 from besser.utilities.provenance import get_besser_version
 # The canonical set, shared with get_tools_for() so the advertised list and the
 # dispatch gate can never disagree about which tools are shell tools.
+from besser.spec_driven_agent.agent.history_eviction import REJECTED_DRAFT_PLACEHOLDER
 from besser.spec_driven_agent.agent.runbook import backend_files, files_the_app_wrote
 from besser.spec_driven_agent.agent.tools import _SHELL_TOOLS as _SHELL_TOOL_NAMES
 from besser.spec_driven_agent.agent.tools import dumps_for_model
@@ -257,6 +258,9 @@ class ToolExecutionResult:
 
     def to_json(self) -> str:
         return dumps_for_model(self.payload)
+
+# The file tools' arguments that carry code or text to match.
+_EDIT_BODY_KEYS = ("content", "old_text", "new_text")
 
 # Default time a shell command can run (seconds); the model may ask for up to
 # MAX_COMMAND_TIMEOUT for a long build. install_dependencies gets INSTALL_TIMEOUT.
@@ -1887,6 +1891,14 @@ class ToolExecutor:
                             "BESSER (trace, checkpoint, attribution, logs). It can be read but "
                             "not written, edited or deleted. Change the project's own files instead."
                         )})
+                    placeholder = next((key for key in _EDIT_BODY_KEYS if REJECTED_DRAFT_PLACEHOLDER
+                                        in str(arguments.get(key) or "")), None)
+                    if placeholder:
+                        return ToolExecutionResult("error", {"error": (
+                            f"{tool_name} refused: {placeholder} holds the placeholder the "
+                            "conversation shows in place of a refused draft, not code. Nothing "
+                            "was written. Read the current source and send the real text."
+                        ), "rejection_kind": "placeholder"})
                     if tool_name != "read_file":
                         needed_for = str(arguments.pop("needed_for", None) or "").strip()
                         refusal = self._edit_scope_refusal(tool_name, arguments["path"], needed_for)

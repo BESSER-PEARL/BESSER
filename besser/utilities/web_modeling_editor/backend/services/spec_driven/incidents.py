@@ -28,9 +28,14 @@ _LOCK = threading.Lock()
 _DEFAULT_INCIDENT_LOG_DIR = "/app/incidents"
 
 
-def _incident_path() -> str:
+def incident_log_dir() -> str:
+    """``BESSER_INCIDENT_LOG_DIR``, or ``/app/incidents`` when it is unset."""
     configured = BackendSettings().incident_log_dir
-    directory = _DEFAULT_INCIDENT_LOG_DIR if configured is None else configured
+    return _DEFAULT_INCIDENT_LOG_DIR if configured is None else configured
+
+
+def _incident_path() -> str:
+    directory = incident_log_dir()
     try:
         os.makedirs(directory, exist_ok=True)
     except Exception:

@@ -118,6 +118,7 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
 )
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.workspace_tree import read_run_json
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import run_record
+from besser.utilities.web_modeling_editor.backend.services.spec_driven.run_evidence import RunEvidence
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.sse_events import (
     BaseSseEvent,
     CostEvent,
@@ -1850,6 +1851,8 @@ class SmartGenerationRunner:
             # BESSER_LLM_ENABLE_* env vars without a code change.
             enable_tracing=settings.llm_enable_tracing,
             enable_checkpointing=settings.llm_enable_checkpointing,
+            # The full record, kept server-side: the recipe the user gets is size-bounded.
+            run_evidence=RunEvidence(self.run_id, secrets=(self.request.resolved_api_key(),)),
             # Heavy per-project compilers (tsc / cargo / kotlinc) are
             # opt-in for the web deployment — they were the main driver
             # of the duration/cost regression on non-Python stacks.
@@ -1909,18 +1912,17 @@ class SmartGenerationRunner:
         async def run_orchestrator() -> str:
             try:
                 if self._resume_run_id:
-                    return await self._runtime.run_blocking(
-                        orchestrator.resume, self.request.instructions
-                    )
-                if self._mode == "modify" and self._seeded:
+                    entry = orchestrator.resume
+                elif self._mode == "modify" and self._seeded:
                     # Seeded modify: edit the copied files in place.
                     # (A base-expired / failed-seed fallback left _seeded
                     # False and drops through to the from-scratch run().)
-                    return await self._runtime.run_blocking(
-                        orchestrator.modify, self.request.instructions
-                    )
+                    entry = orchestrator.modify
+                else:
+                    entry = orchestrator.run
+                # Every line the worker thread logs names the run.
                 return await self._runtime.run_blocking(
-                    orchestrator.run, self.request.instructions
+                    run_record.with_run_id(self.run_id, entry), self.request.instructions
                 )
             finally:
                 # Sentinel: tells the drain loop to stop waiting for

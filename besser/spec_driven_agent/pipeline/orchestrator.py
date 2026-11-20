@@ -19,6 +19,7 @@ Phase 3 (validation & fix):
 """
 
 import contextlib
+import contextvars
 import hashlib
 import json
 import logging
@@ -353,6 +354,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         run_id: str = "",
         enable_tracing: bool = True,
         enable_checkpointing: bool = True,
+        # Given every trace record with its uncut tool inputs and results (the
+        # backend keeps them server-side); None writes nothing besides the trace.
+        run_evidence: Callable[[dict], None] | None = None,
         # Both default OFF: they enable run_command / install_dependencies, the
         # arbitrary-shell capability the hosted gate exists to withhold. Opt in
         # explicitly; generation does not need them.
@@ -630,10 +634,11 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self.run_id = run_id
         self._trace: TraceWriter | NullTraceWriter = (
             TraceWriter(self.output_dir, run_id=run_id, primary_kind=self.primary_kind,
-                        usage=self._run_usage_counters)
+                        usage=self._run_usage_counters, mirror=run_evidence)
             if enable_tracing
             else NullTraceWriter()
         )
+        self._keeps_run_evidence = enable_tracing and run_evidence is not None
         self._checkpointing_enabled = enable_checkpointing
         # Fingerprint is stable over the run; compute once so resume
         # validation doesn't re-hash on every turn.
@@ -2627,7 +2632,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 
         tool_results: list[dict] = []
         with ThreadPoolExecutor(max_workers=_MAX_PARALLEL_WORKERS) as pool:
-            futures = {pool.submit(_run_group, blocks): blocks
+            # Each group runs in a copy of this thread's context: its logs name the run.
+            futures = {pool.submit(contextvars.copy_context().run, _run_group, blocks): blocks
                        for blocks in groups.values()}
             for future in as_completed(futures):
                 blocks = futures[future]
@@ -2710,7 +2716,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                                   getattr(self, "_blocks_in_turn", 1)),
             )
 
+        started = time.monotonic()
         execution = self.executor.execute_typed(tool_name, block.input)
+        seconds = round(time.monotonic() - started, 3)
         # A landed edit may have satisfied a checkable item. Close it here
         # rather than making the model spend turns arguing for it.
         if execution.succeeded and tool_name in _WRITE_TOOLS_ON_RECORD:
@@ -2777,10 +2785,13 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             self._record_full_tool_input(turn + 1, tool_name, block.input, success, execution.status)
         self._trace.write(
             EVENT_TOOL_CALL,
+            uncut=({"input": _redacted_tool_input(tool_name, block.input), "result": result}
+                   if self._keeps_run_evidence else None),
             turn=turn + 1,
             tool=tool_name,
             success=success,
             status=execution.status,
+            seconds=seconds,
             input=logged_input,
             # How many calls the model batched into this turn (1 = no batching).
             blocks_in_turn=getattr(self, "_blocks_in_turn", 1),
@@ -5671,7 +5682,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             }
         recipe_path = os.path.join(self.output_dir, ".besser_recipe.json")
         try:
-            self.saved_recipe, text = bounded_recipe(recipe)
+            self.saved_recipe, text = bounded_recipe(recipe, full_record=(
+                f"full record kept server-side under run {self.run_id}" if self._keeps_run_evidence
+                else f"every call is in {TRACE_FILENAME}" if self._trace.path else ""))
             with open_plain_write(recipe_path, "w", root=self.output_dir, encoding="utf-8") as f:
                 f.write(text)
         except Exception as e:
@@ -5837,13 +5850,18 @@ def _redact_for_trace(value: Any) -> Any:
     return value
 
 
-def _trace_safe_input(tool_name: str, data: Any) -> Any:
-    """A tool input as the trace and checkpoint record it: redacted, bounded."""
+def _redacted_tool_input(tool_name: str, data: Any) -> Any:
+    """A tool input with credentials replaced, test_api header values included."""
     if tool_name == "test_api" and isinstance(data, dict) and "requests" in data:
         from besser.spec_driven_agent.validation.api_probe import redact_scenario_headers
 
         data = {**data, "requests": redact_scenario_headers(data["requests"])}
-    return _sanitize_for_log(_redact_for_trace(data))
+    return _redact_for_trace(data)
+
+
+def _trace_safe_input(tool_name: str, data: Any) -> Any:
+    """A tool input as the trace and checkpoint record it: redacted, bounded."""
+    return _sanitize_for_log(_redacted_tool_input(tool_name, data))
 
 
 def _trace_result_excerpt(result: Any) -> dict:

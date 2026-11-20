@@ -177,6 +177,10 @@ class BackendSettings(BaseSettings):
     llm_max_concurrent_runs: _PositiveInt = Field(
         10, validation_alias="BESSER_LLM_MAX_CONCURRENT_RUNS",
         description="Runs (and other LLM jobs) allowed at once.")
+    llm_run_evidence_retention_days: _PositiveInt = Field(
+        30, validation_alias="BESSER_LLM_RUN_EVIDENCE_RETENTION_DAYS",
+        description="Days a run's full record is kept in the incident log directory's runs/ folder. "
+                    "Read per call.")
     llm_run_store_path: _AbsPath = Field(
         None, validation_alias="BESSER_LLM_RUN_STORE_PATH",
         description="SQLite file of the durable run store (unset: the system temp dir). Read per call.")
@@ -230,8 +234,8 @@ class BackendSettings(BaseSettings):
         description="Token GET /telemetry/report requires; unset answers 404. Read per call.")
     incident_log_dir: Optional[str] = Field(
         None, validation_alias="BESSER_INCIDENT_LOG_DIR",
-        description="Incident log directory (unset: /app/incidents); set, it also keeps run traces. "
-                    "Read per call.")
+        description="Incident log directory (unset: /app/incidents); it also keeps each run's full record "
+                    "(runs/) and, set, run traces. Read per call.")
 
     # -- SDMX import ---------------------------------------------------------
     # The largest message seen (Eurostat Comext DS-045409) is 23.6 MB; parsing

@@ -115,6 +115,48 @@ removes it. Likewise a run that fails or is cancelled after writing a
 checkpoint keeps its workspace, so an abandoned run that reports
 ``resumeAvailable: true`` can be resumed.
 
+.. _spec-driven-run-evidence:
+
+What the server keeps of a run
+------------------------------
+
+The recipe (``.besser_recipe.json``) ships in the download, so it is bounded:
+over 128 KiB it is shortened, and its ``recipe_shortened`` section counts what
+was cut and says so in ``note``, for example *kept 5 of 109 tool calls; full
+record kept server-side under run <run id>*. The run log
+(``.besser_trace.jsonl``) stays in the workspace and is deleted with it, after
+``BESSER_LLM_DOWNLOAD_TTL_SECONDS``.
+
+A run started through the backend also keeps its full record on the server, in
+``<BESSER_INCIDENT_LOG_DIR>/runs/<run id>.jsonl`` (default
+``/app/incidents/runs``), for ``BESSER_LLM_RUN_EVIDENCE_RETENTION_DAYS`` days
+(30). It holds one JSON line for every record of the run log, appended as it
+happens, so a run that is cancelled or crashes keeps what it did up to then.
+Each line has the run log's fields plus ``phase`` (the phase it happened in). A
+``tool_call`` line has the turn, the tool, its whole input, ``success``,
+``status``, ``seconds`` (how long the tool took) and ``result``, the text the
+model read.
+
+- **Caps.** Any one string is kept up to 64 KiB (its first and last 32 KiB
+  beyond that), so a written file's content is kept whole up to that size. A
+  tool result is kept up to 16 KiB, its first and last 8 KiB.
+- **Redaction.** Every string goes through the redaction of the run's events
+  and run log first: the user's own key, provider tokens, private keys,
+  database URL passwords, authorization headers, token fields and JWTs become
+  ``[REDACTED]``, as do ``test_api`` header values. Application code the agent
+  wrote is kept.
+- **Access.** A run's shell never sees the folder: the sandbox masks
+  ``BESSER_INCIDENT_LOG_DIR``.
+- **Size.** Measured on production runs, a record is about 0.2 to 1.6 MB
+  (0.7 MB on average).
+
+The record is written only with the run log (``BESSER_LLM_ENABLE_TRACING``,
+on by default). A run driven from Python with ``LLMOrchestrator`` writes none
+unless it passes ``run_evidence``, a callable that receives each record.
+
+While a run is working, each warning its worker logs carries
+``run_id=<run id>``, as the ``spec-driven run start`` and ``run end`` lines do.
+
 .. _spec-driven-modify-mode:
 
 Modifying a previous run

@@ -251,14 +251,17 @@ Context and token budgets
 
 - ``BESSER_LLM_COMPACT_THRESHOLD`` (``80000``) -- Estimated-token threshold at
   which the Phase 2 conversation is compacted, for models whose context
-  window is unknown. Models with a known window (from the model catalogs of
-  the free and sponsored tiers, or the built-in table of hosted frontier
-  models) get an
-  adaptive threshold derived from that window instead: 80% of what is left
-  of the window after a reserve for the reply (the run's output-token
-  ceiling, at least 16,000). Setting this variable
-  also caps the adaptive value, so lowering it to cut cost applies to every
-  model, not only unknown ones. Floored at 8,000.
+  window is unknown. Models in the built-in table of hosted frontier models
+  get an adaptive threshold derived from their window instead: 80% of what
+  is left of the window after a reserve for the reply (the run's
+  output-token ceiling, at least 16,000). A window from the model catalogs
+  of the free and sponsored tiers only lowers the threshold (a small served
+  window), never raises it. Setting this variable also caps the adaptive
+  value, so lowering it to cut cost applies to every model, not only unknown
+  ones. Floored at 8,000. ``docker-compose.prod.yml`` sets it to 80000 on the
+  generation worker, which caps every model that worker runs, a user's own
+  key included. The resolved value is the ``compact_threshold`` of the run
+  log's Phase 2 ``phase_enter`` record.
 - ``BESSER_LLM_MAX_COMPACT_THRESHOLD`` (``200000``) -- Ceiling on the adaptive
   threshold for models with a known window, so a million-token model does
   not send prompts of that size every turn. A blank value is 200000. Models

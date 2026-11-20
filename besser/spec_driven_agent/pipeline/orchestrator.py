@@ -933,7 +933,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             self._trace.write(EVENT_VALIDATION_ISSUE, phase="phase1_5", message=issue)
 
         # -- Phase 2: LLM customization -----------------------------------
-        self._trace.write(EVENT_PHASE_ENTER, phase="phase2")
+        self._trace.write(EVENT_PHASE_ENTER, phase="phase2", compact_threshold=self._compact_threshold())
         self._run_phase2(instructions, extra_issues=phase1_issues)
         self._trace.write(
             EVENT_PHASE_EXIT, phase="phase2", turns=self.total_turns,
@@ -1141,7 +1141,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             phase1_issues = self._validate_phase1_output()
             for issue in phase1_issues:
                 self._trace.write(EVENT_VALIDATION_ISSUE, phase="phase1_5", message=issue)
-            self._trace.write(EVENT_PHASE_ENTER, phase="phase2_resume")
+            self._trace.write(EVENT_PHASE_ENTER, phase="phase2_resume", compact_threshold=self._compact_threshold())
             self._run_phase2(instructions, extra_issues=(
                 self._modify_scoped_issues(phase1_issues) if self._modify_mode else phase1_issues))
             self._trace.write(
@@ -5492,6 +5492,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         """Output headroom of the next response: the run's raised max_tokens,
         not only the COMPACT_RESERVE_TOKENS floor."""
         return max(COMPACT_RESERVE_TOKENS, int(getattr(self.client, "max_tokens", 0) or 0))
+
+    def _compact_threshold(self) -> int:
+        """The compaction threshold this run's model resolves to now."""
+        return effective_threshold(getattr(self.client, "model", None), reserve=self._compaction_reserve())
 
     def _drop_stale_thinking(self, messages: list[dict], why: str) -> list[dict]:
         """Remove thinking blocks whose conversation is no longer what is sent.

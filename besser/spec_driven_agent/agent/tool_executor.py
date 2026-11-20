@@ -1848,6 +1848,8 @@ class ToolExecutor:
                 f"{tool_name} is missing required argument(s): {', '.join(missing)}. "
                 "Nothing was done; resend the call with every required field."
             )})
+        declared = schema.get("properties") or {}
+        ignored = [name for name in arguments if name not in declared and name != "needed_for"]
         arguments, problems = _normalize_arguments(schema, arguments)
         if problems:
             return ToolExecutionResult("error", {"error": (
@@ -1889,6 +1891,10 @@ class ToolExecutor:
                 if file_tool and isinstance(raw_result, dict):
                     self._add_edit_recovery(tool_name, arguments, raw_result)
             payload = raw_result if isinstance(raw_result, dict) else {"result": raw_result}
+            if ignored:
+                payload["ignored_arguments"] = (
+                    f"{', '.join(ignored)} not used: {tool_name} takes "
+                    f"{', '.join(declared) or 'no arguments'}.")
             return ToolExecutionResult(self._result_status(payload), payload)
         except Exception as e:
             logger.warning("Tool %s failed: %s", tool_name, e, exc_info=True)

@@ -58,7 +58,10 @@ schema declares: a null optional argument counts as omitted, ``"12"`` or ``12.0`
 is accepted for an integer, ``"true"``/``"false"`` for a boolean and a single value
 for an array; any other mismatch (a boolean or ``1.5`` for an integer, ``inf``, an
 object for a string, a value outside an ``enum``) is refused with an error naming
-the argument, the expected type and the type received.
+the argument, the expected type and the type received. An argument the tool
+does not declare (``old_text`` on a range edit, a ``path`` scope on
+``search_in_files``) is not used, and the result says so under
+``ignored_arguments``, with the arguments the tool takes.
 
 A refused edit carries one next step (``edit_recovery``), the same in
 customization and validation repair. When a ``modify_file`` miss brackets one

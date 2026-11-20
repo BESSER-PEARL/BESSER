@@ -159,9 +159,11 @@ satisfy it. The JSX rule matters even where build verification is enabled:
 no build check can see it. A Vite project counts as using the automatic runtime
 only when its ``vite.config`` imports ``@vitejs/plugin-react`` and calls it
 inside ``plugins: [...]``. Declaring the package in ``package.json``, or naming
-it in a comment, does not enable it. A ``package.json`` dependency whose version
-is ``"latest"``, ``"*"``, ``"x"`` or empty is a blocker naming the file and the
-package: the install would depend on whatever npm publishes that day.
+it in a comment, does not enable it. Dependencies whose version is ``"latest"``,
+``"*"``, ``"x"``, empty or another dist-tag are one warning per ``package.json``,
+naming the packages: the install still works, but takes whatever npm publishes
+that day, so the build is not reproducible. The warning points at the lockfile
+when the project has one and never suggests a version number.
 
 Create forms are checked statically against the backend's ``*Create`` Pydantic
 schemas, because the runtime probes drive HTTP and never render a page. Each
@@ -853,8 +855,10 @@ is not among the files the verdict rests on, so a style edit does not re-judge i
 
 Two kinds of requirement cannot be shown by citing a line of code, and the
 extraction labels them: ``absence``, something the app must not have at all ("no
-data export", never a refusal the app enforces), and ``preservation``, existing
-behaviour a change must keep working as it is. When the judge leaves one
+data export", or data invented beyond a given source such as an imported file;
+never a refusal the app enforces), and ``preservation``, existing behaviour a
+change must keep working as it is. Neither needs an enforcing line: a citation
+of where the data comes from can verify an absence. When the judge leaves one
 unverified, it is settled without a citation, never as met, and an unverified
 absence is not sent to the focused round:
 

@@ -219,8 +219,8 @@ workflow that did not run is kept and replayed on the next source revision;
 only a workflow that ran and failed is an ``api scenario:`` blocker; one the
 agent retired as replaced (``test_api(action="retire")``) is not replayed. A repair
 after which the probe can no longer measure a backend it measured before is
-not accepted as "all blockers fixed": the rollback check ranks that tree
-behind the measured one.
+not accepted as "all blockers fixed": that attempt is not kept, because its
+tree ranks behind the measured one.
 
 The same applies when these checks are turned off for the run
 (``enable_import_smoke_check=False``): the finding is a warning, not a
@@ -747,32 +747,82 @@ The bounded auto-fix loop
 -------------------------
 
 Blocker-level findings drive a repair/recheck loop within the remaining turn,
-cost and runtime budgets. The loop stops when blockers reach zero, after two
-consecutive unchanged/repeated source states, or after three consecutive rounds
-that change the tree without improving it. A round is progress when the tree
-scores better, the source changed, or a verification obligation was discharged
-(a checklist or scenario change counts only if it changed the set of blockers)
-— writing no source is not by itself a stop, because a round spent closing
-checklist items or correcting a scenario can resolve blockers without touching
-a file, and a round whose edits were all rejected feeds those rejections into
-the next attempt's prompt. A round that wrote nothing and never called an edit
-tool is the exception: it leaves the next prompt identical to its own, so it
-ends the loop immediately rather than paying for the same attempt twice. A larger error count does not trigger an automatic rollback: fixing one
-import may expose several previously unreachable CRUD failures. Unresolved
-output remains explicitly incomplete. Startup and data-entry failures are
-repaired before spending tokens on business requirement judgment.
+cost and runtime budgets. Only blockers reach it: a finding that only says a
+check could not run (a warning) starts no fix attempt, and the step shown for
+an attempt ("Fix attempt 1: fixing 2 of 3 blockers ...") counts those apart.
+
+Each attempt has targets. Its prompt lists the blockers, each with the
+workspace files and lines it names, and while it runs the write tools
+(``write_file``, ``modify_file``, ``replace_file_lines``, ``delete_file``)
+accept the files the blockers name, the files those import or that import them
+(relative imports, and ``paths`` aliases from the frontend's tsconfig), the
+other source files of their folder, and new files. A frontend file also brings
+the app's entry and routing files, and a ``missing module:`` blocker brings the
+dependency manifest (``requirements.txt`` / ``package.json``). A write elsewhere
+is refused with the list of allowed files; repeating the call with
+``needed_for`` naming the blocker it is needed for writes the file, and the
+trace records each widening as an ``edit_scope`` event. A blocker that names no
+file (a failing route, a missing requirement) leaves that attempt free to edit
+any file. The scope is a guide, not a guarantee: any stated reason widens it,
+and shell commands are not scoped. Because the other source files of a named
+file's folder are in scope, an attempt that fixes the named defect and also
+edits, say, other routers is kept unless those edits change a finding. The
+scope reduces drift; it does not prevent it. Keeping or reverting each attempt
+is what protects the tree.
+
+An attempt that edited the tree is kept only if all of these hold:
+
+1. It retired at least one blocker it faced. Attempts compare requirements by
+   id and status rank, since a re-judge rewords its note: a requirement is
+   retired when its status rises (missing to partial is progress, though it
+   still blocks), or when it no longer has a blocker and the judge ran on the
+   tree after the attempt. A requirement that disappears because the judge was
+   deferred, failed or was stopped is not retired. Missing and unsupported rank
+   the same, so turning one into the other is neither progress nor a fall.
+   Other findings are compared with line and column numbers ignored, since an
+   edit moves the errors it leaves; any other number (``/e2/`` against
+   ``/e3/``) tells them apart.
+2. Every observed failure it added (a check that watched something fail, not a
+   judgment or an unknown) belongs to a check family that could not run on the
+   tree before it. Fixing the front failure of a layer shows what it hid: a
+   missing module or a startup failure hides the runtime checks (where the
+   probe measured that tree, its boot verdict decides instead), fewer entities
+   failing to be created reveals the creates and action calls that needed them,
+   a judge that was deferred, failed or stopped hides its verdicts, missing
+   dependencies or a check that did not run hide ``tsc`` and the frontend build
+   of that project, ``tsc`` errors hide its build, and a syntax error hides the
+   lint of its file. The families are one table in ``validation/issues.py``; a
+   finding of no family always counts.
+3. The blocker count, leaving out the added findings of those hidden families,
+   is no higher than before; a requirement whose status fell counts as one more.
+4. An app that started still starts.
+5. Where runtime checks ran on the tree before, no more entities fail to be
+   created, and no more actions fail unless more entities are now created
+   (counted from the probe's records, or from all findings, warnings included,
+   where the probe did not measure the tree).
+
+An attempt that is not kept is rolled back to the tree from before it, which is
+checked again; the findings only the discarded tree showed are listed in a
+``validation:`` note, the tool calls it made are marked ``rolled_back`` in the
+run record, checklist items it had verified are reopened, and the loop ends.
+An attempt that edits nothing is checked again when it moved evidence (a
+checklist item, a corrected scenario, an accepted citation) or dependencies (a
+successful ``install_dependencies`` or ``run_command``, or a change in a
+project's installed ``node_modules``). It continues the loop only if that check
+meets the same five conditions; having no edit to undo, it otherwise ends the
+loop. An attempt whose every write was refused gets one more attempt, with the
+refusals in the next prompt. A blocker set seen before ends the loop too. Unresolved output remains explicitly incomplete. Startup and
+data-entry failures are repaired before spending tokens on business requirement
+judgment.
 
 A fix turn whose reply is cut off at the output-token limit is retried with
 an instruction to emit less, up to four times per attempt, rather than
 applying a half-written edit.
 
-For concrete code defects, an attempt without a successful edit — the model explained
-the fix instead of making it, or read files until its turn budget ran out — is
-re-prompted once, with ``modify_file`` forced through ``tool_choice`` where the
-provider honours it and a reminder in the message either way; if that still
-produces no edit the attempt ends, and the log says ``ended with no successful
-edit``. Phase 3 tool calls are recorded in the trace and the recipe exactly
-like Phase 2's.
+No tool is forced in a fix attempt: it ends when the model ends its turn or
+its ten turns are spent, and an attempt without a successful edit is logged as
+``ended with no successful edit``. Phase 3 tool calls are recorded in the trace
+and the recipe exactly like Phase 2's.
 
 Evidence-only findings and generated API assertions do not force a source edit.
 The agent can inspect saved scenarios, correct a mistaken expectation with a
@@ -792,7 +842,9 @@ opinion alone does not. Cancellation is checked between repair and validation,
 so stopping a run does not trigger another paid coverage judgment.
 
 Repair prompts retain the original specification, current files/symbols, actual
-action handlers and recent rejected operations. The parts that are fixed for the
+action handlers and recent rejected operations. Each attempt is a new
+conversation, so its prompt also lists the files the run has edited and, after a
+kept attempt, what that attempt edited and which blockers it retired. The parts that are fixed for the
 run (the original specification, the inspection handoff, the domain model and the
 requirements ledger) form the system prompt, identical in every repair round so
 the provider can serve it from its prompt cache; each round's message carries the
@@ -805,16 +857,8 @@ the ledger by its id. Validation still records and reports every blocker.
 A fix attempt is skipped when every remaining blocker is a requirement whose
 cited code exists but whose citation is malformed and already had its
 citation-repair round, and that has no fragment the fix agent may complete (below):
-no edit can change it. A citation of code that exists nowhere keeps its attempt. The
-loop also ends when the last attempt faced the same
-blockers (requirements compared by id, status and citation label, since a re-judge
-rewords its note; other blockers by message), its edits were not all rejected,
-and each remaining blocker is a ``requirement unverified`` verdict the
-judge left without a citation (or with a malformed one) after its focused
-re-judge on the current source: another attempt would get the same request. A
-citation of code that exists nowhere, or one whose cited body fails its role (an
-HTTP 501 scaffold, a no-op), keeps its attempts. The blockers keep their severity
-and are reported. ``validate_app`` lists the requirement blockers of the last
+no edit can change it. A citation of code that exists nowhere keeps its attempt.
+The blockers keep their severity and are reported. ``validate_app`` lists the requirement blockers of the last
 judgment too (no new judge call), so the fix agent is never told the app is
 verified while the run holds one; their message tells it to implement behaviour
 only if it is really absent, since citations are re-judged automatically. When the

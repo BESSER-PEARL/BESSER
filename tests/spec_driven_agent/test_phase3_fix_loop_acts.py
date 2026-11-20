@@ -1,4 +1,4 @@
-"""A Phase 3 fix attempt must end in an edit, and must say what it did.
+"""A Phase 3 fix attempt must say what it did, and is never forced to call a tool.
 
 Recorded run 7f918e11 (Qwen3-30B-A3B via Nebius): one blocker, two fix
 attempts, ten LLM turns, $0.0032, and the file that needed a one-line change
@@ -9,13 +9,14 @@ reached the trace, the recipe or the sidecar, and every one of the ten
 successful edit, and that the attempt was scored "no progress" without any
 attempt to make the model act.
 
-Three things follow, each pinned here:
+Forcing ``modify_file`` on such an attempt was tried and measured in
+production (24 of 52 attempts still made no successful edit, and forced edits
+landed on files no blocker named), so it is gone: an attempt ends when the model
+ends its turn or its turns are spent, and the loop ends after an attempt that
+edited nothing (test_phase3_repair_targets.py). What stays pinned here:
 
-* an attempt that ends with no successful edit is re-prompted ONCE, with
-  ``modify_file`` forced through ``tool_choice`` where the client supports it
-  and a high-salience reminder either way (the gateway may ignore
-  ``tool_choice``) - after that the attempt ends instead of spinning;
-* a model that reads until the turn cap gets that same single extra turn;
+* no request in an attempt carries a forced tool, prose or not;
+* unread creates still get a reminder turn while each one confirms more;
 * Phase 3 tool calls go through the same recording path as Phase 2, so the
   next run like this one can be read instead of guessed at.
 """
@@ -137,25 +138,15 @@ def _main_py(tmp_path) -> str:
 
 
 @pytest.mark.parametrize("verification_only", [False, "requirement unverified:", "verification setup:"])
-def test_a_prose_reply_is_re_prompted_with_modify_file_forced(tmp_path, verification_only):
+def test_a_prose_reply_ends_the_attempt_without_a_forced_tool(tmp_path, verification_only):
     client = _StructuredClient(_prose)
     orch = _build(tmp_path, client)
 
     blocker = ValidationIssue("blocker", f"{verification_only} verification is required") if verification_only else BLOCKER
     orch._invoke_phase3_fix_loop([blocker], is_first_attempt=True)
 
-    if verification_only:
-        assert _main_py(tmp_path) == "x = 1\n", "evidence correction must not force a gratuitous source edit"
-        assert [force for force, _ in client.calls] == [None]
-        return
-
-    assert _main_py(tmp_path) == "x = 2\n"
-    # Prose, the forced edit, then the model's own next turn (prose again,
-    # which ends the attempt because an edit is now on record).
-    assert [force for force, _ in client.calls] == [None, "modify_file", None]
-    assert any("modify_file" in text for text in client.calls[1][1]), (
-        "the re-prompt must say in words what tool_choice asks for - the "
-        "gateway may drop tool_choice")
+    assert _main_py(tmp_path) == "x = 1\n"
+    assert [force for force, _ in client.calls] == [None]
 
 
 def _unverified_create(path):
@@ -188,7 +179,7 @@ def test_a_verification_round_that_stops_early_is_told_which_creates_are_unread(
     orch._invoke_phase3_fix_loop([_unverified_create(p) for p in ("a", "b", "c")], is_first_attempt=True)
 
     # Prose; reminder 1 (all three); reminder 2 (only c); nothing new -> stop.
-    assert [force for force, _ in client.calls] == [None, "test_api", "test_api"]
+    assert [force for force, _ in client.calls] == [None, None, None]
     first, second = client.calls[1][1][-1], client.calls[2][1][-1]
     assert all(f"POST /{p}/" in first for p in "abc")
     assert "POST /c/" in second and "POST /a/" not in second and "POST /b/" not in second
@@ -196,26 +187,24 @@ def test_a_verification_round_that_stops_early_is_told_which_creates_are_unread(
     assert _main_py(tmp_path) == "x = 1\n"
 
 
-def test_a_round_with_a_code_defect_is_nudged_to_edit_before_the_create_reminder(tmp_path):
-    """An edit after the read-backs would leave them stale, so the edit comes
-    first; a reminder that confirms nothing ends the attempt."""
+def test_a_round_with_a_code_defect_still_gets_the_create_reminder(tmp_path):
+    """A reminder that confirms nothing ends the attempt."""
     client = _StructuredClient(_prose)
     orch = _build(tmp_path, client)
 
     orch._invoke_phase3_fix_loop([BLOCKER, _unverified_create("a")], is_first_attempt=True)
 
-    assert _main_py(tmp_path) == "x = 2\n"
-    assert [force for force, _ in client.calls] == [None, "modify_file", None, "test_api"]
-    assert [any("no read-back" in text for text in seen) for _, seen in client.calls] == [
-        False, False, False, True]
+    assert _main_py(tmp_path) == "x = 1\n"
+    assert [force for force, _ in client.calls] == [None, None]
+    assert [any("no read-back" in text for text in seen) for _, seen in client.calls] == [False, True]
 
 
 def test_a_requirement_finding_does_not_switch_off_the_create_reminder(tmp_path):
     """A judge ``requirement:`` finding next to unverified creates made the
-    round not verification-only, so the reminder never fired: the attempt
-    forced modify_file and ended with every create unread."""
+    round not verification-only, so the reminder never fired and the attempt
+    ended with every create unread."""
     def reply(n):
-        if n == 4:   # the forced test_api turn, after the edit
+        if n == 2:   # the reminder turn
             for path in ("a", "b"):
                 orch._api_scenarios[path] = _read_back(orch, path)
         return _prose(n)
@@ -227,9 +216,9 @@ def test_a_requirement_finding_does_not_switch_off_the_create_reminder(tmp_path)
 
     orch._invoke_phase3_fix_loop([requirement, *creates], is_first_attempt=True)
 
-    assert [force for force, _ in client.calls] == [None, "modify_file", None, "test_api"]
-    assert _main_py(tmp_path) == "x = 2\n"
-    assert orch._unconfirmed_creates(creates) == set(), "read-backs must be current after the edit"
+    assert [force for force, _ in client.calls] == [None, None]
+    assert any("no read-back" in text for text in client.calls[1][1])
+    assert orch._unconfirmed_creates(creates) == set()
 
 
 def test_validate_app_does_not_ask_for_one_scenario_covering_every_create(tmp_path):
@@ -243,62 +232,42 @@ def test_validate_app_does_not_ask_for_one_scenario_covering_every_create(tmp_pa
     assert "for every listed endpoint" not in step
 
 
-def test_reading_until_the_turn_cap_gets_one_forced_edit_turn(tmp_path):
+def test_reading_until_the_turn_cap_ends_the_attempt(tmp_path):
     client = _StructuredClient(_read)
     orch = _build(tmp_path, client)
 
-    orch._invoke_phase3_fix_loop([BLOCKER], is_first_attempt=True)
+    assert orch._invoke_phase3_fix_loop([BLOCKER], is_first_attempt=True) == 0
 
-    assert _main_py(tmp_path) == "x = 2\n"
-    assert [force for force, _ in client.calls] == [None] * _PHASE3_FIX_TURNS + ["modify_file"]
-    assert orch.total_turns == _PHASE3_FIX_TURNS + 1
-    edits = [call for call in orch.tool_calls_log if call["tool"] == "modify_file"]
-    assert len(edits) == 1 and edits[0]["success"]
+    assert _main_py(tmp_path) == "x = 1\n"
+    assert [force for force, _ in client.calls] == [None] * _PHASE3_FIX_TURNS
+    assert orch.total_turns == _PHASE3_FIX_TURNS
 
 
-@pytest.mark.parametrize("prose_turn", [_PHASE3_FIX_TURNS - 1, _PHASE3_FIX_TURNS])
-def test_a_prose_reply_on_the_last_turn_still_gets_the_forced_edit_turn(tmp_path, prose_turn):
-    """Prose on the cap's own turn set ``nudged`` before the cap check ran,
-    so the cap check returned and the forced edit turn never happened - one
-    turn earlier, the same reply got it."""
-    client = _StructuredClient(lambda n: _read(n) if n < prose_turn else _prose(n))
-    orch = _build(tmp_path, client)
-
-    orch._invoke_phase3_fix_loop([BLOCKER], is_first_attempt=True)
-
-    assert _main_py(tmp_path) == "x = 2\n"
-    assert [force for force, _ in client.calls][prose_turn:] == ["modify_file"]
-
-
-def test_the_stop_gate_runs_before_the_forced_edit_turn(tmp_path):
-    client = _StructuredClient(lambda n: _read(n) if n < _PHASE3_FIX_TURNS else _prose(n))
+def test_the_stop_gate_runs_before_the_next_turn(tmp_path):
+    client = _StructuredClient(_read)
     orch = _build(tmp_path, client)
     real_chat = client.chat
 
     def chat(*args, **kwargs):
         response = real_chat(*args, **kwargs)
-        if len(client.calls) == _PHASE3_FIX_TURNS:
-            orch._should_continue = lambda: False  # cancelled during the prose turn
+        if len(client.calls) == 3:
+            orch._should_continue = lambda: False  # cancelled during the third turn
         return response
 
     client.chat = chat
     orch._invoke_phase3_fix_loop([BLOCKER], is_first_attempt=True)
 
-    assert len(client.calls) == _PHASE3_FIX_TURNS
-    assert _main_py(tmp_path) == "x = 1\n"
+    assert len(client.calls) == 3
 
 
-def test_a_client_that_ignores_the_re_prompt_ends_the_attempt(tmp_path):
-    """Without tool_choice the reminder is all we have; it is sent once."""
+def test_a_client_without_tool_choice_gets_one_request_for_a_prose_reply(tmp_path):
     client = _PlainClient()
     orch = _build(tmp_path, client)
 
     orch._invoke_phase3_fix_loop([BLOCKER], is_first_attempt=True)
 
     assert _main_py(tmp_path) == "x = 1\n"
-    assert len(client.calls) == 2
-    assert client.calls[0] == []
-    assert any("modify_file" in text for text in client.calls[1])
+    assert client.calls == [[]]
 
 
 def test_an_attempt_that_edited_is_not_re_prompted(tmp_path):
@@ -373,8 +342,16 @@ def test_repair_excerpts_accept_real_finding_formats_and_reject_escape(tmp_path)
 # ------------------------------------------------------- the attempt is seen
 
 
+def _edit_once(n):
+    if n == 1:
+        return {"stop_reason": "tool_use", "content": [
+            _Block("tool_use", id="m1", name="modify_file", input=dict(EDIT)),
+        ]}
+    return _prose(n)
+
+
 def test_phase3_tool_calls_are_recorded_like_phase2_ones(tmp_path):
-    client = _StructuredClient(_prose)
+    client = _StructuredClient(_edit_once)
     orch = _build(tmp_path, client, enable_tracing=True, run_id="t")
 
     orch._invoke_phase3_fix_loop([BLOCKER], is_first_attempt=True)
@@ -402,17 +379,10 @@ def test_phase3_tool_calls_are_recorded_like_phase2_ones(tmp_path):
 
 
 def test_an_attempt_without_an_edit_is_said_so_in_the_log(tmp_path, caplog):
-    """One attempt, not two.
+    """One attempt, not two: an attempt that edits nothing ends the loop.
 
-    This client answers in prose and calls no tool at all, so the attempt left
-    the tree byte-identical AND never reached for the editor: nothing it did
-    reaches the next prompt, and the next round would be a replay of this one.
-    Across the 221 runs recorded before this stop existed, the round after a
-    prose-only round wrote source 0 times in 4. (An attempt whose edits were
-    REJECTED is the opposite case and does buy a second round - 57% of those
-    wrote next round, n=30 - see test_phase3_stall_guards.py.) The summary
-    still prints the real attempt count, never the cap: printing the cap is
-    what got this misdiagnosed in the first place.
+    The summary prints the real attempt count, never the cap: printing the cap
+    is what got this misdiagnosed in the first place.
     """
     client = _PlainClient()
     orch = _build(tmp_path, client, auto_fix_issues=True)
@@ -426,7 +396,7 @@ def test_an_attempt_without_an_edit_is_said_so_in_the_log(tmp_path, caplog):
     text = caplog.text
     assert "no successful edit" in text, text
     assert "remain after 1 attempt(s)" in text, text
-    assert "writes=0, attempted_writes=0" in text, text
+    assert "attempt 1 changed nothing; ending the fix loop" in text, text
     assert f"after {_MAX_TOOLCHAIN_FIX_ITERATIONS} attempt(s)" not in text
 
 
@@ -438,9 +408,8 @@ _BOOKING_ROUTER = "web_app/backend/routers/booking.py"
 
 def test_run_7f918e11_is_repaired_end_to_end(tmp_path):
     """The whole chain on that run's backend, verbatim: the probe names the
-    site, the fix prompt carries its lines, the model explains instead of
-    editing, the forced modify_file lands on both sites, and the re-probe
-    finds nothing."""
+    site, the fix prompt carries its lines and names the file, the edit lands
+    on both sites inside the attempt's files, and the re-probe finds nothing."""
     pytest.importorskip("fastapi")
     pytest.importorskip("httpx")
     shutil.copytree(FIXTURE_7F, tmp_path, dirs_exist_ok=True)
@@ -450,7 +419,7 @@ def test_run_7f918e11_is_repaired_end_to_end(tmp_path):
         def chat(self, system, messages, tools, force_tool=None, model_override=None):
             prompts.append(messages[0]["content"])
             self.calls.append((force_tool, _reminders(messages)))
-            if force_tool != "modify_file":
+            if len(self.calls) > 1:
                 return _prose(len(self.calls))
             return {"stop_reason": "tool_use", "content": [
                 _Block("tool_use", id="m1", name="modify_file", input={
@@ -475,7 +444,7 @@ def test_run_7f918e11_is_repaired_end_to_end(tmp_path):
 
     assert "Fix site: create_booking in web_app/backend/routers/booking.py line 165" in prompts[0]
     assert "  165|     db_booking = Booking(" in prompts[0]
-    assert [force for force, _ in client.calls][:2] == [None, "modify_file"]
+    assert all(force is None for force, _ in client.calls)
     router = (tmp_path / _BOOKING_ROUTER).read_text(encoding="utf-8")
     assert router.count("totalAmountDue=0.0") == 2
     assert [i.message for i in orch._validation_issues if i.severity == "blocker"] == []

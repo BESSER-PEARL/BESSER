@@ -883,14 +883,15 @@ def test_a_flapping_requirement_verdict_never_rolls_back_a_fix(simple_model, tmp
     assert restored is False
 
 
-def test_a_new_hard_blocker_is_reported_without_count_based_rollback(simple_model, tmp_path, monkeypatch):
+def test_an_attempt_that_wrote_nothing_is_neither_rolled_back_nor_rechecked(simple_model, tmp_path, monkeypatch):
+    """Nothing to undo, and a re-check of the same tree could only add variance."""
     from besser.spec_driven_agent.pipeline.orchestrator import ValidationIssue
     syntax = ValidationIssue("blocker", "Syntax error in backend/main_api.py line 3: invalid syntax")
     orch = LLMOrchestrator(llm_client=_MockClient(), domain_model=simple_model,
                            output_dir=str(tmp_path), auto_fix_issues=True)
     restored = _run_phase3_with(orch, [[_req(1)], [_req(1), syntax]], monkeypatch)
     assert restored is False
-    assert orch._validation_issues == [_req(1), syntax]
+    assert orch._validation_issues == [_req(1)]
 
 
 # ------------------------------------------- the ledger reaches Phase 2 too

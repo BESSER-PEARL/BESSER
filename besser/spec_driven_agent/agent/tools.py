@@ -26,6 +26,10 @@ GENERATOR_TOOLS: list[dict[str, Any]] = [tool.schema() for tool in agent_tools()
 # File tools
 # ======================================================================
 
+# The write tools' optional argument for a file outside a fix attempt's files.
+_NEEDED_FOR = ("Only when a fix attempt refused this file as outside its files: the listed "
+               "blocker this file is needed to fix. Omit it otherwise.")
+
 FILE_TOOLS: list[dict[str, Any]] = [
     {
         "name": "list_files",
@@ -86,6 +90,7 @@ FILE_TOOLS: list[dict[str, Any]] = [
             "properties": {
                 "path": {"type": "string", "description": "Relative path within the workspace"},
                 "content": {"type": "string", "description": "Full file content"},
+                "needed_for": {"type": "string", "description": _NEEDED_FOR},
             },
             "required": ["path", "content"],
         },
@@ -116,6 +121,7 @@ FILE_TOOLS: list[dict[str, Any]] = [
                 "path": {"type": "string"},
                 "old_text": {"type": "string"},
                 "new_text": {"type": "string"},
+                "needed_for": {"type": "string", "description": _NEEDED_FOR},
                 "replace_all": {
                     "type": "boolean",
                     "default": False,
@@ -149,6 +155,7 @@ FILE_TOOLS: list[dict[str, Any]] = [
                 "start_line": {"type": "integer", "minimum": 1},
                 "end_line": {"type": "integer", "minimum": 1},
                 "new_text": {"type": "string"},
+                "needed_for": {"type": "string", "description": _NEEDED_FOR},
             },
             "required": ["path", "read_id", "start_line", "end_line", "new_text"],
             "additionalProperties": False,
@@ -192,6 +199,7 @@ FILE_TOOLS: list[dict[str, Any]] = [
             "type": "object",
             "properties": {
                 "path": {"type": "string"},
+                "needed_for": {"type": "string", "description": _NEEDED_FOR},
             },
             "required": ["path"],
         },

@@ -24,8 +24,6 @@ import pytest
 
 from besser.spec_driven_agent.providers.llm_client import UsageTracker
 from besser.spec_driven_agent.pipeline.orchestrator import (
-    _PHASE3_NO_PROGRESS_ROUNDS,
-    _PHASE3_PLATEAU_ROUNDS,
     LLMOrchestrator,
     ValidationIssue,
 )
@@ -119,50 +117,36 @@ def test_a_writing_attempt_still_gets_a_second_round(orch):
     assert attempts == 3
 
 
-def test_edits_without_a_tree_change_are_not_treated_as_nothing(orch):
+def test_edits_that_leave_the_tree_unchanged_are_treated_as_nothing(orch):
     """``edits > 0`` with an unchanged revision (the model rewrote identical
-    bytes) is not the replay case: the softer no-progress streak owns it, and
-    that streak is two rounds long."""
+    bytes) moved nothing: a re-check would read the same tree."""
     attempts, _snap, _restore = _drive(orch, [(2, False, _blockers(6))] * 5)
 
-    assert attempts == _PHASE3_NO_PROGRESS_ROUNDS == 2
+    assert attempts == 1
 
 
 # ---------------------------------------------------------------------------
-# 2. A plateau ends the loop; the unchanged-state guard cannot see one
+# 2. An attempt that edits without retiring a blocker is rolled back
 # ---------------------------------------------------------------------------
 
 def test_rounds_that_edit_without_improving_end_the_loop(orch):
     """Run mbzbzhq9: six attempts, each ending at exactly 13 blockers, the
-    120-turn cap, and a dead app.
+    120-turn cap, and a dead app. The first such attempt is rolled back now."""
+    attempts, _snap, restore = _drive(orch, [(1, True, _blockers(6))] * 8)
 
-    ``seen_states`` cannot catch this - its key includes a content hash of
-    every source file, so a different useless edit each round always reads as
-    a brand new state and the guard never fires.
-    """
-    attempts, _snap, _restore = _drive(orch, [(1, True, _blockers(6))] * 8)
-
-    assert attempts == _PHASE3_PLATEAU_ROUNDS, (
-        "a tree that keeps changing without improving must not run to the cap"
-    )
+    assert attempts == 1
+    restore.assert_called_once()
 
 
-def test_a_repair_that_exposes_the_errors_behind_an_import_keeps_going(orch):
-    """11 -> 45 -> 40 -> 35 is a repair converging, not a stall.
-
-    The plateau guard measures against the PREVIOUS round for exactly this:
-    fixing one import legitimately exposes the CRUD errors it was hiding, and
-    scoring against the best-ever tree would end the run on the exposure.
-    """
-    attempts, _snap, _restore = _drive(orch, [
+def test_a_repair_that_only_adds_blockers_is_rolled_back(orch):
+    """6 -> 45 retires none of the six it faced."""
+    attempts, _snap, restore = _drive(orch, [
         (1, True, _blockers(45)),
-        (1, True, _blockers(40)),
-        (1, True, _blockers(35)),
-        (1, True, _blockers(30)),
         (1, True, []),
     ])
 
-    assert attempts == 5
+    assert attempts == 1
+    restore.assert_called_once()
 
 
 def test_a_run_that_keeps_improving_is_not_cut_short(orch):
@@ -186,7 +170,8 @@ def test_the_best_tree_is_re_snapshotted_and_restored(orch):
 
     The old code snapshotted once, before Phase 3, and compared only the final
     state against that entry state: 6 -> 2 -> 6 ended "no worse than we began",
-    so the 2-blocker tree was thrown away silently.
+    so the 2-blocker tree was thrown away silently. The kept tree is
+    snapshotted, and the attempt that went back to 6 is rolled back to it.
     """
     attempts, snap, restore = _drive(orch, [
         (1, True, _blockers(2)),   # best

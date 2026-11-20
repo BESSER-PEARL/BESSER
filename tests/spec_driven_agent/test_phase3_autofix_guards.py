@@ -129,16 +129,15 @@ def test_fix_loop_runs_when_under_all_budgets(tmp_path) -> None:
     orch._start_time = time.monotonic()
     turns_before = orch.total_turns
     orch._invoke_phase3_fix_loop([_BLOCKER], is_first_attempt=True)
-    # end_turn with no edit is re-prompted once (modify_file forced), then
-    # the attempt ends: two calls, both accounted as fix turns.
-    assert client.calls == 2
-    assert orch.total_turns == turns_before + 2
+    # end_turn ends the attempt: one call, accounted as a fix turn.
+    assert client.calls == 1
+    assert orch.total_turns == turns_before + 1
 
     # Repair continuation is budgeted by the run's total turns too; it must
     # never get a fresh allowance after Phase 2 has spent that budget.
     orch.total_turns = orch.max_turns
     assert orch._invoke_phase3_fix_loop([_BLOCKER], is_first_attempt=False) == 0
-    assert client.calls == 2
+    assert client.calls == 1
 
 
 # ---------------------------------------------------------------------------

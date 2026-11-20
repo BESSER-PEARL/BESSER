@@ -446,7 +446,7 @@ def test_toolchain_fix_iteration_cap_bounded(tmp_path) -> None:
     # And we DID at least call the LLM once — otherwise the test
     # would pass vacuously.
     assert len(client.calls) >= 1
-    assert call_count["n"] == 2  # initial sweep plus one genuinely unchanged attempt
+    assert call_count["n"] == 1  # the initial sweep; an attempt that moved nothing is not re-checked
 
 
 @pytest.mark.parametrize("reveals_crud_errors", [False, True])
@@ -470,8 +470,9 @@ def test_toolchain_fix_loop_exits_when_blockers_clear(tmp_path, reveals_crud_err
     source = tmp_path / "app.py"
     source.write_text("status = MissingStatus.ready\n", encoding="utf-8")
     first = [ValidationIssue("blocker", "application startup: app.py line 1: invalid enum default")]
-    downstream = [ValidationIssue("blocker", f"data contract: app.py line 2: missing field {field}")
-                  for field in ("total", "booking", "id")]
+    # The creates an app that did not start could not run.
+    downstream = [ValidationIssue("blocker", f"create contract: app: POST /{name}/ - observed a server failure (500)")
+                  for name in ("total", "booking", "item")]
     final_source = "status = 'READY'\ncontracts_fixed = True\n"
     intermediate_source = "status = 'READY'\ncontracts_fixed = False\n"
     changes = [intermediate_source, final_source] if reveals_crud_errors else [final_source]

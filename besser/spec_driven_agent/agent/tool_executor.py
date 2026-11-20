@@ -339,6 +339,8 @@ _SHOWN_READS_MAX = 128
 
 # Workspace-wide findings attached to one write, per check.
 _CROSS_FILE_FINDINGS_MAX = 10
+# Files a refusal outside a fix attempt's edit scope lists.
+_SCOPE_FILES_LISTED = 25
 # Workspace paths a cross-file finding names ("backend/routers/book.py line 3",
 # "src/App.tsx:12:", "(BookCreate in backend/pydantic_classes.py)").
 _NAMED_SOURCE_PATH_RE = re.compile(r"[\w./-]+\.(?:pyi?|[cm]?[jt]sx?)\b")
@@ -994,6 +996,37 @@ class ToolExecutor:
         # answered with a stub. See _read_file_once; forget_shown_results.
         self._shown_reads: dict[tuple, tuple[str, str, int, int]] = {}
         self._stubbed_reads: set[tuple] = set()
+        # The files a Phase 3 fix attempt may write (None: any), and the writes
+        # outside them a call justified with ``needed_for``, for the trace.
+        self._edit_scope: set[str] | None = None
+        self.scope_widenings: list[dict] = []
+
+    def set_edit_scope(self, allowed) -> None:
+        """Limit the write tools to ``allowed`` paths and new files; None lifts the limit."""
+        self._edit_scope = None if allowed is None else set(allowed)
+
+    def _edit_scope_refusal(self, tool_name: str, rel_path: str, needed_for: str) -> dict | None:
+        """The refusal of a write outside the edit scope, or None when it may run.
+
+        A new file, or a call naming the blocker it is ``needed_for``, joins the scope.
+        """
+        scope = self._edit_scope
+        if scope is None or rel_path in scope:
+            return None
+        if needed_for or not os.path.exists(os.path.join(self.workspace, rel_path)):
+            scope.add(rel_path)
+            if needed_for:
+                self.scope_widenings.append({"tool": tool_name, "path": rel_path, "needed_for": needed_for[:300]})
+            return None
+        listed = sorted(scope)
+        shown = ", ".join(listed[:_SCOPE_FILES_LISTED]) + (
+            f" (+{len(listed) - _SCOPE_FILES_LISTED} more)" if len(listed) > _SCOPE_FILES_LISTED else "")
+        return {"error": (
+            f"{tool_name} refused: {rel_path} is outside this fix attempt. It may edit the files its "
+            f"blockers name and the files those import or that import them ({shown}), and create new "
+            f"files. If {rel_path} is needed to fix a listed blocker, resend this call with needed_for "
+            "set to that blocker."
+        )}
 
     def forget_shown_results(self) -> None:
         """The conversation no longer holds earlier tool results (compaction,
@@ -1830,6 +1863,13 @@ class ToolExecutor:
                             "BESSER (trace, checkpoint, attribution, logs). It can be read but "
                             "not written, edited or deleted. Change the project's own files instead."
                         )})
+                    if tool_name != "read_file":
+                        needed_for = str(arguments.pop("needed_for", None) or "").strip()
+                        refusal = self._edit_scope_refusal(tool_name, arguments["path"], needed_for)
+                        if refusal:
+                            logger.warning("Refused %s on %s: outside the fix attempt's files",
+                                           tool_name, arguments["path"])
+                            return ToolExecutionResult("error", refusal)
                 raw_result = handler(self, arguments)
                 if file_tool and isinstance(raw_result, dict):
                     self._add_edit_recovery(tool_name, arguments, raw_result)

@@ -75,6 +75,119 @@ def unresolved_defects(issues: list) -> list:
     ]
 
 
+# Requirement blockers by status rank: a requirement whose rank rises is progress,
+# one whose rank falls is a new blocker (``requirement_status``). Equal ranks are
+# neither: a stub that turns "missing" into "unsupported" settles nothing.
+REQUIREMENT_STATUSES = {
+    "requirement:": 0,
+    "requirement unsupported:": 0,
+    "requirement partial:": 1,
+}
+_REQUIREMENT_ID_RE = _re.compile(r"\s*R(\d+)\b")
+
+
+def requirement_status(message: str) -> tuple[int, int] | None:
+    """``(requirement id, status rank)`` of a requirement blocker, else None."""
+    for prefix, rank in REQUIREMENT_STATUSES.items():
+        if message.startswith(prefix):
+            match = _REQUIREMENT_ID_RE.match(message, len(prefix))
+            return (int(match.group(1)), rank) if match else None
+    return None
+
+
+# Phase 3's note when the requirement judge was not run on a tree.
+JUDGMENT_DEFERRED = "validation: business-requirement judgment deferred"
+# Findings that say the requirement judge did not run on a tree: deferred, failed
+# (it returned no verdicts) or stopped (deadline or budget).
+JUDGE_DID_NOT_RUN = (
+    JUDGMENT_DEFERRED,
+    "validation unverified: the requirements judge",
+    "requirement unverified: not checked",
+)
+
+# The check family of a finding, and what stops that family running ("dependent"
+# is hidden only by the runtime facts: see Phase 3's ``_hidden_before``). A finding
+# whose family could not run on the tree before an edit is newly visible, not
+# newly broken (``could_not_run``). A family in ``toolchain`` / ``build`` is
+# per project (``[P]`` in the message), in ``file`` per file; a finding of no
+# family is always counted. One row per message prefix (lower case).
+FINDING_FAMILIES = (
+    ("application startup:", ("runtime",)),
+    ("mapper config:", ("runtime",)),
+    ("create contract:", ("runtime", "dependent")),
+    ("action call:", ("runtime", "dependent")),
+    ("api scenario:", ("runtime",)),
+    ("requirement", ("judge",)),
+    ("task ", ("judge",)),
+    ("tsc [", ("toolchain",)),
+    ("frontend build [", ("toolchain", "build")),
+    ("ruff:", ("file",)),
+    ("python contract:", ("file",)),
+)
+HIDDEN_BY = (
+    ("missing module:", "runtime"),
+    ("application startup:", "runtime"),
+    ("mapper config:", "runtime"),
+    *((note, "judge") for note in JUDGE_DID_NOT_RUN),
+    ("verification setup: tsc [", "toolchain"),
+    ("verification setup: frontend build [", "toolchain"),
+    ("validation unverified: tsc [", "toolchain"),
+    ("validation unverified: frontend build [", "toolchain"),
+    ("tsc [", "build"),
+    ("syntax error in ", "file"),
+)
+_PROJECT_RE = _re.compile(r"\[([^\]]+)\]")
+# The first path a finding names with a line: ``x.py:3``, ``x.py line 3``, ``x.tsx(3,5)``.
+_FILE_RE = _re.compile(r"([\w./\-]+\.\w+)(?::\d| line \d|\(\d)")
+
+
+def _family_key(family: str, message: str) -> tuple[str, str] | None:
+    """``(family, parameter)``; None when a per-project or per-file family names none."""
+    if family in ("toolchain", "build"):
+        match = _PROJECT_RE.search(message)
+        return (family, match.group(1)) if match else None
+    if family == "file":
+        match = _FILE_RE.search(message)
+        return (family, match.group(1).replace("\\", "/").removeprefix("./")) if match else None
+    return family, ""
+
+
+def finding_families(message: str) -> set[tuple[str, str]]:
+    """The check families ``message`` belongs to (``FINDING_FAMILIES``)."""
+    lower = message.lower()
+    return {key for prefix, families in FINDING_FAMILIES if lower.startswith(prefix)
+            for key in (_family_key(family, message) for family in families) if key}
+
+
+def hidden_families(issues: list) -> set[tuple[str, str]]:
+    """The check families that could not run on the tree ``issues`` (warnings included) describe."""
+    hidden = set()
+    for issue in issues:
+        message = str(getattr(issue, "message", issue))
+        lower = message.lower()
+        for prefix, family in HIDDEN_BY:
+            key = _family_key(family, message) if lower.startswith(prefix) else None
+            if key:
+                hidden.add(key)
+    return hidden
+
+
+def judge_ran(issues: list) -> bool:
+    """Whether the requirement judge ran on the tree ``issues`` (warnings included) describe."""
+    return not any(str(getattr(i, "message", i)).startswith(JUDGE_DID_NOT_RUN) for i in issues)
+
+
+def could_not_run(message: str, hidden: set[tuple[str, str]]) -> bool:
+    """Whether a check family of ``message`` is in ``hidden``; files match by path suffix."""
+    for family, param in finding_families(message):
+        if (family, param) in hidden:
+            return True
+        if family == "file" and any(kind == "file" and (other.endswith("/" + param) or param.endswith("/" + other))
+                                    for kind, other in hidden):
+            return True
+    return False
+
+
 def _check_did_not_run(tool: str, reason: str) -> str:
     """A validation note saying a check was SKIPPED, not that it passed.
 

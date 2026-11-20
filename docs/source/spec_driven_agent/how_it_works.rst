@@ -176,16 +176,19 @@ The three phases
    and as many as the turns Phase 2 left over, each round up to ten LLM turns.
    With auto-fix on, Phase 2 leaves this loop part of ``max_turns`` (see
    :doc:`runs`), so a model that never ends its turn still has its output
-   checked and repaired. The loop stops when blockers
-   reach zero, after two consecutive rounds without progress, or after three
-   rounds that change the tree without improving it. Every strictly better
-   tree is re-snapshotted, ranked by whether the app boots, then backends the
-   runtime probe could not measure (a startup that hangs ranks behind every
-   measured tree), then entities it cannot create, then actions it cannot
-   run, then the blocker count. A
-   repair that ends worse is rolled back to the best snapshot, not merely to
-   the last round; the pre-Phase-3 tree is the first snapshot, so a failed
-   repair can never cost you the Phase 2 work. Non-blocker findings are recorded but never burn fix turns.
+   checked and repaired. Each round is steered to the files its blockers name
+   and their neighbours (a blocker that names no file leaves the round open),
+   and no tool is forced. A round that edits is kept only if it retires a
+   blocker it faced, adds no observed failure except ones a failure it fixed had
+   hidden, leaves no more blockers by the same measure, does not stop an app
+   that started from starting, and leaves no more entities or actions failing
+   at runtime; otherwise the tree from before it is restored and the loop ends.
+   A round that edits nothing continues the loop only if the evidence or
+   dependencies it changed pass the same check, or once after every write it
+   tried was refused. Every kept tree is re-snapshotted as the next round's rollback
+   target; the pre-Phase-3 tree is the first snapshot, so a failed repair can
+   never cost you the Phase 2 work.
+   Non-blocker findings are recorded but never burn fix turns.
    See :doc:`validation` for the full list of checks, the severity model, and
    how to turn the repair half on or off.
 

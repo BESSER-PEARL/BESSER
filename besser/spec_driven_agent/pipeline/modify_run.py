@@ -31,7 +31,13 @@ from besser.spec_driven_agent.planning.model_rules import (
     is_dropped_by_model_change,
     mark_rules_broken_by_model_change,
 )
-from besser.spec_driven_agent.planning.requirements_ledger import latest_user_message, original_request, source_hashes
+from besser.spec_driven_agent.planning.requirements_ledger import (
+    latest_user_message,
+    ledger_issues,
+    original_request,
+    previous_run_verdicts,
+    source_hashes,
+)
 from besser.spec_driven_agent.planning.user_request import user_request
 from besser.spec_driven_agent.planning.specification import validate_specification
 from besser.spec_driven_agent.planning.target import (
@@ -106,6 +112,7 @@ class ModifyRunMixin:
         self._start_time = time.monotonic()
         # The previous version, before this run's model sync and regeneration change it.
         self._seed_source_hashes = source_hashes(self.output_dir)
+        self._previous_verdicts = self._load_previous_verdicts()
         # Before the model-sync below adds classes: a resume re-checks it
         # against the model in the request.
         self._project_fingerprint = self._compute_project_fingerprint(instructions)
@@ -362,6 +369,10 @@ class ModifyRunMixin:
             self._trace.write(EVENT_REGENERATION, generator=generator, skipped=reason)
             return
         self._regeneration = regeneration
+        # A moved file counts once, under its new path.
+        self._regenerated_files = sorted({
+            *regeneration.written, *regeneration.merged, *regeneration.removed,
+            *(new for _, new in regeneration.moved)})
         moved_from = [old for old, _ in regeneration.moved]
         self.executor.update_generator_files(
             regeneration.written + [new for _, new in regeneration.moved], regeneration.removed + moved_from)
@@ -415,6 +426,23 @@ class ModifyRunMixin:
         if notes:
             lines.append(notes)
         return "\n".join(lines)
+
+    def _load_previous_verdicts(self) -> list[dict] | None:
+        """The seed recipe's requirement verdicts on the seeded tree (see
+        ``previous_run_verdicts``), and its request; None without a ledger or a recorded one.
+        Best-effort: the recipe can come from a repository anyone edited."""
+        recipe = load_recipe(self.output_dir)
+        recorded = recipe.get("requirements") if isinstance(recipe, dict) else None
+        if not self.enable_requirements_ledger or not isinstance(recorded, list) or not recorded:
+            return None
+        try:
+            verdicts = previous_run_verdicts(recorded, self.output_dir)
+        except Exception:
+            logger.warning("Seed recipe requirements unreadable; judging the whole request", exc_info=True)
+            return None
+        instructions = recipe.get("instructions")
+        self._previous_instructions = instructions if isinstance(instructions, str) else None
+        return verdicts or None
 
     def _seed_generator_files_from_recipe(self) -> None:
         """Pre-load generator-file tags from a seeded run's recipe.
@@ -600,6 +628,12 @@ class ModifyRunMixin:
             "updated_project_export": self._updated_project_export,
             "model_sync_error": self._model_sync_error,
             "seed_source_hashes": self._seed_source_hashes,
+            "regenerated_files": self._regenerated_files,
+            "previous_verdicts": self._previous_verdicts,
+            "previous_instructions": self._previous_instructions,
+            "previous_ids": sorted(self._previous_ids),
+            "follow_up_continues": self._follow_up_continues,
+            "replaced_ids": sorted(self._replaced_ids),
         }
 
     def _restore_modify_state(self, state: dict) -> None:
@@ -633,6 +667,15 @@ class ModifyRunMixin:
         self._model_sync_error = state.get("model_sync_error")
         hashes = state.get("seed_source_hashes")
         self._seed_source_hashes = hashes if isinstance(hashes, dict) else None
+        self._regenerated_files = [
+            p for p in state.get("regenerated_files") or [] if isinstance(p, str)]
+        verdicts = state.get("previous_verdicts")
+        self._previous_verdicts = verdicts if isinstance(verdicts, list) and verdicts else None
+        previous = state.get("previous_instructions")
+        self._previous_instructions = previous if isinstance(previous, str) else None
+        self._previous_ids = {rid for rid in state.get("previous_ids") or [] if type(rid) is int}
+        self._follow_up_continues = state.get("follow_up_continues") is True
+        self._replaced_ids = {rid for rid in state.get("replaced_ids") or [] if type(rid) is int}
 
     def _acceptance_seed_issues(self) -> list[str]:
         """Acceptance-matrix findings on the current (seed) workspace."""
@@ -692,10 +735,12 @@ class ModifyRunMixin:
             return issues
         from besser.spec_driven_agent.planning.fix_target import finding_matches_target
 
+        earlier = self._earlier_requirement_findings()
         promoted: list[ValidationIssue] = []
         for issue in issues:
             if (
                 issue.severity != "blocker"
+                and issue.message not in earlier
                 and not issue.message.startswith(self._FIX_TARGET_PREFIX)
                 and finding_matches_target(issue.message, self._fix_target)
             ):
@@ -707,6 +752,12 @@ class ModifyRunMixin:
             else:
                 promoted.append(issue)
         return promoted
+
+    def _earlier_requirement_findings(self) -> frozenset[str]:
+        """The ledger's findings on requirements of earlier runs: they judge those requests and
+        name their entities, so they say nothing about the failure reported now."""
+        return frozenset(message for verdict in self._requirement_verdicts if verdict["id"] in self._previous_ids
+                         for message in ledger_issues([verdict]))
 
     def _evaluate_fix_target_gate(self) -> None:
         """Decide whether the reported failure is plausibly addressed.
@@ -731,9 +782,10 @@ class ModifyRunMixin:
             return
         from besser.spec_driven_agent.planning.fix_target import finding_matches_target
 
+        earlier = self._earlier_requirement_findings()
         unresolved = [
             i for i in self._validation_issues
-            if i.severity == "blocker"
+            if i.severity == "blocker" and i.message not in earlier
             and (
                 i.message.startswith(self._FIX_TARGET_PREFIX)
                 or finding_matches_target(i.message, self._fix_target)

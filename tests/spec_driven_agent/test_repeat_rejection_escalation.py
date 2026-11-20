@@ -18,7 +18,7 @@ import openai
 import pytest
 
 from besser.BUML.metamodel.structural import Class, DomainModel, PrimitiveDataType, Property
-from besser.spec_driven_agent.errors import InvalidApiKeyError, UpstreamLLMError
+from besser.spec_driven_agent.errors import DeadlineReached, InvalidApiKeyError, UpstreamLLMError
 from besser.spec_driven_agent.execution.deadline import Deadline, under_deadline
 from besser.spec_driven_agent.providers import llm_client
 from besser.spec_driven_agent.providers.llm_client import OpenAIProvider, UsageTracker
@@ -227,6 +227,25 @@ def test_a_rejected_key_on_a_forced_call_is_not_resent(simple_model, tmp_path, m
     assert len(requests) == 1
 
 
+def test_a_rejected_forced_call_on_a_streaming_run_resends_through_the_stream(
+        simple_model, tmp_path, monkeypatch):
+    rejected = _status_error(openai.BadRequestError, 400,
+                             "tool_choice of type 'function' is not supported")
+    provider, requests = _openai_endpoint(
+        monkeypatch, lambda kwargs: rejected if "tool_choice" in kwargs else None)
+    streamed = []
+    orch = LLMOrchestrator(llm_client=provider, domain_model=simple_model,
+                           output_dir=str(tmp_path), use_streaming=True, on_text=streamed.append)
+    orch._force_tool_next = "read_file"
+
+    reply = orch._chat_with_pending_force("system", [{"role": "user", "content": "go on"}])
+
+    assert reply["stop_reason"] == "end_turn"
+    assert [(("tool_choice" in kw), bool(kw.get("stream"))) for kw in requests] == [
+        (True, False), (False, True)]
+    assert streamed == ["done"]
+
+
 @pytest.mark.parametrize("error, seconds, expected", [
     # A timeout costs the full SDK timeout: capped at 3 requests, not 6.
     (openai.APITimeoutError(request=httpx.Request("POST", "https://gateway.example.invalid")),
@@ -278,6 +297,30 @@ def test_timeouts_on_a_forced_call_inside_a_run_are_reported_as_the_provider(
         _UnderDeadline(deadline).call(orch._chat_with_pending_force,
                                       "system", [{"role": "user", "content": "go on"}])
     assert len(requests) == 3
+
+
+class _CutClient:
+    """Every call is cut by the run's deadline."""
+    model = "mock-model"
+    usage = UsageTracker("mock-model")
+
+    def __init__(self):
+        self.calls = []
+
+    def chat(self, system, messages, tools, force_tool=None, model_override=None):
+        self.calls.append(force_tool)
+        raise DeadlineReached("the run's time limit is reached")
+
+
+def test_a_deadline_cut_on_a_forced_call_is_not_resent(simple_model, tmp_path):
+    client = _CutClient()
+    orch = LLMOrchestrator(llm_client=client, domain_model=simple_model,
+                           output_dir=str(tmp_path), use_streaming=False)
+    orch._force_tool_next = "read_file"
+
+    with pytest.raises(DeadlineReached):
+        orch._chat_with_pending_force("system", [{"role": "user", "content": "go on"}])
+    assert client.calls == ["read_file"]
 
 
 def test_untruncated_edit_inputs_are_kept_beside_the_trace(simple_model, tmp_path):

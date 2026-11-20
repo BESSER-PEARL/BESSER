@@ -159,6 +159,16 @@ class TestOpenAIChatPaths:
             client.chat("sys", [{"role": "user", "content": "hi"}], tools=[])
         assert messages.calls == 3
 
+    def test_claude_fast_transport_failure_gets_the_full_retry_budget(self, monkeypatch):
+        anthropic = pytest.importorskip("anthropic")
+        client = ClaudeLLMClient(api_key="sk-ant-x")
+        messages = _RaisingCompletions(anthropic.APIConnectionError(request=_REQUEST))
+        client._client = type("C", (), {"messages": messages})()
+        monkeypatch.setattr(llm_client.time, "sleep", lambda s: None)
+        with pytest.raises(UpstreamLLMError):
+            client.chat("sys", [{"role": "user", "content": "hi"}], tools=[])
+        assert messages.calls == client._max_retries + 1 == 5
+
     @pytest.mark.parametrize("status, cls, refused", [
         (400, "BadRequestError", True), (503, "InternalServerError", False)])
     def test_claude_marks_a_refused_request(self, monkeypatch, status, cls, refused):

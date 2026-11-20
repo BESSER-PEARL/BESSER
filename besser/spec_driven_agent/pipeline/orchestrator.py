@@ -1987,6 +1987,14 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             logger.debug("could not write .gitignore", exc_info=True)
 
     def _run_phase2(self, instructions: str, extra_issues: list[str] | None = None) -> None:
+        """Run Phase 2 with Phase 3's share of the clock held back until it returns."""
+        self.deadline.hold(self.max_runtime_seconds * _PHASE3_BUDGET_SHARE)
+        try:
+            self._run_phase2_turns(instructions, extra_issues)
+        finally:
+            self.deadline.hold(0)
+
+    def _run_phase2_turns(self, instructions: str, extra_issues: list[str] | None = None) -> None:
         """Run the Phase 2 customisation loop.
 
         Before starting, do ONE cheap LLM call (~$0.01) to scope the
@@ -1998,8 +2006,6 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         they're presented as bugs to fix (separate from the user's
         feature request).
         """
-        # Phase 3 starts with its share of the clock; it releases the hold.
-        self.deadline.hold(self.max_runtime_seconds * _PHASE3_BUDGET_SHARE)
         # Drop sub-generator tools already covered by the chosen primary, so
         # the agent can't scatter redundant pydantic/ sqlalchemy/ rest_api/
         # dirs next to the assembled backend/.

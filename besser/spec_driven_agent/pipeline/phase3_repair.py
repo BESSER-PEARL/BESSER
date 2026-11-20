@@ -342,7 +342,6 @@ class Phase3RepairMixin:
         """
         if self.phase3_started_at is None:
             self.phase3_started_at = time.monotonic()
-        self.deadline.hold(0)  # Phase 3's share of the clock, held since Phase 2 began
         # Announced before the first check, which can take minutes (npm, tsc), so
         # that time is counted as validation, not as the phase before it.
         self._emit_progress(self.total_turns, "__validating__", "")

@@ -91,6 +91,24 @@ def test_a_phase2_cut_by_its_time_share_with_its_work_done_completes_when_valida
     assert orchestrator._phase2_stop_reason == "completed" and orchestrator._phase2_exited_cleanly
 
 
+def test_the_formatter_runs_after_phase2_used_its_time_share(tmp_path, monkeypatch):
+    """Phase 3's share was held until Phase 3 began, so the formatter between the phases saw
+    no time left and did not run on the files the model wrote."""
+    seen = {}
+    original = orchestrator_module.LLMOrchestrator._format_python_output
+
+    def spy(self):
+        seen["remaining"] = self.deadline.remaining()
+        original(self)
+        seen["notes"] = list(self._format_notes)
+    monkeypatch.setattr(orchestrator_module.LLMOrchestrator, "_format_python_output", spy)
+    _, orchestrator = _timed_run(tmp_path, monkeypatch, 52.0)
+
+    assert orchestrator._phase2_stop_detail.startswith("time share used")
+    assert seen["remaining"] > 100, seen
+    assert not any("did not run" in note for note in seen["notes"]), seen["notes"]
+
+
 def test_verifying_one_call_per_turn_is_not_stagnation(tmp_path, monkeypatch):
     """After its last edit the model checks its work one call per turn, each call with a
     new result. The inspection handoff counted that as no progress and cut it after ten

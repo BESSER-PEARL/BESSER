@@ -522,7 +522,16 @@ Findings are classified into three severities:
        (``{``, ``/>``, even followed by a comment) identifies no code and proves nothing.
        A quote that starts or ends inside a string or comment
        is not code. An explanation after a closed statement or element
-       ("<Plot /> which renders ...") is not matched. Prose, a paraphrase or
+       ("<Plot /> which renders ...") is not matched. Spacing is not compared, and
+       quotation marks are compared by kind, not glyph: ``'``, ``“ ”``, ``‘ ’``, ``« »``
+       and the fullwidth ``＂ ＇`` read as ``"`` on both sides, since some models return
+       them typographic. Some providers return a citation with its double quotation
+       marks left out (``<button type=submit>``): a citation with no quotation mark
+       at all that no line matches is compared once more with the file's quotation
+       marks removed (a quote that kept some marks is compared with them), and
+       locates a line only when exactly one line of the cited file then reads as the
+       whole quote; with two or more it is refused, never picked.
+       Prose, a paraphrase or
        another file's code leaves the requirement unverified. A Python
        quote that matches no line is also located by syntax tree, so a
        formatter's wrapping parentheses, adjacent string literals merged or
@@ -760,6 +769,54 @@ judgment per revision, right after the judgment or on a later pass, may revisit
 only unverified entries without a code change. Evidence must name a real application source file and quote an
 executable line; traces, recipes and unrelated files cannot validate a claim.
 Failure to extract requirements remains unknown and blocks verified completion.
+
+.. _spec-driven-modify-requirements:
+
+A modify run is answerable for its own request and for what it breaks, not for
+the whole application again. When the seeded recipe records requirement
+verdicts, the run keeps the previous run's requirements (same ``R`` numbers, at
+most 128) and extracts only the user messages the previous run's request did not
+hold: the messages after the previous run's when those start the conversation,
+otherwise all later messages (a message sent to a run that was cancelled counts
+as new, and so does one repeated after the previous run), with the earlier
+conversation and the numbered requirements as context, so "retry", "yes" or "the
+same for the other screen" resolve. Their requirements follow the previous ones.
+The extraction also names the previous requirements a new message changes, asks
+for again or removes. Those stay in the ledger and are judged as usual (an
+extraction that names every requirement cannot empty it): met, they are met;
+unmet, they are a warning, ``requirement changed by your newest message:``, never
+a regression and never work for the fix loop; when it was implemented as the
+previous run ended, the warning says so, which tells a deliberate change from a
+break. A changed or restated requirement comes back as a new requirement of its own.
+It also says whether the messages only ask to retry, continue or finish earlier
+work. When that extraction fails, the whole request is extracted instead and
+judged as in a run without a previous ledger. When the editor sends its own
+requirements, a previous verdict is kept for
+the requirement with the same trace id, else the same text.
+
+The previous verdicts are taken as of the tree the run starts from: an
+"implemented" citation is checked again against it (one that no longer matches
+stays "implemented" but is judged again), and every verdict records the hashes of
+the files it cites or names and of the files they rest on; a verdict that names no
+file records none and is judged again. A verdict whose files this run leaves
+byte-identical is not judged again, whether it was met or not. A recipe whose
+verdicts cannot be read is ignored, and the whole request is judged. Then:
+
+- a requirement that was implemented and is no longer is a blocker, and its
+  note says it was implemented when the previous run ended;
+- a requirement of the new messages that is not implemented is a blocker;
+- a requirement the previous run had left partial, missing or unverified that
+  is still so is a warning, ``requirement still open from the previous run:``.
+  It does not drive the fix loop and does not make the run incomplete; the
+  report lists it with "open since the previous run". When the new messages only
+  ask to retry or finish earlier work, these requirements are this run's own
+  instead: judged, and blockers while unmet. The incomplete-extraction gate and
+  the requirements derived from the model or the agent are never carried this way.
+
+Known limit: the files a verdict rests on are the files it cites, their local
+imports and the entry files that mount them. A frontend screen that reaches the
+backend only over HTTP does not rest on the backend's files, so an edit to the
+backend route it calls keeps the screen's verdict.
 
 When the editor sends the modeling assistant's requirements (the request's
 ``requirements`` field, see :doc:`api`), the ledger is built from them instead of

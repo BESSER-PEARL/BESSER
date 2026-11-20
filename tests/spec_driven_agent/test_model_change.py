@@ -424,19 +424,43 @@ def test_model_sync_classes_are_not_reported_removed_next_run(tmp_path):
     assert change.verdict == SMALL and change.removed == () and change.changes == ()
 
 
-def test_a_modify_recipe_records_the_files_the_regeneration_changed(tmp_path):
+def _regenerated(tmp_path, monkeypatch) -> LLMOrchestrator:
+    """A modify run whose model change regeneration rewrote, merged, moved and removed files."""
+    from besser.spec_driven_agent.pipeline import modify_run
     from besser.spec_driven_agent.pipeline.regeneration import Regeneration
 
-    orch = _orch(tmp_path, _domain(HOTEL))
-    orch._modify_mode = True
-    orch._regeneration = Regeneration(
+    for name in ("a.py", "b.py", "c.py", "new.py"):
+        (tmp_path / name).write_text("x = 1" + chr(10), encoding="utf-8")
+    regeneration = Regeneration(
         generator="backend", replaced=["b.py"], added=["a.py"], merged=["c.py"],
         moved=[("old.py", "new.py")], removed=["gone.py"])
-    orch._save_recipe("rename a class", elapsed=1.0)
+    monkeypatch.setattr(modify_run, "regenerate", lambda *a, **k: (regeneration, ""))
+    orch = _orch(tmp_path, _domain(HOTEL))
+    orch._modify_mode = True
+    orch._seed_generator_used = "backend"
+    orch._model_change = compare_models(model_summary(_domain(HOTEL)), model_summary(_domain(CASE_M)))
+    orch._regenerate_generated_files()
+    return orch
 
+
+def _recorded(tmp_path) -> list:
     recipe = json.loads((tmp_path / ".besser_recipe.json").read_text(encoding="utf-8"))
+    return recipe.get("regenerated_files")
+
+
+def test_a_modify_recipe_records_the_files_the_regeneration_changed(tmp_path, monkeypatch):
+    _regenerated(tmp_path, monkeypatch)._save_recipe("rename a class", elapsed=1.0)
     # A moved file is one file, under its new path.
-    assert recipe["regenerated_files"] == ["a.py", "b.py", "c.py", "gone.py", "new.py"]
+    assert _recorded(tmp_path) == ["a.py", "b.py", "c.py", "gone.py", "new.py"]
+
+
+def test_a_resumed_modify_run_keeps_the_files_the_regeneration_changed(tmp_path, monkeypatch):
+    state = _regenerated(tmp_path, monkeypatch)._modify_checkpoint_state()
+    resumed = _orch(tmp_path, _domain(HOTEL))
+    resumed._restore_modify_state(json.loads(json.dumps(state)))
+
+    resumed._save_recipe("rename a class", elapsed=1.0)
+    assert _recorded(tmp_path) == ["a.py", "b.py", "c.py", "gone.py", "new.py"]
 
 
 def test_a_recipe_without_a_regeneration_has_no_regenerated_files(tmp_path):

@@ -67,7 +67,11 @@ The three phases
    a failure of the existing app (``is_failure_report``), and which entity it
    is about (``reported_entity``). A changed target is built next to the
    existing project; a failure report makes the run a fix run, gated on that
-   failure. A call with no usable answer, even as JSON text, keeps the
+   failure: a blocker that names the reported entity, from a check of the app
+   (a runtime probe, the data contract, the acceptance matrix), leaves it
+   unconfirmed, and so does one on this run's own requirements or fix tasks.
+   A finding on a requirement of an earlier run's request never does: it names
+   the app's entities whatever the failure. A call with no usable answer, even as JSON text, keeps the
    recorded target and makes no fix run, with a warning. This call is one
    primary-model call more per modify run.
 

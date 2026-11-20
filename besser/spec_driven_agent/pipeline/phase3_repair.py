@@ -1551,6 +1551,8 @@ class Phase3RepairMixin:
             if os.path.exists(snapshot_path):
                 shutil.rmtree(snapshot_path)
             os.replace(staging_path, snapshot_path)
+            # The calls whose edits the snapshot holds; a restore discards the later ones.
+            self._snapshot_calls = len(self.tool_calls_log)
             logger.info("Snapshot created at %s", snapshot_path)
             return True
         except Exception as e:
@@ -1624,6 +1626,9 @@ class Phase3RepairMixin:
 
         self._carry_over_ignored_dirs(discard_path)
         shutil.rmtree(discard_path, ignore_errors=True)
+        if self._snapshot_calls is not None:
+            for call in self.tool_calls_log[self._snapshot_calls:]:
+                call["rolled_back"] = True
         logger.info("Restored from snapshot")
         return True
 

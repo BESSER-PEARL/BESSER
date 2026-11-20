@@ -38,6 +38,7 @@ from besser.BUML.metamodel.structural import DomainModel
 from besser.utilities.provenance import get_besser_version
 # The canonical set, shared with get_tools_for() so the advertised list and the
 # dispatch gate can never disagree about which tools are shell tools.
+from besser.spec_driven_agent.agent.runbook import backend_files, files_the_app_wrote
 from besser.spec_driven_agent.agent.tools import _SHELL_TOOLS as _SHELL_TOOL_NAMES
 from besser.spec_driven_agent.agent.tools import dumps_for_model
 from besser.spec_driven_agent.agent.tools import (
@@ -889,6 +890,9 @@ class ToolExecutor:
         self.nn_model = nn_model
         # Track files created by generators — used to warn if LLM overwrites them
         self._generator_files: set[str] = set()
+        # Files the running app wrote under the backend during a shell command
+        # (runbook.files_the_app_wrote): {path: [size, mtime_ns]}, left out of the output.
+        self.command_app_files: dict[str, list[int]] = {}
         # Called with each generator call's files and traced regions (the run
         # log's ``generator_output`` record); set by the orchestrator.
         self.on_generated: Callable[[dict], None] | None = None
@@ -3699,6 +3703,7 @@ class ToolExecutor:
         located = ({"ran_in": f"{carried_over} (an earlier cd still applies; not the workspace root)"}
                    if carried_over not in (None, ".") else {})
         records = {name: self._guarded_record(name) for name in _COMMAND_GUARDED_RECORDS}
+        before = backend_files(self.workspace)
         try:
             # Fail closed: a command that cannot be confined is not run.
             # Falling back to an unconfined shell would silently restore both
@@ -3719,6 +3724,8 @@ class ToolExecutor:
             return {"error": f"Failed to run command: {e}"}
 
         extra: dict = {}
+        self.command_app_files.update(
+            files_the_app_wrote(before, backend_files(self.workspace), command, self.workspace))
         restored, not_restored = self._restore_guarded_records(records)
         if restored:
             extra["run_records_restored"] = restored

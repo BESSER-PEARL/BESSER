@@ -528,6 +528,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # ``POST /cancel-smart-gen/{run_id}`` without killing the thread.
         self._should_continue = should_continue
         self.tool_calls_log: list[dict] = []
+        # ``tool_calls_log`` length at the last snapshot (None: none taken by this process).
+        self._snapshot_calls: int | None = None
         self.total_turns = 0
         # (loop key, succeeded) per non-readonly call. Success matters: counting
         # names alone flags a run of SUCCESSFUL edits as a loop.
@@ -739,6 +741,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._model_sync_classes: list[dict] = []
         # The modify run's regeneration of the generated files (#659).
         self._regeneration: Regeneration | None = None
+        # The files the regeneration wrote, merged, moved (new path) or removed; kept across a resume.
+        self._regenerated_files: list[str] = []
         # The model the app's stored generator output came from (modify runs), to
         # rebuild the merge base after a BESSER upgrade (#659).
         self._previous_domain_model = previous_domain_model
@@ -5697,12 +5701,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         model_change = getattr(self, "_model_change", None) if self._modify_mode else None
         if model_change is not None:
             recipe["model_change"] = model_change.to_dict()
-        regeneration = self._regeneration if self._modify_mode else None
-        if regeneration is not None:
-            # A moved file counts once, under its new path.
-            recipe["regenerated_files"] = sorted({
-                *regeneration.written, *regeneration.merged, *regeneration.removed,
-                *(new for _, new in regeneration.moved)})
+        if self._modify_mode and self._regenerated_files:
+            recipe["regenerated_files"] = list(self._regenerated_files)
         # Fix/modify success-gate outcome. Present ONLY on a fix run so the
         # from-scratch recipe stays byte-identical; records the reported
         # target and whether it was confirmed fixed, so a later "what did

@@ -590,3 +590,14 @@ def test_the_stack_is_listed_in_the_same_order_on_every_filesystem(tmp_path, mon
     })
 
     assert code_reverse._detect_stack(root) == ["FastAPI", "React"]
+
+
+def test_edits_a_rollback_discarded_are_not_counted():
+    recipe = {
+        "history": [{"mode": "modify"}],
+        "tool_calls": [
+            {"tool": "modify_file", "input": {"path": "app/main.py"}, "success": True},
+            {"tool": "write_file", "input": {"path": "app/extra.py"}, "success": True, "rolled_back": True},
+        ],
+    }
+    assert run_changes(recipe)["changedFiles"] == ["app/main.py"]

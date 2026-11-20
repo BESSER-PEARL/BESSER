@@ -425,13 +425,14 @@ def run_changes(recipe: dict) -> dict:
     """The ``DoneEvent`` fields that say what a run changed, read from its recipe."""
     history = recipe.get("history") or []
     mode = (history[-1] if history and isinstance(history[-1], dict) else {}).get("mode")
-    # Distinct files: successful edit calls (a failed or refused one changed nothing) and
-    # the files the model change regeneration wrote, merged, moved or removed.
+    # Distinct files: successful edit calls (a failed or refused one changed nothing, a
+    # rollback discarded a rolled-back one) and the files the model change regeneration
+    # wrote, merged, moved or removed.
     edited = {
         (call.get("input") or {}).get("path")
         for call in recipe.get("tool_calls") or []
         if isinstance(call, dict) and call.get("tool") in _FILE_CHANGE_TOOLS
-        and call.get("success") is not False
+        and call.get("success") is not False and not call.get("rolled_back")
     }
     regenerated = recipe.get("regenerated_files")
     changed = sorted(path for path in edited | set(regenerated if isinstance(regenerated, list) else [])

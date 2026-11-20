@@ -362,6 +362,10 @@ class ModifyRunMixin:
             self._trace.write(EVENT_REGENERATION, generator=generator, skipped=reason)
             return
         self._regeneration = regeneration
+        # A moved file counts once, under its new path.
+        self._regenerated_files = sorted({
+            *regeneration.written, *regeneration.merged, *regeneration.removed,
+            *(new for _, new in regeneration.moved)})
         moved_from = [old for old, _ in regeneration.moved]
         self.executor.update_generator_files(
             regeneration.written + [new for _, new in regeneration.moved], regeneration.removed + moved_from)
@@ -600,6 +604,7 @@ class ModifyRunMixin:
             "updated_project_export": self._updated_project_export,
             "model_sync_error": self._model_sync_error,
             "seed_source_hashes": self._seed_source_hashes,
+            "regenerated_files": self._regenerated_files,
         }
 
     def _restore_modify_state(self, state: dict) -> None:
@@ -633,6 +638,8 @@ class ModifyRunMixin:
         self._model_sync_error = state.get("model_sync_error")
         hashes = state.get("seed_source_hashes")
         self._seed_source_hashes = hashes if isinstance(hashes, dict) else None
+        self._regenerated_files = [
+            p for p in state.get("regenerated_files") or [] if isinstance(p, str)]
 
     def _acceptance_seed_issues(self) -> list[str]:
         """Acceptance-matrix findings on the current (seed) workspace."""

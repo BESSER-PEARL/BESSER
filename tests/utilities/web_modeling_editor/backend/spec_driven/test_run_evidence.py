@@ -23,6 +23,7 @@ from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 from besser.spec_driven_agent.providers.llm_client import UsageTracker
 from besser.spec_driven_agent.state.tracing import EVENT_PHASE_ENTER, EVENT_TOOL_CALL, TraceWriter
 from besser.spec_driven_agent.validation.issues import ValidationIssue
+from besser.utilities.secret_redaction import redact_record_text
 from besser.utilities.web_modeling_editor.backend.services import cleanup
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import incidents, run_evidence, run_record
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import runner as runner_module
@@ -212,6 +213,33 @@ def test_many_secrets_before_a_cut_do_not_pull_an_unredacted_one_into_it(inciden
     stored = _stored(incident_dir, "write_file", {"path": "a.py", "content": content}, "{}")
 
     assert OWN_KEY[:10] not in stored
+
+
+def _long_literal_across_a_cut(value, at, earlier_key_at=None, total=100_000):
+    """A file with ``value`` as a quoted credential literal at ``at``, and maybe a private key."""
+    text = list("x" * total)
+
+    def put(position, chunk):
+        text[position:position + len(chunk)] = chunk
+    if earlier_key_at is not None:
+        put(earlier_key_at, "-----BEGIN PRIVATE KEY-----\n" + "\n".join("k" * 64 for _ in range(6))
+            + "\n-----END PRIVATE KEY-----")
+    put(at, f'\nconst sessionToken = "{value}";\n')
+    return "".join(text)[:total]
+
+
+@pytest.mark.parametrize("length, at, earlier_key_at", [
+    (1000, run_evidence.VALUE_CHARS // 2 + 1024 - 800, 1000),
+    (1000, 100_000 - run_evidence.VALUE_CHARS // 2 - 1024 - 200, 100_000 - 2000),
+    (2000, run_evidence.VALUE_CHARS // 2 - 100, None),
+], ids=["head-window-after-a-key", "tail-window-before-a-key", "across-the-cut"])
+def test_a_long_credential_across_a_cut_or_window_never_survives(length, at, earlier_key_at):
+    value = "".join(chr(ord("A") + (i * 7) % 26) + str(i % 10) for i in range(length // 2))
+    text = _long_literal_across_a_cut(value, at, earlier_key_at)
+
+    kept = run_evidence._redacted_cut(text, run_evidence.VALUE_CHARS, redact_record_text)
+
+    assert [value[i:i + 24] for i in range(0, len(value) - 24, 24) if value[i:i + 24] in kept] == []
 
 
 ENV_BODY = f"SECRET_KEY={HEX}\nJWT_SECRET=supersecretjwtvalue123\n"

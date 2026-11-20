@@ -32,9 +32,9 @@ EVIDENCE_DIRNAME = "runs"
 VALUE_CHARS = 64 * 1024
 # A tool result, as the model read it: its first and last 8 KiB.
 RESULT_CHARS = 16 * 1024
-# Text past each cut that is redacted with the kept part, so a secret straddling the cut is
-# matched whole. Longer than any credential the rules match, a private key excepted.
-_CUT_WINDOW = 1024
+# Text past each cut that is checked with the kept part, so a secret across the cut is
+# matched whole: longer than any credential (an AWS session token is about 1 KiB).
+_CUT_WINDOW = 8 * 1024
 
 _LOCK = threading.Lock()
 
@@ -65,15 +65,17 @@ def _cut(text: str, limit: int) -> str:
 
 
 def _redacted_cut(text: str, limit: int, redact: Callable[[str], str]) -> str:
-    """``text`` redacted and cut to ``limit``, redacting only what is kept and a window past each cut."""
+    """``text`` redacted and cut to ``limit``.
+
+    When the kept parts and a window past each cut hold nothing to redact, the
+    rest is not read; otherwise the whole text is redacted, then cut.
+    """
     half = limit // 2
-    if len(text) <= limit + 2 * _CUT_WINDOW:
-        return _cut(redact(text), limit)
-    head, tail = redact(text[:half + _CUT_WINDOW]), redact(text[-(half + _CUT_WINDOW):])
-    if min(len(head), len(tail)) < half + _CUT_WINDOW // 2:
-        # Redactions shortened a window by more than half: its unredacted end could reach the kept part.
-        return _cut(redact(text), limit)
-    return f"{head[:half]}\n<<cut {len(text) - 2 * half} of {len(text)} chars>>\n{tail[-half:]}"
+    if len(text) > limit + 2 * _CUT_WINDOW:
+        head, tail = text[:half + _CUT_WINDOW], text[-(half + _CUT_WINDOW):]
+        if redact(head) == head and redact(tail) == tail:
+            return _cut(text, limit)
+    return _cut(redact(text), limit)
 
 
 class RunEvidence:

@@ -133,7 +133,7 @@ Validation of a modify run is proportional to its request: it keeps the previous
 run's requirement verdicts, judges only the newest message's requirements and
 those whose files changed, and reports a requirement the previous run had left
 open as still open rather than as a blocker of this run (see
-:ref:`spec-driven-modify-requirements`). The build, type-check, boot and runtime
+:ref:`requirements of a modify run <spec-driven-modify-requirements>`). The build, type-check, boot and runtime
 gates apply as in any run.
 
 Every run records the class diagram it was given in the run's

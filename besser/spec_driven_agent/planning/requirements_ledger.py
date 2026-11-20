@@ -848,9 +848,9 @@ def extract_follow_up(previous: list[dict], instructions: str, previous_instruct
     start, with ``previous_instructions`` (the previous run's), and the newest one when there are
     none. Returns ``{"requirements", "replaces", "continues"}``: requirements numbered from 1, the
     ids of ``previous`` a new message changes, asks for again or removes, and whether the messages
-    only ask to retry or finish earlier work. When each new message is empty or one the previous
-    run already had, that is decided without a call. None when no real provider is available or
-    the call failed.
+    only ask to retry or finish earlier work. When the new messages are empty or are only the
+    previous run's newest message, that is decided without a call. None when no real provider is
+    available or the call failed.
     """
     validate_specification(instructions)
     if not _is_real_provider(llm_client):
@@ -860,7 +860,7 @@ def extract_follow_up(previous: list[dict], instructions: str, previous_instruct
     shared = next((i for i, (a, b) in enumerate(zip(seen, messages)) if a != b), min(len(seen), len(messages)))
     earlier_messages = messages[:shared]
     new = messages[shared:] or [latest_user_message(instructions)]
-    if all(not message or message in {_first_message(previous_instructions or ""), *seen} for message in new):
+    if not any(new) or new == [latest_user_message(previous_instructions or "")]:
         return {"requirements": [], "replaces": set(), "continues": True}
     earlier = _first_message(instructions)
     prompt = "\n\n".join([

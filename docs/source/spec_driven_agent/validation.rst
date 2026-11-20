@@ -1027,10 +1027,11 @@ hold: the later messages after those the conversation shares, from its start,
 with the previous run's (a message sent to a run that was cancelled counts as
 new; a retry the conversation did not keep does not make the messages before it
 new), with the earlier conversation and the numbered requirements as context, so
-"retry", "yes" or "the same for the other screen" resolve. When every new message
-is empty or one the previous run's request already held (the same request sent
-again), the run continues earlier work without that call; a repeat among other
-new messages is extracted with them. Their requirements follow the previous ones.
+"retry", "yes" or "the same for the other screen" resolve. When the new messages
+are empty or are only the previous run's newest message (the same request sent
+again), the run continues earlier work without that call. Any other message is
+extracted, also one that repeats an older message of the previous run (a change
+asked for, reversed and asked for again). Their requirements follow the previous ones.
 The extraction also names the previous requirements a new message changes, asks
 for again or removes. Those stay in the ledger and are judged as usual (an
 extraction that names every requirement cannot empty it): met, they are met;

@@ -262,6 +262,27 @@ def test_the_same_request_again_continues_earlier_work_without_a_call(tmp_path):
     assert [item["id"] for item in orch._requirements] == [1, 2, 3]
 
 
+REMOVE_EXPORT = "Remove the CSV export, we do not need it."
+
+
+@pytest.mark.parametrize("before, again", [
+    ((EXPORT, REMOVE_EXPORT), EXPORT),
+    ((EXPORT,), ORIGINAL),
+])
+def test_an_older_message_asked_again_is_extracted(tmp_path, before, again):
+    """Only the previous run's newest message sent again continues its work: an older one
+    asked again after a change (or a reversal) states a requirement anew."""
+    _seed(tmp_path, instructions=_instructions(*before))
+    client = _Client({"requirements": [NEW], "replaces": [], "continues_earlier_work": False})
+    orch = _orchestrator(tmp_path, client, instructions=_instructions(*before, again))
+
+    orch._extract_requirements(orch._instructions)
+
+    [prompt] = client.prompts
+    assert f"1. {again}" in prompt.split("## The new user messages", 1)[1]
+    assert orch._follow_up_continues is False
+
+
 def test_a_retry_the_conversation_did_not_keep_does_not_make_earlier_messages_new(tmp_path):
     """The previous run was a retry: its newest message is not in the next request,
     so the previous run's messages are no longer a prefix of the conversation."""

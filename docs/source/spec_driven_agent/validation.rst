@@ -855,8 +855,10 @@ is not among the files the verdict rests on, so a style edit does not re-judge i
 
 Two kinds of requirement cannot be shown by citing a line of code, and the
 extraction labels them: ``absence``, something the app must not have at all ("no
-data export", never a refusal the app enforces), and ``preservation``, existing
-behaviour a change must keep working as it is. When the judge leaves one
+data export", or data invented beyond a given source such as an imported file;
+never a refusal the app enforces), and ``preservation``, existing behaviour a
+change must keep working as it is. Neither needs an enforcing line: a citation
+of where the data comes from can verify an absence. When the judge leaves one
 unverified, it is settled without a citation, never as met, and an unverified
 absence is not sent to the focused round:
 

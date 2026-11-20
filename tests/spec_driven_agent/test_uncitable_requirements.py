@@ -106,6 +106,29 @@ def test_extraction_keeps_the_absence_and_preservation_kinds(kind):
     assert ledger.extract_requirements("Build a task list.", _ToolClient())[0]["kind"] == kind
 
 
+def test_extraction_labels_a_source_restriction_as_an_absence():
+    """A requirement that data comes only from a given source has no guard line to cite: the code
+    shows where the data comes from. Labelled 'rule', it was refused for lacking one."""
+    prompt = ledger._EXTRACT_SYSTEM_PROMPT
+    absence = prompt[prompt.index("'absence' for"):prompt.index("'preservation' for")]
+    assert "no data invented beyond a given source" in absence
+    assert "never a refusal or limit the app enforces (that is a 'rule')" in absence
+
+
+SOURCE_ONLY = "Book titles come only from the imported file; the app never invents a title"
+
+
+@pytest.mark.parametrize("kind, status", [(ledger.ABSENCE_KIND, "implemented"), ("rule", "unverified")])
+def test_the_kind_decides_whether_a_data_source_line_is_evidence(tmp_path, kind, status):
+    _write(tmp_path, "backend/catalogue.py", "def titles(rows, limit):\n    return rows[:limit]\n")
+    verdict = {"id": 1, "text": SOURCE_ONLY, "kind": kind, "status": "implemented",
+               "evidence": [{"path": "backend/catalogue.py", "line": "return rows[:limit]"}]}
+
+    (checked,) = ledger.verify_evidence([verdict], str(tmp_path))
+
+    assert checked["status"] == status, checked.get("note")
+
+
 # --------------------------------------------------------------------- absence
 
 

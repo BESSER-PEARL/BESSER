@@ -320,7 +320,20 @@ def _quote_spans(quoted: str, source: _Source, cut: bool = False) -> list[tuple[
     spans = list(_spans_in(quoted, source, source.normalised, cut))
     if not spans and source.bare != source.normalised:
         spans = list(_spans_in(quoted, source, source.bare, cut))
-    return spans
+    return spans or _quoteless_span(quoted, source)
+
+
+def _quoteless_span(quoted: str, source: _Source) -> list[tuple[int, int]]:
+    """The one line of the file that reads as the quote once the quotation marks of both are
+    removed (some providers return a citation with them left out); none when no line or
+    more than one line does, so a line is never picked among several."""
+    bare = quoted.replace('"', "")
+    if len(bare) < _MIN_PART_QUOTE:
+        return []
+    found = [index + 1 for index, line in enumerate(source.normalised)
+             if (text := line.replace('"', "")) == bare
+             or (text.startswith(bare) and set(text[len(bare):]) <= _BLOCK_PUNCTUATION)]
+    return [(found[0], found[0])] if len(found) == 1 else []
 
 
 def _spans_in(quoted: str, source: _Source, normalised: list[str], cut: bool):

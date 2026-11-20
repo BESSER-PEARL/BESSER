@@ -2449,11 +2449,11 @@ _SCREEN_REASONS = {"passed": "the frontend builds", "failed": "the frontend buil
                    "not_run": "the frontend build check did not run", "none": "no frontend"}
 
 
-def _cited_lines(full: str, quotes: list[str]) -> set[int]:
-    """The 1-based lines of a cited file the quotes locate on."""
-    source = _load_source(full, {}, False)
-    return {line for quote in quotes for first, last in _quote_spans(_evidence_quote(quote), source)
-            for line in range(first, last + 1)}
+def _cited_lines(full: str, path: str, quote: str, files: dict[str, str], parsed: dict, cache: dict) -> set[int]:
+    """The 1-based lines of ``full`` a citation is located on, as :func:`verify_evidence` locates it."""
+    located = _locate_citation(path, quote, files, parsed, cache, False)[0]
+    return {line for source, _, spans in located if source.path == full
+            for first, last in spans for line in range(first, last + 1)}
 
 
 def with_verification_levels(verdicts: list[dict], output_dir: str, *, frontend_build: str,
@@ -2462,8 +2462,8 @@ def with_verification_levels(verdicts: list[dict], output_dir: str, *, frontend_
     the screens half reported apart.
 
     The API half is exercised when a passing ``test_api`` call (``exercised``: method, path)
-    hit the route a cited line is on (its decorator or handler), or, when no cited line is
-    on a route, any route of a cited backend file; that call is named. No harness check
+    hit the route a cited line is on (its decorator or handler); that call is named. A
+    citation on no route (a helper, a model, an import) is found in code, whatever ran. No harness check
     renders a screen, so a cited frontend file is never exercised (``frontend_build``:
     passed, failed, not_run or none says why). ``verification``: ``verified`` when every
     cited half was exercised, ``api_verified`` when the API half was and screens are cited,
@@ -2471,6 +2471,8 @@ def with_verification_levels(verdicts: list[dict], output_dir: str, *, frontend_
     """
     files = _source_files(output_dir)
     routes_cache: dict[str, set] = {}
+    parsed: dict[str, _Source] = {}
+    quote_cache: dict = {}
     leveled = []
     for item in verdicts:
         if item.get("status") != "implemented":
@@ -2485,19 +2487,18 @@ def with_verification_levels(verdicts: list[dict], output_dir: str, *, frontend_
         backend = [(path, quote) for path, quote in cited if not path.lower().endswith(_FRONTEND_SUFFIXES)]
         halves, api_exercised = [], False
         if backend:
-            on_cited, in_files = set(), set()
+            on_cited = set()
             for path, quote in backend:
                 full = files.get(path) or next((v for k, v in files.items() if k.endswith("/" + path)), None)
                 if full and full.endswith(".py"):
                     routes = routes_cache.setdefault(full, _declared_routes(full))
-                    lines = _cited_lines(full, [quote])
-                    in_files |= routes
+                    lines = _cited_lines(full, path, quote, files, parsed, quote_cache)
                     on_cited |= {route for route in routes if any(route[2] <= line <= route[3] for line in lines)}
-            routes, which = (on_cited, "the cited route") if on_cited else (in_files, "a route of the cited file")
-            call = next((f"{method} {path}" for method, path in sorted(exercised) if _route_called(routes, method, path)),
-                        None)
+            call = next((f"{method} {path}" for method, path in sorted(exercised)
+                         if _route_called(on_cited, method, path)), None)
             api_exercised = call is not None
-            halves.append(f"API: a passing workflow called {call}, {which}" if call
+            halves.append(f"API: a passing workflow called {call}, the cited route" if call
+                          else "API: not run (no cited line is in a route handler)" if not on_cited
                           else "API: a workflow passed but called no cited route" if workflows_passed
                           else "API: no workflow passed")
         if screens:

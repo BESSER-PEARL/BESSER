@@ -812,11 +812,13 @@ missing or partial for either kind stays a blocker.
 
 The recipe records, for each implemented requirement, ``verification`` and a
 ``verification_note`` giving its API half and its screens half apart. The API half
-is exercised when a ``test_api`` call that passed on the final tree hit the route
-a cited line is on (its decorator or handler), or, when no cited line is on a route,
-any route of a cited backend file (under the literal ``prefix=`` of its router there;
-a router whose prefix is not a literal verifies nothing); the note names that call
-("API: a passing workflow called GET /x/, the cited route"). No check renders a
+is exercised only when a ``test_api`` call that passed on the final tree hit the
+route a cited line is on: its decorator or the handler function holding the line,
+under the literal ``prefix=`` of its router (a router whose prefix is not a literal
+verifies nothing). The note names that call ("API: a passing workflow called GET
+/x/, the cited route"). A call to another route of the same file proves nothing, and
+a citation on no route (a helper, a model, an import) is found in the code whatever
+ran: "API: not run (no cited line is in a route handler)". No check renders a
 screen, so a cited frontend file is never exercised, and the note says why: "screens:
 not run (the frontend builds)", "(the frontend build failed)", "(the frontend build
 check did not run)" or "(no frontend)". ``verified`` means every cited half was

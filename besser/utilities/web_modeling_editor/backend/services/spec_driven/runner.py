@@ -2029,6 +2029,15 @@ class SmartGenerationRunner:
             runtime_watchdog(), name="spec-driven-runtime-watchdog",
         )
 
+        # Every stop sets cancel_event: the cancel endpoint, a disconnect, the
+        # abandonment timer, the watchdog. This ends the LLM call or command
+        # running at that moment instead of waiting for it to return.
+        async def cancel_relay() -> None:
+            await cancel_event.wait()
+            await asyncio.to_thread(orchestrator.deadline.cancel)
+
+        relay_task = asyncio.create_task(cancel_relay(), name="spec-driven-cancel-relay")
+
         # ---- 7. Drain the queue, yielding events ----------------------
         worker_exception: Optional[BaseException] = None
         result_path: Optional[str] = None
@@ -2126,6 +2135,7 @@ class SmartGenerationRunner:
                 logger.warning("Run %s: stream ended before its worker; cancelling the worker", self.run_id)
                 cancel_event.set()
                 await asyncio.wait({worker_task})
+            await _stop_helper_task(relay_task, self.run_id)
             if aborted and not worker_task.cancelled() and worker_task.exception() is not None:
                 logger.warning("Run %s: worker failed after its stream ended: %r",
                                self.run_id, worker_task.exception())

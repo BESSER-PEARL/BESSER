@@ -61,7 +61,8 @@ Endpoints
      - Resume an interrupted run from its checkpoint (streams SSE).
    * - ``/spec-driven/cancel/{run_id}``
      - POST
-     - Cancel an in-flight run at its next turn boundary.
+     - Cancel an in-flight run: the command or streaming LLM call it is
+       running is stopped at once (see :doc:`runs`).
    * - ``/spec-driven/download/{run_id}``
      - GET
      - Download the generated ZIP/file (re-fetchable for

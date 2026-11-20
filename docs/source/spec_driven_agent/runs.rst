@@ -47,6 +47,28 @@ then spend — and the cost check runs *before* the next request is sent, so a
 run cannot overshoot its cap by one more billable call. A single warning is
 logged at 80% of the cost cap.
 
+The runtime cap and cancellation also hold *inside* a turn. Every LLM call of a
+run (the customize and repair turns, generator selection, planning, model sync,
+requirement extraction and judging) gets as its timeout the time left, never
+more than its usual timeout, and a call is not started with less than 20 seconds
+left: the requirements it would have judged are reported as not checked, an
+unknown rather than a failure. LLM calls and the agent's own commands stop 30
+seconds before the cap, which keeps that time free for packaging the result
+(formatting, the recipe and report, the checkpoint, the download); a call cut
+short by the cap is reported as a time stop, not as a provider error, so it
+never moves the run to a fallback model. Every command a run starts
+(``run_command``, ``install_dependencies``, the scaffold's install, the
+validators, the build and type checks) ends by the cap at the latest.
+
+A cancellation — from ``POST /besser_api/spec-driven/cancel/{run_id}``, a closed
+connection, the abandonment timer or the runtime watchdog — takes effect at
+once: the command running at that moment is killed with every process it
+started (its whole sandbox on Linux, its process tree on Windows and macOS) and
+the tool reports ``Command stopped: the run was cancelled``; a streaming LLM
+response is closed. A non-streaming LLM call that is already in flight still
+runs to its end, which the timeout above bounds. The run then writes its
+checkpoint, recipe and report as it does at any other stop.
+
 Only the paid LLM calls count against the budget: generator selection, the
 planning pass, a modify run's model sync, the customize loop, requirement
 extraction and judging, and any Phase 3 fix turns. The deterministic scaffold, the
@@ -91,8 +113,8 @@ producer is cooperatively stopped — which bounds unattended BYOK spend. A
 client polling ``events.json`` counts as present: the run is stopped only when
 no stream is open *and* no poll arrived within the grace period. When
 the event store itself fails mid-run (a full disk, a lock held past its
-timeout), or the backend stops, the run's worker is cancelled at its next turn
-boundary, and its concurrency slot is freed only once the worker has stopped;
+timeout), or the backend stops, the run's worker is cancelled (as above, the
+command it is running is stopped at once), and its concurrency slot is freed only once the worker has stopped;
 the run is recorded ``failed`` (``interrupted`` on shutdown). A
 server restart marks still-running records ``interrupted`` and ends their event
 log with a terminal ``error`` frame (code ``INTERNAL``) whose ``resumeAvailable``,

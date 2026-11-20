@@ -312,3 +312,19 @@ def test_options_written_as_a_json_list_are_read():
 
     dropdown, = [i for i in form.inputFields if i.field_type == InputFieldType.Dropdown]
     assert _options(dropdown) == [("low", "Low"), ("a, b", "A, then B")]
+
+
+def test_options_dropped_or_replaced_for_an_enumeration_are_reported(caplog):
+    with caplog.at_level("WARNING"):
+        _forms(import_gui([_form(
+            _label(_radio("status", "open"), " Open"), _label(_radio("status", "pending"), " Pending"),
+            _label(_radio("status", "closed"), " Closed"),
+        )], _task_classes()))
+        _forms(import_gui([_form(
+            _label(_radio("status", "draft"), " Draft"), _label(_radio("status", "published"), " Published"),
+        )], _task_classes()))
+
+    dropped, replaced = [r.getMessage() for r in caplog.records if "Status" in r.getMessage()]
+    assert "Field 'status'" in dropped and "(Open, Closed)" in dropped
+    assert dropped.endswith("it ignores the options pending.")
+    assert replaced.endswith("it offers its literals instead of the options draft, published.")

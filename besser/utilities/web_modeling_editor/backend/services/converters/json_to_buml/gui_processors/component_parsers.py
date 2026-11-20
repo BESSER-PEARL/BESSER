@@ -717,14 +717,14 @@ def parse_form(component: Dict[str, Any], styling, name: str, meta: Dict,
     in_labels = {
         input_field
         for element in ordered
-        if isinstance(element, ViewContainer) and (element.tag_name or element.component_type or "").lower() in TEXT_TAGS
+        if isinstance(element, ViewContainer) and is_text_element(element.component_type, element.tag_name)
         for input_field in collect_input_fields_recursive(element.view_elements)
     }
     _bind_form(form, inputs, attributes.get("data-source"), class_model, domain_model, in_labels)
     form.inputFields = form.inputFields - _group_radios(inputs, captions)
     for input_field in form.inputFields:
         if input_field.field_type in (InputFieldType.Dropdown, InputFieldType.RadioGroup):
-            _fit_to_enumeration(input_field)
+            _fit_to_enumeration(input_field, name)
 
     # Create OnSubmit event if form has submit button
     submit_button = None
@@ -806,22 +806,33 @@ def _is_native_radio(input_field) -> bool:
     )
 
 
-def _fit_to_enumeration(input_field) -> None:
+def _fit_to_enumeration(input_field, form_name: str) -> None:
     """Make the options of an input bound to an enumeration attribute its
     literals, the only values the backend accepts: each option's value matched
     exactly, else ignoring case, else by its label. Options matching no literal
-    are dropped; an input left without options offers every literal."""
+    are dropped; an input left without options offers every literal. Both are
+    logged."""
     attribute_type = getattr(getattr(input_field.data_binding, "data_field", None), "type", None)
     if not isinstance(attribute_type, Enumeration):
         return
     literals = [literal.name for literal in sort_by_timestamp(attribute_type.literals)]
     by_lower = {name.lower(): name for name in literals}
     fitted: Dict[str, SelectOption] = {}
+    matched = set()
     for option in input_field.options or []:
         literal = (option.value if option.value in literals else None) or by_lower.get(
             str(option.value).lower()) or by_lower.get(str(option.label or "").lower())
         if literal:
             fitted.setdefault(literal, SelectOption(value=literal, label=option.label or literal))
+            matched.add(option.value)
+    unmatched = [o.value for o in input_field.options or [] if o.value not in matched]
+    if unmatched:
+        logger.warning(
+            "Field %r of form %r is bound to the enumeration %s (%s): %s %s.",
+            input_field.name, form_name, attribute_type.name, ", ".join(literals),
+            "it ignores the options" if fitted else "it offers its literals instead of the options",
+            ", ".join(unmatched),
+        )
     input_field.options = list(fitted.values()) or [SelectOption(value=name, label=name) for name in literals]
 
 
@@ -1245,6 +1256,11 @@ def parse_container(component: Dict[str, Any], styling, name: str, meta: Dict, p
 
     _attach_component_metadata(container, component, meta)
     return container
+
+
+def is_text_element(component_type: Optional[str], tag: Optional[str]) -> bool:
+    """Whether a component is text (a ``<label>``, a ``<p>``, a GrapesJS text block)."""
+    return str(component_type or "").lower() in {"text", "label"} or str(tag or "").lower() in TEXT_TAGS
 
 
 def wraps_input(component: Dict[str, Any]) -> bool:

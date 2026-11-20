@@ -31,7 +31,12 @@ from besser.spec_driven_agent.planning.model_rules import (
     is_dropped_by_model_change,
     mark_rules_broken_by_model_change,
 )
-from besser.spec_driven_agent.planning.requirements_ledger import latest_user_message, original_request, source_hashes
+from besser.spec_driven_agent.planning.requirements_ledger import (
+    latest_user_message,
+    original_request,
+    previous_run_verdicts,
+    source_hashes,
+)
 from besser.spec_driven_agent.planning.user_request import user_request
 from besser.spec_driven_agent.planning.specification import validate_specification
 from besser.spec_driven_agent.planning.target import (
@@ -106,6 +111,7 @@ class ModifyRunMixin:
         self._start_time = time.monotonic()
         # The previous version, before this run's model sync and regeneration change it.
         self._seed_source_hashes = source_hashes(self.output_dir)
+        self._previous_verdicts = self._load_previous_verdicts()
         # Before the model-sync below adds classes: a resume re-checks it
         # against the model in the request.
         self._project_fingerprint = self._compute_project_fingerprint(instructions)
@@ -416,6 +422,15 @@ class ModifyRunMixin:
             lines.append(notes)
         return "\n".join(lines)
 
+    def _load_previous_verdicts(self) -> list[dict] | None:
+        """The seed recipe's requirement verdicts on the seeded tree (see
+        ``previous_run_verdicts``); None without a ledger or a recorded one."""
+        recipe = load_recipe(self.output_dir)
+        recorded = recipe.get("requirements") if isinstance(recipe, dict) else None
+        if not self.enable_requirements_ledger or not isinstance(recorded, list) or not recorded:
+            return None
+        return previous_run_verdicts(recorded, self.output_dir) or None
+
     def _seed_generator_files_from_recipe(self) -> None:
         """Pre-load generator-file tags from a seeded run's recipe.
 
@@ -600,6 +615,7 @@ class ModifyRunMixin:
             "updated_project_export": self._updated_project_export,
             "model_sync_error": self._model_sync_error,
             "seed_source_hashes": self._seed_source_hashes,
+            "previous_verdicts": self._previous_verdicts,
         }
 
     def _restore_modify_state(self, state: dict) -> None:
@@ -633,6 +649,8 @@ class ModifyRunMixin:
         self._model_sync_error = state.get("model_sync_error")
         hashes = state.get("seed_source_hashes")
         self._seed_source_hashes = hashes if isinstance(hashes, dict) else None
+        verdicts = state.get("previous_verdicts")
+        self._previous_verdicts = verdicts if isinstance(verdicts, list) and verdicts else None
 
     def _acceptance_seed_issues(self) -> list[str]:
         """Acceptance-matrix findings on the current (seed) workspace."""

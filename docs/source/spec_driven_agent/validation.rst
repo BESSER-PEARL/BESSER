@@ -741,6 +741,27 @@ only unverified entries without a code change. Evidence must name a real applica
 executable line; traces, recipes and unrelated files cannot validate a claim.
 Failure to extract requirements remains unknown and blocks verified completion.
 
+.. _spec-driven-modify-requirements:
+
+A modify run is answerable for its own request and for what it breaks, not for
+the whole application again. When the seeded recipe records requirement
+verdicts, the run keeps the previous run's requirements (same ``R`` numbers) and
+extracts only the newest user message, whose requirements follow them. The
+previous verdicts are taken as of the tree the run starts from: an
+"implemented" citation is checked again against it (one that no longer matches
+is judged again), and every verdict records the hashes of the files it cites or
+names and of the files they rest on. A verdict whose files this run leaves
+byte-identical is not judged again, whether it was met or not. Then:
+
+- a requirement that was implemented and is no longer is a blocker, and its
+  note says it was implemented when the previous run ended;
+- a requirement of the newest message that is not implemented is a blocker;
+- a requirement the previous run had left partial, missing or unverified that
+  is still so is a warning, ``requirement still open from the previous run:``.
+  It does not drive the fix loop and does not make the run incomplete; the
+  report lists it with "open since the previous run". A later message that
+  states it again adds it as that run's own requirement.
+
 When the editor sends the modeling assistant's requirements (the request's
 ``requirements`` field, see :doc:`api`), the ledger is built from them instead of
 extracted. Only the kinds that can be judged from code are judged (``uniqueness``,

@@ -2624,6 +2624,54 @@ def source_hashes(output_dir: str) -> dict[str, str]:
     return {rel: cited_file_hash(full) for rel, full in _source_files(output_dir).items()}
 
 
+# Set on a modify run's verdict that is unmet now and was unmet when the previous run ended:
+# reported as still open, not a blocker of this run.
+INHERITED = "open_since_previous_run"
+UNMET_STATUSES = ("partial", "missing", "unverified")
+_RECORDED_VERDICT_KEYS = ("id", "text", "kind", "ref", "status", "evidence", "note", "inspection_paths")
+
+
+def previous_run_verdicts(recorded: list, output_dir: str) -> list[dict]:
+    """A previous run's recorded verdicts as of ``output_dir``, the tree it delivered (no call).
+
+    An "implemented" citation is checked again (:func:`verify_evidence`), which records its
+    file hashes; an unmet verdict records the hashes of the files it names (inspection paths
+    and citations) and of the files they rest on, so a later pass can tell they are unchanged.
+    An "implemented" whose citation no longer matches records none, so it is judged again.
+    """
+    items = [{key: item[key] for key in _RECORDED_VERDICT_KEYS if key in item} for item in recorded
+             if isinstance(item, dict) and isinstance(item.get("text"), str) and type(item.get("id")) is int
+             and isinstance(item.get("status"), str)]
+    files = _source_files(output_dir)
+    imports = ImportIndex(output_dir, files)
+    verdicts = verify_evidence(items, output_dir, imports)
+    for recorded_item, item in zip(items, verdicts):
+        if item["status"] == "implemented" or recorded_item["status"] == "implemented":
+            continue
+        named = resolved_focus_paths(files, [*item.get("inspection_paths", []), *cited_paths(item.get("evidence"))])
+        if named:
+            item["cited_file_hashes"] = {rel: cited_file_hash(files[rel]) for rel in named}
+            item["dependency_file_hashes"] = {rel: cited_file_hash(files[rel])
+                                              for rel in sorted(imports.dependencies(set(named)))}
+    return verdicts
+
+
+def mark_inherited(verdicts: list[dict], previous: list[dict]) -> list[dict]:
+    """``verdicts`` with each unmet one that ``previous`` (by id) also left unmet marked
+    :data:`INHERITED`, and each unmet one that ``previous`` found implemented noted as a regression."""
+    before = {item["id"]: item.get("status") for item in previous}
+    marked = []
+    for verdict in verdicts:
+        status, earlier = verdict.get("status"), before.get(verdict["id"])
+        if status in UNMET_STATUSES and earlier in UNMET_STATUSES:
+            verdict = {**verdict, INHERITED: True}
+        elif status in UNMET_STATUSES and earlier == "implemented":
+            verdict = {**verdict, "note": " ".join(
+                f"{verdict.get('note') or ''} It was implemented when the previous run ended.".split())}
+        marked.append(verdict)
+    return marked
+
+
 def settle_uncitable(verdicts: list[dict], output_dir: str, imports: ImportIndex | None,
                      baseline: dict[str, str] | None) -> list[dict]:
     """The unverified absence and preservation verdicts, settled without a citation: never met.
@@ -2685,6 +2733,10 @@ def ledger_issues(verdicts: list[dict]) -> list[str]:
         label = f"R{v['id']} — {v['text']}"
         note = f" ({v['note']})" if v.get("note") else ""
         status = v.get("status")
+        if v.get(INHERITED):
+            # Unclassified prefix: a warning, never a blocker.
+            issues.append(f"requirement still open from the previous run: {label} ({status}){note}")
+            continue
         if status == "out_of_scope":
             # Unclassified prefix: a warning, never a blocker.
             issues.append(f"requirement out of scope: {label}{note}")

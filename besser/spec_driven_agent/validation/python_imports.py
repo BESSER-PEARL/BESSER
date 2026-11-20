@@ -268,6 +268,18 @@ def _falls_back(node: _ast.Try | _ast.TryStar) -> bool:
                    for n in _ast.walk(handler))
 
 
+def _used_only_in(function: _ast.AST, block: list[_ast.stmt]) -> bool:
+    """Whether every name the imports in ``block`` bind is read only inside
+    ``block``: a read anywhere else in ``function`` is a NameError when the
+    import failed."""
+    imports = [n for stmt in block for n in _ast.walk(stmt) if isinstance(n, (_ast.Import, _ast.ImportFrom))]
+    bound = {alias.asname or (alias.name if isinstance(node, _ast.ImportFrom) else alias.name.split(".")[0])
+             for node in imports for alias in node.names}
+    inside = {id(n) for stmt in block for n in _ast.walk(stmt)}
+    return not any(isinstance(n, _ast.Name) and isinstance(n.ctx, _ast.Load) and n.id in bound
+                   and id(n) not in inside for n in _ast.walk(function))
+
+
 def _is_type_checking(test: _ast.expr) -> bool:
     return ((isinstance(test, _ast.Name) and test.id == "TYPE_CHECKING")
             or (isinstance(test, _ast.Attribute) and test.attr == "TYPE_CHECKING"))
@@ -289,7 +301,7 @@ def _suppress_kind(node: _ast.With) -> str | None:
 
 
 def _required_import_roots(node: _ast.AST, broad: bool = False,
-                           in_function: bool = False) -> list[tuple[str, bool]]:
+                           function: _ast.AST | None = None) -> list[tuple[str, bool]]:
     """``(root, broad)`` for the absolute imports the app needs in order to start.
 
     Skipped, because the app starts without them: imports inside a ``try``
@@ -297,7 +309,8 @@ def _required_import_roots(node: _ast.AST, broad: bool = False,
     ``with suppress(ImportError)``, ``if TYPE_CHECKING:`` imports, which never
     run, both branches of a ``sys.version_info`` check (a backport), and an
     import inside a function under a catch-all handler that neither returns nor
-    raises (an optional fast path the function falls back from).
+    raises, when the names it binds are read only under that guard (an optional
+    fast path the function falls back from). ``function`` is the enclosing one.
     ``broad`` marks an import under a handler that catches every exception.
     """
     if isinstance(node, _ast.ImportFrom):
@@ -309,7 +322,9 @@ def _required_import_roots(node: _ast.AST, broad: bool = False,
         kinds = {_handler_kind(h) for h in node.handlers}
         if _OPTIONAL in kinds or _BROAD in kinds:
             children = [*node.orelse, *node.finalbody]
-            guarded = [] if _OPTIONAL in kinds or (in_function and _falls_back(node)) else node.body
+            optional = (function is not None and _falls_back(node)
+                        and _used_only_in(function, [*node.body, *node.orelse]))
+            guarded = [] if _OPTIONAL in kinds or optional else node.body
         else:
             children = list(_ast.iter_child_nodes(node))
     elif isinstance(node, _ast.If) and _is_type_checking(node.test):
@@ -317,12 +332,14 @@ def _required_import_roots(node: _ast.AST, broad: bool = False,
     elif isinstance(node, _ast.If) and _is_version_check(node.test):
         children = []
     elif isinstance(node, _ast.With) and (kind := _suppress_kind(node)):
-        children, guarded = [], [] if kind == _OPTIONAL or in_function else node.body
+        optional = kind == _OPTIONAL or (function is not None and _used_only_in(function, node.body))
+        children, guarded = [], [] if optional else node.body
     else:
         children = list(_ast.iter_child_nodes(node))
-    in_function = in_function or isinstance(node, (_ast.FunctionDef, _ast.AsyncFunctionDef))
-    return ([root for child in children for root in _required_import_roots(child, broad, in_function)]
-            + [root for child in guarded for root in _required_import_roots(child, True, in_function)])
+    if isinstance(node, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
+        function = node
+    return ([root for child in children for root in _required_import_roots(child, broad, function)]
+            + [root for child in guarded for root in _required_import_roots(child, True, function)])
 
 
 def _unresolvable_local_imports(output_dir: str) -> list[str]:

@@ -52,8 +52,10 @@ that was already broken is never refused, so it can be repaired.
   under ``if TYPE_CHECKING:``. Under a catch-all handler (``except Exception``)
   an unresolved import is a warning, ``possibly missing module:``, unless it
   is inside a function and the handler goes on to the code after the
-  ``try`` (no ``return`` or ``raise`` in it): an optional fast path the
-  function falls back from. A package
+  ``try`` (no ``return`` or ``raise`` in it) and the imported names are read
+  only inside the ``try`` body or its ``else``: an optional fast path the
+  function falls back from. A name read after the ``try`` or in its handler
+  is a ``NameError`` when the import failed, so it is still reported. A package
   declared in the app's manifest satisfies its import name, matched
   case-insensitively and, for names that differ (``python-socketio`` /
   ``socketio``), by name prefix, unless the app ships a module of that name.

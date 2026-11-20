@@ -135,7 +135,8 @@ JUDGE_DID_NOT_RUN = (
 )
 
 # The check family of a finding, and what stops that family running ("dependent"
-# is hidden only by the runtime facts: see Phase 3's ``_hidden_before``). A finding
+# findings are excused per entity from the probe's records: see Phase 3's
+# ``_newly_reachable``). A finding
 # whose family could not run on the tree before an edit is newly visible, not
 # newly broken (``could_not_run``). A family in ``toolchain`` / ``build`` is
 # per project (``[P]`` in the message), in ``file`` per file; a finding of no

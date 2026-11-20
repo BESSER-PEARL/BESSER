@@ -17,6 +17,7 @@ observed failure or blockers - otherwise the tree from before it is restored.
 from __future__ import annotations
 
 import json
+import pathlib
 from unittest.mock import patch
 
 import pytest
@@ -73,7 +74,7 @@ class _Client:
         self.requests = []
 
     def chat(self, system, messages, tools, force_tool=None, model_override=None):
-        self.requests.append({"force_tool": force_tool, "messages": list(messages)})
+        self.requests.append({"force_tool": force_tool, "messages": list(messages), "tools": tools})
         return self.replies.pop(0) if self.replies else _done()
 
 
@@ -379,8 +380,6 @@ DEP_UNCONFIRMED = B("warning", "runtime unverified: create unverified: backend: 
 
 @pytest.mark.parametrize("entry, after", [
     pytest.param((MISSING,), [STARTUP], id="missing module hides boot"),
-    pytest.param((CREATE,), [ACTION], id="failing create hides its action calls"),
-    pytest.param((CREATE, DEP_UNCONFIRMED), [DEP_CREATE], id="failing create hides the dependent create"),
     pytest.param((CREATE, DEFERRED), [REQ1], id="a hard blocker defers the judge"),
     pytest.param((SETUP,), [TSC], id="missing dependencies hide tsc"),
     pytest.param((TSC,), [BUILD], id="tsc errors hide the build"),
@@ -391,6 +390,64 @@ def test_a_fix_that_shows_the_failure_it_hid_is_kept(tmp_path, entry, after):
 
     assert not orch._phase3_rolled_back, orch._phase3_exit_reason
     assert _read(tmp_path, "backend/routers/order.py").endswith("# fixed\n")
+
+
+def _backend(entities: dict, actions=()):
+    """One backend as the probe records it: entity -> (create path, verdict); actions as (entity, route, verdict)."""
+    return {"boot": "ok",
+            "entities": {name: {"path": path, "verdict": verdict} for name, (path, verdict) in entities.items()},
+            "action_calls": [{"entity": e, "route": r, "verdict": v} for e, r, v in actions]}
+
+
+def _probe(before: dict, after: dict):
+    """The probe's records: ``before`` for the tree Phase 3 starts from, ``after`` once the fix is on disk."""
+    def on_check(orch):
+        fixed = _read(pathlib.Path(orch.output_dir), "backend/routers/order.py").endswith("# fixed\n")
+        orch._runtime_probe_facts = (orch._workspace_revision(), [after if fixed else before])
+    return on_check
+
+
+ORDER = ("/order/", "crashed")
+SUBMIT = "/order/{id}/methods/submit/"
+
+
+def test_a_fixed_create_shows_the_failing_action_of_the_entity_it_creates(tmp_path):
+    orch, _ = _cycle(tmp_path, [[ACTION], [CREATE]], _tools(FIX_ORDER), entry=(CREATE,), on_check=_probe(
+        _backend({"Order": ORDER}),
+        _backend({"Order": ("/order/", "created")}, [("Order", SUBMIT, "crashed")])))
+
+    assert not orch._phase3_rolled_back, orch._phase3_exit_reason
+
+
+def test_a_fixed_create_shows_the_failing_create_that_needed_its_record(tmp_path):
+    orch, _ = _cycle(tmp_path, [[DEP_CREATE], [CREATE, DEP_UNCONFIRMED]], _tools(FIX_ORDER),
+                     entry=(CREATE, DEP_UNCONFIRMED), on_check=_probe(
+        _backend({"Order": ORDER, "OrderLine": ("/orderline/", "unresolved")}),
+        _backend({"Order": ("/order/", "created"), "OrderLine": ("/orderline/", "crashed")})))
+
+    assert not orch._phase3_rolled_back, orch._phase3_exit_reason
+
+
+def test_a_fixed_create_does_not_excuse_new_failures_of_entities_created_before(tmp_path):
+    """Fixing one create made five actions of OTHER entities, created before, fail."""
+    others = ("bravo", "charlie", "delta", "echo", "foxtrot")
+    actions = [B("blocker", f"action call: backend: POST /{n}/{{id}}/methods/run/ - observed a server failure (500)")
+               for n in others]
+    alpha = B("blocker", "create contract: backend: POST /alpha/ - observed a server failure creating Alpha (500)")
+    created = {n: (f"/{n}/", "created") for n in others}
+    orch, _ = _cycle(tmp_path, [actions, [alpha]], _tools(FIX_ORDER), entry=(alpha,), on_check=_probe(
+        _backend({"Alpha": ("/alpha/", "crashed"), **created}),
+        _backend({"Alpha": ("/alpha/", "created"), **created},
+                 [(n, f"/{n}/{{id}}/methods/run/", "crashed") for n in others])))
+
+    assert orch._phase3_exit_reason.startswith("attempt 1 reverted: it added an observed failure: action call: "
+                                               "backend: POST /bravo/")
+
+
+def test_without_the_probe_records_a_new_action_failure_is_not_excused(tmp_path):
+    orch, _ = _cycle(tmp_path, [[ACTION], [CREATE]], _tools(FIX_ORDER), entry=(CREATE,))
+
+    assert orch._phase3_exit_reason.startswith("attempt 1 reverted: it added an observed failure: action call:")
 
 
 def test_a_deferred_judge_brings_its_verdicts_without_counting_against_the_fix(tmp_path):
@@ -671,3 +728,34 @@ def test_evidence_that_adds_an_observed_failure_ends_the_loop(tmp_path):
 
     assert orch._phase3_exit_reason.endswith("it added an observed failure: " + MAPPER.message)
     assert len(client.requests) == 2
+
+
+# ---------------------------------------------------------------- needed_for only where it means something
+
+WRITE_TOOLS = {"write_file", "modify_file", "replace_file_lines", "delete_file"}
+
+
+def _offers_needed_for(tools) -> set[str]:
+    return {tool["name"] for tool in tools if "needed_for" in tool["input_schema"].get("properties", {})}
+
+
+def test_needed_for_is_offered_only_while_an_attempts_edits_are_limited(tmp_path):
+    client = _Client()
+    orch = _build(tmp_path, client)
+    assert _offers_needed_for(orch.tools) == set(), "every Phase 2 turn re-sends the schemas"
+
+    orch._invoke_phase3_fix_loop([IN_ORDER], is_first_attempt=True)
+    orch._invoke_phase3_fix_loop([ROUTE_500], is_first_attempt=True)  # names no file: scope open
+
+    assert _offers_needed_for(client.requests[0]["tools"]) == WRITE_TOOLS
+    assert _offers_needed_for(client.requests[1]["tools"]) == set()
+
+
+def test_needed_for_where_it_is_not_offered_is_ignored(tmp_path):
+    orch = _build(tmp_path, _Client())
+
+    result = orch.executor.execute_typed("modify_file", {
+        "path": "backend/services/customer.py", "old_text": "return []", "new_text": "return [2]",
+        "needed_for": "a blocker"})
+
+    assert result.succeeded

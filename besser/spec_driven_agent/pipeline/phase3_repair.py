@@ -35,6 +35,7 @@ from besser.spec_driven_agent.planning.action_inventory import (
     format_action_inventory,
 )
 from besser.spec_driven_agent.agent.prompt_builder import DROPPED_RULES_NOTE, build_inventory
+from besser.spec_driven_agent.agent.tools import with_scope_widening
 from besser.spec_driven_agent.planning.model_rules import DROPPED
 from besser.spec_driven_agent.planning.mutation_inventory import build_mutation_manifest, route_serves
 from besser.spec_driven_agent.model_serializer import serialize_domain_model, to_prompt_json
@@ -105,6 +106,8 @@ _FIX_PROMPT_MAX_SCOPE_FILES = 40
 # Masked when attempts compare findings: an edit moves the lines and columns of the
 # errors it leaves. Other numbers (``/e2/`` and ``/e3/``) tell findings apart.
 _LINE_NUMBERS_RE = re.compile(r"line \d+|:\d+(?::\d+)?|\(\d+,\d+\)")
+# The route a runtime finding names: ``create contract: backend: POST /order/ - ...``.
+_POST_ROUTE_RE = re.compile(r": POST (\S+) - ")
 
 
 def clip_finding(text: str) -> str:
@@ -578,12 +581,14 @@ class Phase3RepairMixin:
                 successful_writes=edits or 0,
             )
 
-            hidden = self._hidden_before(current_issues, probe_before[1], revision_before,
-                                         current_score, score_after)
+            hidden = self._hidden_before(current_issues, probe_before[1], revision_before)
+            facts_after = getattr(self, "_runtime_probe_facts", None)
             not_kept = self._attempt_not_kept(
                 current_blockers, blockers_after, hidden, judge_ran(issues_after),
                 booted_before, self._booted(blockers_after, self._workspace_revision()),
-                current_score, score_after)
+                current_score, score_after,
+                before_facts=probe_before[1][1] if probe_before[1] and probe_before[1][0] == revision_before else None,
+                after_facts=facts_after[1] if facts_after and facts_after[0] == self._workspace_revision() else None)
             if not_kept and source_changed:
                 restored = self._revert_attempt(attempts_run, not_kept, issues_after, probe_before)
                 exit_reason = (f"attempt {attempts_run} reverted: {not_kept}" if restored
@@ -686,26 +691,48 @@ class Phase3RepairMixin:
             return all(backend.get("boot") == "ok" for backend in facts[1])
         return not self._startup_blockers(blockers)
 
-    def _hidden_before(self, issues: list[ValidationIssue], facts, revision: str,
-                       score_before: tuple, score_after: tuple) -> set:
+    def _hidden_before(self, issues: list[ValidationIssue], facts, revision: str) -> set:
         """The check families that could not run on the tree before an attempt: from its
         findings (``hidden_families``) and the probe's facts for it. Where the probe
         measured that tree, its boot verdict alone says whether runtime checks ran.
-        Creates and actions that need another record count as hidden only when fewer
-        entities fail to be created after the attempt, not because one create failed."""
+        Creates and actions that needed a record are excused per entity instead
+        (``_newly_reachable``)."""
         hidden = hidden_families(issues)
         if facts and facts[0] == revision and facts[1]:
             hidden.discard(("runtime", ""))
             if any(backend.get("boot") != "ok" for backend in facts[1]):
                 hidden.add(("runtime", ""))
-        if score_after[2] < score_before[2]:
-            # More entities created: the creates and actions that needed them run now.
-            hidden.add(("dependent", ""))
         return hidden
+
+    @staticmethod
+    def _newly_reachable(before_facts: list | None, after_facts: list | None):
+        """``(finding, entity)`` predicates: whether a ``create contract:`` / ``action call:``
+        finding, or a probed entity, belongs to an entity the probe could not create on the
+        tree before the attempt. The route's entity comes from the probe's records of the
+        tree after it; without records of both trees nothing is excused."""
+        if not before_facts or not after_facts:
+            return (lambda message: False), (lambda entity: False)
+        created = {name for backend in before_facts for name, entry in (backend.get("entities") or {}).items()
+                   if entry.get("verdict") == "created"}
+        entity_of = {}
+        for backend in after_facts:
+            for name, entry in (backend.get("entities") or {}).items():
+                entity_of[("create contract:", entry.get("path"))] = name
+            for call in [*(backend.get("action_calls") or []), *(backend.get("actions") or [])]:
+                entity_of[("action call:", call.get("route"))] = call.get("entity")
+
+        def finding(message: str) -> bool:
+            prefix = next((p for p in ("create contract:", "action call:") if message.startswith(p)), None)
+            match = _POST_ROUTE_RE.search(message)
+            entity = entity_of.get((prefix, match.group(1))) if prefix and match else None
+            return entity is not None and entity not in created
+
+        return finding, (lambda entity: entity is not None and entity not in created)
 
     def _attempt_not_kept(self, before: list[ValidationIssue], after: list[ValidationIssue],
                           hidden: set, judged_after: bool, booted_before: bool, booted_after: bool,
-                          score_before: tuple, score_after: tuple) -> str | None:
+                          score_before: tuple, score_after: tuple, *, before_facts: list | None = None,
+                          after_facts: list | None = None) -> str | None:
         """Why an attempt is not kept (or, with no edit, does not continue the loop), or None.
 
         Kept only if (1) it retired a blocker it faced (``_retired``); (2) every
@@ -715,15 +742,21 @@ class Phase3RepairMixin:
         added findings of those families, is no higher, a requirement whose
         status fell counting as one more; (4) a tree that started still starts;
         (5) where runtime checks ran before, no more entities fail to be created,
-        and no more actions fail unless more entities were created.
+        and no more actions fail, leaving out those of entities the probe could
+        not create before (``_newly_reachable``).
         """
+        reachable_finding, reachable_entity = self._newly_reachable(before_facts, after_facts)
+
+        def excused(message: str) -> bool:
+            return could_not_run(message, hidden) or reachable_finding(message)
+
         if not self._retired(before, after, judged_after):
             return f"it retired none of the {counted(len(before), 'blocker')} it faced"
         # A requirement verdict is a judgment, never an observed failure.
         observed_before = Counter(_LINE_NUMBERS_RE.sub("#", i.message) for i in unresolved_defects(before)
                                   if not requirement_status(i.message))
         added = [i.message for i in unresolved_defects(after)
-                 if not requirement_status(i.message) and not could_not_run(i.message, hidden)
+                 if not requirement_status(i.message) and not excused(i.message)
                  and _LINE_NUMBERS_RE.sub("#", i.message) not in observed_before]
         if added:
             return f"it added an observed failure: {added[0][:300]}"
@@ -731,7 +764,7 @@ class Phase3RepairMixin:
         newly_visible = 0
         for issue in after:
             key = self._blocker_key(issue)
-            if new_keys[key] > 0 and could_not_run(issue.message, hidden):
+            if new_keys[key] > 0 and excused(issue.message):
                 new_keys[key] -= 1
                 newly_visible += 1
         statuses = {r[0]: r[1] for r in map(requirement_status, (i.message for i in before)) if r}
@@ -742,11 +775,13 @@ class Phase3RepairMixin:
             return f"it left more blockers ({len(before)} -> {count})"
         if booted_before and not booted_after:
             return "the application no longer starts"
-        if ("runtime", "") not in hidden and (
-                score_after[2] > score_before[2]
-                or (score_after[3] > score_before[3] and ("dependent", "") not in hidden)):
+        failing_actions = score_after[3] if not after_facts else sum(
+            1 for backend in after_facts for call in backend.get("action_calls") or []
+            if call.get("verdict") != "effective" and not reachable_entity(call.get("entity")))
+        if ("runtime", "") not in hidden and (score_after[2] > score_before[2]
+                                              or failing_actions > score_before[3]):
             return (f"more entities or actions fail at runtime (entities {score_before[2]} -> {score_after[2]}, "
-                    f"actions {score_before[3]} -> {score_after[3]})")
+                    f"actions {score_before[3]} -> {failing_actions})")
         return None
 
     def _install_state(self) -> tuple:
@@ -1242,6 +1277,8 @@ class Phase3RepairMixin:
             })
 
         edits = 0                 # successful write-tool calls this attempt
+        # needed_for is offered only while the attempt's edits are limited.
+        tools = with_scope_widening(self.tools) if scope is not None else self.tools
         unconfirmed_at_reminder: set | None = None
         truncations = 0           # "emit less" retries after a max_tokens stop
         turn_cap = _PHASE3_FIX_TURNS
@@ -1264,7 +1301,7 @@ class Phase3RepairMixin:
             request_messages = without_rejected_edit_drafts(messages)
             try:
                 response = self.client.chat(
-                    system=system, messages=request_messages, tools=self.tools,
+                    system=system, messages=request_messages, tools=tools,
                 )
             except InvalidApiKeyError:
                 # Same rule as Phase 2: an auth failure must PROPAGATE so the

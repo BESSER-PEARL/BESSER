@@ -80,3 +80,18 @@ def test_the_earlier_shape_decodes_stringified_arrays(executor, args, closed):
 
     assert "error" not in result, result
     assert all(executor._tasks[i - 1]["done"] for i in closed)
+
+
+def test_empty_arrays_count_as_absent_fields(executor):
+    """Models fill every optional array with []; that must not refuse the field they used."""
+    result = _call(executor, done=[1], add=[], drop=[], blocked=[])
+
+    assert "error" not in result and result["status"] != "partial", result
+    assert executor._tasks[0]["done"]
+
+
+def test_all_empty_arrays_list_the_checklist(executor):
+    result = _call(executor, done=[], add=[], drop=[], blocked=[])
+
+    assert "error" not in result, result
+    assert [row["id"] for row in result["tasks"]] == [1, 2, 3]

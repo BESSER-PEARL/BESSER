@@ -1365,10 +1365,11 @@ class ToolExecutor:
         The earlier ``action=...`` shape (``_TASK_LIST_ACTION_ARGUMENTS``) is still accepted.
         """
         if "action" not in args:
-            verbs = {"done_ids": args.get("done"), "add_texts": args.get("add"),
-                     "drop": args.get("drop"), "blocked": args.get("blocked")}
-            result = (self._task_list({"action": "list"}) if all(v is None for v in verbs.values())
-                      else self._do_mixed(verbs))
+            # An empty array is a field left unused: models fill every optional one.
+            verbs = {verb: args.get(field) for verb, field in (
+                ("done_ids", "done"), ("add_texts", "add"), ("drop", "drop"), ("blocked", "blocked"))
+                if args.get(field) not in (None, [])}
+            result = self._do_mixed(verbs) if verbs else self._task_list({"action": "list"})
             # Once per result, as labels: the conversation re-sends every result.
             result.get("results", {}).get("done", {}).pop("open_items", None)
             result["open_items"] = [{"id": t["id"], "label": _task_label(t["text"])} for t in self.open_tasks()]

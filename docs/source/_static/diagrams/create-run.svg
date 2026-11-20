@@ -75,7 +75,7 @@
 <path class="e" d="M631,412.0 L665,412.0" marker-end="url(#create-run-a)"/>
 <path class="e" d="M538.5,448 L538.5,478 L102.5,478 L102.5,448" marker-end="url(#create-run-a)"/>
 <text class="lab" x="10" y="496" text-anchor="start">re-validate after each attempt;</text>
-<text class="lab" x="10" y="511" text-anchor="start">keep the best tree, ranked by boot, entities, actions, then blockers</text>
+<text class="lab" x="10" y="511" text-anchor="start">keep an attempt only if it retires a blocker and breaks nothing new</text>
 <path class="e" d="M757.5,448 L757.5,508" marker-end="url(#create-run-a)"/>
 <g class="n k-d"><rect x="665" y="508" width="185" height="72" rx="6"/><text class="t" x="677" y="534">Records + packaging</text>
 <text class="s" x="677" y="549">recipe, Agent Trace, secret</text>

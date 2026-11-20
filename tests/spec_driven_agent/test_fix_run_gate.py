@@ -17,13 +17,17 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from besser.BUML.metamodel.structural import (
     Class,
     DomainModel,
     PrimitiveDataType,
     Property,
 )
+from besser.spec_driven_agent.planning import requirements_ledger as ledger
 from besser.spec_driven_agent.planning.fix_target import parse_reported_target
+from besser.spec_driven_agent.planning.requirements_ledger import ledger_issues
 from besser.spec_driven_agent.planning.target import Routing
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator, ValidationIssue
 
@@ -209,6 +213,93 @@ def test_gate_soft_target_is_unverified(tmp_path):
     assert orch._fix_target_message is None
 
 
+_EXCEPTION_INSTR = ("I got \"if order.quantity > stock: TypeError: '>' not supported between "
+                   "instances of 'NoneType' and 'int'\". Fix this error.")
+
+
+def _earlier_and_own_requirements(orch):
+    """R11 comes from an earlier run's request, R40 from this run's; both name the entity."""
+    orch._previous_ids = {11}
+    orch._requirement_verdicts = [
+        {"id": 11, "text": "The Order screen offers a discount option", "kind": "ui", "status": "unverified",
+         "evidence": "", "note": ""},
+        {"id": 40, "text": "An Order without a quantity is refused", "kind": "validation", "status": "missing",
+         "evidence": "", "note": ""},
+    ]
+    return [ValidationIssue("blocker", message) for message in ledger_issues(orch._requirement_verdicts)]
+
+
+def test_gate_ignores_requirement_findings_of_earlier_runs(tmp_path):
+    """An earlier run's requirement names the entity whenever a requirement does: it left the
+    fixed error reported as unconfirmed."""
+    orch = _orch(tmp_path, _domain("Order", "Customer"))
+    orch._is_fix_run = True
+    orch._fix_target = parse_reported_target(_EXCEPTION_INSTR, orch.domain_model, "Order")
+    assert orch._fix_target.kind == "exception" and orch._fix_target.entities == ("Order",)
+    earlier, _ = _earlier_and_own_requirements(orch)
+    orch._validation_issues = [earlier]
+
+    orch._evaluate_fix_target_gate()
+
+    assert orch._fix_target_resolved is True
+    assert orch._fix_target_message is None
+
+
+@pytest.mark.parametrize("own", ["requirement", "task"])
+def test_this_runs_own_requirement_or_fix_task_keeps_the_failure_unconfirmed(tmp_path, own):
+    orch = _orch(tmp_path, _domain("Order"))
+    orch._is_fix_run = True
+    orch._fix_target = parse_reported_target(_EXCEPTION_INSTR, orch.domain_model, "Order")
+    earlier, requirement = _earlier_and_own_requirements(orch)
+    task = ValidationIssue("blocker", "task incomplete: task 2 is not done: refuse an Order "
+                                      "without a quantity. Its deterministic check fails")
+    orch._validation_issues = [earlier, requirement if own == "requirement" else task]
+
+    orch._evaluate_fix_target_gate()
+
+    assert orch._fix_target_resolved is False
+
+
+def test_requirement_findings_of_earlier_runs_are_never_promoted(tmp_path):
+    orch = _orch(tmp_path, _domain("Order"))
+    orch._is_fix_run = True
+    orch._fix_target = parse_reported_target(_EXCEPTION_INSTR, orch.domain_model, "Order")
+    orch._previous_ids = {4}
+    orch._requirement_verdicts = [{"id": 4, "text": "Orders can be exported", "kind": "action",
+                                   "status": "missing", "evidence": "", "note": "", ledger.INHERITED: True}]
+    [message] = ledger_issues(orch._requirement_verdicts)
+    issue = ValidationIssue("warning", message)
+
+    assert orch._promote_fix_target_findings([issue]) == [issue]
+
+
+def test_a_checklist_item_nothing_confirmed_is_never_promoted(tmp_path):
+    """An open item naming the entity says nothing was confirmed, not that the failure persists."""
+    orch = _orch(tmp_path, _domain("Order"))
+    orch._is_fix_run = True
+    orch._fix_target = parse_reported_target(_EXCEPTION_INSTR, orch.domain_model, "Order")
+    orch.executor.set_tasks(["Refuse an Order without a quantity"])
+    issues = [ValidationIssue("warning", message) for message in orch._collect_task_issues()]
+    assert issues and issues[0].message.startswith("task unverified:")
+
+    assert orch._promote_fix_target_findings(issues) == issues
+    orch._validation_issues = issues
+    orch._evaluate_fix_target_gate()
+    assert orch._fix_target_resolved is True
+
+
+def test_a_runtime_finding_on_the_entity_still_keeps_the_failure_unconfirmed(tmp_path):
+    orch = _orch(tmp_path, _domain("Order"))
+    orch._is_fix_run = True
+    orch._fix_target = parse_reported_target(_EXCEPTION_INSTR, orch.domain_model, "Order")
+    orch._validation_issues = [ValidationIssue(
+        "blocker", "create contract: backend: POST /order/ - observed a server/persistence failure")]
+
+    orch._evaluate_fix_target_gate()
+
+    assert orch._fix_target_resolved is False
+
+
 # ----------------------------------------------------------------------
 # Full modify() wiring
 # ----------------------------------------------------------------------
@@ -291,3 +382,74 @@ def test_run_never_detects_a_fix_target(tmp_path, monkeypatch):
     assert orch._is_fix_run is False
     assert orch._fix_target is None
     assert orch._fix_target_message is None
+
+
+def test_a_not_confirmed_finding_on_the_reported_entity_is_corroborated(tmp_path):
+    """The probe's guessed create was refused, on the entity the user reported failing: the
+    user's report corroborates it. Promoted to the reported failure, and it keeps the gate open."""
+    orch = _orch(tmp_path, _domain("Order"))
+    orch._is_fix_run = True
+    orch._fix_target = parse_reported_target(_EXCEPTION_INSTR, orch.domain_model, "Order")
+    refused = ("runtime unverified: create unverified: backend: POST /order/ - autogenerated input was "
+               "refused (422: quantity required); attempted input: {}")
+
+    promoted, = orch._promote_fix_target_findings([ValidationIssue("warning", refused)])
+    assert promoted.severity == "blocker" and promoted.message.startswith(orch._FIX_TARGET_PREFIX)
+    orch._validation_issues = [ValidationIssue("warning", refused)]
+    orch._evaluate_fix_target_gate()
+    assert orch._fix_target_resolved is False
+
+
+def test_a_not_confirmed_finding_elsewhere_is_not_the_failure_persisting(tmp_path):
+    """A check that did not run names nothing the user reported: not promoted, gate not held."""
+    orch = _orch(tmp_path, _domain("Order"))
+    orch._is_fix_run = True
+    orch._fix_target = parse_reported_target(_EXCEPTION_INSTR, orch.domain_model, "Order")
+    skipped = ValidationIssue("warning", "validation unverified: frontend build [web] did not run completely "
+                                         "(timed out) - required verification was SKIPPED")
+
+    assert orch._promote_fix_target_findings([skipped]) == [skipped]
+    orch._validation_issues = [skipped]
+    orch._evaluate_fix_target_gate()
+    assert orch._fix_target_resolved is True
+
+
+def test_a_screen_check_finding_is_never_promoted(tmp_path):
+    """The screen check reports warnings only: a fix run must not turn one into a blocker."""
+    orch = _orch(tmp_path, _domain("Order"))
+    orch._is_fix_run = True
+    orch._fix_target = parse_reported_target(_EXCEPTION_INSTR, orch.domain_model, "Order")
+    issues = [ValidationIssue("warning", message) for message in (
+        "screen warning: [frontend] created an Order through the API (POST /order/) and the API lists it, "
+        "but its text was not found in the page text of any of the 3 opened screen(s)",
+        "screen warning: [frontend] route /orders (frontend/src/pages/OrderList.jsx): the page showed nothing",
+        "screens: not run ([frontend] Order screens: the shell sandbox is unavailable on this server)",
+    )]
+
+    assert orch._promote_fix_target_findings(issues) == issues
+    orch._validation_issues = issues
+    orch._evaluate_fix_target_gate()
+    assert orch._fix_target_resolved is True
+
+
+@pytest.mark.parametrize("message", [
+    "requirement unverified: R4 — An Order can be exported — the cited evidence 'backend/x.py: a' does not "
+    "verify it ([the quoted executable line was not found])",
+    "validation unverified: runtime check (the constructibility probe) did not run (backend: timed out) for Order",
+])
+def test_no_conclusion_about_the_code_is_never_the_reported_failure(tmp_path, message):
+    """The report can corroborate what the running app did, not "the citation was not located"
+    or "the check did not run". Before (first review round): both became reported-failure blockers."""
+    from besser.spec_driven_agent.pipeline.modify_run import _NEVER_PROMOTED
+    from besser.spec_driven_agent.validation.issues import _classify_issue
+
+    orch = _orch(tmp_path, _domain("Order"))
+    assert _NEVER_PROMOTED[0] == orch._FIX_TARGET_PREFIX
+    orch._is_fix_run = True
+    orch._fix_target = parse_reported_target(_EXCEPTION_INSTR, orch.domain_model, "Order")
+    issue = _classify_issue(message)
+
+    assert orch._promote_fix_target_findings([issue]) == [issue]
+    orch._validation_issues = [issue]
+    orch._evaluate_fix_target_gate()
+    assert orch._fix_target_resolved is True

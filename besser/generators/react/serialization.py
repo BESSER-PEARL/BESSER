@@ -63,6 +63,11 @@ _CHARTS = (LineChart, BarChart, PieChart, RadarChart, RadialBarChart)
 _ENDPOINT_READERS = (*_CHARTS, MetricCard)
 
 
+def _enum_options(enumeration: Enumeration) -> List[str]:
+    """The literal names of an enumeration, in model order."""
+    return [literal.name for literal in sort_by_timestamp(enumeration.literals)]
+
+
 class GuiSerializationMixin:
     def _build_generation_context(self) -> Dict[str, Any]:
         components_payload, styles_payload, meta = self._serialize_gui_model()
@@ -287,7 +292,7 @@ class GuiSerializationMixin:
                                         param_data["lookup_field"] = lookup_field
                                 elif isinstance(param_type, Enumeration):
                                     param_data["input_kind"] = "enum"
-                                    param_data["options"] = sorted([literal.name for literal in param_type.literals])
+                                    param_data["options"] = _enum_options(param_type)
 
                                 input_params[param.name] = param_data
 
@@ -570,7 +575,7 @@ class GuiSerializationMixin:
                     if isinstance(field_type, Enumeration):
                         column_dict["type"] = "enum"
                         # Extract enumeration literal names as options
-                        column_dict["options"] = sorted([literal.name for literal in field_type.literals])
+                        column_dict["options"] = _enum_options(field_type)
                     else:
                         column_dict["type"] = field_type.name if hasattr(field_type, "name") else "str"
 
@@ -634,11 +639,13 @@ class GuiSerializationMixin:
 
                     if isinstance(field_type, Enumeration):
                         column_dict["type"] = "enum"
-                        column_dict["options"] = sorted([literal.name for literal in field_type.literals])
+                        column_dict["options"] = _enum_options(field_type)
                     elif field_type and getattr(field_type, "name", None):
                         column_dict["type"] = field_type.name
 
                     is_optional = getattr(attr, "is_optional", False)
+                    # The backend schema accepts null exactly for these (as Optional[...])
+                    column_dict["nullable"] = bool(is_optional) and not getattr(attr, "is_id", False)
                     if not is_optional:
                         multiplicity = getattr(attr, "multiplicity", None)
                         if multiplicity and getattr(multiplicity, "min", 0) > 0:
@@ -679,7 +686,6 @@ class GuiSerializationMixin:
                     "positiveColor": element.positive_color,
                     "negativeColor": element.negative_color,
                     "value": 0,  # Default placeholder - will be populated from API
-                    "trend": 12,  # Default placeholder trend percentage
                 }
             )
             node["color"] = element.primary_color or element.value_color or "#2c3e50"
@@ -1555,7 +1561,7 @@ class GuiSerializationMixin:
 
             if isinstance(attr_type, Enumeration):
                 field_dict["type"] = "enum"
-                field_dict["options"] = sorted([literal.name for literal in attr_type.literals])
+                field_dict["options"] = _enum_options(attr_type)
             elif attr_type is not None and getattr(attr_type, "name", None):
                 field_dict["type"] = attr_type.name
 

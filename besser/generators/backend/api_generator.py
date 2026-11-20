@@ -95,6 +95,24 @@ def clean_method_name(name):
     return str(name).strip()
 
 
+def method_route_code(model: DomainModel, cls, method, nn_modules) -> str:
+    """The Python body a method's route runs (normalized), or ``""`` when the method has none.
+
+    A body without a ``self`` parameter makes the route class-level (``/<class>/methods/<name>/``);
+    every other method, including one with no body, is routed per instance.
+    """
+    kind = method.implementation_type.name
+    if kind == "BAL":
+        code = bal_to_rest(parse_bal(model, cls, method.code), cls.name)
+    elif kind == "CODE":
+        code = method.code
+    elif kind == "NEURAL_NETWORK":
+        code = nn_method_code(method, nn_modules)
+    else:
+        code = ""
+    return normalize_method_code(code, method.name)
+
+
 def get_pk_names(model: DomainModel) -> Dict[str, str]:
     """Map every class name to the name of its primary-key attribute.
 
@@ -202,8 +220,7 @@ def _make_env() -> Environment:
         extensions=['jinja2.ext.do'],
     )
     env.filters['clean_method_name'] = clean_method_name
-    env.globals.update(parse_bal=parse_bal, bal_to_rest=bal_to_rest,
-                       normalize_code=normalize_method_code,
+    env.globals.update(
                        # router.py.j2's _client_supplied used to re-implement
                        # this and its own comment said it MUST mirror the
                        # pydantic template's copy. Three copies of one rule is
@@ -279,7 +296,7 @@ def generate_modular_api(
     env.filters['pk'] = lambda class_name: pk_names.get(str(class_name), "id")
     # NEURAL_NETWORK methods get a generated body calling nn_runtime.run_network.
     nn_modules = collect_nn_modules(model)
-    env.globals['nn_method_code'] = lambda method: nn_method_code(method, nn_modules)
+    env.globals['method_route_code'] = lambda cls, method: method_route_code(model, cls, method, nn_modules)
 
     routers_dir = os.path.join(output_dir, "routers")
     os.makedirs(routers_dir, exist_ok=True)

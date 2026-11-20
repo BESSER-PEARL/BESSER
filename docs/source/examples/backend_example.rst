@@ -55,7 +55,7 @@ validation models. Here's a snippet from the generated files:
     __tablename__ = "book"
     id: Mapped[int] = mapped_column(primary_key=True)
     pages: Mapped[int] = mapped_column(Integer)
-    title: Mapped[str] = mapped_column(String(100))
+    title: Mapped[str] = mapped_column(Text().with_variant(String(4000), "oracle"))
     release: Mapped[datetime] = mapped_column(DateTime)
 
 

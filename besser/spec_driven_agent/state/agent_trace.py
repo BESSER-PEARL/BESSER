@@ -43,6 +43,7 @@ import re
 import stat
 import threading
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Iterable, Optional
 
@@ -53,7 +54,7 @@ from besser.utilities.workspace_fs import (
     walk_plain,
     write_atomic_plain,
 )
-from besser.utilities.provenance import ATTRIBUTION_FILENAME, PROVENANCE_FILENAME
+from besser.utilities.provenance import ATTRIBUTION_FILENAME, PROVENANCE_FILENAME, get_besser_version
 from besser.utilities.secret_redaction import redact_text
 
 logger = logging.getLogger(__name__)
@@ -75,6 +76,10 @@ _MAX_DIFF_LINES = 5_000
 # Never attributed: the trace itself, the provenance file, run internals.
 _ALWAYS_SKIPPED_DIRS = {TRACE_DIRNAME, ".git"}
 _ALWAYS_SKIPPED_FILES = {PROVENANCE_FILENAME}
+# Written by a package manager, whoever ran it: never the model's lines.
+_LOCK_FILES = frozenset({"package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml",
+                         "bun.lock", "poetry.lock", "Pipfile.lock", "uv.lock", "Cargo.lock",
+                         "composer.lock", "Gemfile.lock", "go.sum"})
 # The model source a GitHub push adds after the run's state is saved: not run
 # output, and attributing it would credit it to a human on continue-from-GitHub.
 _SKIPPED_ROOT_DIRS = {"buml"}
@@ -524,14 +529,57 @@ def _reconcile(
         targets: Iterable[str] = sorted(current)
     else:
         targets = sorted({str(p).replace("\\", "/") for p in paths})
+    lock_file_contributor = generator_contributor("package_manager")
     for rel in targets:
         lines = read_text_lines(workspace, rel)
         if lines is None:
             state.files.pop(rel, None)
             continue
-        state.reconcile_file(rel, lines, contributor)
+        is_lock_file = contributor.get("kind") == KIND_AI and rel.rsplit("/", 1)[-1] in _LOCK_FILES
+        state.reconcile_file(rel, lines, lock_file_contributor if is_lock_file else contributor)
     state.save(workspace)
     return state
+
+
+@contextmanager
+def harness_writes(workspace: str, name: str, excluded: Optional[Iterable[str]] = None):
+    """Attribute the lines the enclosed harness step writes to ``name``, a generator-kind contributor.
+
+    Lines the model changed before the step and that the step kept are left unrecorded, so the
+    packaging reconcile still gives them to the AI. Best-effort, like :func:`record_generated_files`.
+    """
+    try:
+        before = {rel: read_text_lines(workspace, rel) for rel in iter_attributable_files(workspace, excluded)}
+    except Exception:
+        logger.warning("Reading the workspace before a harness step failed", exc_info=True)
+        before = None
+    yield
+    with _STATE_LOCK:
+        try:
+            if before is None:
+                raise RuntimeError("no snapshot of the workspace before the harness step")
+            state = _load_or_new(workspace)
+            index = state.contributor_index(generator_contributor(name, get_besser_version()))
+            changed = False
+            for rel in iter_attributable_files(workspace, excluded):
+                after = read_text_lines(workspace, rel)
+                previous = before.get(rel)
+                if after is None or after == previous:
+                    continue
+                # -1: a line the model wrote that the state has not recorded yet.
+                prior = state.owners_of(rel, previous) if previous is not None else []
+                hashes = line_hashes(after)
+                owners, _ = _carry_owners(line_hashes(previous or []), prior, hashes, index)
+                state.files[rel] = ([h for h, o in zip(hashes, owners) if o != -1],
+                                    [o for o in owners if o != -1])
+                changed = True
+            if changed:
+                state.save(workspace)
+        except AttributionStateError as exc:
+            logger.warning("Harness attribution skipped: %s", exc)
+        except Exception:
+            logger.warning("Recording harness attribution failed", exc_info=True)
+            _mark_broken(workspace)
 
 
 def seed_attribution(workspace: str, excluded: Optional[Iterable[str]] = None) -> bool:

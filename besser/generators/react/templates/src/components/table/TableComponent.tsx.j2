@@ -1,9 +1,11 @@
 import React, { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
+import { API_BASE_URL } from "../../api/generated/client";
 import { createPortal } from "react-dom";
 import { useTableContext } from "../../contexts/TableContext";
 import { notifyDataChanged, useDataVersion } from "../runtime/dataVersion";
 import { coerceLookupTarget, fetchLookupOptions, lookupOptionLabel, lookupOptionValue } from "../runtime/lookup";
+import { humanize } from "../runtime/humanize";
 import { ColumnFilter } from "./ColumnFilter";
 import { ColumnSort } from "./ColumnSort";
 import "./TableComponent.css";
@@ -40,6 +42,8 @@ interface TableColumn {
   defaultValue?: any;
   // Shown in the create/edit form but never edited or sent (e.g. a server-computed total)
   readOnly?: boolean;
+  // The backend accepts null for it (an optional attribute)
+  nullable?: boolean;
 }
 
 interface TableOptions {
@@ -65,18 +69,6 @@ interface Props {
 // Stable fallbacks: a fresh `[]` per render would invalidate the columns ->
 // formColumns memo chain on every render and re-trigger the modal effects.
 const EMPTY_COLUMNS: any[] = [];
-
-const humanize = (value: string): string => {
-  if (!value) {
-    return "";
-  }
-  return value
-    .replace(/[_-]+/g, " ")
-    .replace(/([a-z])([A-Z])/g, "$1 $2")
-    .replace(/\s+/g, " ")
-    .trim()
-    .replace(/^./, (str) => str.toUpperCase());
-};
 
 const formatCellValue = (value: any): string => {
   if (value === null || value === undefined) {
@@ -139,7 +131,7 @@ export const TableComponent: React.FC<Props> = ({
           ? `/${id}/`
           : "";
     if (!endpoint) return;
-    const backendBase = import.meta.env.VITE_API_URL || "http://localhost:8000";
+    const backendBase = API_BASE_URL;
     
     // Check if table has lookup columns - if so, request detailed data with joins
     const hasLookupColumns = options?.columns?.some(
@@ -247,6 +239,7 @@ export const TableComponent: React.FC<Props> = ({
           relationshipKey: relationshipKey,
           associationClass: col.column_type === "lookup" ? associationClass : undefined,
           readOnly: Boolean((col as any).readOnly ?? (col as any).read_only),
+          nullable: Boolean((col as any).nullable),
         };
       });
   };
@@ -778,7 +771,7 @@ export const TableComponent: React.FC<Props> = ({
     const endpoint = getEndpoint();
     const rowId = getRowId(row);
     const url = endpoint.replace(/\/$/, "");
-    const backendBase = import.meta.env.VITE_API_URL || "http://localhost:8000";
+    const backendBase = API_BASE_URL;
     const fullUrl = url.startsWith("/") ? `${backendBase}${url}/${rowId}/` : `${url}/${rowId}/`;
     try {
       await axios.delete(fullUrl);
@@ -997,7 +990,7 @@ export const TableComponent: React.FC<Props> = ({
                   
                   setValidationError("");
                   const endpoint = getEndpoint();
-                  const backendBase = import.meta.env.VITE_API_URL || "http://localhost:8000";
+                  const backendBase = API_BASE_URL;
                   
                   // Process form values based on column types
                   const processedValues: Record<string, any> = {};
@@ -1049,6 +1042,12 @@ export const TableComponent: React.FC<Props> = ({
                       if (col.type === 'enum' && (value === undefined || value === null || value === '')) {
                         // No literal chosen: leave the field out so the backend applies the
                         // attribute's default (or reports it missing) instead of rejecting ""
+                        return;
+                      }
+                      if (col.nullable && col.type !== 'list' && col.type !== 'bool' && col.type !== 'boolean'
+                          && (value === undefined || value === null || value === '')) {
+                        // An optional field left empty has no value: null, not "" or 0
+                        processedValues[col.field] = null;
                         return;
                       }
                       if (col.type === 'list') {
@@ -1506,8 +1505,8 @@ export const TableComponent: React.FC<Props> = ({
                       <label htmlFor={`modal-input-${col.field}`} style={{ fontWeight: 500, color: "#334155" }}>
                         {col.label}
                         {col.required && <span style={{ color: "#ef4444", marginLeft: "4px" }}>*</span>}
-                        {col.type && col.type !== 'string' && (
-                          <span style={{ fontSize: "11px", color: "#64748b", marginLeft: "6px" }}>({col.type === 'list' ? 'comma-separated' : col.type})</span>
+                        {col.type === 'list' && (
+                          <span style={{ fontSize: "11px", color: "#64748b", marginLeft: "6px" }}>(comma-separated)</span>
                         )}
                       </label>
                       <input

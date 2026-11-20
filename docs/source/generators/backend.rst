@@ -59,6 +59,11 @@ This method will generate a modular project (rather than one large file) so each
    + ``sql_alchemy.py``: Includes SQL Alchemy database models.
    + ``pydantic_classes.py``: Consists of Pydantic validation models.
    + ``requirements.txt``: The dependencies of the generated application.
+   + ``api_contract.json``: Every route of the generated API as data: method, path, path and query parameters, the
+     ``<Class>Create`` body keys with their types and enumeration literals, what each route returns (including
+     its wrappers, such as ``{"task": ..., "tag_ids": [...]}`` from GET by id), the id type, pagination and the
+     two error shapes. The :doc:`react` generator renders its typed API client from the same data.
+   + ``API.md``: The same contract as a compact reference for people and coding agents.
 
 Running the application creates the SQLite database file under ``data/`` (unless ``DATABASE_URL`` points elsewhere).
 
@@ -245,6 +250,11 @@ How the model shapes these endpoints:
 * When an attribute and an **association end share a name**, the association
   end is generated and the attribute is left out (model validation warns about
   the clash).
+* A required **text attribute** (a ``str`` that is not optional) refuses an
+  empty or whitespace-only value with ``422``; the value is stored as sent.
+  An optional one accepts any value. A ``str`` attribute is stored as
+  long text: unbounded on PostgreSQL and SQLite, up to 64 KB on MySQL, 4000
+  characters on Oracle (see :doc:`alchemy`).
 * A ``DELETE`` that would leave another record without a link it requires is
   refused with ``409`` and a message naming that record, including when the
   record is required by a part that would be deleted with its whole.

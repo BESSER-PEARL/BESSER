@@ -45,7 +45,7 @@ def test_summary_names_target_and_verification_but_not_the_request():
     assert "quiero una app" not in text and "Request" not in text
     assert "Built as: `Windows 11 desktop todo app`" in text
     assert "none, written from scratch" in text
-    assert "1 checked and working, 1 not checked, 1 checked and missing" in text
+    assert "1 confirmed by running the app's API, 0 found in the code but not run, 1 not confirmed, 1 checked and not met" in text
     assert "edit and delete Tag records`: `tags can only be added`" in text
 
 

@@ -82,3 +82,67 @@ def test_a_failing_line_keeps_its_own_report(tmp_path):
     result = _run(_executor(tmp_path), "python seed.py; false", returncode=1, stderr=_ENOENT)
 
     assert result["success"] is False and "note" not in result
+
+
+_CD_FAILED = "bash: line 2: cd: app/frontend: No such file or directory\n"
+
+
+def test_a_failed_cd_off_the_root_names_the_shell_directory_and_the_root_relative_path(tmp_path):
+    executor = _executor(tmp_path)
+    os.makedirs(tmp_path / "app" / "backend")
+    os.makedirs(tmp_path / "app" / "frontend")
+    executor._shell.cwd = str(tmp_path / "app" / "backend")
+
+    result = _run(executor, "cd app/frontend && npm run build", returncode=1, stderr=_CD_FAILED)
+
+    hint = result["cd_hint"]
+    assert "app/backend" in hint and "../frontend" in hint and "working_dir" in hint
+    assert "\n" not in hint
+
+
+@pytest.mark.parametrize("cwd, made", [
+    (".", ["app/frontend"]),          # at the root the path really is missing
+    ("app/backend", []),              # missing from the root too: nothing to point at
+])
+def test_no_cd_hint_when_the_root_does_not_explain_the_failure(tmp_path, cwd, made):
+    executor = _executor(tmp_path)
+    os.makedirs(tmp_path / "app" / "backend")
+    for rel in made:
+        os.makedirs(tmp_path / rel, exist_ok=True)
+    executor._shell.cwd = str(tmp_path / cwd)
+
+    result = _run(executor, "cd app/frontend && npm run build", returncode=1, stderr=_CD_FAILED)
+
+    assert "cd_hint" not in result
+
+
+# Review of a48bbe563: the hint assumed the failing cd ran in the directory the
+# line started in, and pointed outside the workspace for a '..' path.
+
+@pytest.mark.parametrize("command, target", [
+    ("cd ../frontend && cd src/components", "src/components"),   # the line's first cd moved the shell
+    ("cd .. && cd app/frontend", "app/frontend"),
+])
+def test_no_cd_hint_when_an_earlier_cd_on_the_line_moved_the_shell(tmp_path, command, target):
+    executor = _executor(tmp_path)
+    for rel in ("app/backend", "app/frontend", "src/components"):
+        os.makedirs(tmp_path / rel, exist_ok=True)
+    executor._shell.cwd = str(tmp_path / "app" / "backend")
+
+    result = _run(executor, command, returncode=1,
+                  stderr=f"bash: line 1: cd: {target}: No such file or directory\n")
+
+    assert "cd_hint" not in result
+
+
+def test_no_cd_hint_for_a_path_that_leaves_the_workspace(tmp_path):
+    workspace = tmp_path / "ws"
+    os.makedirs(workspace / "app" / "backend")
+    os.makedirs(tmp_path / "other")
+    executor = _executor(workspace)
+    executor._shell.cwd = str(workspace / "app" / "backend")
+
+    result = _run(executor, "cd ../other", returncode=1,
+                  stderr="bash: line 1: cd: ../other: No such file or directory\n")
+
+    assert "cd_hint" not in result

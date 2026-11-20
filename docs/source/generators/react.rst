@@ -16,6 +16,41 @@ The React Generator creates:
 - **Components**: Reusable UI components (tables, forms, charts)
 - **Contexts**: React contexts for state management
 - **Routing**: Application navigation setup
+- **API client**: a typed client of the generated backend (``src/api/generated/``)
+
+Typed API client
+----------------
+
+``src/api/generated/types.ts`` and ``src/api/generated/client.ts`` are rendered from the
+same route list the :doc:`backend` writes as ``api_contract.json``, so the client calls
+exactly the routes the backend serves. Per class, an object such as ``taskApi`` has one
+function per route: ``list``, ``listDetailed`` (``?detailed=true``), ``count``, ``page``
+(``skip``/``limit``), ``search``, ``get``, ``create``, ``bulkCreate``, ``update``,
+``delete``, ``bulkDelete``, ``relations.<end>.list``/``add``/``remove`` (and ``links``
+for an association class) and ``methods.<name>``. ``apiSystem`` covers ``/``,
+``/health`` and ``/statistics``. The names ``client.ts`` fixes (``API_BASE_URL``,
+``ApiError``, ``apiRequest``, ``apiUrl``, ``apiSystem``, ``ApiPage``, ...) start with
+``api`` and never end in ``Api``, so no class's object can take one; a type ``types.ts``
+derives that is already a class or enumeration of the model gets a number
+(``TaskCreate2`` when the model has a class ``TaskCreate``).
+
+The client hides the backend's response wrappers: ``get``, ``create`` and ``update``
+return the record, a relation reader returns an array, and a method takes its arguments
+flat and adds the ``{"params": ...}`` body itself. ``types.ts`` states the keys a body
+writes (``TaskCreate``: the association end, such as ``project``) apart from the keys a
+record reads (``Task``: the foreign key column, such as ``project_id``), with
+enumerations as literal unions, so ``tsc`` rejects a call that guesses a key or a shape.
+Every failure is thrown as one ``ApiError`` (``status``, ``message``, ``fields``, and the
+response ``body``) for every error body the backend sends; ``status`` is ``0`` when the
+backend was not reached. Requests go through axios, so the app's ``axios.defaults`` and
+interceptors (an ``Authorization`` header, for instance) apply to every call.
+
+``API_BASE_URL`` in ``client.ts`` is the one place the backend's address is read
+(``VITE_API_URL``, default ``http://localhost:8000``; a relative one such as ``/api``
+behind a same-origin proxy works too); the runtime blocks and ``MethodButton`` use it,
+and the runtime blocks' requests go through the client's ``apiRequest``, which joins it
+to the path it is given (pass a path, not a URL already joined to the base). The client assumes the backend generated with every HTTP method, as the
+:doc:`full_web_app` generator does.
 
 Generated Components
 --------------------
@@ -25,9 +60,14 @@ TableComponent
 
 Dynamic data tables with:
 
-- Sorting and filtering
+- Sorting and filtering; an enumeration column is filtered by choosing one of
+  its literals
+- Enumeration literals offered in the model's order (columns, Add/Edit dialog,
+  association class fields, method parameters)
 - Pagination
-- Add/Edit modals with form validation
+- Add/Edit modals with form validation; an empty field of an ``is_optional``
+  attribute (``"nullable": true`` in ``formColumns``) is saved as ``null``, not
+  ``""`` or ``0``
 - A confirmation prompt before a row's delete icon removes the record
 - Backend validation error display (keeps modal open on error)
 - Support for all relationship types (1:1, 1:N, N:M)
@@ -44,7 +84,8 @@ MethodButton
 
 Executes class and instance methods with:
 
-- Parameter input modal for methods with parameters
+- Parameter input modal for methods with parameters, each labelled by its
+  name made readable (``min_pages`` shows as "Min pages"), as in the table dialog
 - Automatic type handling (int, float, bool, string, date, time)
 - Detailed error display for 500 errors; a method modeled without an
   implementation (the backend answers 501) shows "This action is not
@@ -68,7 +109,8 @@ The table is the button's ``instance_source`` or, failing that, the table
 bound to the button's ``entity_class`` on the same screen. A create button
 with no such table on its screen navigates to the first screen that has one
 and opens its dialog there. Update and delete report "Select a row in the
-table first" when nothing is selected. A CRUD button with no bound table is
+table first" when nothing is selected; the confirmation prompt comes only once
+the action can run. A CRUD button with no bound table is
 rendered as a plain button.
 
 FormBlock
@@ -101,6 +143,14 @@ is opened through the router, so the app is not reloaded; any other URL, and a
 link with ``target="_blank"``, stays a plain anchor. When the GUI comes from the
 web editor, a link names its page by a ``data-navigate-to`` attribute or by a
 site-relative ``href`` matching the page's route, name or id.
+
+A ``<nav>`` bar's fixed ``height`` is generated as its ``min-height``, except for a
+bar that scrolls inside its height (an ``overflow`` other than ``visible``), one
+positioned ``fixed`` or ``absolute``, and one of height 0. On a screen
+640 px wide or narrower, the bar and its direct children wrap their items onto
+more lines (``src/index.css``), so its links stay on the screen and the bar grows
+to fit them. The rule is in the ``base`` layer: any rule of the design, such as
+a tab strip that scrolls sideways on a phone, takes precedence.
 
 A page's route is the route set on the page in the web editor when it is URL-safe
 (letters of any script, digits, ``_``, ``-`` and ``/``). Otherwise it is ``/`` and the page name
@@ -140,6 +190,8 @@ Visualization components including:
 - Bar charts
 - Pie charts
 - Data binding to backend entities
+- A series appears in the legend and tooltip under its ``label``; its ``name``
+  is the key of its values in the chart data
 - Aggregation: a series with an ``aggregation`` groups the records by its
   label field and shows one value per group (``count``, ``sum``, ``avg``,
   ``min``, ``max``, ``median``, ``first``, ``last``); a bound series without a
@@ -151,7 +203,9 @@ Visualization components including:
 
 Metric cards (``MetricCardBlock``) show their binding's ``aggregation`` over all
 records; without one, the sum of the bound field, or the number of records when
-no field is bound. A card whose binding has an ``endpoint`` fetches it instead
+no field is bound. No trend is computed: ``show_trend``, ``positive_color`` and
+``negative_color`` are carried in the page's metric data but draw nothing, and
+``MetricCardComponent`` takes no trend properties. A card whose binding has an ``endpoint`` fetches it instead
 of the CRUD list, and applies the binding's filter to the rows it returns. The response contract (an array of rows, or an object holding
 one under ``data``, ``results``, ``items``, ``records`` or ``list``) is described
 with ``DataBinding`` in :doc:`../buml_language/model_types/gui`. Tables, maps and
@@ -234,6 +288,10 @@ Generated Structure
 
    frontend/
    ├── src/
+   │   ├── api/
+   │   │   └── generated/
+   │   │       ├── client.ts
+   │   │       └── types.ts
    │   ├── components/
    │   │   ├── table/
    │   │   │   └── TableComponent.tsx
@@ -248,6 +306,7 @@ Generated Structure
    │   │   │   ├── LookupSelect.tsx
    │   │   │   ├── lookup.ts
    │   │   │   ├── dataVersion.ts
+   │   │   │   ├── humanize.ts
    │   │   │   └── MapBlock.tsx
    │   │   ├── InputComponents.tsx
    │   │   └── MethodButton.tsx

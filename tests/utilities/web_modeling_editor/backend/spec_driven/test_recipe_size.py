@@ -117,12 +117,14 @@ def test_a_busy_run_keeps_its_record_and_reports_what_its_checks_found(tmp_path)
     # The report is what Phase 3 found, not "nothing could be read".
     verification = done.verification
     assert verification.counts.verified == WORKFLOWS - 1
-    # The failed workflow is a test the agent wrote, not a rule the user stated: not checked, not missing.
-    assert verification.counts.shippedUnenforced == 0
+    # The failed workflow is a test the agent wrote, not a rule the user stated, and it ran:
+    # listed as ran and failed, never as missing or as "could not check".
+    assert verification.counts.shippedUnenforced == 0 and verification.counts.failed == 1
     assert not any("could not be read" in (item.why or "") for item in verification.notVerified)
-    assert verification.counts.notVerified == 3
+    assert verification.counts.notVerified == 2
     assert recipe["verification"] == verification.model_dump(mode="json")
-    assert "3 checked and working, 3 not checked, 0 checked and missing in the code" in _summary(entry)
+    assert ("3 confirmed by running the app's API, 0 found in the code but not run, 2 not confirmed, "
+            "0 checked and not met, 1 test workflow(s) ran and failed") in _summary(entry)
 
 
 def test_a_record_too_large_for_the_writer_budget_alone_still_stays_under_the_reader_limit(tmp_path):
@@ -176,6 +178,32 @@ def test_the_report_comes_from_the_run_even_when_its_record_file_was_replaced(tm
     done, _entry = _runner(result, orchestrator)._package_result(str(result))
 
     assert done.verification.counts.verified == WORKFLOWS - 1
-    assert done.verification.counts.notVerified == 3
+    assert done.verification.counts.notVerified == 2
     recipe = json.loads((result / ".besser_recipe.json").read_bytes())
     assert recipe["tool_calls_count"] == TOOL_CALLS and "padding" not in recipe
+
+
+def test_cutting_the_calls_keeps_the_last_successful_change_of_each_file():
+    from besser.spec_driven_agent.state.recipe_size import _cut_tool_calls
+
+    recipe = {"tool_calls": [
+        {"tool": "modify_file", "input": {"path": "a.py"}, "success": True},
+        {"tool": "modify_file", "input": {"path": "a.py"}, "success": True},
+        {"tool": "modify_file", "input": {"path": "a.py"}, "success": False},
+    ]}
+    _cut_tool_calls(recipe)
+
+    assert [call["success"] for call in recipe["tool_calls"]] == [True, False]
+
+
+def test_cutting_the_calls_treats_a_rolled_back_change_as_unsuccessful():
+    from besser.spec_driven_agent.state.recipe_size import _cut_tool_calls
+
+    recipe = {"tool_calls": [
+        {"tool": "modify_file", "input": {"path": "a.py"}, "success": True},
+        {"tool": "modify_file", "input": {"path": "a.py"}, "success": True, "rolled_back": True},
+        {"tool": "modify_file", "input": {"path": "a.py"}, "success": True, "rolled_back": True},
+    ]}
+    _cut_tool_calls(recipe)
+
+    assert [call.get("rolled_back") for call in recipe["tool_calls"]] == [None, True]

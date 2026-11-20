@@ -83,6 +83,22 @@ class PhaseUpdateEvent(BaseSseEvent):
     message: Optional[str] = None
 
 
+class StepEvent(BaseSseEvent):
+    """What the current phase is doing now, while one of its steps runs.
+
+    Emitted during ``validate``: each check round, requirement judge call and
+    fix attempt, where one step can take minutes. A step lasts until the next
+    step, phase or terminal event. ``elapsedSeconds`` is the run's elapsed
+    time when the step started, measured like the ``cost`` event, so a client
+    can show how long the step has been running from the ``cost`` ticks.
+    """
+
+    event: Literal["step"] = "step"
+    phase: PhaseName
+    message: str
+    elapsedSeconds: Optional[float] = None
+
+
 class TextDeltaEvent(BaseSseEvent):
     """A streaming text delta from the underlying LLM response.
 
@@ -174,8 +190,9 @@ VerificationKind = Literal["requirement", "ocl_constraint", "api_workflow", "che
 class VerificationItem(BaseModel):
     """One thing the run checked, could not check, or found missing.
 
-    ``how`` is set on a verified item (what was actually run); ``why`` on the
-    other two (why nothing reached it, or what the delivered code is missing).
+    ``how`` is set on a verified item (what was actually run) and on a
+    found-in-code item (the cited source); ``why`` on the other two (why
+    nothing reached it, or what the delivered code is missing).
     Rendered in full by the client, so a value cut server-side ends in a
     visible truncation mark rather than mid-word.
     """
@@ -199,24 +216,34 @@ class VerificationCounts(BaseModel):
     """
 
     verified: int = 0
+    foundInCode: int = 0
     notVerified: int = 0
     shippedUnenforced: int = 0
+    failed: int = 0
 
 
 class VerificationReport(BaseModel):
-    """The three states a blocker count collapses into one number.
+    """The four states a blocker count collapses into one number.
 
     An app scored 11/11 with a passing booking workflow still double-sold
     rooms: two OCL constraints failed conversion and never reached the code.
     The run knew — it listed both and reported 21 blockers — but the number
-    hid which. ``verified`` is "we checked and it works", ``notVerified`` is
-    "we could not check", ``shippedUnenforced`` is "we checked and it is
-    missing". ``counts`` holds the true totals; the lists are capped.
+    hid which. ``verified`` is "we ran it against the app and it works",
+    ``foundInCode`` is "its source is cited, but nothing ran it",
+    ``notVerified`` is "we could not check" (a finding not confirmed, a check
+    that did not run), ``shippedUnenforced`` is "we checked and it is not met"
+    (a rule missing in the code, a cited implementation that does not do it),
+    ``failed`` is "we ran it and it failed" (a test workflow the agent wrote;
+    the test or the app may be wrong, so it is not a rule shipped unenforced).
+    A finding counted as a blocker is never in ``notVerified``. ``counts``
+    holds the true totals; the lists are capped. ``failed`` is additive.
     """
 
     verified: list[VerificationItem] = Field(default_factory=list)
+    foundInCode: list[VerificationItem] = Field(default_factory=list)
     notVerified: list[VerificationItem] = Field(default_factory=list)
     shippedUnenforced: list[VerificationItem] = Field(default_factory=list)
+    failed: list[VerificationItem] = Field(default_factory=list)
     counts: VerificationCounts = Field(default_factory=VerificationCounts)
 
 
@@ -256,12 +283,38 @@ class DoneEvent(BaseSseEvent):
     # True when the run ended because a cancel request was honoured after it
     # had written files: the output is what it had made by then.
     cancelled: bool = False
-    # Number of unresolved blocker-severity validation issues left by a run
-    # whose customization loop COMPLETED. Lets the client distinguish
-    # "finished, but with issues that may stop the app from running" from a
-    # run that was genuinely cut short (which reports 0 here) — the two need
-    # different user-facing framing. 0 when there is nothing to distinguish.
+    # 0 on a run that was cut short (the loop did not finish, or a cancel stopped
+    # Phase 3), so clients use their cut-short copy. Otherwise, with
+    # ``incomplete`` true: the unresolved blockers. With ``incomplete`` false:
+    # the legacy "could not be verified" count released editors show, the
+    # blockers (requirements found missing or unsupported, failed workflows,
+    # which never set ``incomplete``) plus ``notConfirmedCount`` plus the notes
+    # of checks the server has switched off (counted there before), and at
+    # least one per class of checks that never ran when ``unverified``. New
+    # clients read ``unresolvedBlockerCount`` and ``notConfirmedCount``.
     blockerCount: int = 0
+    # Findings that are not confirmed: a check that reached no conclusion (a
+    # citation not located, a guessed create refused, a check that did not run,
+    # a dependency install left undone). Never blockers. A check the server has
+    # switched off (``checksOff``) is not counted here. Additive.
+    notConfirmedCount: int = 0
+    # The real unresolved blockers, on every run (also one cut short): what
+    # ``blockerCount`` cannot say on a finished run, where it is padded for
+    # released editors. Additive.
+    unresolvedBlockerCount: int = 0
+    # True when the run is not incomplete but a whole class of checks left no
+    # evidence on the delivered app: it was not checked against the request, it
+    # was never started, no record could be created through its API, or its
+    # frontend was never built. ``unverifiedReason`` is the sentence to show
+    # ("The app was generated, but ..."; "The app was updated, but ..." on a
+    # modify run). False whenever ``incomplete`` is true. Additive.
+    unverified: bool = False
+    unverifiedReason: Optional[str] = None
+    # The classes of checks (``requirements``, ``runtime``, ``build``) this server has
+    # switched off: the requirements check, the startup check, the build check or shell
+    # tools. A property of the server, the same on every run there, so it never sets
+    # ``unverified``; the editor may say it once. Additive.
+    checksOff: list[str] = Field(default_factory=list)
     # What the run verified, could not verify, and shipped unenforced. This is
     # the field to render: blockerCount is one number over all three states.
     # Additive — existing clients that ignore it are unaffected.

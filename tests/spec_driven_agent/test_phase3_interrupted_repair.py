@@ -153,8 +153,8 @@ def test_the_discard_keeps_the_rewrites_entry_validation_made(orchestrator, tmp_
 
 def test_a_failed_best_tree_snapshot_keeps_the_findings_of_the_tree_it_holds(orchestrator, tmp_path):
     """Attempt 1 reaches a better tree but its snapshot copy fails (disk full).
-    The rollback target is still the entry tree, so discarding attempt 2 must
-    report the entry tree's findings, not attempt 1's."""
+    The rollback target would still be the entry tree, so no attempt 2 runs:
+    attempt 1's validated tree ships with its own findings."""
     app = tmp_path / "app.py"
     app.write_text("v = 0\n", encoding="utf-8")
     state = {"attempts": 0}
@@ -181,9 +181,11 @@ def test_a_failed_best_tree_snapshot_keeps_the_findings_of_the_tree_it_holds(orc
             patch.object(orchestrator, "_invoke_phase3_fix_loop", side_effect=fix):
         orchestrator._run_phase3_validation()
 
-    assert app.read_text(encoding="utf-8") == "v = 0\n"
+    assert state["attempts"] == 1
+    assert orchestrator._phase3_exit_reason == "attempt 1 kept, but its tree could not be snapshotted"
+    assert app.read_text(encoding="utf-8") == "v = 1\n"
     blockers = [i.message for i in orchestrator._validation_issues if i.severity == "blocker"]
-    assert sorted(blockers) == sorted(i.message for i in _blockers(39))
+    assert sorted(blockers) == sorted(i.message for i in _blockers(20))
 
 
 def test_an_attempt_that_raises_is_discarded_and_the_error_still_propagates(orchestrator):

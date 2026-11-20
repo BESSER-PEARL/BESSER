@@ -21,6 +21,7 @@ import time
 from besser.spec_driven_agent.agent.prompt_builder import build_inventory
 from besser.spec_driven_agent.agent.tool_executor import ends_shell_session
 from besser.spec_driven_agent.errors import EmptyInstructionsError
+from besser.spec_driven_agent.execution.deadline import under_deadline
 from besser.spec_driven_agent.pipeline.regeneration import MAX_REASON_CHARS, regenerate
 from besser.spec_driven_agent.planning.model_change import (
     FULL_MODEL,
@@ -31,7 +32,13 @@ from besser.spec_driven_agent.planning.model_rules import (
     is_dropped_by_model_change,
     mark_rules_broken_by_model_change,
 )
-from besser.spec_driven_agent.planning.requirements_ledger import latest_user_message, original_request
+from besser.spec_driven_agent.planning.requirements_ledger import (
+    latest_user_message,
+    ledger_issues,
+    original_request,
+    previous_run_verdicts,
+    source_hashes,
+)
 from besser.spec_driven_agent.planning.user_request import user_request
 from besser.spec_driven_agent.planning.specification import validate_specification
 from besser.spec_driven_agent.planning.target import (
@@ -61,7 +68,13 @@ from besser.spec_driven_agent.state.tracing import (
     EVENT_SNAPSHOT,
     EVENT_VALIDATION_ISSUE,
 )
-from besser.spec_driven_agent.validation.issues import ValidationIssue, _check_did_not_run, unresolved_defects
+from besser.spec_driven_agent.validation.issues import (
+    ValidationIssue,
+    _check_did_not_run,
+    is_completion_issue,
+    is_not_confirmed,
+    unresolved_defects,
+)
 from besser.spec_driven_agent.validation.model_conformance import model_conformance_issues
 from besser.spec_driven_agent.validation.user_wording import user_sentence
 from besser.utilities.workspace_fs import open_plain
@@ -69,10 +82,28 @@ from besser.utilities.workspace_fs import open_plain
 logger = logging.getLogger(__name__)
 
 
+# Never promoted to the reported failure on a fix run, and never held against it by the
+# gate. A user's report can corroborate an OBSERVATION of the running app (a guessed create
+# or action the app refused: ``create``/``action``/``runtime unverified:``), never "no
+# conclusion about the code" (a citation not located), "the check did not run", or a
+# checklist item nothing closed. The first entry is ``_FIX_TARGET_PREFIX``. Leaving the
+# screen check out is a policy choice: its findings stay warnings until calibrated.
+_NEVER_PROMOTED = (
+    "reported-failure: ",
+    "requirement unverified:",
+    "validation unverified:",
+    "task unverified:",
+    "screen:",
+    "screen warning:",
+    "screens: not run",
+)
+
+
 class ModifyRunMixin:
     """modify and friends; see the module docstring."""
 
     @ends_shell_session
+    @under_deadline
     def modify(self, instructions: str) -> str:
         """Edit a seeded workspace in place instead of rebuilding it.
 
@@ -104,6 +135,9 @@ class ModifyRunMixin:
         self._instructions = instructions
 
         self._start_time = time.monotonic()
+        # The previous version, before this run's model sync and regeneration change it.
+        self._seed_source_hashes = source_hashes(self.output_dir)
+        self._previous_verdicts = self._load_previous_verdicts()
         # Before the model-sync below adds classes: a resume re-checks it
         # against the model in the request.
         self._project_fingerprint = self._compute_project_fingerprint(instructions)
@@ -239,12 +273,12 @@ class ModifyRunMixin:
             self._save_phase3_checkpoint()
         self._trace.write(EVENT_PHASE_ENTER, phase="phase3")
         self._run_phase3_validation()
+        self._settle_open_setup()
         self._trace.write(
             EVENT_PHASE_EXIT,
             phase="phase3",
-            unresolved_blockers=sum(
-                1 for i in self._validation_issues if i.severity == "blocker"
-            ),
+            unresolved_blockers=sum(1 for i in self._validation_issues if is_completion_issue(i)),
+            not_confirmed=sum(1 for i in self._validation_issues if is_not_confirmed(i)),
             exit_reason=self._phase3_exit_reason,
         )
 
@@ -360,6 +394,10 @@ class ModifyRunMixin:
             self._trace.write(EVENT_REGENERATION, generator=generator, skipped=reason)
             return
         self._regeneration = regeneration
+        # A moved file counts once, under its new path.
+        self._regenerated_files = sorted({
+            *regeneration.written, *regeneration.merged, *regeneration.removed,
+            *(new for _, new in regeneration.moved)})
         moved_from = [old for old, _ in regeneration.moved]
         self.executor.update_generator_files(
             regeneration.written + [new for _, new in regeneration.moved], regeneration.removed + moved_from)
@@ -413,6 +451,23 @@ class ModifyRunMixin:
         if notes:
             lines.append(notes)
         return "\n".join(lines)
+
+    def _load_previous_verdicts(self) -> list[dict] | None:
+        """The seed recipe's requirement verdicts on the seeded tree (see
+        ``previous_run_verdicts``), and its request; None without a ledger or a recorded one.
+        Best-effort: the recipe can come from a repository anyone edited."""
+        recipe = load_recipe(self.output_dir)
+        recorded = recipe.get("requirements") if isinstance(recipe, dict) else None
+        if not self.enable_requirements_ledger or not isinstance(recorded, list) or not recorded:
+            return None
+        try:
+            verdicts = previous_run_verdicts(recorded, self.output_dir)
+        except Exception:
+            logger.warning("Seed recipe requirements unreadable; judging the whole request", exc_info=True)
+            return None
+        instructions = recipe.get("instructions")
+        self._previous_instructions = instructions if isinstance(instructions, str) else None
+        return verdicts or None
 
     def _seed_generator_files_from_recipe(self) -> None:
         """Pre-load generator-file tags from a seeded run's recipe.
@@ -597,6 +652,13 @@ class ModifyRunMixin:
             "model_sync_classes": self._model_sync_classes,
             "updated_project_export": self._updated_project_export,
             "model_sync_error": self._model_sync_error,
+            "seed_source_hashes": self._seed_source_hashes,
+            "regenerated_files": self._regenerated_files,
+            "previous_verdicts": self._previous_verdicts,
+            "previous_instructions": self._previous_instructions,
+            "previous_ids": sorted(self._previous_ids),
+            "follow_up_continues": self._follow_up_continues,
+            "replaced_ids": sorted(self._replaced_ids),
         }
 
     def _restore_modify_state(self, state: dict) -> None:
@@ -628,6 +690,17 @@ class ModifyRunMixin:
         export = state.get("updated_project_export")
         self._updated_project_export = export if isinstance(export, dict) else None
         self._model_sync_error = state.get("model_sync_error")
+        hashes = state.get("seed_source_hashes")
+        self._seed_source_hashes = hashes if isinstance(hashes, dict) else None
+        self._regenerated_files = [
+            p for p in state.get("regenerated_files") or [] if isinstance(p, str)]
+        verdicts = state.get("previous_verdicts")
+        self._previous_verdicts = verdicts if isinstance(verdicts, list) and verdicts else None
+        previous = state.get("previous_instructions")
+        self._previous_instructions = previous if isinstance(previous, str) else None
+        self._previous_ids = {rid for rid in state.get("previous_ids") or [] if type(rid) is int}
+        self._follow_up_continues = state.get("follow_up_continues") is True
+        self._replaced_ids = {rid for rid in state.get("replaced_ids") or [] if type(rid) is int}
 
     def _acceptance_seed_issues(self) -> list[str]:
         """Acceptance-matrix findings on the current (seed) workspace."""
@@ -636,7 +709,8 @@ class ModifyRunMixin:
                 build_acceptance_matrix,
                 matrix_issues,
             )
-            matrix = build_acceptance_matrix(self.output_dir, self.domain_model)
+            matrix = build_acceptance_matrix(self.output_dir, self.domain_model,
+                                             gui_model=self.gui_model)
             return matrix_issues(matrix)
         except Exception:
             logger.debug("Seed acceptance computation failed", exc_info=True)
@@ -686,11 +760,14 @@ class ModifyRunMixin:
             return issues
         from besser.spec_driven_agent.planning.fix_target import finding_matches_target
 
+        earlier = self._earlier_requirement_findings()
         promoted: list[ValidationIssue] = []
         for issue in issues:
+            # A refusal the probe observed is corroborated when it matches what the user reported.
             if (
                 issue.severity != "blocker"
-                and not issue.message.startswith(self._FIX_TARGET_PREFIX)
+                and issue.message not in earlier
+                and not issue.message.startswith(_NEVER_PROMOTED)
                 and finding_matches_target(issue.message, self._fix_target)
             ):
                 promoted.append(ValidationIssue(
@@ -701,6 +778,12 @@ class ModifyRunMixin:
             else:
                 promoted.append(issue)
         return promoted
+
+    def _earlier_requirement_findings(self) -> frozenset[str]:
+        """The ledger's findings on requirements of earlier runs: they judge those requests and
+        name their entities, so they say nothing about the failure reported now."""
+        return frozenset(message for verdict in self._requirement_verdicts if verdict["id"] in self._previous_ids
+                         for message in ledger_issues([verdict]))
 
     def _evaluate_fix_target_gate(self) -> None:
         """Decide whether the reported failure is plausibly addressed.
@@ -725,9 +808,12 @@ class ModifyRunMixin:
             return
         from besser.spec_driven_agent.planning.fix_target import finding_matches_target
 
+        earlier = self._earlier_requirement_findings()
+        # A not-confirmed observation that matches the report is the failure persisting too.
         unresolved = [
             i for i in self._validation_issues
-            if i.severity == "blocker"
+            if (is_completion_issue(i) or (is_not_confirmed(i) and not i.message.startswith(_NEVER_PROMOTED)))
+            and i.message not in earlier
             and (
                 i.message.startswith(self._FIX_TARGET_PREFIX)
                 or finding_matches_target(i.message, self._fix_target)

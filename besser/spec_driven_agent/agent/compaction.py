@@ -107,6 +107,8 @@ _MIN_WORKABLE_THRESHOLD = 16_500
 # and never allowed to fail a run: this runs inside the generation loop, so a
 # dead endpoint costs one short timeout and then the fall-through.
 _CATALOG_TIMEOUT_S = 3.0
+# Cloudflare refuses Python's default urllib agent (403, error 1010).
+_CATALOG_USER_AGENT = "BESSER (+https://github.com/BESSER-PEARL/BESSER)"
 _CATALOG: dict[str, int] | None = None
 _CATALOG_LOADED = False
 
@@ -160,7 +162,8 @@ MAX_COMPACT_THRESHOLD = AgentSettings().llm_max_compact_threshold
 
 def _fetch_models(base_url: str, token: str) -> dict[str, int]:
     """``{model id: context_length}`` from one endpoint's GET /models."""
-    request = urllib.request.Request(base_url.rstrip("/") + "/models")
+    request = urllib.request.Request(base_url.rstrip("/") + "/models",
+                                     headers={"User-Agent": _CATALOG_USER_AGENT})
     if token:
         request.add_header("Authorization", f"Bearer {token}")
     with urllib.request.urlopen(request, timeout=_CATALOG_TIMEOUT_S) as response:

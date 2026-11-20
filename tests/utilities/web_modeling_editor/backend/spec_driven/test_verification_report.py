@@ -15,6 +15,8 @@ import json
 import os
 from types import SimpleNamespace
 
+import pytest
+
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 from besser.spec_driven_agent.validation.issues import (
     _check_did_not_run,
@@ -121,7 +123,9 @@ def test_tests_the_agent_wrote_are_not_reported_as_rules_the_user_asked_for():
     })
 
     assert report.shippedUnenforced == [] and report.counts.shippedUnenforced == 0
-    failed = next(i for i in report.notVerified if i.id == "test_decrease_stock")
+    # It ran and failed: listed as such, never as "could not check" (it is an ``api scenario:`` blocker).
+    failed = next(i for i in report.failed if i.id == "test_decrease_stock")
+    assert all(i.id != "test_decrease_stock" for i in report.notVerified)
     assert "a test the agent wrote" in failed.why and "not a rule from your request" in failed.why
     retired = next(i for i in report.notVerified if i.id == "test_decrease_stock_proper")
     assert retired.what == "Test workflow 'test_decrease_stock_proper'"
@@ -178,7 +182,7 @@ def test_checked_and_missing_is_separated_from_could_not_check():
     assert len({i.id for i in identified}) == len(identified), \
         "an identified item may appear in exactly one list"
     assert report.counts.model_dump() == {
-        "verified": 2, "notVerified": 2, "shippedUnenforced": 3,
+        "verified": 2, "foundInCode": 0, "notVerified": 2, "shippedUnenforced": 3, "failed": 0,
     }
 
 
@@ -194,6 +198,20 @@ def test_a_recovered_ocl_constraint_moves_out_of_shipped_unenforced():
     assert "noOverlappingBookings" in _ids(report.verified)
     assert "noOverlappingBookings" not in _ids(report.shippedUnenforced)
     assert "guestsWithinCapacity" in _ids(report.shippedUnenforced)
+
+
+@pytest.mark.parametrize("level_fields, found_in_code", [
+    ({"verification": "unverified"}, True), ({"verification": None}, True),
+    ({"verification": "api_verified"}, False), ({}, False)])
+def test_a_recovered_ocl_constraint_is_placed_by_its_verification_level(level_fields, found_in_code):
+    recipe = _hotel_recipe()
+    recipe["requirements"][3] = _recovery_requirement(
+        _NO_DOUBLE_BOOKING, 4, status="implemented",
+        evidence="backend/routers/booking.py:        raise HTTPException(409, 'room already booked')", **level_fields)
+    report = build_verification_report(recipe)
+
+    assert ("noOverlappingBookings" in _ids(report.foundInCode)) is found_in_code
+    assert ("noOverlappingBookings" in _ids(report.verified)) is not found_in_code
 
 
 def test_structured_citations_read_as_path_and_line_like_the_older_string():

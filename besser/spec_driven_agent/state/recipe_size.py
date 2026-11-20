@@ -69,7 +69,8 @@ def _cut_api_bodies(recipe: dict) -> int:
 
 
 def _cut_tool_calls(recipe: dict) -> int:
-    """All but the last call of each file-changing tool on each file; ``.besser_trace.jsonl`` has every call."""
+    """All but the last call, and the last successful one, of each file-changing tool on each file;
+    ``.besser_trace.jsonl`` has every call."""
     calls = recipe.get("tool_calls")
     if not isinstance(calls, list):
         return 0
@@ -77,7 +78,10 @@ def _cut_tool_calls(recipe: dict) -> int:
     for index, call in enumerate(calls):
         if isinstance(call, dict) and call.get("tool") in _FILE_CHANGE_TOOLS:
             given = call.get("input") if isinstance(call.get("input"), dict) else {}
-            last[(call["tool"], str(given.get("path")))] = index
+            key = (call["tool"], str(given.get("path")))
+            last[key] = index
+            if call.get("success") is not False and not call.get("rolled_back"):
+                last[(*key, "succeeded")] = index
     kept = set(last.values())
     recipe["tool_calls"] = [call for index, call in enumerate(calls) if index in kept]
     return len(calls) - len(kept)
@@ -118,21 +122,28 @@ def _dump(recipe: dict) -> str:
     return json.dumps(recipe, indent=2, default=str)
 
 
-def bounded_recipe(recipe: dict) -> tuple[dict, str]:
+def bounded_recipe(recipe: dict, full_record: str = "") -> tuple[dict, str]:
     """``recipe`` as plain JSON data and its text, cut to ``RECIPE_WRITE_BUDGET`` when over it.
 
     A recipe within the budget is written exactly as before. Over it, the cuts
     in ``_CUTS`` apply in order until it fits, and ``SHORTENED_KEY`` records
-    each count; true totals (``tool_calls_count``) are not touched.
+    each count and a ``note`` saying how many tool calls are kept, then
+    ``full_record`` (where the rest is); true totals (``tool_calls_count``) are
+    not touched.
     """
     text = _dump(recipe)
     size = len(text.encode("utf-8"))
     if size <= RECIPE_WRITE_BUDGET:
         return json.loads(text), text
     data = json.loads(text)  # a copy: the cuts never touch the caller's objects
+    calls = len(data["tool_calls"]) if isinstance(data.get("tool_calls"), list) else 0
     shortened = {"bytes_before": size, "budget_bytes": RECIPE_WRITE_BUDGET, **{name: 0 for name, _ in _CUTS}}
     for name, cut in _CUTS:
         shortened[name] = cut(data)
+        kept = len(data["tool_calls"]) if isinstance(data.get("tool_calls"), list) else 0
+        shortened["note"] = (f"Shortened to fit {RECIPE_WRITE_BUDGET} bytes, with "
+                             f"{shortened['tool_call_inputs_cut']} tool call inputs cut: kept {kept} of {calls} "
+                             "tool calls" + (f"; {full_record}" if full_record else ""))
         text = _dump({**data, SHORTENED_KEY: shortened})
         if len(text.encode("utf-8")) <= RECIPE_WRITE_BUDGET:
             break

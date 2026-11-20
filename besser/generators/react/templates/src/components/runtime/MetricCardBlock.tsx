@@ -1,8 +1,8 @@
 import React, { CSSProperties, useEffect, useState } from "react";
-import axios from "axios";
+import { apiRequest } from "../../api/generated/client";
 import { MetricCardComponent } from "../charts/MetricCardComponent";
 import { aggregate, normalizeAggregation } from "./aggregate";
-import { applyFilter, backendUrl, extractRows, parseFilterExpression } from "./bindingData";
+import { applyFilter, extractRows, parseFilterExpression } from "./bindingData";
 import { useDataVersion } from "./dataVersion";
 
 export interface MetricCardBlockProps {
@@ -36,10 +36,9 @@ export const MetricCardBlock: React.FC<MetricCardBlockProps> = ({
     // The filter applies to the rows the endpoint returns, as on a chart.
     const parsedFilter = parseFilterExpression(dataBinding?.filter_expression || dataBinding?.filter);
 
-    axios
-      .get(backendUrl(endpoint))
-      .then((res) => {
-        const data = applyFilter(extractRows(res.data), parsedFilter);
+    apiRequest<unknown>("GET", endpoint)
+      .then((body) => {
+        const data = applyFilter(extractRows(body), parsedFilter);
         setValue(metricValue(data, dataBinding?.data_field, dataBinding?.aggregation));
       })
       .catch(() => {
@@ -62,11 +61,7 @@ export const MetricCardBlock: React.FC<MetricCardBlockProps> = ({
       format={metric?.format}
       value-color={metric?.valueColor}
       value-size={metric?.valueSize}
-      show-trend={metric?.showTrend}
-      positive-color={metric?.positiveColor}
-      negative-color={metric?.negativeColor}
       value={value}
-      trend={metric?.trend ?? 0}
       data_binding={dataBinding}
       styles={styles}
       className={className}

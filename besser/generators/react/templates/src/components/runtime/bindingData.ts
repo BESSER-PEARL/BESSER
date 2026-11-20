@@ -1,5 +1,6 @@
 // The data side of the runtime blocks: nested field values, filter expressions,
 // the rows of a response and the URL of an endpoint.
+import { API_BASE_URL, apiUrl } from "../../api/generated/client";
 
 export const isNestedField = (field?: string): boolean => !!field && field.includes(".");
 
@@ -333,14 +334,10 @@ export const extractRows = (payload: any): any[] => {
 };
 
 /** The backend's base URL (VITE_API_URL, without a trailing slash). */
-export const backendBase = (): string =>
-  String(import.meta.env.VITE_API_URL || "http://localhost:8000").replace(/\/+$/, "");
+export const backendBase = (): string => API_BASE_URL;
 
 /** An endpoint as a URL: a path is joined to the backend's base, an http(s) URL is kept. */
-export const backendUrl = (endpoint: string): string => {
-  if (/^https?:\/\//i.test(endpoint)) return endpoint;
-  return backendBase() + (endpoint.startsWith("/") ? endpoint : `/${endpoint}`);
-};
+export const backendUrl = (endpoint: string): string => apiUrl(endpoint);
 
 const normalizeSearchPath = (pathname: string): string => {
   if (pathname.endsWith("/search") || pathname.endsWith("/search/")) {
@@ -357,42 +354,46 @@ const canUseSearchEndpoint = (pathname: string): boolean => {
 };
 
 /**
- * The URL a chart fetches. For the class's CRUD list it may ask for detailed rows
- * and send a server-compatible filter as query parameters (to `/<class>/search/`
- * when `preferSearch`). A custom endpoint (`DataBinding.endpoint`, flagged
- * `custom`) is fetched as written: its route knows neither, so the filter is only
- * applied to the rows it returns.
+ * The request a chart sends: the endpoint's path and its query parameters, for
+ * apiRequest (which joins the backend's base URL once). For the class's CRUD list it
+ * may ask for detailed rows and send a server-compatible filter as query parameters
+ * (to `/<class>/search/` when `preferSearch`). A custom endpoint (`DataBinding.endpoint`,
+ * flagged `custom`) is fetched as written: its route knows neither, so the filter is
+ * only applied to the rows it returns.
  */
-export const buildFilteredUrl = (
+export const buildFilteredRequest = (
   endpoint: string,
   options: { detailed?: boolean; filter?: ParsedFilter | null; preferSearch?: boolean; custom?: boolean }
-): string => {
-  const isRelative = !/^https?:\/\//i.test(endpoint);
-  const baseUrl = backendUrl(endpoint);
-  if (options.custom) return baseUrl;
-  let url: URL;
-  try {
-    url = new URL(baseUrl);
-  } catch {
-    return baseUrl;
-  }
-
+): { path: string; query: Record<string, string> } => {
+  const query: Record<string, string> = {};
+  if (options.custom) return { path: endpoint, query };
+  let path = endpoint;
   if (options.detailed) {
-    url.searchParams.set("detailed", "true");
+    query.detailed = "true";
   }
 
   const filter = options.filter;
   const shouldAttachFilters = !!filter?.serverCompatible && Object.keys(filter.queryParams).length > 0;
   if (shouldAttachFilters) {
-    if (options.preferSearch && isRelative && canUseSearchEndpoint(url.pathname)) {
-      url.pathname = normalizeSearchPath(url.pathname);
+    const isRelative = !/^https?:\/\//i.test(endpoint);
+    const [pathname, search = ""] = endpoint.split(/(?=\?)/);
+    if (options.preferSearch && isRelative && canUseSearchEndpoint(pathname)) {
+      path = normalizeSearchPath(pathname) + search;
     }
     Object.entries(filter.queryParams).forEach(([key, value]) => {
       if (value !== "") {
-        url.searchParams.set(key, value);
+        query[key] = value;
       }
     });
   }
+  return { path, query };
+};
 
-  return url.toString();
+/** The URL of `buildFilteredRequest`'s request. */
+export const buildFilteredUrl = (
+  endpoint: string,
+  options: { detailed?: boolean; filter?: ParsedFilter | null; preferSearch?: boolean; custom?: boolean }
+): string => {
+  const { path, query } = buildFilteredRequest(endpoint, options);
+  return apiUrl(path, query);
 };

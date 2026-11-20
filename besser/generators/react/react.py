@@ -14,6 +14,7 @@ from besser.BUML.metamodel.structural import DomainModel
 from besser.generators import GeneratorInterface
 from besser.utilities.generation_trace import traced_environment
 
+from .api_client import api_client_context, register_api_client_filters
 from .page_builder import PageBuilderMixin
 from .serialization import GuiSerializationMixin
 
@@ -61,6 +62,7 @@ class ReactGenerator(GuiSerializationMixin, PageBuilderMixin, GeneratorInterface
             variable_start_string="[[",
             variable_end_string="]]",
         )
+        register_api_client_filters(self.env)
         self._style_map: Dict[Tuple[str, ...], Dict[str, Any]] = {}
 
     def generate(self):
@@ -71,6 +73,7 @@ class ReactGenerator(GuiSerializationMixin, PageBuilderMixin, GeneratorInterface
         """
 
         context = self._build_generation_context()
+        context.update(api_client_context(self.model))
         used_component_types = self._get_used_component_types()
 
         def generate_file_from_template(rel_template_path: str):

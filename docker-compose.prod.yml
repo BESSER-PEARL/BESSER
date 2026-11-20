@@ -126,9 +126,19 @@ services:
       # Secret authorising the sponsored tier (?demo= links). The gate runs
       # here and fails closed: without it every demo run is refused.
       - BESSER_DEMO_TOKEN=${BESSER_DEMO_TOKEN:-}
+      # Opt-in run records, with the volume below: set, every run's full record
+      # is kept in /app/incidents/runs for BESSER_LLM_RUN_EVIDENCE_RETENTION_DAYS.
+      # - BESSER_INCIDENT_LOG_DIR=/app/incidents
+      # - BESSER_LLM_RUN_EVIDENCE_RETENTION_DAYS=30
     volumes:
       - smartgen_workspace:/workspace
       - ./telemetry-logs:/app/telemetry
+      # Opt-in: keep every run's full record (the start of the request, the files
+      # the agent wrote, up to 16 KiB of each tool result, redacted) for 30 days,
+      # plus the incident log and run traces, on the host. Uncomment this line and
+      # BESSER_INCIDENT_LOG_DIR in `environment` above; see the docs page
+      # spec_driven_agent/runs.rst, "What the server keeps of a run".
+      # - ./logs/spec-runs:/app/incidents
     # run_command wraps every model-authored command in bubblewrap, which needs
     # an unprivileged user namespace. Docker's default seccomp profile gates
     # unshare/mount/pivot_root behind CAP_SYS_ADMIN and the docker-default

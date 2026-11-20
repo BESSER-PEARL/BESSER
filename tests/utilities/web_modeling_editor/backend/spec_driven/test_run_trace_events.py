@@ -4,6 +4,8 @@
   phase started, so the card can show what each phase cost and how long it took.
 * Each Phase 3 validation round becomes a ``findings`` event; the tool calls
   between two of them are that fix attempt's repairs.
+* Each Phase 3 step (a check, a judge call, a fix attempt) becomes a ``step``
+  event, so the card names what runs now rather than a finished phase's line.
 * A fix attempt's tool calls stay under the ``validate`` row. A run whose
   Phase 2 was skipped used to open a "customize" row in the middle of validation
   at the first fix-loop call, so the repairs were listed as customization.
@@ -50,6 +52,7 @@ class _RepairingOrchestrator(_StubOrchestrator):
         # serialize the validate event first, so a late stamp would pick it up.
         self.client.usage.estimated_cost = 0.9
         time.sleep(0.2)
+        progress(0, "__validation_step__", "First check: checking 2 requirements against the code")
         progress(0, "validation", "2 blockers / 3 total")
         findings(0, [
             ValidationIssue("blocker", "import [backend/main.py]: " + "x" * 600),
@@ -57,6 +60,7 @@ class _RepairingOrchestrator(_StubOrchestrator):
             ValidationIssue("warning", "ruff: unused import"),
         ])
         self.total_turns = 1
+        progress(1, "__validation_step__", "Fix attempt 1: fixing 2 blockers")
         progress(1, "read_file", "executing", "path=backend/main.py")
         progress(1, "modify_file", "executing", "path=backend/main.py")
         findings(1, [ValidationIssue("blocker", "Syntax error in backend/models.py line 3: invalid syntax")])
@@ -117,7 +121,7 @@ def test_findings_list_is_capped_but_counts_are_true(monkeypatch):
 
 def test_findings_count_blockers_as_the_done_event_does(monkeypatch):
     # Live run f84c0f93 (2026-11-18): the last round said 4 blockers, the done event 5; the fifth was
-    # "validation unverified: frontend build ... did not run", which also counts towards completion.
+    # "validation unverified: frontend build ... did not run". Not confirmed: neither counts it now.
     unverified = "validation unverified: frontend build [frontend] did not run completely"
 
     class _Unverified(_StubOrchestrator):
@@ -136,8 +140,8 @@ def test_findings_count_blockers_as_the_done_event_does(monkeypatch):
     runner = SmartGenerationRunner(_build_request(), runtime=current_runtime())
     events = [_parse(frame) for frame in asyncio.run(_collect_frames(runner))]
     [event] = [e for e in events if e.get("event") == "findings"]
-    assert event["blockerCount"] == 2 and event["issueCount"] == 3
-    assert unverified in event["blockers"]
+    assert event["blockerCount"] == 1 and event["issueCount"] == 3
+    assert unverified not in event["blockers"]
 
 
 def test_repairs_stay_under_the_validate_row(monkeypatch):
@@ -174,3 +178,16 @@ def test_phase_events_carry_the_run_totals_at_their_start(monkeypatch):
     assert validate["phase"] == "validate" and validate["usd"] == 0.25
     elapsed = [p["elapsedSeconds"] for p in phases]
     assert elapsed == sorted(elapsed)
+
+
+def test_each_validation_step_is_a_step_event_on_the_validate_row(monkeypatch):
+    events = _events(monkeypatch)
+    opened = next(i for i, e in enumerate(events) if e.get("event") == "phase" and e["phase"] == "validate")
+    steps = [(i, e) for i, e in enumerate(events) if e.get("event") == "step"]
+    assert [e["message"] for _, e in steps] == [
+        "First check: checking 2 requirements against the code", "Fix attempt 1: fixing 2 blockers"]
+    assert all(i > opened and e["phase"] == "validate" for i, e in steps)
+    # Stamped when the step started, so the card can show how long it has been running.
+    assert steps[0][1]["elapsedSeconds"] >= events[opened]["elapsedSeconds"]
+    # A step is not a tool call: the fix attempt's calls are its repairs, nothing else.
+    assert [e["tool"] for e in events if e.get("event") == "tool_call"] == ["read_file", "modify_file", "modify_file"]

@@ -12,6 +12,8 @@ import {
 
 interface SeriesConfig {
   name: string;
+  // Shown in the legend and tooltip; `name` is the data key
+  label?: string;
   color?: string;
 }
 
@@ -195,7 +197,7 @@ export const BarChartComponent: React.FC<Props> = ({
               <Bar
                 key={s.name || index}
                 dataKey={s.name}
-                name={s.name}
+                name={s.label || s.name}
                 fill={s.color || defaultSeriesColors[index % defaultSeriesColors.length]}
                 stackId={options?.stacked ? "stack" : undefined}
                 isAnimationActive={options?.animate ?? true}

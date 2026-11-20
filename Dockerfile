@@ -1,7 +1,8 @@
 # Two targets, both with the Alloy Analyzer and its JRE:
 #   backend          the web editor backend: Python, its requirements and besser.
 #   smartgen-worker  the Spec-Driven Agent worker: backend plus the toolchains
-#                    Phase 3 compiles with and bubblewrap for run_command.
+#                    Phase 3 compiles with, the headless Chromium its screen
+#                    check opens pages in, and bubblewrap for run_command.
 # docker build --target backend|smartgen-worker. Without --target the last
 # stage (the worker) is built.
 
@@ -116,6 +117,7 @@ FROM python-deps AS smartgen-worker
 # directory. The worker fails closed without it, and needs
 # seccomp=unconfined to use it (see docker-compose.prod.yml). passt (pasta)
 # gives each shell session a private network; it needs /dev/net/tun.
+# procps gives the shell ps, to find the servers a run left running.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         curl \
@@ -124,6 +126,7 @@ RUN apt-get update \
         build-essential \
         bubblewrap \
         passt \
+        procps \
         openjdk-21-jdk-headless \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
@@ -138,6 +141,18 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && check_java
 ENV PATH="/root/.cargo/bin:/opt/kotlinc/bin:${PATH}"
+
+# Chromium for Phase 3's screen check (validation/ui_probe.py), which opens every
+# screen of a built frontend headless. Debian's headless-only build: about 300 MB
+# installed (chromium-headless-shell 230 MB + chromium-common 67 MB on trixie
+# amd64) plus the shared libraries it pulls in. SCREEN_CHECK_BROWSER=0 leaves it
+# out; the check then reports "screens: not run (no browser available)".
+ARG SCREEN_CHECK_BROWSER=1
+RUN if [ "$SCREEN_CHECK_BROWSER" = "1" ]; then \
+        apt-get update \
+        && apt-get install -y --no-install-recommends chromium-headless-shell \
+        && rm -rf /var/lib/apt/lists/*; \
+    fi
 
 # Same code layers and CA strip as the backend target.
 COPY pyproject.toml setup.cfg README.md ./

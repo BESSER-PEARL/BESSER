@@ -44,9 +44,12 @@ GROUP_SENTENCES = {
     "action_failed": "{n} actions failed or changed nothing in the test run: {subjects}.",
     "requirement_unconfirmed": "{n} requirements could not be confirmed in the code: {subjects}.",
     "task_unconfirmed": "{n} planned changes could not be confirmed as done.",
+    "task_incomplete": "{n} planned changes are not done.",
     "workflow_failed": "{n} test workflows ran and failed: {subjects}.",
     "no_create_screen": "The user interface offers no way to create: {subjects}.",
     "operation_missing": "{n} operations of the model are not implemented: {subjects}.",
+    "record_not_shown": "For {n} kinds of record created through the app's API, the record's text was not found "
+                        "in the page text or form fields of any screen that was opened: {subjects}.",
 }
 
 # Checks named by their internal tool, said in plain words.
@@ -72,12 +75,22 @@ _ACTION = re.compile(r"POST \S+ - (?P<action>\w+) (?:on (?P<entity>\w+)|answered
 _ACTION_CALLING = re.compile(r"failure calling (?P<action>\w+) on a (?P<entity>\w+)")
 _ACTION_ENTITY = re.compile(r"the (?P<entity>\w+) created one request earlier")
 _SCENARIO = re.compile(r"^api scenario: (?P<id>.+?) failed:")
-_TASK = re.compile(r"remains unresolved: (?P<text>.*?)\.(?: |$)", re.S)
+_TASK = re.compile(r"(?:remains unresolved|was not confirmed|is not done|was closed by the agent, not checked): "
+                   r"(?P<text>.*?)\.(?: |$)", re.S)
+# What an unconfirmed item's message says about it, said for the user.
+_TASK_NOTES = (("was closed by the agent, not checked", " (the agent marked it done)"),
+               ("Every file it names was edited", " (its files were edited)"),
+               ("Some of the files it names were edited", " (some of its files were edited)"),
+               ("The files it names were not touched", " (its files were not touched)"))
 _DID_NOT_RUN = re.compile(r"^validation(?: unverified)?: (?P<check>.+?) did not run(?: completely)?"
                           r"(?: \((?P<reason>.*?)\))?(?: - |$)")
 _DETAIL_TEXT = re.compile(r'"detail"\s*:\s*"((?:[^"\\]|\\.)+)"')
 _ERROR_MSG = re.compile(r'"loc"\s*:\s*\[(?P<loc>[^\]]*)\].*?"msg"\s*:\s*"(?P<msg>(?:[^"\\]|\\.)+)"', re.S)
 _ACCEPTANCE = re.compile(r"^acceptance: entity (?P<entity>\w+) — (?P<detail>.*)")
+_SCREENS_NOT_RUN = re.compile(r"^screens: not run \((?P<reason>.*)\)$", re.S)
+_NOT_SHOWN = re.compile(r"^screen warning: \[[^\]]*\] created an? (?P<entity>\w+) through the API .* was not found")
+# What the screen check could not look at (ui_probe.COVERAGE), as opposed to what it saw.
+_SCREEN_COVERAGE = re.compile(r"^screen warning: \[[^\]]*\](?: route \S+(?: \([^)]*\))?)?:? not checked: ")
 
 # Prefixes whose finding needs no detail to be said plainly.
 _SIMPLE = (
@@ -89,6 +102,8 @@ _SIMPLE = (
     ("form route:", "A form in the user interface cannot be reached."),
     ("form json textarea:", "A form in the user interface asks for raw data instead of fields."),
     ("form field type:", "A form field does not match the type of value it collects."),
+    ("screen warning:", "A screen of the app reported a problem when it was opened in a browser."),
+    ("api call:", "A screen sends a request, or reads its answer, in a shape the backend does not use."),
     ("data contract", "The code does not match the class diagram (an identifier or a field type)."),
     ("model conformance:", "The backend does not match the latest changes to the class diagram."),
     ("missing module:", "The code imports a module that is not in the output, so the app cannot start."),
@@ -98,8 +113,11 @@ _SIMPLE = (
     ("open account writes:", "A route lets a request change records it should not be allowed to change."),
     ("verification setup:", "The app's dependencies were not installed, so some checks could not run."),
     ("runtime gate:", "The app could not be shown to start and save a record."),
+    ("validation unverified: runtime gate:", "Nothing started the app, so nothing shows that it runs."),
     ("entity coverage:", "Not every class can be created, viewed, edited and deleted in the app."),
     ("requirement out of scope:", "A requirement was judged to be outside what this app covers."),
+    ("requirement not provable:", "A requirement cannot be shown by reading the code (something the app must not "
+                                  "have, or behaviour kept as before), so it is not counted as a blocker."),
     ("reported-failure:", "The failure you reported could not be confirmed as fixed."),
     ("tsc [", "The user interface does not compile."),
     ("frontend build [", "The user interface does not build."),
@@ -231,6 +249,8 @@ def _requirement(message: str, prefix: str) -> Finding:
         return Finding(f"Requirement {ident} is not implemented: {text}")
     if prefix == "requirement partial:":
         return Finding(f"Requirement {ident} is only partly implemented: {text}")
+    if prefix == "requirement unsupported:":
+        return Finding(f"Requirement {ident}: the code the check was pointed at does not do this: {text}")
     return Finding(f"Requirement {ident} could not be confirmed in the code: {text}",
                    "requirement_unconfirmed", ident)
 
@@ -245,14 +265,17 @@ def user_finding(message: str) -> Finding:
         return _create(text)
     if lower.startswith(("action unverified:", "action call:")):
         return _action(text)
-    for prefix in ("requirement unverified:", "requirement partial:", "requirement:"):
+    for prefix in ("requirement unverified:", "requirement unsupported:", "requirement partial:", "requirement:"):
         if lower.startswith(prefix):
             return _requirement(text, prefix)
-    if lower.startswith("task unverified:"):
+    if lower.startswith(("task unverified:", "task incomplete:")):
         task = _TASK.search(text)
-        return Finding("A planned change could not be confirmed as done"
-                       + (f": {_cut(task.group('text'), _MAX_REQUIREMENT)}" if task else "."),
-                       "task_unconfirmed")
+        unverified = lower.startswith("task unverified:")
+        note = next((said for marker, said in _TASK_NOTES if marker in text), "") if unverified else ""
+        return Finding(("A planned change could not be confirmed as done" if unverified
+                        else "A planned change is not done")
+                       + (f": {_cut(task.group('text'), _MAX_REQUIREMENT)}{note}" if task else "."),
+                       "task_unconfirmed" if unverified else "task_incomplete")
     if scenario := _SCENARIO.match(text):
         name = scenario.group("id")
         return Finding(f"The test workflow '{name}' ran and failed.", "workflow_failed", name)
@@ -262,6 +285,17 @@ def user_finding(message: str) -> Finding:
             return Finding(f"{check[0].upper()}{check[1:]} could not be run against the app.")
         reason = f" ({plain_reason(skipped.group('reason'))})" if skipped.group("reason") else ""
         return Finding(f"Not run: {check}{reason}, so its checks are not covered.")
+    if unshown := _NOT_SHOWN.match(text):
+        entity = unshown.group("entity")
+        article = "An" if entity[:1].lower() in "aeiou" else "A"
+        return Finding(f"{article} {entity} was created through the app's API, but its text was not found in the "
+                       "page text or form fields of any screen that was opened.", "record_not_shown", entity)
+    if _SCREEN_COVERAGE.match(text):
+        return Finding("Part of the app's screens could not be checked in a browser; the run's detailed report "
+                       "says what was not covered.")
+    if screens := _SCREENS_NOT_RUN.match(text):
+        return Finding(f"Not run: opening the app's screens in a browser ({plain_reason(screens.group('reason'))}), "
+                       "so they are not covered.")
     if acceptance := _ACCEPTANCE.match(text):
         entity = acceptance.group("entity")
         if "create" in acceptance.group("detail"):
@@ -275,6 +309,9 @@ def user_finding(message: str) -> Finding:
     if lower.startswith("model contract:"):
         return Finding("The class diagram has a problem the generated code cannot resolve: "
                        + _cut(text[len("model contract:"):], _MAX_REQUIREMENT))
+    if lower.startswith("agent left out:"):
+        # Written for the user already: the message after its prefix.
+        return Finding(text[len("agent left out:"):].strip())
     if _TRUNCATION_NOTE_RE.match(text):
         return Finding("More findings of the same check were counted but not listed.")
     if lower.startswith("ruff:"):

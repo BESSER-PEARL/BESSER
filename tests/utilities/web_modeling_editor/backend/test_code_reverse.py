@@ -182,6 +182,29 @@ def test_a_finished_run_says_what_it_changed():
     }
 
 
+def test_a_finished_run_counts_only_the_files_it_changed():
+    # Distinct files of successful calls, plus what the model change regeneration wrote.
+    recipe = {
+        "history": [{"mode": "modify"}],
+        "tool_calls": [
+            {"tool": "modify_file", "input": {"path": "app/main.py"}, "success": True},
+            {"tool": "replace_file_lines", "input": {"path": "app/main.py"}, "success": True},
+            {"tool": "modify_file", "input": {"path": "app/models.py"}, "success": False, "status": "rejected"},
+            {"tool": "write_file", "input": {"path": "app/extra.py"}, "success": False, "status": "error"},
+        ],
+        "regenerated_files": ["app/models.py", "app/schemas.py"],
+    }
+
+    changes = run_changes(recipe)
+    assert changes["changedFiles"] == ["app/main.py", "app/models.py", "app/schemas.py"]
+    assert changes["changedFileCount"] == 3
+
+
+def test_a_run_whose_changes_all_come_from_the_regeneration_counts_them():
+    recipe = {"history": [{"mode": "modify"}], "tool_calls": [], "regenerated_files": ["app/models.py"]}
+    assert run_changes(recipe)["changedFileCount"] == 1
+
+
 GENERATED = os.path.join(os.path.dirname(__file__), "fixtures", "besser_generated_sql_alchemy.py.txt")
 
 
@@ -567,3 +590,14 @@ def test_the_stack_is_listed_in_the_same_order_on_every_filesystem(tmp_path, mon
     })
 
     assert code_reverse._detect_stack(root) == ["FastAPI", "React"]
+
+
+def test_edits_a_rollback_discarded_are_not_counted():
+    recipe = {
+        "history": [{"mode": "modify"}],
+        "tool_calls": [
+            {"tool": "modify_file", "input": {"path": "app/main.py"}, "success": True},
+            {"tool": "write_file", "input": {"path": "app/extra.py"}, "success": True, "rolled_back": True},
+        ],
+    }
+    assert run_changes(recipe)["changedFiles"] == ["app/main.py"]

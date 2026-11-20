@@ -20,7 +20,8 @@ from besser.BUML.metamodel.structural import (
 from besser.generators.sql_alchemy import SQLAlchemyGenerator
 from besser.generators.sql_alchemy.ocl_check_constraints import get_check_constraints
 
-TYPES = {"int": "Integer_", "str": "String_(100)", "float": "Float_", "bool": "Boolean_"}
+TYPES = SQLAlchemyGenerator.TYPES
+STR = TYPES["str"]
 
 
 def _book_model(*invariants, language="OCL"):
@@ -51,8 +52,8 @@ def _translate(*invariants, **kwargs):
     ("0 < self.pages", "_sa_column('pages', Integer_) > 0"),
     ("self.price > 1.5", "_sa_column('price', Float_) > 1.5"),
     ("self.price <> 2", "_sa_column('price', Float_) != 2"),
-    ("self.title <> ''", "_sa_column('title', String_(100)) != ''"),
-    ("self.title = 'a\"b'", "_sa_column('title', String_(100)) == 'a\"b'"),
+    ("self.title <> ''", f"_sa_column('title', {STR}) != ''"),
+    ("self.title = 'a\"b'", f"_sa_column('title', {STR}) == 'a\"b'"),
     ("self.inPrint = true", "_sa_column('inPrint', Boolean_) == True"),
 ])
 def test_simple_invariants_are_translated(body, expected):

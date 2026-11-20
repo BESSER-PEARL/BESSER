@@ -223,9 +223,12 @@ def _fastapi_backends(output_dir: str) -> list[str]:
 
 def _run_probe(folder: str, env: dict, model_actions: dict | None = None,
                abstract_entities: list[str] | None = None, *,
-               workspace: str | None = None) -> dict:
+               workspace: str | None = None, database: str | None = None,
+               timeout: float = _PROBE_TIMEOUT_SECONDS) -> dict:
     """Execute the child, sandboxed with no network, on a scratch copy of
-    ``folder`` (inside the run ``workspace``); never raises."""
+    ``folder`` (inside the run ``workspace``); never raises. ``database``, a
+    SQLite file path, keeps what the probe created for the caller."""
+    from besser.spec_driven_agent.execution.process import timeout_cause
     from besser.spec_driven_agent.execution.sandbox import SandboxUnavailable, run_confined
     from besser.utilities.workspace_fs import copytree_plain
 
@@ -234,7 +237,8 @@ def _run_probe(folder: str, env: dict, model_actions: dict | None = None,
         app_dir = os.path.join(work, "app")
         copytree_plain(folder, app_dir, (*_SKIP_DIRS, ".besser_*", "*.db"))
         env = dict(env)
-        env["DATABASE_URL"] = "sqlite:///" + os.path.join(work, "probe.db").replace("\\", "/")
+        db_file = database or os.path.join(work, "probe.db")
+        env["DATABASE_URL"] = "sqlite:///" + db_file.replace("\\", "/")
         if model_actions:
             actions_path = os.path.join(work, "model_actions.json")
             try:
@@ -248,14 +252,15 @@ def _run_probe(folder: str, env: dict, model_actions: dict | None = None,
         try:
             result = run_confined(
                 [sys.executable, os.path.abspath(__file__)],
-                workspace=workspace or folder, writable=[work], cwd=app_dir,
-                env=env, timeout=_PROBE_TIMEOUT_SECONDS,
+                workspace=workspace or folder,
+                writable=[work, os.path.dirname(db_file)] if database else [work], cwd=app_dir,
+                env=env, timeout=timeout,
             )
         except SandboxUnavailable as exc:
             return {"boot": "probe_error", "error": str(exc)}
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as exc:
             return {"boot": "probe_error",
-                    "error": f"timed out after {_PROBE_TIMEOUT_SECONDS}s"}
+                    "error": timeout_cause(exc, f"timed out after {int(timeout)}s")}
         except OSError as exc:
             return {"boot": "probe_error", "error": f"could not be launched: {exc}"}
         for line in reversed((result.stdout or "").splitlines()):

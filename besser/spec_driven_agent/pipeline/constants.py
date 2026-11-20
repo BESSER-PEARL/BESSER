@@ -57,6 +57,9 @@ _ROLLBACK_PRESERVED = {
     _ROLLBACK_DISCARD_DIR,
 }
 
+# A run's temporary workspace folder starts with this; it is removed after the run.
+RUN_DIR_PREFIX = "besser_llm_"
+
 # Dependency, build and run-internal directories that are not part of the app.
 _RECIPE_EXCLUDED_DIRS = {
     "target", "node_modules", "__pycache__", ".git", "dist", "build",
@@ -218,10 +221,8 @@ _MAX_PARALLEL_WORKERS = 4
 # 5-turn LLM fix loop, and the actual spend is bounded by ``max_cost_usd``
 # (the inner loop stops when the cost cap is hit), so this cap just keeps
 # a truly stuck run from looping forever. It is deliberately NOT tiny: as
-# long as each round keeps reducing blockers (or we still have cost
-# budget), the loop should keep going rather than abandon a run that is
-# steadily converging — the no-progress-streak guard below handles the
-# stuck case.
+# long as each kept attempt retires blockers, the loop keeps going; the
+# keep-or-revert rule in phase3_repair ends a stuck one.
 _MAX_TOOLCHAIN_FIX_ITERATIONS = 5
 
 # Ceiling on the one-off Phase 1 dependency install. A cold npm install of a
@@ -229,18 +230,9 @@ _MAX_TOOLCHAIN_FIX_ITERATIONS = 5
 # from delaying the whole run before the model has done anything.
 _SCAFFOLD_INSTALL_TIMEOUT_SECONDS = 180
 
-# Turns per fix attempt. An attempt that reaches the cap, or ends in prose,
-# without one successful write gets exactly one more turn with modify_file
-# forced, so an attempt cannot end having only described the fix.
+# Turns per fix attempt. No tool is forced: an attempt ends when the model ends its turn.
 _PHASE3_FIX_TURNS = 10
-_PHASE3_NO_EDIT_REMINDER = (
-    "<system-reminder>This attempt has not edited any file, and the blocker is "
-    "still there. Explaining the fix does not apply it. Your next call must be "
-    "modify_file on the file the blocker names (quote old_text exactly from the "
-    "excerpt), or write_file if the file has to be rewritten. Then keep going "
-    "until every blocker is fixed.</system-reminder>"
-)
-# Sent when a verification-only attempt stops with listed creates not yet read back.
+# Sent when a fix attempt stops with listed creates not yet read back.
 _PHASE3_CREATE_EVIDENCE_REMINDER = (
     "<system-reminder>These listed creates still have no read-back: {paths}. "
     "Each is settled only by a test_api scenario that POSTs it and then, in that "
@@ -251,34 +243,15 @@ _PHASE3_CREATE_EVIDENCE_REMINDER = (
     "</system-reminder>"
 )
 
-# Consecutive no-progress rounds tolerated before the repair loop ends.
-#
-# The loop decides per round (see ``replay``): a round that never reached for
-# the editor ends the loop on the spot; only a round that DID something it can
-# carry into the next prompt gets this allowance.
-#
-# Measured over 221 recorded runs, on the round that FOLLOWED a round which
-# wrote nothing and left the tree byte-identical:
-#
-#   the round attempted edits, all rejected  n= 30  next wrote 57%, cut 20%
-#   the round made tool calls, none an edit  n=209  next wrote 18%, cut 11%
-#   the round called no tool at all (prose)  n=  4  next wrote  0%, cut  0%
-#
-# and after TWO consecutive such rounds, whatever their kind, the next wrote
-# 6% and cut 4% (n=116) - so the streak still ends at two.
+# Fix attempts the turn reserve below is sized for.
 _PHASE3_NO_PROGRESS_ROUNDS = 2
 
-# Rounds that edit the tree without improving its score before the loop ends.
-# The unchanged-state guard cannot see these: its key includes a content hash
-# of every source file, so ANY write - including a different useless one each
-# round - reads as a new state and the guard never fires.
-#
-# Same corpus, counting a round as non-improving when the blocker count did
-# not fall: after two consecutive non-improving rounds the NEXT round still
-# improved 36% of the time (n=125) against a 46% baseline with no plateau
-# behind it; only at three does the payoff halve (23%, n=60) and at four
-# collapse (15%, n=107).
-_PHASE3_PLATEAU_ROUNDS = 3
+# Turns of ``max_turns`` Phase 2 leaves to the repair loop: that many full fix
+# attempts, but never more than 1/_PHASE3_RESERVE_MAX_FRACTION of the cap, so a
+# small cap stays mostly Phase 2's.
+# A share smaller than one fix attempt is not reserved at all.
+_PHASE3_TURN_RESERVE = _PHASE3_NO_PROGRESS_ROUNDS * _PHASE3_FIX_TURNS
+_PHASE3_RESERVE_MAX_FRACTION = 4
 
 # Runtime-gate verdicts, ordered worst-last so a tuple compares as a score.
 _RUNTIME_OK, _RUNTIME_UNVERIFIED, _RUNTIME_FAILED = 0, 1, 2

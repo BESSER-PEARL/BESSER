@@ -359,3 +359,62 @@ def test_a_generator_rerun_does_not_take_over_the_models_files(tmp_path):
     classes = next(f for f in record["files"] if f["path"] == "python/classes.py")
     (related,) = classes["conversations"][0]["related"]
     assert related["url"].startswith("urn:besser:generator:python")
+
+
+def test_a_package_manager_lock_file_is_never_credited_to_the_ai(tmp_path):
+    root = str(tmp_path)
+    _write(root, "frontend/package-lock.json", '{\n  "lockfileVersion": 3\n}\n')
+    _write(root, "frontend/src/App.jsx", "export default 1;\n")
+
+    _state, record = _record(root)
+
+    assert _ranges(record, "frontend/package-lock.json") == [(1, 3, "unknown", None)]
+    assert _ranges(record, "frontend/src/App.jsx") == [(1, 1, "ai", "openai/gpt-4o")]
+    assert record["metadata"][at.METADATA_KEY]["lines"]["ai"] == 1
+
+
+def test_lines_a_harness_step_writes_are_not_credited_to_the_ai(tmp_path):
+    root = str(tmp_path)
+    _write(root, "app/main.py", "a\nb\n")
+    at.record_generated_files(root, ["app/main.py"], "django", "9.9.9")
+    # The model edits two files before the harness step runs.
+    _write(root, "app/main.py", "a\nB\n")
+    _write(root, "frontend/package.json", '{\n  "name": "x"\n}\n')
+
+    with at.harness_writes(root, "scaffold_repair"):
+        _write(root, "README.md", "# Run it\n")
+        _write(root, "frontend/package.json", '{\n  "name": "x",\n  "scripts": {}\n}\n')
+
+    _state, record = _record(root)
+
+    assert _ranges(record, "README.md") == [(1, 1, "unknown", None)]
+    # The model's lines stay the model's; the two lines the harness rewrote or added are the harness's.
+    assert _ranges(record, "frontend/package.json") == [
+        (1, 1, "ai", "openai/gpt-4o"), (2, 3, "unknown", None), (4, 4, "ai", "openai/gpt-4o")]
+    assert _ranges(record, "app/main.py") == [(1, 1, "unknown", None), (2, 2, "ai", "openai/gpt-4o")]
+
+
+def test_files_the_harness_writes_during_a_run_are_not_credited_to_the_ai(tmp_path):
+    from tests.spec_driven_agent.test_phase3_toolchain import _build_orchestrator
+
+    orch = _build_orchestrator(tmp_path)
+    root = orch.output_dir
+    _write(root, "web/package.json", json.dumps({
+        "name": "orders", "scripts": {"dev": "vite"},
+        "dependencies": {"react": "^18.2.0", "react-dom": "^18.2.0"},
+        "devDependencies": {"vite": "^5.0.0", "@vitejs/plugin-react": "^4.0.0"}}, indent=2) + "\n")
+    _write(root, "web/index.html", '<div id="root"></div><script type="module" src="/src/main.jsx"></script>\n')
+    _write(root, "web/src/main.jsx", "export const order = 1;\n")
+
+    orch._ensure_gitignore()
+    orch._repair_build_configuration()
+
+    _state, record = _record(root)
+    by_type = {}
+    for entry in record["files"]:
+        for conversation in entry["conversations"]:
+            by_type.setdefault(entry["path"], set()).add(conversation["contributor"]["type"])
+    harness_written = {".gitignore", "web/vite.config.mjs"}
+    assert harness_written <= set(by_type)
+    assert all(by_type[path] == {"unknown"} for path in harness_written)
+    assert by_type["web/src/main.jsx"] == {"ai"}

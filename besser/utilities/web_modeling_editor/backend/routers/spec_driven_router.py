@@ -35,7 +35,7 @@ import httpx
 from fastapi import APIRouter, File, Header, HTTPException, Path, Query, UploadFile
 from fastapi.responses import StreamingResponse
 
-from besser.spec_driven_agent.planning.model_change import compare_with_base
+from besser.spec_driven_agent.planning.model_change import compare_with_base, compare_with_recipe
 from besser.utilities.web_modeling_editor.backend.models.spec_driven import (
     ImportGeneratedCodeResponse,
     ImportGitHubRunRequest,
@@ -71,6 +71,8 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.preview i
 # Underscored names below are shared on purpose; tests patch them by name.
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
     _locate_run_temp_dir,
+    archived_recipe_text,
+    modify_base,
     run_download_dir,
 )
 from besser.utilities.workspace_fs import open_plain
@@ -637,7 +639,8 @@ async def smart_preview(request: SmartPreviewRequest, runtime: SpecDrivenRuntime
           "estimated_duration_seconds": 195,
           "notes": [...],
           "model_summary": {"primary": "class", "present": [...]},
-          "model_change": {"verdict": "large", "gone": 0.54, ...}  # modify only
+          "model_change": {"verdict": "large", "gone": 0.54, ...},  # modify only
+          "base_available": true  # modify only; false: the run builds from scratch
         }
 
     Errors are mapped by ``handle_endpoint_errors`` (``ValueError`` -> 400).
@@ -661,15 +664,20 @@ async def smart_preview(request: SmartPreviewRequest, runtime: SpecDrivenRuntime
     payload["model_summary"] = assembled.summary()
     # For a modify: how the model relates to the base app's, so the UI can ask
     # "update the existing app / start fresh". None = unknown, keep modifying.
-    model_change = None
+    model_change = base_available = None
     if request.mode == "modify" and request.base_run_id:
         base = await runtime.registry.get(request.base_run_id)
-        if base is not None and base.temp_dir:
+        base_dir, base_archive = modify_base(base)
+        base_available = base_dir is not None or base_archive is not None
+        change = None
+        if base_dir is not None:
+            change = await asyncio.to_thread(compare_with_base, base_dir, assembled.domain_model)
+        elif base_archive is not None and base.packaged:  # an upload's run records are not read
             change = await asyncio.to_thread(
-                compare_with_base, base.temp_dir, assembled.domain_model,
-            )
-            model_change = change.to_dict() if change else None
+                lambda: compare_with_recipe(archived_recipe_text(base_archive), assembled.domain_model))
+        model_change = change.to_dict() if change else None
     payload["model_change"] = model_change
+    payload["base_available"] = base_available
     return payload
 
 

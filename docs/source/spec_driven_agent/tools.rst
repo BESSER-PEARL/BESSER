@@ -28,8 +28,8 @@ The model-query tools give the LLM random access into your domain model
 (attributes, flattened inherited methods, association ends, OCL constraints)
 without holding the whole serialized model in context.
 
-File edits and checklist evidence
----------------------------------
+File edits and the checklist
+----------------------------
 
 ``modify_file`` refuses ambiguous anchors, identical no-ops and duplicate-looking
 insertions. ``already_applied`` requires a receipt for that exact successful edit
@@ -67,6 +67,18 @@ second refused edit on a file (with no landed edit between), the step is to read
 the whole file and ``write_file`` it back; two targeted edit attempts of either
 kind also unlock ``write_file`` where it is otherwise held back (a large
 generated file, a modify run). The orchestrator's reminders repeat that step.
+A generated frontend page or component (``.tsx``, ``.jsx``, ``.ts`` or ``.js``
+under a ``frontend`` folder) over 200 lines needs no such attempts when the
+rewrite keeps its code: at least 60% of its non-blank lines, every column-0
+declaration outside comments, its ``export default``, every ``<Route>``
+element, no new elision such as ``{/* ... unchanged ... */}``, and no new
+comment-only line that reads as a placeholder (``{/* remaining fields
+unchanged */}``) in place of three or more of the file's lines that the
+rewrite has fewer copies of (a repeated section counts), or added while a
+block of three or more such lines is deleted elsewhere, however much the
+rewrite adds. A rewrite that misses one is
+refused saying which. Backend and other files, and frontend files with no
+declarations to compare, keep the two-attempt rule.
 Repeated failures do not permanently freeze the file; an agent that ignores
 recovery is still bounded by the loop and run budgets.
 
@@ -78,7 +90,7 @@ shown clipped and never authorized by a ``read_id``. Unread/truncated ranges, st
 no-ops, new elisions, and changes that break previously valid Python syntax are
 refused without writing. After a successful edit, read again before another
 same-file range edit. IDs are session-local and expire on resume. The tool shares
-path containment, per-file locking, diagnostics, and successful-write evidence
+path containment, per-file locking, diagnostics, and checklist write tracking
 with the other editors. An accepted edit is not proof of business correctness.
 
 A ``read_file`` repeating an earlier call (same path, ``offset`` and
@@ -101,16 +113,29 @@ a ``pyvenv.cfg`` (a virtualenv, whatever its name; it is named under
 ``file_glob`` matches file names only; one containing a path separator is
 refused with an error rather than returning no matches.
 
-``task_list(action='done')`` runs an attached verifier. A verifier exception is a
-failed check, not success. Without a verifier, supply
-``evidence=[{"id": N, "path": "...", "quote": "..."}]`` from a successful current
-write; this records implementation, with acceptance still unverified.
-Already-correct scaffold code can instead use ``existing=true`` after reading
-the file and citing executable evidence. This records an existing implementation,
-not a fabricated write or a passing business test.
-``action='blocked'`` requires a reason and retains required unresolved work.
-A later successful check/evidence submission can clear the block. ``drop`` is
-only for work outside the user's request. Task outcomes are retained in the recipe.
+``task_list(action='done')`` runs an attached verifier and refuses the item
+while it fails; a verifier exception is a failed check, not success. An item
+without a verifier closes on the model's word, with no code to quote. The ids
+may also come as ``done_ids``, the key the reply lists them under.
+
+After every successful edit the harness re-runs the verifiers and closes the
+items whose check now passes. Nothing else closes an item: an edit to a file
+an item names is recorded with the item (as ``written``) and quoted in its
+"not confirmed" finding, but it does not show the item is done. An item names
+a file only by a path written in its text (``backend/routers/order.py``),
+matched exactly against the edited path; the planner's paths are first
+repaired against the workspace (a suffix matching exactly one file becomes
+that file's path). Only an edit that changed the file after the item was
+created is recorded: a refused or failed call, an identical rewrite and an
+edit a Phase 3 rollback discarded are not. A named path that is not a
+workspace file is reported as absent; the item for a modeled rule the
+generators could not enforce names ``routers/<class>.py``, relative to the
+backend folder, so its finding says no workspace file is there.
+
+``action='blocked'`` requires a reason and records required work the model
+could not finish; the item stops holding the end-turn gate. A later passing
+check can clear the block. ``drop`` is only for work outside the user's
+request. Task outcomes are retained in the recipe.
 
 Application checks during editing
 ---------------------------------
@@ -437,18 +462,36 @@ Phase 2's system prompt gains a *runtime verification* runbook, and a probe
 script, ``.besser_probe.py``, is written to the workspace root. Its
 subcommands (``up``, ``routes``, ``req``, ``log``, ``down``) boot the server
 detached, list its routes and send requests, so the agent can run the app
-rather than only read it. The server ``up`` starts keeps running in the run's
+rather than only read it. ``routes`` prints, per route, the JSON body it reads
+as its top-level keys (``<- {"params": {...}}`` for a method route, whose
+values go inside that key) and what a 2xx answer is (``-> list`` or
+``-> object {...}`` with its keys): the response schema the app's OpenAPI
+declares, else what the handler's ``return`` statements send, read from its
+source as the ``api call:`` check reads it (see :doc:`validation`). The server ``up`` starts keeps running in the run's
 shell session, so ``routes`` and ``req`` reach that same server; when the
 session was restarted in between, they start their own, and the SQLite file
-keeps records either way. ``req`` sends
+keeps records either way. A new server takes the port of the previous one
+again while nothing else holds it, so a command or script written with that
+port keeps working after a restart. ``req`` takes a JSON body as one argument
+in single quotes (unquoted, the shell strips its double quotes), from a file
+as ``@body.json``, or from standard input as ``-``, for instance a quoted
+here-document; a body whose quotes the shell removed, an empty file or empty
+standard input, or an option ``req`` does not have, is refused with a message
+saying which. ``req`` sends
 extra headers with ``-H "Name: value"`` (e.g. a bearer token from a login) and
-prints only their names. ``down`` stops a process only when its command line
+prints only their names. It sends form fields and files as
+``multipart/form-data`` with curl's syntax, ``-F "name=value"`` and
+``-F "file=@path"`` (``;type=<mime>`` and ``;filename=<name>`` set a file's
+type and name), for an upload endpoint; a field value keeps its own quotes. ``down`` stops a process only when its command line
 identifies it as the probe's own server, since a recorded PID from a previous
 session can name an unrelated process. Several ``run_command`` (and
 ``install_dependencies``) calls in one turn run one after another, in order.
 A command without ``working_dir`` starts where an earlier ``cd`` left the
 shell; when that is not the workspace root, the result's first field,
-``ran_in``, names that directory. A line that joins two commands with ``;`` or
+``ran_in``, names that directory. When the line's first ``cd``, relative,
+fails there and the path exists from the workspace root (inside it), a
+``cd_hint`` names the shell's directory
+and the path to use from it (or as ``working_dir``). A line that joins two commands with ``;`` or
 a new line, exits 0 and reports a failure in stderr gets a ``note`` that
 ``exit_code`` is the last command's alone.
 ``BESSER_LLM_SHELL_RUNBOOK=0`` leaves the runbook out.
@@ -459,19 +502,54 @@ upload) lands beside the source. The probe records the files that appear under
 the backend during ``up`` and ``req`` in ``.besser_probe.runtime_files.json``,
 and the run deletes them before it writes the recipe, unless a generator or a
 write tool wrote them; the recipe lists them under ``runtime_files_removed``.
-They are therefore in neither the download nor a GitHub push. Only the
-name-based exclusions (databases, logs, caches) apply, and a generated key or
-upload is delivered with the app, when the file is:
+They are therefore in neither the download nor a GitHub push.
 
-- written while the app was started some other way than the probe: ``python
-  main_api.py`` or a test run through ``run_command``, or a script that
-  imports the app's module;
-- written by the running server between two probe calls, for example by a
-  background task or a request sent with ``curl``;
+The worker also lists the backend's files before and after every
+``run_command`` and ``install_dependencies`` call, and records a file the call
+left as written by the running app (a request sent with ``curl``, a test
+client, a script importing the app) only when all of these hold: it is new
+under the backend folder, outside dot-folders; it is a data file (``.json``,
+``.pdf``, an image), not code, configuration or docs (``.py``, ``.ts``,
+``.toml``, ``.txt``, ``.yaml``, ``.sql``, ``.html`` ...); its name holds a
+generated id, 32 hex digits or a UUID, as an app names a stored upload; and the
+command names neither its path nor its name, nor does another file the same
+command created or changed (a script writing an image under a generated name
+and the manifest naming it; UTF-8 text files up to 1 MB, at most 50, never a
+database, log or other file the output leaves out by name, so the app's database
+storing an upload's path does not keep the upload). Those
+are removed by the same rules as the probe's record. A file the agent creates on
+purpose through the shell is kept: one the command names (``cat >
+data/seed.json``, ``cp a b``), code such as a migration ``alembic`` names with a
+hex id, data a script writes under a plain name (``fixtures.json``), and a
+generated name another file of that command names. A file of the app's data that
+the agent's own script writes under a generated name that nothing names is still
+taken for the app's and removed. The listing skips virtualenvs (a folder holding
+``pyvenv.cfg``, under any name) and stops at 5,000 files, in which case nothing is
+recorded for that command.
+
+Only the name-based exclusions (databases, logs, caches) apply, and a generated
+key or upload is delivered with the app, when the file is:
+
+- written while the app was started some other way than the probe and not
+  matching the rule above: a key under a plain name (``signing.key``), an
+  upload kept under the name it was sent with;
+- written by the running server between two shell commands, for example by a
+  background task;
 - written anywhere when the backend is the workspace root: the probe then
   records nothing and nothing is removed;
 - in a dot-folder or outside the backend folder, an existing file the app
   rewrote, or a recorded file changed afterwards.
+
+At the same point the run looks for files written this run whose content names
+the run's temporary workspace folder (``besser_llm_...``), which is removed
+after the run. Only a shell script (``.sh``, ``.ps1``, ``.bat`` or ``.cmd``)
+at the workspace root that a write tool of this run wrote and no other file
+names, such as a check script that ``cd``s into that folder, is deleted; the
+recipe lists those under ``scratch_files_removed``. Every other such file (any
+Python file, a script in a folder, a README, a test) is kept and listed under
+``temporary_path_files``. ``BESSER_GENERATION.md`` names both. A workspace
+folder the caller chose (a :doc:`Python library run <usage>` with its own
+``output_dir``) is left alone, since a path to it stays valid.
 
 Where no sandbox applies, treat "enable shell tools" as "I am willing to run
 model-authored commands on this machine, as this user". That is acceptable on

@@ -67,7 +67,11 @@ The three phases
    a failure of the existing app (``is_failure_report``), and which entity it
    is about (``reported_entity``). A changed target is built next to the
    existing project; a failure report makes the run a fix run, gated on that
-   failure. A call with no usable answer, even as JSON text, keeps the
+   failure: a blocker that names the reported entity, from a check of the app
+   (a runtime probe, the data contract, the acceptance matrix), leaves it
+   unconfirmed, and so does one on this run's own requirements or fix tasks.
+   A finding on a requirement of an earlier run's request never does: it names
+   the app's entities whatever the failure. A call with no usable answer, even as JSON text, keeps the
    recorded target and makes no fix run, with a warning. This call is one
    primary-model call more per modify run.
 
@@ -100,7 +104,8 @@ The three phases
    scaffold. Before the loop starts, a cheap *planning* call analyses the gap
    between the scaffold and the request and produces the task list; when it
    judges the scaffold already sufficient, Phase 2 is skipped entirely (a
-   create run only; a modify run always runs it). The planner labels each task
+   create run only; a modify run always runs it), and the run record says the
+   run finished, not that a limit stopped it. The planner labels each task
    as a change, or as removing the scaffold or switching its framework; the
    latter two are dropped, since the scaffold's stack is fixed. Only the
    planner's own empty list skips Phase 2: a list emptied by dropped tasks
@@ -130,7 +135,10 @@ The three phases
    frontend files. With no GUI model, the item names the classes that have
    backend routes, says that a narrower UI scope in the request wins, and
    closes only once a routed app with at least one entity screen exists. A new project with both a class model and an agent model
-   gets a checklist item to connect them: the agent's intents about the
+   gets a checklist item to connect them (with a GUI model, only when a
+   screen uses the agent or the run targets the agent; the generated web app
+   includes the agent only when a screen uses it, as in the editor's own web
+   app generation, and otherwise reports ``agent left out:`` as a warning): the agent's intents about the
    model's records must read and write them, not answer with canned text.
    The item also keeps Phase 2 from being skipped, and the agent may drop it
    with a reason when it has nothing to do with the data. Phase 3 checks the
@@ -163,26 +171,39 @@ The three phases
 
 **Phase 3 — validation and bounded auto-fix.**
    The workspace is snapshotted, then swept by a set of static validators.
-   Findings are classified by severity, and **blocker**-level issues drive a
+   Findings are classified by the kind of evidence: a **blocker** is an observed
+   failure or a requirement the judge found missing or partial; a check that
+   reached no conclusion (a citation not located, a guessed request the app
+   refused, a check that did not run) is *not confirmed*, listed for the user and
+   never a blocker. Blockers drive a
    bounded repair loop of (LLM fix turns → re-validate) rounds: at least five,
-   and as many as the turns Phase 2 left over, each round up to ten LLM turns. The loop stops when blockers
-   reach zero, after two consecutive rounds without progress, or after three
-   rounds that change the tree without improving it. Every strictly better
-   tree is re-snapshotted, ranked by whether the app boots, then backends the
-   runtime probe could not measure (a startup that hangs ranks behind every
-   measured tree), then entities it cannot create, then actions it cannot
-   run, then the blocker count. A
-   repair that ends worse is rolled back to the best snapshot, not merely to
-   the last round; the pre-Phase-3 tree is the first snapshot, so a failed
-   repair can never cost you the Phase 2 work. Non-blocker findings are recorded but never burn fix turns.
+   and as many as the turns Phase 2 left over, each round up to ten LLM turns.
+   With auto-fix on, Phase 2 leaves this loop part of ``max_turns`` (see
+   :doc:`runs`), so a model that never ends its turn still has its output
+   checked and repaired. Each round is steered to the files its blockers name
+   and their neighbours (a blocker that names no file leaves the round open),
+   and no tool is forced. A round that edits is kept only if it retires a
+   blocker it faced, adds no observed failure except ones a failure it fixed had
+   hidden, leaves no more blockers by the same measure, does not stop an app
+   that started from starting, and leaves no more entities or actions failing
+   at runtime; otherwise the tree from before it is restored and the loop ends.
+   A round that edits nothing continues the loop only if the evidence or
+   dependencies it changed pass the same check, or once after every write it
+   tried was refused. Every kept tree is re-snapshotted as the next round's rollback
+   target; the pre-Phase-3 tree is the first snapshot, so a failed repair can
+   never cost you the Phase 2 work.
+   Non-blocker findings are recorded but never burn fix turns.
    See :doc:`validation` for the full list of checks, the severity model, and
    how to turn the repair half on or off.
 
 The whole run streams progress over Server-Sent Events, so the editor shows the
 phase timeline, the LLM's tool calls, a live cost/runtime meter, and the
 streamed text as it happens. The stream reports five coarse phases:
-``select``, ``generate``, ``gap``, ``customize``, and ``validate``. The event
-schema is documented in :doc:`api`.
+``select``, ``generate``, ``gap``, ``customize``, and ``validate``. Within
+``validate``, which can run for many minutes, each step is named as it starts
+(the check round, starting the backend, judging the requirements and how many,
+each fix attempt and how many blockers it faces), and the card shows how long
+the current step has been running. The event schema is documented in :doc:`api`.
 
 A run, end to end
 -----------------
@@ -286,11 +307,16 @@ reading a trace and wondering why a run did what it did.
        before they are accepted (the "build the frontend" item checks that
        frontend files exist). Ending the turn also runs ``validate_app``; a
        blocker from its static frontend checks is sent back to the model once
-       before Phase 2 ends. An item whose check fails three times is recorded
-       as *blocked* and stops holding the gate, so a task the model cannot
-       satisfy can no longer livelock the run. An item the user did not ask
-       for is closed honestly with ``task_list(action='drop', id=N,
-       reason=...)`` rather than marked done.
+       before Phase 2 ends. The harness closes an item itself when its check
+       passes, and refuses ``done`` while the check fails; the model closes
+       an item without a check with ``task_list(action='done')``, without
+       quoting code. An edit to a file the item names never closes it. Work
+       the model cannot finish is recorded with ``action='blocked'`` and
+       stops holding the gate. An item the user did not ask for is closed
+       honestly with ``task_list(action='drop', id=N, reason=...)`` rather
+       than marked done. In Phase 3 only an item whose check fails is a
+       blocker; an item nothing closed is listed in the run report as not
+       confirmed.
    * - Per-write diagnostics
      - Every file the model writes is parsed immediately — ``ast`` plus
        pyflakes' undefined-name checks for Python, a structural scanner for
@@ -308,8 +334,8 @@ reading a trace and wondering why a run did what it did.
      - A checkpoint is written to ``.besser_checkpoint.json`` in the workspace
        after every tool-use turn and again when Phase 3 starts and as its
        repair progresses. It is deleted only when Phase 2 ended cleanly,
-       Phase 3 was not interrupted and no blocker or ``validation
-       unverified:`` finding remains. A run cut short by an error, a cap, or
+       Phase 3 was not interrupted and no blocker or not-confirmed finding
+       remains. A run cut short by an error, a cap, or
        a cancellation, or one that ends with open findings, therefore leaves
        one behind for :ref:`resume <spec-driven-durable-runs>`, which refuses to
        resume against a project whose fingerprint has changed and seeds the
@@ -327,7 +353,7 @@ reading a trace and wondering why a run did what it did.
        ``run_start``, ``phase_enter`` / ``phase_exit``, ``turn_start``,
        ``tool_call``, ``cost_update``, ``llm_call``, ``checkpoint``, ``error``,
        ``target``, ``snapshot``, ``rollback``, ``regeneration``,
-       ``validation_issue``, ``run_end``). ``run_start`` holds the start of
+       ``validation_issue``, ``requirement_cited``, ``run_end``). ``run_start`` holds the start of
        the user's own request, not the modeling agent's notes. Every Phase 2
        turn, the closing reply included, and every Phase 3 fix turn
        (``phase: "phase3_fix"``) writes a ``turn_start`` and a ``cost_update``
@@ -408,11 +434,15 @@ Between Phase 2 and Phase 3, the Python files the LLM wrote whole in a create
 run are passed through ``ruff format --isolated``, which changes layout only,
 so Phase 3 validates the layout that ships; a file it only edited, generator
 files and the files of a modify run keep their own layout. A formatter that
-could not run is reported under *Not checked*. The download's
+could not run is reported under *Not confirmed*. The download's
 ``BESSER_GENERATION.md`` gains a *This run* section: what was built, the base
-generator and the verification counts, with up to eight lines each for what was
-found missing in the code or not checked (a check that could not run, a
-requirement whose evidence did not verify), and how many more there are. A list
+generator and the verification counts (confirmed by running the app's API, found
+in the code but not run, not confirmed, checked and not met, and test workflows that ran and
+failed), a *Not verified* line when a whole
+class of checks left no evidence, with up to eight lines each for what was
+checked and not met (a rule missing in the code, cited code that does not do it), what ran and
+failed (a test workflow the agent wrote) or not confirmed (a check that could not run, a
+requirement whose citation was not located), and how many more there are. A list
 of more than five lines puts findings of one kind on one line ("5 create
 operations could not be tested automatically, because each needs an existing
 record first: ..."). These items, the run card's verification report and the
@@ -422,8 +452,10 @@ agent, with the request it sent, the file and line to edit and what to call
 next, so it stays in the agent's prompt, the trace and the recipe's
 ``validation_issues``. A finding with no sentence of its own reads as a generic
 one, never as the agent's text. A request that states no business rule adds a *Not
-checked* line saying so, and an implemented requirement that was only found in
-the source says so. It leaves out the request itself, because the file
+confirmed* line saying so, and an implemented requirement that was only found in
+the source is counted as found in the code, never as confirmed; a confirmed one
+names the call that exercised it. No check opens
+the screens, so only a call to the running app's API confirms anything. It leaves out the request itself, because the file
 also goes into GitHub pushes, and shows model-written values as code, never as
 links or markup.
 

@@ -172,6 +172,12 @@ class AgentSettings(LLMSettings):
         description="Live shell sessions per process (unset: 10; 0: each command its own sandbox). "
                     "Read per call.")
 
+    # -- Validation -------------------------------------------------------------------
+    llm_screen_check: Annotated[bool, BeforeValidator(_not_off)] = Field(
+        True, validation_alias="BESSER_LLM_SCREEN_CHECK",
+        description="Phase 3 opens every screen of a built frontend in a headless browser; off for 0, "
+                    "false or no. Read per call.")
+
     @field_validator("llm_shell_session_idle_seconds", "llm_shell_session_max", mode="before")
     @classmethod
     def _non_negative_or_warn(cls, value, info: ValidationInfo) -> int:

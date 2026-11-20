@@ -26,6 +26,26 @@ GENERATOR_TOOLS: list[dict[str, Any]] = [tool.schema() for tool in agent_tools()
 # File tools
 # ======================================================================
 
+# The write tools' argument for a file outside a fix attempt's files. Offered only
+# while an attempt's edits are limited (``with_scope_widening``), not on every turn.
+_NEEDED_FOR = {"type": "string", "description": (
+    "Only when this fix attempt refused the file as outside its files: the listed "
+    "blocker the file is needed to fix. Omit it otherwise.")}
+_SCOPED_WRITE_TOOLS = frozenset({"write_file", "modify_file", "replace_file_lines", "delete_file"})
+
+
+def with_scope_widening(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """``tools`` with ``needed_for`` on the write tools, for a fix attempt whose edits are
+    limited to its files."""
+    widened = []
+    for tool in tools:
+        if tool.get("name") in _SCOPED_WRITE_TOOLS:
+            schema = tool["input_schema"]
+            tool = {**tool, "input_schema": {
+                **schema, "properties": {**schema["properties"], "needed_for": _NEEDED_FOR}}}
+        widened.append(tool)
+    return widened
+
 FILE_TOOLS: list[dict[str, Any]] = [
     {
         "name": "list_files",
@@ -221,12 +241,14 @@ EXECUTION_TOOLS: list[dict[str, Any]] = [
             "say the session was restarted or the command ran in a one-off sandbox, earlier "
             "background processes are gone. A result's cwd field is the shell's directory "
             "when it is not the workspace root; ran_in, the result's first field, names it when an "
-            "earlier cd left the shell there. A result's note says when exit_code is only that of the "
+            "earlier cd left the shell there, and cd_hint gives the path from there when a cd failed "
+            "on a path that exists from the root. A result's note says when exit_code is only that of the "
             "last of several commands joined with ';' and an earlier one failed. Destructive or exfiltrating commands "
             "are refused with an error. stdout/stderr are truncated (~15k chars total); "
             "when cut, full_output_path names a file holding the complete log. A command "
             "whose runtime is not installed returns success=false, missing_command=true: "
-            "treat its check as failed, not as passing. Several run_command calls in one turn run "
+            "treat its check as failed, not as passing. git is not installed and the workspace is "
+            "not a git repository. Several run_command calls in one turn run "
             "one after another in the order given."
         ),
         "input_schema": {
@@ -352,9 +374,13 @@ VALIDATION_TOOLS: list[dict[str, Any]] = [
             "No arbitrary shell commands or package installation. Call after a coherent "
             "code change, not again without one: ending your turn runs it too. Fix the "
             "returned blockers, then rerun. "
-            "A passing result covers these checks only, not all business requirements."
+            "A passing result covers these checks only, not all business requirements. "
+            "citations: the whole line a 'requirement unverified' blocker asks you to cite."
         ),
-        "input_schema": {"type": "object", "properties": {}},
+        "input_schema": {"type": "object", "properties": {"citations": {"type": "array", "items": {
+            "type": "object", "required": ["requirement", "path", "line"],
+            "properties": {"requirement": {"type": "integer"}, "path": {"type": "string"},
+                           "line": {"type": "string"}}}}}},
     },
     {
         "name": "validate_model",
@@ -392,24 +418,18 @@ VALIDATION_TOOLS: list[dict[str, Any]] = [
             "action='mixed' does SEVERAL OF THE ABOVE IN ONE CALL — the turn "
             "you finish two items AND discover a new one AND drop one you didn't "
             "need should be ONE task_list call, not four. Pass any combination of "
-            "`done_ids` (+ top-level `evidence`/`existing`, same as action='done'), "
+            "`done_ids` (same as action='done' `ids`), "
             "`add_texts` (same as action='add' `texts`), `drop` (a list of "
             "{id, reason} objects), and `blocked` (a list of {id, reason} objects). "
             "The reply nests each verb's own result under `results` — check every "
             "key you used; a mixed call can succeed on one verb and be refused on "
             "another in the same response. "
-            "For done without an attached verifier, supply evidence=[{id, path, quote}]: "
-            "current exact quotes from your successful writes. For an already-existing "
-            "implementation, read the source first and set existing=true with exact "
-            "executable evidence (citing code you read, without claiming you wrote it); "
-            "do not make unnecessary edits just to close a task. This records "
-            "implementation only, not verified acceptance. "
             "Mark items done as you complete them — the run does not finish "
             "while items are open. Batch them: one task per call wastes a turn "
-            "each, and you have a limited number of turns. Some items are "
-            "checked before they are accepted; if one is refused, do the work "
-            "and try again — after a few refusals it is recorded as blocked "
-            "and you should move on rather than retry it."
+            "each, and you have a limited number of turns. An item with a machine "
+            "check closes by itself once the check passes, and done is refused while "
+            "it fails. Any other item closes only when you mark it done. Closing an "
+            "item is bookkeeping: the harness still checks the app."
         ),
         "input_schema": {
             "type": "object",
@@ -418,22 +438,8 @@ VALIDATION_TOOLS: list[dict[str, Any]] = [
                     "type": "string",
                     "enum": ["list", "done", "add", "drop", "blocked", "mixed"],
                 },
-                "existing": {"type": "boolean"},
                 "id": {"type": "integer"},
                 "reason": {"type": "string"},
-                "evidence": {
-                    "type": "array",
-                    "maxItems": 20,
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "id": {"type": "integer"},
-                            "path": {"type": "string"},
-                            "quote": {"type": "string", "maxLength": 4000},
-                        },
-                        "required": ["id", "path", "quote"],
-                    },
-                },
                 "ids": {"type": "array", "items": {"type": "integer"}},
                 "text": {"type": "string"},
                 "texts": {"type": "array", "items": {"type": "string"}},

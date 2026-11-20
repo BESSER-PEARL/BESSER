@@ -55,10 +55,6 @@ _EXCEPTION_RE = re.compile(r"\b([A-Z][A-Za-z0-9]*(?:Error|Exception|Warning))\b"
 # A source file reference, e.g. ``forecast.py`` / ``src/App.tsx``.
 _SOURCE_FILE_RE = re.compile(r"\b([\w./\\-]+\.(?:py|js|jsx|ts|tsx))\b")
 
-# Findings of the requirements ledger and the task checklist (``requirement:``,
-# ``requirement unverified:``, ``task unverified:``, ...).
-_JUDGED_REQUEST_PREFIXES = ("requirement:", "requirement ", "task unverified:")
-
 # Verb prefixes stripped off a handler tail to recover the entity noun.
 _VERB_PREFIXES = (
     "create", "get", "update", "delete", "list", "post", "put",
@@ -280,14 +276,11 @@ def finding_matches_target(
     would match inside ``booking`` and point the fix loop at the wrong
     entity. ``_`` and punctuation count as boundaries, so ``book_id`` and
     ``routers/book.py`` still match.
-
-    A requirement or checklist finding never matches: it judges the request,
-    and names the entity whenever a requirement does.
     """
     if target is None or not target.entities:
         return False
     low = (finding_message or "").lower()
-    if not low or low.startswith(_JUDGED_REQUEST_PREFIXES):
+    if not low:
         return False
     for entity in target.entities:
         for form in _forms(entity):

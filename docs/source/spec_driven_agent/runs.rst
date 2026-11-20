@@ -130,9 +130,10 @@ request. The editor avoids that for a project linked to GitHub: it starts the ru
 from the repository instead (see :ref:`web-editor-github-coming-back`).
 
 Validation of a modify run is proportional to its request: it keeps the previous
-run's requirement verdicts, judges only the newest message's requirements and
-those whose files changed, and reports a requirement the previous run had left
-open as still open rather than as a blocker of this run (see
+run's requirement verdicts, judges only the requirements of the messages since
+that run and those whose files changed, and reports a requirement the previous run
+had left open as still open rather than as a blocker of this run, unless the new
+messages ask to finish it (see
 :ref:`requirements of a modify run <spec-driven-modify-requirements>`). The build, type-check, boot and runtime
 gates apply as in any run.
 

@@ -752,6 +752,11 @@ def extract_requirements(instructions: str, llm_client, *,
         logger.warning("Requirements ledger: 'requirements' came back as %s, not a list",
                        type(extracted).__name__)
         return None
+    return _requirement_items(extracted)
+
+
+def _requirement_items(extracted: list) -> list[dict]:
+    """The extraction tool's items as ledger requirements numbered from 1."""
     requirements: list[dict] = []
     for item in extracted:
         # A bare string is a requirement's text; a null or non-string text is
@@ -774,6 +779,82 @@ def extract_requirements(instructions: str, llm_client, *,
 
 def _incomplete_extraction_item(rid: int) -> dict:
     return {"id": rid, "text": _EXTRACTION_INCOMPLETE, "kind": "verification"}
+
+
+_FOLLOW_UP_SYSTEM_PROMPT = _EXTRACT_SYSTEM_PROMPT + (
+    "\n\nThis is a follow-up on an application already built. Extract requirements only "
+    "from the NEW user messages; the earlier conversation and the numbered requirements "
+    "the app was built against are context, used to resolve references such as 'retry', "
+    "'yes', 'the same for the other screen'.\n"
+    "- A new message that asks again for a numbered requirement, or changes it, gives a "
+    "requirement in its new form; put the number in 'replaces'. A numbered requirement a "
+    "new message removes or no longer wants goes in 'replaces' too.\n"
+    "- 'continues_earlier_work' is true when the new messages ask to retry, continue, "
+    "finish or fix what was asked before without stating what to change; then the "
+    "requirement list may be empty."
+)
+
+_SUBMIT_FOLLOW_UP_TOOL = {
+    "name": "submit_follow_up_requirements",
+    "description": "Submit the requirements the new user messages state.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "requirements": _SUBMIT_REQUIREMENTS_TOOL["input_schema"]["properties"]["requirements"],
+            "replaces": {"type": "array", "items": {"type": "integer"},
+                         "description": "Numbers of the listed requirements a new message changes, "
+                                        "asks for again or removes."},
+            "continues_earlier_work": {"type": "boolean"},
+        },
+        "required": ["requirements", "replaces", "continues_earlier_work"],
+    },
+}
+
+
+def later_messages(instructions: str) -> list[str]:
+    """The user's messages after the first one, oldest first (``LATER_REQUEST_MARKER`` sections)."""
+    messages = []
+    for part in original_request(instructions).split(LATER_REQUEST_MARKER)[1:]:
+        head, sep, rest = part.strip().partition("\n\n")
+        messages.append((rest if sep and head.startswith("This later request takes precedence") else part).strip())
+    return messages
+
+
+def extract_follow_up(previous: list[dict], instructions: str, previous_instructions: str | None,
+                      llm_client, *, can_call: Callable[[], bool] | None = None) -> dict | None:
+    """What the user's messages since the previous run ask of the app ``previous`` describes.
+
+    The new messages are the later messages of ``instructions`` that ``previous_instructions``
+    (the previous run's) does not hold, else the newest one. Returns ``{"requirements",
+    "replaces", "continues"}``: requirements numbered from 1, the ids of ``previous`` a new
+    message changes, asks for again or removes, and whether the messages only ask to retry or
+    finish earlier work. None when no real provider is available or the call failed.
+    """
+    validate_specification(instructions)
+    if not _is_real_provider(llm_client):
+        return None
+    seen = set(later_messages(previous_instructions or ""))
+    new = [message for message in later_messages(instructions) if message not in seen] or [
+        latest_user_message(instructions)]
+    earlier = original_request(instructions).split(LATER_REQUEST_MARKER, 1)[0].strip()
+    earlier_messages = [message for message in later_messages(instructions) if message in seen]
+    prompt = "\n\n".join([
+        "## The earlier conversation (context only)", earlier, *earlier_messages,
+        "## Requirements the app was built against", render_requirements(previous),
+        "## The new user messages", *(f"{n}. {message}" for n, message in enumerate(new, 1)),
+    ])
+    payload = _call_with_tool(llm_client, _FOLLOW_UP_SYSTEM_PROMPT, prompt, _SUBMIT_FOLLOW_UP_TOOL,
+                              can_call=can_call)
+    if not payload or not isinstance(payload.get("requirements"), list):
+        return None
+    known = {item["id"] for item in previous}
+    replaces = payload.get("replaces")
+    return {
+        "requirements": _requirement_items(payload["requirements"]),
+        "replaces": {rid for rid in map(_verdict_id, replaces if isinstance(replaces, list) else [])
+                     if rid in known},
+        "continues": payload.get("continues_earlier_work") is True,
+    }
 
 
 def stated_requirements_ledger(stated: list[dict], instructions: str) -> list[dict] | None:
@@ -2634,42 +2715,65 @@ def source_hashes(output_dir: str) -> dict[str, str]:
 # reported as still open, not a blocker of this run.
 INHERITED = "open_since_previous_run"
 UNMET_STATUSES = ("partial", "missing", "unverified")
-_RECORDED_VERDICT_KEYS = ("id", "text", "kind", "ref", "status", "evidence", "note", "inspection_paths")
+
+
+def _recorded_verdict(item) -> dict | None:
+    """A verdict read from a recipe, in the shape this module writes; None when it is not one
+    (the recipe may come from a repository anyone edited)."""
+    if not (isinstance(item, dict) and type(item.get("id")) is int and isinstance(item.get("text"), str)
+            and item["text"].strip() and item.get("status") in (*_STATUSES, NOT_PROVABLE, "out_of_scope")):
+        return None
+    evidence = item.get("evidence")
+    if isinstance(evidence, list):
+        evidence = [{"path": c["path"], "line": c["line"]} for c in evidence
+                    if isinstance(c, dict) and isinstance(c.get("path"), str) and isinstance(c.get("line"), str)]
+    elif not isinstance(evidence, str):
+        evidence = ""
+    paths = item.get("inspection_paths")
+    verdict = {"id": item["id"], "text": item["text"], "status": item["status"],
+               "kind": item["kind"] if isinstance(item.get("kind"), str) else "",
+               "evidence": evidence, "note": item["note"] if isinstance(item.get("note"), str) else "",
+               "inspection_paths": [p for p in paths if isinstance(p, str)] if isinstance(paths, list) else []}
+    if isinstance(item.get("ref"), str):
+        verdict["ref"] = item["ref"]
+    return verdict
 
 
 def previous_run_verdicts(recorded: list, output_dir: str) -> list[dict]:
     """A previous run's recorded verdicts as of ``output_dir``, the tree it delivered (no call).
 
     An "implemented" citation is checked again (:func:`verify_evidence`), which records its
-    file hashes; an unmet verdict records the hashes of the files it names (inspection paths
-    and citations) and of the files they rest on, so a later pass can tell they are unchanged.
-    An "implemented" whose citation no longer matches records none, so it is judged again.
+    file hashes; an "implemented" whose citation no longer matches stays implemented without
+    hashes, so it is judged again. An unmet verdict records the hashes of the files it names
+    (inspection paths and citations) and of the files they rest on, so a later pass can tell
+    they are unchanged; one that names no file records none.
     """
-    items = [{key: item[key] for key in _RECORDED_VERDICT_KEYS if key in item} for item in recorded
-             if isinstance(item, dict) and isinstance(item.get("text"), str) and type(item.get("id")) is int
-             and isinstance(item.get("status"), str)]
+    items = [verdict for verdict in map(_recorded_verdict, recorded) if verdict][:MAX_REQUIREMENTS]
     files = _source_files(output_dir)
     imports = ImportIndex(output_dir, files)
-    verdicts = verify_evidence(items, output_dir, imports)
-    for recorded_item, item in zip(items, verdicts):
-        if item["status"] == "implemented" or recorded_item["status"] == "implemented":
-            continue
-        named = resolved_focus_paths(files, [*item.get("inspection_paths", []), *cited_paths(item.get("evidence"))])
-        if named:
-            item["cited_file_hashes"] = {rel: cited_file_hash(files[rel]) for rel in named}
-            item["dependency_file_hashes"] = {rel: cited_file_hash(files[rel])
-                                              for rel in sorted(imports.dependencies(set(named)))}
+    verdicts = []
+    for item, checked in zip(items, verify_evidence(items, output_dir, imports)):
+        if item["status"] == "implemented" and checked["status"] != "implemented":
+            checked = item
+        elif item["status"] != "implemented":
+            named = resolved_focus_paths(files, [*item["inspection_paths"], *cited_paths(item["evidence"])])
+            if named:
+                checked["cited_file_hashes"] = {rel: cited_file_hash(files[rel]) for rel in named}
+                checked["dependency_file_hashes"] = {rel: cited_file_hash(files[rel])
+                                                     for rel in sorted(imports.dependencies(set(named)))}
+        verdicts.append(checked)
     return verdicts
 
 
-def mark_inherited(verdicts: list[dict], previous: list[dict]) -> list[dict]:
-    """``verdicts`` with each unmet one that ``previous`` (by id) also left unmet marked
-    :data:`INHERITED`, and each unmet one that ``previous`` found implemented noted as a regression."""
+def mark_inherited(verdicts: list[dict], previous: list[dict], *, inherit: bool = True) -> list[dict]:
+    """``verdicts`` with each unmet one whose ``previous`` verdict (by id) was unmet too marked
+    :data:`INHERITED` (unless ``inherit`` is off), and each unmet one whose previous verdict
+    was implemented noted as a regression. Only the ids in ``previous`` are compared."""
     before = {item["id"]: item.get("status") for item in previous}
     marked = []
     for verdict in verdicts:
         status, earlier = verdict.get("status"), before.get(verdict["id"])
-        if status in UNMET_STATUSES and earlier in UNMET_STATUSES:
+        if inherit and status in UNMET_STATUSES and earlier in UNMET_STATUSES:
             verdict = {**verdict, INHERITED: True}
         elif status in UNMET_STATUSES and earlier == "implemented":
             verdict = {**verdict, "note": " ".join(

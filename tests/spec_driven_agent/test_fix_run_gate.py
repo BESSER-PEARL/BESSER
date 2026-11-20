@@ -17,13 +17,17 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from besser.BUML.metamodel.structural import (
     Class,
     DomainModel,
     PrimitiveDataType,
     Property,
 )
+from besser.spec_driven_agent.planning import requirements_ledger as ledger
 from besser.spec_driven_agent.planning.fix_target import parse_reported_target
+from besser.spec_driven_agent.planning.requirements_ledger import ledger_issues
 from besser.spec_driven_agent.planning.target import Routing
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator, ValidationIssue
 
@@ -213,19 +217,27 @@ _EXCEPTION_INSTR = ("I got \"if order.quantity > stock: TypeError: '>' not suppo
                    "instances of 'NoneType' and 'int'\". Fix this error.")
 
 
-def test_gate_ignores_requirement_and_task_findings_that_name_the_entity(tmp_path):
-    """The judge's and the checklist's findings are about the request, not the reported failure:
-    a requirement that mentions the entity left the fixed error reported as unconfirmed."""
+def _earlier_and_own_requirements(orch):
+    """R11 comes from an earlier run's request, R40 from this run's; both name the entity."""
+    orch._previous_ids = {11}
+    orch._requirement_verdicts = [
+        {"id": 11, "text": "The Order screen offers a discount option", "kind": "ui", "status": "unverified",
+         "evidence": "", "note": ""},
+        {"id": 40, "text": "An Order without a quantity is refused", "kind": "validation", "status": "missing",
+         "evidence": "", "note": ""},
+    ]
+    return [ValidationIssue("blocker", message) for message in ledger_issues(orch._requirement_verdicts)]
+
+
+def test_gate_ignores_requirement_findings_of_earlier_runs(tmp_path):
+    """An earlier run's requirement names the entity whenever a requirement does: it left the
+    fixed error reported as unconfirmed."""
     orch = _orch(tmp_path, _domain("Order", "Customer"))
     orch._is_fix_run = True
     orch._fix_target = parse_reported_target(_EXCEPTION_INSTR, orch.domain_model, "Order")
     assert orch._fix_target.kind == "exception" and orch._fix_target.entities == ("Order",)
-    orch._validation_issues = [
-        ValidationIssue("blocker", "requirement unverified: R11 — The Order screen offers a discount "
-                                   "option — the cited evidence '' does not verify it"),
-        ValidationIssue("blocker", "requirement partial: R3 — Orders are listed by date; inspect and complete"),
-        ValidationIssue("blocker", "task unverified: task 2 remains unresolved: show the Order total"),
-    ]
+    earlier, _ = _earlier_and_own_requirements(orch)
+    orch._validation_issues = [earlier]
 
     orch._evaluate_fix_target_gate()
 
@@ -233,12 +245,30 @@ def test_gate_ignores_requirement_and_task_findings_that_name_the_entity(tmp_pat
     assert orch._fix_target_message is None
 
 
-def test_requirement_findings_are_never_promoted_as_the_reported_failure(tmp_path):
+@pytest.mark.parametrize("own", ["requirement", "task"])
+def test_this_runs_own_requirement_or_fix_task_keeps_the_failure_unconfirmed(tmp_path, own):
     orch = _orch(tmp_path, _domain("Order"))
     orch._is_fix_run = True
     orch._fix_target = parse_reported_target(_EXCEPTION_INSTR, orch.domain_model, "Order")
-    issue = ValidationIssue("warning", "requirement still open from the previous run: R4 — Orders can be "
-                                       "exported (missing)")
+    earlier, requirement = _earlier_and_own_requirements(orch)
+    task = ValidationIssue("blocker", "task unverified: task 2 remains unresolved: refuse an Order "
+                                      "without a quantity")
+    orch._validation_issues = [earlier, requirement if own == "requirement" else task]
+
+    orch._evaluate_fix_target_gate()
+
+    assert orch._fix_target_resolved is False
+
+
+def test_requirement_findings_of_earlier_runs_are_never_promoted(tmp_path):
+    orch = _orch(tmp_path, _domain("Order"))
+    orch._is_fix_run = True
+    orch._fix_target = parse_reported_target(_EXCEPTION_INSTR, orch.domain_model, "Order")
+    orch._previous_ids = {4}
+    orch._requirement_verdicts = [{"id": 4, "text": "Orders can be exported", "kind": "action",
+                                   "status": "missing", "evidence": "", "note": "", ledger.INHERITED: True}]
+    [message] = ledger_issues(orch._requirement_verdicts)
+    issue = ValidationIssue("warning", message)
 
     assert orch._promote_fix_target_findings([issue]) == [issue]
 

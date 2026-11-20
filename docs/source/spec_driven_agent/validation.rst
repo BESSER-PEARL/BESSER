@@ -746,22 +746,41 @@ Failure to extract requirements remains unknown and blocks verified completion.
 
 A modify run is answerable for its own request and for what it breaks, not for
 the whole application again. When the seeded recipe records requirement
-verdicts, the run keeps the previous run's requirements (same ``R`` numbers) and
-extracts only the newest user message, whose requirements follow them. The
-previous verdicts are taken as of the tree the run starts from: an
+verdicts, the run keeps the previous run's requirements (same ``R`` numbers, at
+most 128) and extracts only the user messages the previous run's request did not
+hold (a message sent to a run that was cancelled counts as new), with the earlier
+conversation and the numbered requirements as context, so "retry", "yes" or "the
+same for the other screen" resolve. Their requirements follow the previous ones.
+The extraction also names the previous requirements a new message changes, asks
+for again or removes: those leave the ledger (a changed or restated one comes
+back as a new requirement), so doing what the message asks is not a regression.
+It also says whether the messages only ask to retry, continue or finish earlier
+work. When the editor sends its own requirements, a previous verdict is kept for
+the requirement with the same trace id, else the same text.
+
+The previous verdicts are taken as of the tree the run starts from: an
 "implemented" citation is checked again against it (one that no longer matches
-is judged again), and every verdict records the hashes of the files it cites or
-names and of the files they rest on. A verdict whose files this run leaves
-byte-identical is not judged again, whether it was met or not. Then:
+stays "implemented" but is judged again), and every verdict records the hashes of
+the files it cites or names and of the files they rest on; a verdict that names no
+file records none and is judged again. A verdict whose files this run leaves
+byte-identical is not judged again, whether it was met or not. A recipe whose
+verdicts cannot be read is ignored, and the whole request is judged. Then:
 
 - a requirement that was implemented and is no longer is a blocker, and its
   note says it was implemented when the previous run ended;
-- a requirement of the newest message that is not implemented is a blocker;
+- a requirement of the new messages that is not implemented is a blocker;
 - a requirement the previous run had left partial, missing or unverified that
   is still so is a warning, ``requirement still open from the previous run:``.
   It does not drive the fix loop and does not make the run incomplete; the
-  report lists it with "open since the previous run". A later message that
-  states it again adds it as that run's own requirement.
+  report lists it with "open since the previous run". When the new messages only
+  ask to retry or finish earlier work, these requirements are this run's own
+  instead: judged, and blockers while unmet. The incomplete-extraction gate and
+  the requirements derived from the model or the agent are never carried this way.
+
+Known limit: the files a verdict rests on are the files it cites, their local
+imports and the entry files that mount them. A frontend screen that reaches the
+backend only over HTTP does not rest on the backend's files, so an edit to the
+backend route it calls keeps the screen's verdict.
 
 When the editor sends the modeling assistant's requirements (the request's
 ``requirements`` field, see :doc:`api`), the ledger is built from them instead of

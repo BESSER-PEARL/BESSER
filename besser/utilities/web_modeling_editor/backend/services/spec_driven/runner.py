@@ -101,6 +101,7 @@ from besser.spec_driven_agent.validation.user_wording import (
     Finding, not_checked, plain_check, plain_reason, summary_lines, user_finding, user_sentence,
 )
 from besser.spec_driven_agent.validation.issues import (
+    RUNTIME_NOT_CHECKABLE,
     _classify_issue,
     is_completion_issue,
     is_configured_off,
@@ -515,6 +516,9 @@ def run_summary_markdown(
         if run.get("outcome") == "completed_unverified" and run.get("stop_message"):
             lines.append(f"- Not verified: {one_line(run['stop_message'])}")
         off = [gap for gap in run.get("not_verified") or [] if isinstance(gap, dict) and gap.get("configured_off")]
+        if run_record.not_checkable((gap.get("check"), gap.get("reason")) for gap in off):
+            lines.append(f"- Not checked: the app's runtime ({one_line(RUNTIME_NOT_CHECKABLE)})")
+            off = [gap for gap in off if gap.get("reason") != RUNTIME_NOT_CHECKABLE]
         if off:
             lines.append("- Checks off on this server: " + "; ".join(
                 f"{one_line(gap.get('check'))} ({one_line(gap.get('reason'))})" for gap in off))

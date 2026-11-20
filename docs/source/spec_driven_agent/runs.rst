@@ -530,7 +530,12 @@ keys, always in this order:
   started), ``records`` (no record could be created through the API) or
   ``build`` (the frontend was never built). ``configured_off`` is true when the
   server has that check switched off; such an entry is a property of the server
-  and changes neither the outcome nor the ``stop_message``. A finished run with
+  and changes neither the outcome nor the ``stop_message``. It is also true for
+  ``runtime`` with the reason ``no check can start this kind of backend`` (a
+  server no check starts, see :ref:`spec-driven-not-verified`): the outcome stays
+  as it is, and a run with nothing else to say gets the ``stop_message`` ``The app
+  was generated, but its runtime could not be checked: no check can start this
+  kind of backend.`` A finished run with
   another entry and no blocker ends ``completed_unverified``, and its
   ``stop_message`` names them: ``The app was generated, but it was not checked
   against your request (too little time was left).``

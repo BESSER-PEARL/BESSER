@@ -121,6 +121,7 @@ from besser.spec_driven_agent.planning.generator_keywords import (
     keyword_generator,
 )
 from besser.spec_driven_agent.planning.target import (
+    BACKEND,
     MODIFY_TOOL_PROPERTIES,
     OTHER,
     entity_requirements,
@@ -195,6 +196,7 @@ from besser.spec_driven_agent.validation.issues import (
     is_completion_issue,
     is_not_confirmed,
     RUNTIME_CHECK_UNVERIFIED,
+    RUNTIME_NOT_CHECKABLE,
     required_check_unverified,
     DEPENDENCIES_NOT_INSTALLED,
     dependencies_not_installed,
@@ -5791,7 +5793,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         ``configured_off`` marks a class the server has switched off (the ledger, the startup
         check, the build check or shell tools): a property of the server, not of this run.
         Individual findings that are not confirmed are not gaps. Only the FastAPI backends the
-        probe drives count for ``runtime``: another kind of backend is never started by it.
+        probe drives count for ``runtime``: a server the run built that no check can start is
+        ``runtime`` with ``RUNTIME_NOT_CHECKABLE``, marked ``configured_off``, since no edit
+        can give it evidence.
         """
         from besser.spec_driven_agent.validation.api_probe import confirmed_create_paths
 
@@ -5815,6 +5819,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             gaps.append(("runtime", "the startup check is off on this server", True)
                         if not self.enable_import_smoke_check and not skipped else
                         ("runtime", _stopped_by(skipped) if skipped else self._never_started_reason(messages), False))
+        elif self._unprobeable_server():
+            gaps.append(("runtime", RUNTIME_NOT_CHECKABLE, True))
         else:
             booted, reports = self._runtime_evidence()
             entities = [entry for backend in booted for entry in (backend.get("entities") or {}).values()]
@@ -5831,6 +5837,17 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                                     for m in messages)
                              else _stopped_by(skipped) if skipped else "the build did not run", False))
         return gaps
+
+    def _unprobeable_server(self) -> bool:
+        """The run built a server (a whole-application generator, or a backend target) and no
+        runtime check can start it: the workspace holds no backend the probe drives."""
+        if self._generator_used not in _APPLICATION_OUTPUT_DIRS and getattr(self.target, "kind", None) != BACKEND:
+            return False
+        try:
+            return not self._probeable_backends()
+        except Exception:
+            logger.warning("Backend discovery failed; the runtime class is left to _never_started", exc_info=True)
+            return False
 
     def _never_started_reason(self, messages: list[str]) -> str:
         """Why the backend was never started, as a fixed phrase."""

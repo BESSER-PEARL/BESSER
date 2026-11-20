@@ -811,8 +811,13 @@ stays reserved for a known defect. The classes are:
   test workflow that booted it or passed. When no runtime check note already says
   why, the runtime gate records it as ``validation unverified: runtime gate:
   ...``, so a timed-out probe is listed once. Only the FastAPI backends the probe
-  drives count: another kind of backend is never started by the check, and its
-  run reports no runtime class;
+  drives are started. A run that built another kind of server (a
+  whole-application generator ran, or the target is a backend, and the workspace
+  holds no backend the probe drives, as a Django app) records the class with the
+  reason "no check can start this kind of backend", marked like a check switched
+  off (below): no edit can give it evidence, so it never makes the run not
+  verified, and its run record's ``stop_message`` says the runtime could not be
+  checked;
 - *records*: the probe started the backend, no entity came back created, and no
   workflow created a record and read it back ("no record could be created through
   the API"); a single refused create stays a finding not confirmed;

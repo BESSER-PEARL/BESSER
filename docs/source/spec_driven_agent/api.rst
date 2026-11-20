@@ -439,8 +439,9 @@ SSE event types
        run's stored status and its telemetry derive from it.
        ``checksOff`` lists the classes (``requirements``, ``runtime``,
        ``build``) the server has switched off (the requirements check, the
-       startup check, the build check or shell tools): the same on every run
-       there, so it never sets ``unverified`` and never counts in
+       startup check, the build check or shell tools), and ``runtime`` for a
+       server the run built that no check can start (a Django app): no edit of
+       the run can change either, so it never sets ``unverified`` and never counts in
        ``blockerCount`` beyond its own finding notes. These fields,
        ``notConfirmedCount`` and ``unresolvedBlockerCount`` are additive: a
        client that ignores them still reads ``blockerCount`` as before.

@@ -281,6 +281,10 @@ _DID_NOT_RUN_NOTE_RE = _re.compile(
     r"^validation: (?P<check>.+?) did not run \((?P<reason>.*)\) - its checks were SKIPPED", _re.S)
 
 
+# The reason of a ``runtime`` class no check can cover: the run built a server none starts.
+RUNTIME_NOT_CHECKABLE = "no check can start this kind of backend"
+
+
 def runtime_check_unverified(check: str, reason: str) -> str:
     """A runtime check that did not run: an unknown no source edit can settle."""
     return (

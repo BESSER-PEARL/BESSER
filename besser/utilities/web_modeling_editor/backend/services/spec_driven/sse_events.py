@@ -318,8 +318,8 @@ class DoneEvent(BaseSseEvent):
     unverifiedReason: Optional[str] = None
     # The classes of checks (``requirements``, ``runtime``, ``build``) this server has
     # switched off: the requirements check, the startup check, the build check or shell
-    # tools. A property of the server, the same on every run there, so it never sets
-    # ``unverified``; the editor may say it once. Additive.
+    # tools, and ``runtime`` for a server the run built that no check can start. No edit
+    # can change either, so it never sets ``unverified``; the editor may say it once. Additive.
     checksOff: list[str] = Field(default_factory=list)
     # How the run ended, the run record's ``outcome``: ``completed``,
     # ``completed_with_blockers``, ``completed_unverified``, ``cancelled``,

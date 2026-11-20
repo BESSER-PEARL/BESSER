@@ -881,9 +881,12 @@ The recipe records, for each implemented requirement, ``verification`` and a
 is exercised only when a ``test_api`` call that passed on the final tree hit a route
 whose request runs the cited code: its decorator, its handler (also one registered
 with ``add_api_route``), or a function of the same file the handler calls or names in
-``Depends(...)``, under the literal ``prefix=`` of its router (a router whose prefix
+``Depends(...)`` (not a parameter, variable or nested function of the handler with
+that name), under the literal ``prefix=`` of its router (a router whose prefix
 is not a literal verifies nothing). An abridged citation ("a ... b") counts a route
-only when the route runs every part of it. The note names that call ("API: a passing
+only when the route runs every part of it; when a part is too short to locate, the
+parts left may be code several routes share, so it counts no route ("API: not run
+(a part of the abridged citation is too short to tell its route)"). The note names that call ("API: a passing
 workflow called GET /x/, the cited route"). A call to another route of the same file
 proves nothing; a citation no route runs (a model, an import) is found in the code
 whatever ran: "API: not run (no cited line is in a route handler)", and cited backend

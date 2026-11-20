@@ -910,7 +910,10 @@ class SmartRunRegistry:
                 is_zip=bool(data["isZip"]),
                 temp_dir=workspace,
                 created_at=created_at,
-                packaged=data.get("packaged") is True,
+                # A manifest written before the flag: only a packaged ZIP is named after its
+                # run id, which the server draws after an upload is named.
+                packaged=data.get("packaged") is True or (
+                    "packaged" not in data and data["fileName"] == f"besser_smart_{run_id}.zip"),
             )
         except (KeyError, TypeError, ValueError):
             logger.warning("Ignoring invalid download metadata at %s", manifest_path, exc_info=True)

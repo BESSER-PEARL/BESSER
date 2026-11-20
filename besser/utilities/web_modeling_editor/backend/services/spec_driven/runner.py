@@ -128,6 +128,7 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.sse_event
     PhaseEvent,
     PhaseUpdateEvent,
     StartEvent,
+    StepEvent,
     TextDeltaEvent,
     ToolCallEvent,
     VerificationCounts,
@@ -1606,6 +1607,8 @@ class SmartGenerationRunner:
             if isinstance(event, PhaseEvent):
                 # Stamped as the phase starts, not when the consumer gets to it.
                 event = event.model_copy(update=self._run_totals())
+            elif isinstance(event, StepEvent):
+                event = event.model_copy(update={"elapsedSeconds": self._run_totals()["elapsedSeconds"]})
             try:
                 loop.call_soon_threadsafe(_put_in_loop, event)
             except RuntimeError:
@@ -1715,6 +1718,10 @@ class SmartGenerationRunner:
                 # The first check's result, on the row announced above.
                 self._note_validation_counts(status)
                 _put(PhaseUpdateEvent(phase="validate", details="", message=status))
+                return
+            if tool == "__validation_step__":
+                # What Phase 3 is doing now (a check round, a judge call, a fix attempt).
+                _put(StepEvent(phase="validate", message=status))
                 return
             if tool == "gap_analysis":
                 # Sentinel emitted by gap_analyzer.analyze_gaps_via_llm

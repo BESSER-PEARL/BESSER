@@ -576,6 +576,74 @@ def test_gui_reply_without_agent_gui_is_rejected():
         process_agent_diagram(diagram)
 
 
+def test_intent_matched_transition_without_intent_is_rejected():
+    diagram = _live_testing_diagram()
+    diagram["model"]["relationships"]["r-intent"]["predefined"]["intentName"] = ""
+    with pytest.raises(ValueError, match="names no intent"):
+        process_agent_diagram(diagram)
+
+
+def test_state_with_two_auto_transitions_is_rejected():
+    diagram = _live_testing_diagram()
+    diagram["model"]["relationships"]["r-auto2"] = _transition(
+        "r-auto2", "s-think", "s-ask", transitionType="predefined", predefined={"predefinedType": "auto"})
+    diagram["model"]["relationships"]["r-auto3"] = _transition(
+        "r-auto3", "s-think", "s-files", transitionType="predefined", predefined={"predefinedType": "auto"})
+    with pytest.raises(ValueError, match="has 2 'auto' transitions"):
+        process_agent_diagram(diagram)
+
+
+def test_auto_transition_next_to_another_transition_is_rejected():
+    """The quiz mistake: 'wrong answer' modelled as auto next to the intent transition of the same state."""
+    diagram = _live_testing_diagram()
+    # s-ask already has transitions to s-think (form) and s-files (intent); add an auto one
+    diagram["model"]["relationships"]["r-auto"] = _transition(
+        "r-auto", "s-ask", "s-files", transitionType="predefined", predefined={"predefinedType": "auto"})
+    with pytest.raises(ValueError, match="next to .* other transition"):
+        process_agent_diagram(diagram)
+
+
+def test_custom_condition_code_is_wired_under_its_generated_name(tmp_path):
+    """Two custom conditions with the same authored function name must not collide, and the
+    transition must reference a function that exists."""
+    import re
+
+    from besser.generators.agents.baf_generator import BAFGenerator, GenerationMode
+
+    diagram = _live_testing_diagram()
+    for rel_id, dest, value in (("r-c1", "s-think", 1), ("r-c2", "s-ask", 2)):
+        diagram["model"]["relationships"][rel_id] = _transition(
+            rel_id, "s-files", dest, transitionType="custom",
+            custom={"event": "None", "condition": [f"def condition(session):\n    return session.get('q') == {value}"]})
+    agent = process_agent_diagram(diagram)
+    BAFGenerator(agent, output_dir=str(tmp_path), generation_mode=GenerationMode.CODE_ONLY).generate()
+    code = (tmp_path / f"{agent.name}.py").read_text(encoding="utf-8")
+
+    used = re.findall(r"\.when_condition\((\w+)\)", code)
+    assert len(used) == 2 and len(set(used)) == 2
+    for name in used:
+        assert re.search(rf"^def {name}\(", code, re.M), f"{name} is used but never defined"
+
+
+def test_a_helper_above_a_custom_condition_is_not_the_function_that_gets_renamed(tmp_path):
+    import re
+
+    from besser.generators.agents.baf_generator import BAFGenerator, GenerationMode
+
+    diagram = _live_testing_diagram()
+    code = ("def _came_from_q1(session):\n    return session.get('came_from') == 'q1'\n\n"
+            "def condition(session):\n    return _came_from_q1(session)")
+    diagram["model"]["relationships"]["r-c1"] = _transition(
+        "r-c1", "s-files", "s-think", transitionType="custom", custom={"event": "None", "condition": [code]})
+    agent = process_agent_diagram(diagram)
+    BAFGenerator(agent, output_dir=str(tmp_path), generation_mode=GenerationMode.CODE_ONLY).generate()
+    generated = (tmp_path / f"{agent.name}.py").read_text(encoding="utf-8")
+
+    (used,) = re.findall(r"\.when_condition\((\w+)\)", generated)
+    assert re.search(rf"^def {used}\(", generated, re.M)
+    assert re.search(r"^def _came_from_q1\(", generated, re.M)
+
+
 def test_undesigned_agent_gui_becomes_empty_gui_model():
     diagram = _live_testing_diagram()
     diagram["model"]["components"]["gui-1"]["guiModel"] = None

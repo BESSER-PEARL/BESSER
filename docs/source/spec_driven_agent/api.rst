@@ -150,6 +150,25 @@ Request body
        request. Longer input is rejected before generation, not truncated.
        Accepted instructions reach planning and requirement extraction in full;
        inventories and model summaries have separate context budgets.
+   * - ``requirements``
+     - list (optional)
+     - Requirements the modeling assistant extracted from the user's request,
+       each ``{"id", "text", "kind"}``: ``id`` is its ``RequirementArtifact`` id
+       in the project trace, ``kind`` a ``RequirementKind`` value (see
+       :doc:`../buml_language/model_types/traceability`). At most 128, ids
+       unique, text up to 1,000 characters. When given, the requirements ledger
+       judges these instead of extracting its own (see :doc:`validation`).
+       Left out, the run extracts them.
+   * - ``actorName``
+     - string (optional)
+     - The person starting the run (the project owner), at most 200
+       characters. The run's trace (``done.trace``) records them as a
+       ``Person`` beside the Spec-Driven Agent; left out, it names only the agent.
+   * - ``traceabilityEnabled``
+     - boolean (optional)
+     - Whether the project records traces (opt-in, default ``false``). Only
+       when true does the run build its trace, send it as ``done.trace`` and
+       ship it in the ZIP (see :ref:`spec-driven-run-trace`).
    * - ``api_key``
      - string (secret)
      - BYOK. Required for ``anthropic`` / ``openai`` / ``mistral`` / ``nebius``
@@ -302,9 +321,24 @@ SSE event types
      - Run accepted; carries ``runId``, provider, model, and caps.
    * - ``phase``
      - Pipeline advanced to a phase: ``select``, ``generate``, ``gap``,
-       ``customize``, ``validate``.
+       ``customize``, ``validate``. Carries the run's ``usd``, ``turns`` and
+       ``elapsedSeconds`` when the phase started, measured like ``cost``: a
+       phase's own figures are the difference to the next phase, or to the
+       final ``cost`` event for the last one. ``validate`` is sent when Phase 3
+       starts, before the first check.
    * - ``phase_update``
-     - Extra detail for the current phase (e.g. the gap task list).
+     - Extra detail for the current phase (e.g. the gap task list); for
+       ``validate``, the first check's result as ``message``
+       (``"2 blockers / 5 total"``).
+   * - ``findings``
+     - One Phase 3 validation round: ``attempt`` (0 for the first check, n for
+       the re-check after fix attempt n), ``blockers`` (at most 20 messages,
+       each clipped to 300 characters), and the true ``blockerCount`` and
+       ``issueCount``. Blockers are counted as in ``done``, so the last round
+       matches the run's count. The ``tool_call`` events between two ``findings``
+       events are that fix attempt's repairs. ``restored: true`` marks a last
+       round after the run went back to a better earlier tree; it describes
+       the delivered app.
    * - ``text``
      - A streaming text delta from the LLM.
    * - ``tool_call``
@@ -327,7 +361,8 @@ SSE event types
    * - ``done``
      - Success. Carries ``downloadUrl``, ``fileName``, the run recipe, a file
        count and top-level listing, ``tokensUsed``, ``blockerCount`` (unfixed
-       blocker-severity findings), ``verification`` (what the run verified,
+       blocker-severity findings plus required checks that could not run,
+       ``validation unverified:``), ``verification`` (what the run verified,
        could not verify, and shipped unenforced, with true totals in
        ``counts``), ``incomplete`` / ``incompleteReason``, ``cancelled`` (true
        when a cancel request was honoured after the run had written files, so
@@ -340,6 +375,13 @@ SSE event types
        ``changedFiles`` (capped) and ``changedFileCount`` are the files the
        agent wrote, edited or deleted, and ``modelChanges`` how the model
        differs from the one the base app was built from (modify runs).
+       ``trace`` is the run's trace, a trace-file fragment (``projectId``
+       null) the editor merges into the project trace (see
+       :ref:`spec-driven-run-trace`); ``null`` when the request did not set
+       ``traceabilityEnabled`` or the trace could not be built.
+       ``verification`` lists what the run verified, could not verify and
+       shipped unenforced; a requirement item's ``id`` is its ``R<n>`` label
+       and its ``traceRef`` the id of its ``RequirementArtifact`` in ``trace``.
    * - ``error``
      - ``INVALID_KEY`` / ``UPSTREAM_LLM`` / ``INTERNAL`` / ``BAD_REQUEST`` /
        ``CANCELLED`` are terminal; ``COST_CAP`` / ``TIMEOUT`` / ``INCOMPLETE``

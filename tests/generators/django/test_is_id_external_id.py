@@ -14,7 +14,7 @@ calls are introspected as plain strings.
 import os
 
 import pytest
-from jinja2 import Environment, FileSystemLoader
+from besser.utilities.generation_trace import traced_environment
 
 from besser.BUML.metamodel.structural import (
     Class, DomainModel, Enumeration, IntegerType, PrimitiveDataType, Property,
@@ -31,8 +31,8 @@ def render_models():
             os.path.abspath(__file__))))),
         "besser", "generators", "django", "templates",
     )
-    env = Environment(
-        loader=FileSystemLoader(templates_path),
+    env = traced_environment(
+        templates_path,
         trim_blocks=True,
         lstrip_blocks=True,
         extensions=["jinja2.ext.do"],

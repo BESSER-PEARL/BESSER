@@ -122,6 +122,8 @@ class RunFacts:
     blocker_count: int = 0
     estimated_cost_usd: float = 0.0
     archive_written: bool = False
+    #: Lines of the delivered files per author, from the Agent Trace record; None without one.
+    lines: Optional[dict] = None
 
     def saw_phase(self, phase: str) -> None:
         self.phase_started.setdefault(phase, time.monotonic())
@@ -225,6 +227,7 @@ def run_section(facts: RunFacts, orchestrator: Any, *, provider: str, models: li
             "files_edited": edited,
             "blockers": facts.blocker_count,
         },
+        "lines": facts.lines,
         "besser_version": get_besser_version(),
         "besser_build": get_build_sha(),
         "request_chars": request_chars,
@@ -238,8 +241,19 @@ def start_line(run_id: str, facts: RunFacts, *, provider: str, model: Optional[s
             f"model={agent_trace.normalize_model_id(provider, model) or provider} generator={generator or 'auto'}")
 
 
-def end_line(run_id: str, facts: RunFacts) -> str:
-    """The log line of a run's end, in the ``run`` section's names."""
+# The recipe's ``usage`` names.
+_TOKEN_FIELDS = ("input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens")
+_LINE_FIELDS = ("total", "generator", "ai", "human", "unknown", "ai_this_run")
+
+
+def end_line(run_id: str, facts: RunFacts, usage: Any = None) -> str:
+    """The log line of a run's end, in the recipe's names; ``-`` for a value the run does not have."""
+    def count(value: Any) -> Any:
+        return value if isinstance(value, int) else "-"
+
+    tokens = " ".join(f"{name}={count(getattr(usage, name, None))}" for name in _TOKEN_FIELDS)
+    lines = " ".join(f"lines_{name}={(facts.lines or {}).get(name, '-')}" for name in _LINE_FIELDS)
     return (f"spec-driven run end run_id={run_id} outcome={facts.outcome or 'failed'} "
             f"duration_seconds={time.monotonic() - facts.started:.1f} blockers={facts.blocker_count} "
-            f"estimated_cost_usd={facts.estimated_cost_usd:.4f} archive_written={str(facts.archive_written).lower()}")
+            f"estimated_cost_usd={facts.estimated_cost_usd:.4f} {tokens} {lines} "
+            f"archive_written={str(facts.archive_written).lower()}")

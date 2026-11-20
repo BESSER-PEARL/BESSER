@@ -663,6 +663,16 @@ only unverified entries without a code change. Evidence must name a real applica
 executable line; traces, recipes and unrelated files cannot validate a claim.
 Failure to extract requirements remains unknown and blocks verified completion.
 
+When the editor sends the modeling assistant's requirements (the request's
+``requirements`` field, see :doc:`api`), the ledger is built from them instead of
+extracted. Only the kinds that can be judged from code are judged (``uniqueness``,
+``validation``, ``rule``, ``computed``, ``transition``, ``action``, ``ui``,
+``integration``); ``data``, ``quality`` and ``technical`` requirements are not.
+Each verdict keeps the requirement's trace id as ``ref``, and the recipe's
+``requirements_source`` says where the ledger came from (``editor`` or
+``extracted``). The assistant extracts from the user's first request only, so a
+request carrying later messages is extracted as before, with a warning in the log.
+
 The judge reads a digest of the app of at most 200,000 characters: the schema
 files first, then the backend code ranked by the share of its lines the agent
 wrote (a module the generator never wrote first, untouched generator output

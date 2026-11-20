@@ -1,9 +1,9 @@
 import logging
 import os
-from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.structural import DomainModel
 from besser.generators import GeneratorInterface
 from besser.utilities import sort_by_timestamp
+from besser.utilities.generation_trace import traced_environment
 from besser.utilities.template_escaping import register_escaping_filters
 
 logger = logging.getLogger(__name__)
@@ -44,14 +44,12 @@ class RDFGenerator(GeneratorInterface):
         Returns:
             None, but store the generated code as a file named vocabulary.ttl
         """
-        file_path = self.build_generation_path(file_name="vocabulary.ttl")
         templates_path = os.path.join(os.path.dirname(
             os.path.abspath(__file__)), "templates")
-        env = Environment(loader=FileSystemLoader(templates_path), trim_blocks=True, lstrip_blocks=True)
+        env = traced_environment(templates_path, trim_blocks=True, lstrip_blocks=True)
         env.globals["sort_by_timestamp"] = sort_by_timestamp
         register_escaping_filters(env)
         template = env.get_template('rdf_template.j2')
-        with open(file_path, mode="w") as f:
-            generated_code = template.render(model=self.model, types=self.TYPES)
-            f.write(generated_code)
-            logger.info("Code generated in the location: %s", file_path)
+        generated_code = template.render(model=self.model, types=self.TYPES)
+        self._write_traced("vocabulary.ttl", generated_code)
+        logger.info("Code generated in the location: %s", self.build_generation_path(file_name="vocabulary.ttl"))

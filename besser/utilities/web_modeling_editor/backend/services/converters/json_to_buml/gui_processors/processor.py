@@ -19,7 +19,9 @@ from besser.BUML.metamodel.gui import (
     Screen,
     ViewComponent,
     ViewContainer,
+    ViewElement,
 )
+from besser.utilities.web_modeling_editor.backend.services.converters.element_ids import EditorIds
 from besser.BUML.metamodel.gui.events_actions import (
     Create,
     Delete,
@@ -55,7 +57,14 @@ from .component_parsers import (
     parse_menu,
     parse_text,
 )
-from .constants import CONTAINER_TAGS, CONTAINER_TYPES, INPUT_COMPONENT_TYPES, TEXT_TAGS
+from .constants import (
+    CONTAINER_TAGS,
+    CONTAINER_TYPES,
+    INPUT_COMPONENT_TYPES,
+    TEXT_TAGS,
+    TRACED_COMPONENT_TYPES,
+    TRACED_INPUT_TYPE_PREFIX,
+)
 from .styling import build_style_map, build_stylesheet, resolve_component_styling
 from .utils import (
     clean_method_name,
@@ -153,6 +162,15 @@ def _holds_only_text(component: Dict[str, Any]) -> bool:
     return bool(text) and not _has_template_placeholder(text)
 
 
+def is_traced_component(component: Dict[str, Any]) -> bool:
+    """Whether the editor's trace records this GrapesJS component (and gives it a persistent
+    ``attributes.id``), the same test as the editor's ``isTracedComponent``."""
+    comp_type = component.get("type") if isinstance(component.get("type"), str) else ""
+    if comp_type in TRACED_COMPONENT_TYPES or comp_type.startswith(TRACED_INPUT_TYPE_PREFIX):
+        return True
+    return not comp_type and component.get("tagName") in INPUT_COMPONENT_TYPES
+
+
 def process_gui_diagram(gui_diagram, class_model, domain_model):
     """
     Main entry point: Converts GrapesJS JSON and domain_model into a GUIModel instance.
@@ -179,6 +197,8 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
 
     # Track used names to ensure uniqueness
     used_names: Set[str] = set()
+    # The editor ids of the screens and traced components, the ids a trace refers to them by.
+    editor_ids = EditorIds()
 
     def register_name(raw_value: Optional[str], fallback: str) -> str:
         """Register and return a unique name."""
@@ -298,6 +318,10 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
                     setattr(result, 'display_order', index)
                 else:
                     result.display_order = index
+                # A component the editor's trace records is the element a trace refers to by its editor id.
+                if isinstance(result, ViewElement) and is_traced_component(child):
+                    attributes = child.get("attributes") if isinstance(child.get("attributes"), dict) else {}
+                    editor_ids.assign(result, attributes.get("id"))
                 parsed_children.append(result)
         return parsed_children
 
@@ -646,6 +670,9 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
                 screen.component_id = page_id
             else:
                 setattr(screen, 'page_id', page_id)
+            # The page is the screen a trace refers to (by the page id, as the editor's trace does).
+            if frame_index == 0:
+                editor_ids.assign(screen, page_id)
 
             # Set layout if present in styling
             if hasattr(screen, 'styling') and screen.styling and hasattr(screen.styling, 'layout') and screen.styling.layout:

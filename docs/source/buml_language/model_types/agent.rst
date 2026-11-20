@@ -128,7 +128,8 @@ require the agent to use a ``WebSocketPlatform``:
   HTML-formatted message.
 - ``WebSocketReplySpeech(message, audio_speed, use_session_vars=False)`` —
   convert text to speech and send the audio.
-- ``WebSocketReplyOptions(options)`` — present a list of selectable options.
+- ``WebSocketReplyOptions(options, label=None)`` — present a list of selectable options, with an
+  optional text shown with the buttons (e.g. a prompt in the agent's language).
 - ``WebSocketReplyLocation(latitude, longitude)`` — send a geographic
   coordinate.
 - ``WebSocketReplyFile()`` — send a file; the body must supply a ``File``

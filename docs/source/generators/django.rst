@@ -114,6 +114,19 @@ If you have generated the full web app, you can also check the home page and dif
 
 `http://localhost:8000 <http://localhost:8000>`_
 
+Trace Links
+-----------
+
+The generator records which lines of the files it renders come from which model element: after ``generate()``,
+``generator.traced_files`` maps each such path (relative to the output directory, e.g.
+``<project>/<app>/models.py``) to the line ranges rendered from every element that has an ``id`` (as every element
+drawn in the web editor does). ``models.py`` has regions for enumerations and their literals, classes, attributes,
+methods and the ``ForeignKey`` / ``ManyToManyField`` / ``OneToOneField`` lines of associations; ``forms.py``,
+``views.py``, ``urls.py`` and ``admin.py`` have one region per class (and per method action, or association field).
+The per-class HTML pages are traced as a whole to the class and the GUI screen listing it, and ``home.html`` to the
+main screen. Files written by ``django-admin`` (``manage.py``, ``settings.py``...) stay file-level. Recording
+traces does not change the generated files; see :doc:`traceable_generator`.
+
 Example
 -------
 * :doc:`../examples/dpp`

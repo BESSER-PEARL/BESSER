@@ -344,7 +344,12 @@ reading a trace and wondering why a run did what it did.
        the input and a ``result`` excerpt (its length and the first 500
        characters), with credential-shaped values redacted before the cut;
        each input value is cut at 500 characters, and the untruncated input
-       of every write tool goes to ``.besser_tool_inputs.jsonl``. It
+       of every write tool goes to ``.besser_tool_inputs.jsonl``. A
+       ``generator_output`` record holds each generator call's files (SHA-256,
+       traced line ranges), a ``requirements`` record the requirements ledger,
+       and the run, phase and turn records carry the client's cumulative token
+       counters (``usage``). The run's trace (:ref:`spec-driven-run-trace`) is
+       built from this log, so with tracing off it has no turns. It
        is best-effort — a failed
        trace write never fails a run. Toggle with
        ``BESSER_LLM_ENABLE_TRACING`` (default on).

@@ -71,6 +71,14 @@ from besser.spec_driven_agent.run_recap import NO_RULES_STATED
 from besser.spec_driven_agent.run_report import RECIPE_FILENAME
 from besser.spec_driven_agent.state import agent_trace
 from besser.spec_driven_agent.state.generator_output import GENERATOR_OUTPUT_FILENAME, attach_model, stored_model
+from besser.spec_driven_agent.state.trace_model import (
+    TRACE_MODEL_FILENAME,
+    RunModel,
+    build_run_trace_model,
+    traced_requirement_id,
+)
+from besser.BUML.metamodel.traceability import ExecutionStatus
+from besser.utilities.generation_trace import ElementRef, InputModel, input_model
 from besser.spec_driven_agent.state.recipe_size import MAX_RECIPE_BYTES
 from besser.utilities.provenance import (
     PROVENANCE_FILENAME,
@@ -90,7 +98,10 @@ from besser.spec_driven_agent.validation.issues import (
 )
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
     LLM_TEMP_DIR_PREFIX,
+    TRACE_MAX_STORED_CONTENT_BYTES,
+    TRACE_MAX_TOTAL_CONTENT_BYTES,
 )
+from besser.utilities.web_modeling_editor.backend.services.converters import trace_buml_to_json
 from besser.utilities.web_modeling_editor.backend.models.spec_driven import (
     SmartGenerateRequest,
 )
@@ -113,6 +124,7 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.sse_event
     CostEvent,
     DoneEvent,
     ErrorEvent,
+    FindingsEvent,
     ModelUpdateEvent,
     PhaseEvent,
     PhaseUpdateEvent,
@@ -125,6 +137,7 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.sse_event
     format_sse,
 )
 from besser.utilities.secret_redaction import (
+    redact_data,
     redact_text,
     scrub_secret_files,
 )
@@ -299,6 +312,10 @@ _MAX_WHAT = 1300
 _MAX_WHY = 1200
 _MAX_HOW = 320
 _TRUNCATION_MARK = " …[truncated]"
+# A findings event lists this many blockers, each clipped: enough to read which
+# checks failed, while a 300-error tsc run stays a small frame.
+_MAX_FINDINGS_LISTED = 20
+_MAX_FINDING_CHARS = 300
 
 # ``_check_did_not_run`` / ``required_check_unverified`` wording. Follow the
 # convention rather than re-deriving which checks were skipped.
@@ -381,6 +398,15 @@ def _conversion_label(issue: dict) -> str:
 _FILE_CHANGE_TOOLS = frozenset({"write_file", "modify_file", "replace_file_lines", "delete_file"})
 # The card lists this many paths; the count covers the rest.
 _MAX_CHANGED_FILES = 50
+
+
+def _run_status(exited_cleanly: bool, stop_reason: Optional[str]) -> ExecutionStatus:
+    """How the run's operation ended, for its trace: a run cut short before its loop finished
+    did not succeed, whatever it delivered (its findings are in the trace's log records)."""
+    if exited_cleanly:
+        return ExecutionStatus.SUCCEEDED
+    return {"cancelled": ExecutionStatus.CANCELLED,
+            "timeout": ExecutionStatus.TIMED_OUT}.get(stop_reason or "", ExecutionStatus.FAILED)
 
 
 def run_changes(recipe: dict) -> dict:
@@ -484,7 +510,7 @@ def _summary_finding(item: VerificationItem, findings: dict) -> Finding:
     return Finding(item.what)
 
 
-def build_verification_report(recipe: dict) -> VerificationReport:
+def build_verification_report(recipe: dict, run_id: Optional[str] = None) -> VerificationReport:
     """Split the recipe's own evidence into the three states a count hides.
 
     "we checked and it works", "we could not check" and "we checked and it is
@@ -492,6 +518,9 @@ def build_verification_report(recipe: dict) -> VerificationReport:
     booking workflow still double-sold rooms because two OCL constraints
     failed conversion; the evidence was in the recipe, flattened into
     "21 blockers".
+
+    With ``run_id``, a requirement item carries its ``traceRef``: the id of
+    its RequirementArtifact in the run's trace.
     """
     verified: list[VerificationItem] = []
     not_verified: list[VerificationItem] = []
@@ -580,17 +609,20 @@ def build_verification_report(recipe: dict) -> VerificationReport:
             if level:
                 # Clip the citation, not the note: a bare "implemented" would read as checked.
                 how = f"{_clip(how, _MAX_HOW - len(_TRUNCATION_MARK) - len(level) - 2)}; {level}"
-            verified.append(_item("requirement", ident, what, how=how))
+            item = _item("requirement", ident, what, how=how)
+            verified.append(item)
         elif status in ("missing", "partial"):
             reason = ("the delivered code does not implement it" if status == "missing"
                       else "the delivered code implements it only partly")
             note = _CITATION_NOTE_RE.sub("", note).strip()
-            unenforced.append(_item(
-                "requirement", ident, what, why=f"{reason}{f'; {note}' if note else ''}",
-            ))
+            item = _item("requirement", ident, what, why=f"{reason}{f'; {note}' if note else ''}")
+            unenforced.append(item)
         else:
             # The judge's note argues about citations with the agent; the user needs the outcome.
-            not_verified.append(_item("requirement", ident, what, why=_UNCONFIRMED))
+            item = _item("requirement", ident, what, why=_UNCONFIRMED)
+            not_verified.append(item)
+        if run_id:
+            item.traceRef = traced_requirement_id(run_id, verdict)
 
     # 2b. An empty ledger is not a clean one: the request stated no rule to check.
     if recipe.get("business_rules_stated") is False:
@@ -1092,6 +1124,9 @@ class SmartGenerationRunner:
         # False once seeding the line attribution failed: the run then ships
         # no Agent Trace record (a person's edits would read as the AI's).
         self._attribution_ok = True
+        # The diagrams the run reads (model assembly) and how it ended, for its trace.
+        self._trace_diagrams: list = []
+        self._trace_status = ExecutionStatus.SUCCEEDED
         self._t_blockers_found: Optional[int] = None
         self._t_stream_aborted: Optional[str] = None
         # Set once the run is packaged: what ``release_disk`` may clear.
@@ -1123,7 +1158,8 @@ class SmartGenerationRunner:
                     async for frame in frames:
                         yield frame
             finally:
-                run_record.run_log.info(run_record.end_line(self.run_id, self._facts))
+                run_record.run_log.info(run_record.end_line(
+                    self.run_id, self._facts, usage=getattr(self._t_client, "usage", None)))
             return
         try:
             async with inner as frames:
@@ -1139,7 +1175,8 @@ class SmartGenerationRunner:
             self._t_stream_aborted = "STREAM_CRASH"
             raise
         finally:
-            run_record.run_log.info(run_record.end_line(self.run_id, self._facts))
+            run_record.run_log.info(run_record.end_line(
+                self.run_id, self._facts, usage=getattr(self._t_client, "usage", None)))
             self._record_run_summary()
 
     async def release_disk(self) -> None:
@@ -1201,6 +1238,8 @@ class SmartGenerationRunner:
                 generator=getattr(self.request, "target_generator_override", None)))
         elif isinstance(event, PhaseEvent):
             self._facts.saw_phase(event.phase)
+            if event.elapsedSeconds is None:  # yielded directly, not through the worker queue
+                event = event.model_copy(update=self._run_totals())
         elif isinstance(event, ErrorEvent):
             if event.code in _WARNING_CODES:
                 self._facts.saw_warning(event.message)
@@ -1211,6 +1250,19 @@ class SmartGenerationRunner:
             elif event.code not in _WARNING_CODES:
                 self._facts.outcome = "failed"
         return format_sse(event, secrets=(self.request.resolved_api_key(),))
+
+    def _run_totals(self) -> dict[str, Any]:
+        """The run's cost, turns and elapsed seconds so far, as the ``cost`` event reports them."""
+        usage = getattr(self._t_client, "usage", None)
+        try:
+            cost_usd = float(usage.estimated_cost) if usage is not None else 0.0
+        except Exception:
+            cost_usd = 0.0
+        return {
+            "usd": _user_facing_cost(usage, cost_usd) if usage is not None else 0.0,
+            "turns": getattr(self._t_orchestrator, "total_turns", 0) or 0,
+            "elapsedSeconds": round(time.monotonic() - (self._started_at or time.monotonic()), 2),
+        }
 
     async def _generate_and_stream_impl(
         self,
@@ -1427,6 +1479,7 @@ class SmartGenerationRunner:
             return
 
         assembly_issues = getattr(assembled, "assembly_issues", []) or []
+        self._trace_diagrams = list(getattr(assembled, "diagrams", None) or [])
         assembly_warnings = [
             required_check_unverified(
                 "model assembly",
@@ -1525,6 +1578,9 @@ class SmartGenerationRunner:
         model_state: dict[str, str] = {"current": llm_model}
 
         def _put(event: BaseSseEvent) -> None:
+            if isinstance(event, PhaseEvent):
+                # Stamped as the phase starts, not when the consumer gets to it.
+                event = event.model_copy(update=self._run_totals())
             try:
                 loop.call_soon_threadsafe(_put_in_loop, event)
             except RuntimeError:
@@ -1585,6 +1641,18 @@ class SmartGenerationRunner:
                     "PhaseUpdateEvent emission failed (phase=%s)", phase, exc_info=True
                 )
 
+        def on_findings(attempt: int, issues: list, restored: bool = False) -> None:
+            """One Phase 3 validation round, for the run card's findings and repairs."""
+            # The done event's definition, so the last round and the run's blocker count agree.
+            blockers = [i.message for i in issues if is_completion_issue(i)]
+            _put(FindingsEvent(
+                attempt=attempt,
+                blockers=[_clip(m, _MAX_FINDING_CHARS) for m in blockers[:_MAX_FINDINGS_LISTED]],
+                blockerCount=len(blockers),
+                issueCount=len(issues),
+                restored=restored,
+            ))
+
         def on_progress(turn: int, tool: str, status: str,
                         detail: str | None = None) -> None:
             # Any tool/phase activity ends the current turn's prose; the
@@ -1612,9 +1680,16 @@ class SmartGenerationRunner:
                     ),
                 ))
                 return
+            if tool == "__validating__":
+                # Phase 3 started. Fix-loop tool calls belong to this row:
+                # never open a customize row after it (a run that skipped Phase 2).
+                phase_state["customize_sent"] = True
+                _put(PhaseEvent(phase="validate", message="Validating"))
+                return
             if tool == "validation":
+                # The first check's result, on the row announced above.
                 self._note_validation_counts(status)
-                _put(PhaseEvent(phase="validate", message=status))
+                _put(PhaseUpdateEvent(phase="validate", details="", message=status))
                 return
             if tool == "gap_analysis":
                 # Sentinel emitted by gap_analyzer.analyze_gaps_via_llm
@@ -1737,6 +1812,7 @@ class SmartGenerationRunner:
             on_progress=on_progress,
             on_text=on_text,
             on_phase_details=on_phase_details,
+            on_findings=on_findings,
             use_streaming=True,
             should_continue=should_continue,
             # Carry through the assembled primary so the orchestrator
@@ -1769,6 +1845,12 @@ class SmartGenerationRunner:
             per_write_diagnostics=settings.llm_per_write_diagnostics,
             enable_import_smoke_check=settings.llm_enable_import_smoke_check,
             enable_requirements_ledger=settings.llm_enable_requirements_ledger,
+            # The modeling assistant's requirements, when the editor sent
+            # them: the ledger is built from them instead of extracted again.
+            stated_requirements=(
+                [item.model_dump(mode="json") for item in self.request.requirements]
+                if self.request.requirements is not None else None
+            ),
             # Binding generator choice from an approved preview plan. A
             # bound None explicitly skips Phase 1; an unbound None auto-selects.
             target_generator=target_generator,
@@ -1792,16 +1874,9 @@ class SmartGenerationRunner:
                     await asyncio.sleep(get_settings().llm_cost_emitter_interval_seconds)
                 except asyncio.CancelledError:
                     raise
-                elapsed = time.monotonic() - (self._started_at or time.monotonic())
-                try:
-                    cost_usd = float(client.usage.estimated_cost)
-                except Exception:
-                    cost_usd = 0.0
                 try:
                     queue.put_nowait(CostEvent(
-                        usd=_user_facing_cost(client.usage, cost_usd),
-                        turns=getattr(orchestrator, "total_turns", 0),
-                        elapsedSeconds=round(elapsed, 2),
+                        **self._run_totals(),
                         servedModel=getattr(client.usage, "served_model", None),
                     ))
                 except Exception:
@@ -2299,6 +2374,7 @@ class SmartGenerationRunner:
                     message=_late_err + " You can run the generation again to continue.",
                 ))
 
+            self._trace_status = _run_status(exited_cleanly, stop_reason)
             self._facts.stop(
                 stop_reason=stop_reason, cancelled=cancel_event.is_set(), cap_breach=bool(_cap_breach),
                 timed_out=elapsed > effective_runtime_cap, incomplete=incomplete,
@@ -2463,7 +2539,8 @@ class SmartGenerationRunner:
             # that misses someone's lines. The next run starts as "unknown".
             agent_trace.discard_attribution(result_path)
         try:
-            verification = build_verification_report(recipe)
+            verification = build_verification_report(
+                recipe, self.run_id if self.request.traceabilityEnabled else None)
         except Exception:
             # Never block the download on the report. An empty report would
             # read as "nothing to verify", so say the report itself failed.
@@ -2498,6 +2575,12 @@ class SmartGenerationRunner:
             "llm_model": recipe.get("llm_model"),
         }, run_summary_markdown(recipe, verification, (self.request.resolved_api_key(),),
                                 readme=os.path.isfile(os.path.join(result_path, "README.md"))))
+
+        # The run's trace (a fragment of the project trace), from what the run
+        # persisted; built after the scrub and the attribution, like the Agent
+        # Trace record, and only when the project records traces (opt-in).
+        # Best-effort: never blocks the download.
+        trace = self._write_trace_model(result_path) if self.request.traceabilityEnabled else None
 
         # Collect every user file. Skips internal artefacts
         # (.besser_recipe.json etc.) AND build-output directories —
@@ -2557,6 +2640,9 @@ class SmartGenerationRunner:
                 for path in user_files:
                     _zip_plain_file(zf, path, os.path.relpath(path, result_path), result_path)
                 _zip_plain_file(zf, provenance_path, PROVENANCE_FILENAME, result_path)
+                trace_model_path = os.path.join(result_path, TRACE_MODEL_FILENAME)
+                if trace is not None and is_plain_entry(trace_model_path):
+                    _zip_plain_file(zf, trace_model_path, TRACE_MODEL_FILENAME, result_path)
                 for path in trace_files:
                     _zip_plain_file(zf, path, os.path.relpath(path, result_path), result_path)
                 for name in CARRIED_RUN_FILES:
@@ -2591,9 +2677,58 @@ class SmartGenerationRunner:
             tokensUsed=int(getattr(self, "_final_tokens", 0) or 0),
             verification=verification,
             aiShare=ai_share,
+            trace=trace,
             **run_changes(recipe),
         )
         return event, entry
+
+    def _write_trace_model(self, result_path: str) -> Optional[dict]:
+        """Build the run's trace, write it as ``TRACE_MODEL_FILENAME`` and return its JSON; None
+        (and no file, not even a seed's) when it cannot be built."""
+        path = os.path.join(result_path, TRACE_MODEL_FILENAME)
+        with contextlib.suppress(OSError):
+            os.remove(path)  # a seeded workspace holds the previous run's
+        try:
+            trace = build_run_trace_model(
+                result_path,
+                run_id=self.run_id,
+                models=self._trace_models(),
+                instructions=self.request.instructions,
+                provider=self.request.provider,
+                agent_version=get_besser_version(),
+                actor_name=getattr(self.request, "actorName", None),
+                status=self._trace_status,
+                excluded=_EXCLUDED_OUTPUT_DIRS,
+                max_stored_content_bytes=TRACE_MAX_STORED_CONTENT_BYTES,
+                max_total_content_bytes=TRACE_MAX_TOTAL_CONTENT_BYTES,
+            )
+            if trace is None:
+                return None
+            data, _findings = redact_data(trace_buml_to_json(trace), (self.request.resolved_api_key(),))
+            write_atomic_plain(path, json.dumps(data, ensure_ascii=False), root=result_path)
+            return data
+        except Exception:
+            logger.exception("The trace of run %s could not be built", self.run_id)
+            with contextlib.suppress(OSError):
+                os.remove(path)
+            return None
+
+    def _trace_models(self) -> list[RunModel]:
+        """The models the run read, as its trace records them (a diagram without an id cannot be
+        referenced, so it is left out)."""
+        models = []
+        for read in self._trace_diagrams:
+            if not read.diagram_id:
+                logger.warning("Run %s read a %s diagram without an id; its trace leaves it out",
+                               self.run_id, read.kind)
+                continue
+            try:
+                model = input_model(read.model, read.diagram_id, read.title or None)
+            except Exception:  # a model the trace cannot walk is still recorded by its diagram
+                model = InputModel(ElementRef(read.diagram_id, type(read.model).__name__,
+                                              read.title or read.diagram_id))
+            models.append(RunModel(read.kind, model))
+        return models
 
     def _trace_model_id(self) -> Optional[str]:
         """``provider/model`` of the model that served the run (after any switch)."""
@@ -2627,6 +2762,8 @@ class SmartGenerationRunner:
             )
             path = agent_trace.write_trace_record(result_path, record, self.run_id)
             share = agent_trace.ai_share(state, self.run_id)
+            by_kind = record["metadata"][agent_trace.METADATA_KEY]["lines"]
+            self._facts.lines = {"total": sum(by_kind.values()), **by_kind, "ai_this_run": share["aiLinesThisRun"]}
             share["tracePath"] = os.path.relpath(path, result_path).replace(os.sep, "/")
             return share
         except Exception:

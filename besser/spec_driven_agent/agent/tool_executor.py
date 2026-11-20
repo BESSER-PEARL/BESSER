@@ -24,6 +24,7 @@ import shlex
 import stat
 import sys
 import threading
+import time
 import weakref
 from collections import Counter
 from contextlib import nullcontext
@@ -82,6 +83,7 @@ from besser.spec_driven_agent.run_report import RECIPE_FILENAME
 from besser.spec_driven_agent.state.agent_trace import TRACE_DIRNAME, record_generated_files
 from besser.spec_driven_agent.state.checkpoint import CHECKPOINT_FILENAME
 from besser.spec_driven_agent.state.generator_output import store_written_files
+from besser.spec_driven_agent.state.trace_model import generator_output_record
 from besser.spec_driven_agent.validation import frontend_source
 
 logger = logging.getLogger(__name__)
@@ -776,6 +778,11 @@ class ToolExecutor:
         self.nn_model = nn_model
         # Track files created by generators — used to warn if LLM overwrites them
         self._generator_files: set[str] = set()
+        # Called with each generator call's files and traced regions (the run
+        # log's ``generator_output`` record); set by the orchestrator.
+        self.on_generated: Callable[[dict], None] | None = None
+        # Per generator output dir: when the call writing into it started.
+        self._generation_started: dict[str, float] = {}
         # Per generator output dir: file stamps taken just before the
         # generator ran (see _gen_dir / _track_generated_files).
         self._pre_generation: dict[str, dict[str, tuple[int, int]]] = {}
@@ -1945,6 +1952,7 @@ class ToolExecutor:
         d = os.path.join(self.workspace, name)
         os.makedirs(d, exist_ok=True)
         self._pre_generation[os.path.normpath(d)] = self._file_stamps(d)
+        self._generation_started[os.path.normpath(d)] = time.time()
         return d
 
     def _file_stamps(self, directory: str) -> dict[str, tuple[int, int]]:
@@ -1957,9 +1965,14 @@ class ToolExecutor:
             stamps[f["path"]] = (st.st_mtime_ns, st.st_size)
         return stamps
 
-    def _track_generated_files(self, directory: str) -> list[dict]:
+    def _track_generated_files(self, directory: str, tool: str | None = None,
+                               generator: Any = None) -> list[dict]:
         """List files in a generator output dir and mark the ones this call
-        wrote as generator-created."""
+        wrote as generator-created.
+
+        ``tool`` and ``generator`` (the tool name and the generator instance)
+        let the call's files and ``traced_files`` reach the run log.
+        """
         files = self._list_dir(directory)
         # Only the files this call wrote or rewrote are generator output: on a
         # Phase 2 re-run the folder also holds the model's own files, which
@@ -1974,6 +1987,15 @@ class ToolExecutor:
         if out_dir in _REGENERABLE_OUTPUT_DIRS:
             # The base a later model change is merged against (#659).
             store_written_files(self.workspace, out_dir, written, get_besser_version())
+        started = self._generation_started.pop(os.path.normpath(directory), time.time())
+        if self.on_generated is not None and tool:
+            try:
+                self.on_generated(generator_output_record(
+                    self.workspace, directory, written, getattr(generator, "traced_files", None) or {},
+                    tool, started))
+            except Exception:
+                # The run log is instrumentation: the generator call stands.
+                logger.warning("Could not log the output of %s", tool, exc_info=True)
         return files
 
     @staticmethod
@@ -2055,14 +2077,15 @@ class ToolExecutor:
             return err
         from besser.generators.pydantic_classes import PydanticGenerator
         out = self._gen_dir("pydantic")
-        PydanticGenerator(
+        generator = PydanticGenerator(
             model=self.domain_model, output_dir=out,
             backend=args.get("backend", False),
             nested_creations=args.get("nested_creations", False),
-        ).generate()
+        )
+        generator.generate()
         return {
             "status": "ok",
-            "files": self._track_generated_files(out),
+            "files": self._track_generated_files(out, "generate_pydantic", generator),
             "guide": self._MODIFICATION_GUIDES.get("generate_pydantic", ""),
         }
 
@@ -2072,12 +2095,13 @@ class ToolExecutor:
             return err
         from besser.generators.sql_alchemy import SQLAlchemyGenerator
         out = self._gen_dir("sqlalchemy")
-        SQLAlchemyGenerator(model=self.domain_model, output_dir=out).generate(
+        generator = SQLAlchemyGenerator(model=self.domain_model, output_dir=out)
+        generator.generate(
             dbms=args.get("dbms", "sqlite")
         )
         return {
             "status": "ok",
-            "files": self._track_generated_files(out),
+            "files": self._track_generated_files(out, "generate_sqlalchemy", generator),
             "guide": self._MODIFICATION_GUIDES.get("generate_sqlalchemy", ""),
         }
 
@@ -2087,13 +2111,14 @@ class ToolExecutor:
             return err
         from besser.generators.backend import BackendGenerator
         out = self._gen_dir(_APPLICATION_OUTPUT_DIRS["generate_fastapi_backend"])
-        BackendGenerator(
+        generator = BackendGenerator(
             model=self.domain_model, output_dir=out,
             http_methods=args.get("http_methods", ["GET", "POST", "PUT", "DELETE"]),
-        ).generate()
+        )
+        generator.generate()
         return {
             "status": "ok",
-            "files": self._track_generated_files(out),
+            "files": self._track_generated_files(out, "generate_fastapi_backend", generator),
             "guide": self._MODIFICATION_GUIDES.get("generate_fastapi_backend", ""),
         }
 
@@ -2103,15 +2128,16 @@ class ToolExecutor:
             return err
         from besser.generators.django import DjangoGenerator
         out = self._gen_dir(_APPLICATION_OUTPUT_DIRS["generate_django"])
-        DjangoGenerator(
+        generator = DjangoGenerator(
             model=self.domain_model,
             project_name=args.get("project_name", "myproject"),
             app_name=args.get("app_name", "myapp"),
             gui_model=self.gui_model, output_dir=out,
-        ).generate()
+        )
+        generator.generate()
         return {
             "status": "ok",
-            "files": self._track_generated_files(out),
+            "files": self._track_generated_files(out, "generate_django", generator),
             "guide": self._MODIFICATION_GUIDES.get("generate_django", ""),
         }
 
@@ -2121,8 +2147,9 @@ class ToolExecutor:
             return err
         from besser.generators.python_classes import PythonGenerator
         out = self._gen_dir("python")
-        PythonGenerator(model=self.domain_model, output_dir=out).generate()
-        return {"status": "ok", "files": self._track_generated_files(out)}
+        generator = PythonGenerator(model=self.domain_model, output_dir=out)
+        generator.generate()
+        return {"status": "ok", "files": self._track_generated_files(out, "generate_python_classes", generator)}
 
     def _gen_qiskit(self, args: dict) -> dict:
         if self.quantum_circuit is None:
@@ -2135,12 +2162,13 @@ class ToolExecutor:
             }
         from besser.generators.qiskit.qiskit_generator import QiskitGenerator
         out = self._gen_dir("qiskit")
-        QiskitGenerator(
+        generator = QiskitGenerator(
             model=self.quantum_circuit, output_dir=out,
             backend_type=args.get("backend_type", "aer_simulator"),
             shots=int(args.get("shots", 1024)),
-        ).generate()
-        return {"status": "ok", "files": self._track_generated_files(out)}
+        )
+        generator.generate()
+        return {"status": "ok", "files": self._track_generated_files(out, "generate_qiskit", generator)}
 
     def _gen_supabase(self, args: dict) -> dict:
         err = self._require_domain_model("generate_supabase")
@@ -2148,11 +2176,12 @@ class ToolExecutor:
             return err
         from besser.generators.supabase.supabase_generator import SupabaseGenerator
         out = self._gen_dir("supabase")
-        SupabaseGenerator(
+        generator = SupabaseGenerator(
             model=self.domain_model, output_dir=out,
             user_root=args.get("user_root", "User"),
-        ).generate()
-        return {"status": "ok", "files": self._track_generated_files(out)}
+        )
+        generator.generate()
+        return {"status": "ok", "files": self._track_generated_files(out, "generate_supabase", generator)}
 
     def _gen_json_object(self, args: dict) -> dict:
         if self.object_model is None:
@@ -2165,8 +2194,9 @@ class ToolExecutor:
             }
         from besser.generators.json.json_object_generator import JSONObjectGenerator
         out = self._gen_dir("json_object")
-        JSONObjectGenerator(model=self.object_model, output_dir=out).generate()
-        return {"status": "ok", "files": self._track_generated_files(out)}
+        generator = JSONObjectGenerator(model=self.object_model, output_dir=out)
+        generator.generate()
+        return {"status": "ok", "files": self._track_generated_files(out, "generate_json_object", generator)}
 
     def _gen_baf(self, args: dict) -> dict:
         if self.agent_model is None:
@@ -2184,10 +2214,11 @@ class ToolExecutor:
         try:
             from besser.generators.agents.baf_generator import BAFGenerator
             out = self._gen_dir("baf")
-            BAFGenerator(model=self.agent_model, output_dir=out).generate()
+            generator = BAFGenerator(model=self.agent_model, output_dir=out)
+            generator.generate()
         except Exception as exc:
             return {"status": "error", "error": f"BAF generation failed: {exc}"}
-        return {"status": "ok", "files": self._track_generated_files(out)}
+        return {"status": "ok", "files": self._track_generated_files(out, "generate_baf", generator)}
 
     def _gen_bpmn(self, args: dict) -> dict:
         if self.bpmn_model is None:
@@ -2200,8 +2231,9 @@ class ToolExecutor:
             }
         from besser.generators.bpmn.bpmn_generator import BPMNGenerator
         out = self._gen_dir("bpmn")
-        BPMNGenerator(model=self.bpmn_model, output_dir=out).generate()
-        return {"status": "ok", "files": self._track_generated_files(out)}
+        generator = BPMNGenerator(model=self.bpmn_model, output_dir=out)
+        generator.generate()
+        return {"status": "ok", "files": self._track_generated_files(out, "generate_bpmn", generator)}
 
     def _gen_pytorch(self, args: dict) -> dict:
         if self.nn_model is None:
@@ -2217,15 +2249,16 @@ class ToolExecutor:
         try:
             from besser.generators.nn.pytorch.pytorch_code_generator import PytorchGenerator
             out = self._gen_dir("pytorch")
-            PytorchGenerator(
+            generator = PytorchGenerator(
                 model=self.nn_model, output_dir=out,
                 generation_type=args.get("generation_type", "subclassing"),
-            ).generate()
+            )
+            generator.generate()
         except ImportError as exc:
             return {"status": "error", "error": f"PyTorch is not installed in this environment ({exc})."}
         except Exception as exc:
             return {"status": "error", "error": f"PyTorch generation failed: {exc}"}
-        return {"status": "ok", "files": self._track_generated_files(out)}
+        return {"status": "ok", "files": self._track_generated_files(out, "generate_pytorch", generator)}
 
     def _gen_tensorflow(self, args: dict) -> dict:
         if self.nn_model is None:
@@ -2240,15 +2273,16 @@ class ToolExecutor:
         try:
             from besser.generators.nn.tf.tf_code_generator import TFGenerator
             out = self._gen_dir("tensorflow")
-            TFGenerator(
+            generator = TFGenerator(
                 model=self.nn_model, output_dir=out,
                 generation_type=args.get("generation_type", "subclassing"),
-            ).generate()
+            )
+            generator.generate()
         except ImportError as exc:
             return {"status": "error", "error": f"TensorFlow is not installed in this environment ({exc})."}
         except Exception as exc:
             return {"status": "error", "error": f"TensorFlow generation failed: {exc}"}
-        return {"status": "ok", "files": self._track_generated_files(out)}
+        return {"status": "ok", "files": self._track_generated_files(out, "generate_tensorflow", generator)}
 
     def _gen_java_classes(self, args: dict) -> dict:
         err = self._require_domain_model("generate_java_classes")
@@ -2256,8 +2290,9 @@ class ToolExecutor:
             return err
         from besser.generators.java_classes import JavaGenerator
         out = self._gen_dir("java")
-        JavaGenerator(model=self.domain_model, output_dir=out).generate()
-        return {"status": "ok", "files": self._track_generated_files(out)}
+        generator = JavaGenerator(model=self.domain_model, output_dir=out)
+        generator.generate()
+        return {"status": "ok", "files": self._track_generated_files(out, "generate_java_classes", generator)}
 
     def _gen_sql(self, args: dict) -> dict:
         err = self._require_domain_model("generate_sql")
@@ -2265,8 +2300,9 @@ class ToolExecutor:
             return err
         from besser.generators.sql import SQLGenerator
         out = self._gen_dir("sql")
-        SQLGenerator(model=self.domain_model, output_dir=out).generate()
-        return {"status": "ok", "files": self._track_generated_files(out)}
+        generator = SQLGenerator(model=self.domain_model, output_dir=out)
+        generator.generate()
+        return {"status": "ok", "files": self._track_generated_files(out, "generate_sql", generator)}
 
     def _gen_json_schema(self, args: dict) -> dict:
         err = self._require_domain_model("generate_json_schema")
@@ -2274,11 +2310,12 @@ class ToolExecutor:
             return err
         from besser.generators.json import JSONSchemaGenerator
         out = self._gen_dir("jsonschema")
-        JSONSchemaGenerator(
+        generator = JSONSchemaGenerator(
             model=self.domain_model, output_dir=out,
             mode=args.get("mode", "regular"),
-        ).generate()
-        return {"status": "ok", "files": self._track_generated_files(out)}
+        )
+        generator.generate()
+        return {"status": "ok", "files": self._track_generated_files(out, "generate_json_schema", generator)}
 
     def _gen_rest_api(self, args: dict) -> dict:
         err = self._require_domain_model("generate_rest_api")
@@ -2286,11 +2323,12 @@ class ToolExecutor:
             return err
         from besser.generators.rest_api import RESTAPIGenerator
         out = self._gen_dir(_APPLICATION_OUTPUT_DIRS["generate_rest_api"])
-        RESTAPIGenerator(
+        generator = RESTAPIGenerator(
             model=self.domain_model, output_dir=out,
             http_methods=args.get("http_methods", ["GET", "POST", "PUT", "DELETE"]),
-        ).generate()
-        return {"status": "ok", "files": self._track_generated_files(out)}
+        )
+        generator.generate()
+        return {"status": "ok", "files": self._track_generated_files(out, "generate_rest_api", generator)}
 
     def _gen_react(self, args: dict) -> dict:
         err = self._require_domain_model("generate_react")
@@ -2300,8 +2338,9 @@ class ToolExecutor:
             return {"error": "No GUI model available. The React generator requires a GUI model."}
         from besser.generators.react import ReactGenerator
         out = self._gen_dir("react")
-        ReactGenerator(model=self.domain_model, gui_model=self.gui_model, output_dir=out).generate()
-        return {"status": "ok", "files": self._track_generated_files(out)}
+        generator = ReactGenerator(model=self.domain_model, gui_model=self.gui_model, output_dir=out)
+        generator.generate()
+        return {"status": "ok", "files": self._track_generated_files(out, "generate_react", generator)}
 
     def _gen_web_app(self, args: dict) -> dict:
         err = self._require_domain_model("generate_web_app")
@@ -2311,11 +2350,12 @@ class ToolExecutor:
             return {"error": "No GUI model available. The WebApp generator requires a GUI model."}
         from besser.generators.web_app import WebAppGenerator
         out = self._gen_dir(_APPLICATION_OUTPUT_DIRS["generate_web_app"])
-        WebAppGenerator(
+        generator = WebAppGenerator(
             model=self.domain_model, gui_model=self.gui_model, output_dir=out,
             agent_model=self.agent_model, agent_config=self.agent_config,
-        ).generate()
-        return {"status": "ok", "files": self._track_generated_files(out)}
+        )
+        generator.generate()
+        return {"status": "ok", "files": self._track_generated_files(out, "generate_web_app", generator)}
 
     def _gen_rdf(self, args: dict) -> dict:
         err = self._require_domain_model("generate_rdf")
@@ -2323,8 +2363,9 @@ class ToolExecutor:
             return err
         from besser.generators.rdf import RDFGenerator
         out = self._gen_dir("rdf")
-        RDFGenerator(model=self.domain_model, output_dir=out).generate()
-        return {"status": "ok", "files": self._track_generated_files(out)}
+        generator = RDFGenerator(model=self.domain_model, output_dir=out)
+        generator.generate()
+        return {"status": "ok", "files": self._track_generated_files(out, "generate_rdf", generator)}
 
     # ------------------------------------------------------------------
     # File tools

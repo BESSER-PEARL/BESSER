@@ -7,7 +7,9 @@ between.
 Design points:
 
 * **Identity is by object**: WME ids ride in ``element.layout`` so the
-  converter pair can round-trip them, but the metamodel itself stays id-free.
+  converter pair can round-trip them (and the generator can reuse them as XML ids).
+  Each element and flow also takes its WME id as ``Element.id``, the id a trace
+  refers to it by; the metamodel's own rules never read it.
 * **Layout is opaque**: ``BPMNElement.layout`` carries the WME bounds /
   path / stash without the metamodel ever interpreting it.
 * **Validation is a separate concern**: this processor never calls ``BPMNModel.validate``
@@ -57,6 +59,7 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
 from besser.utilities.web_modeling_editor.backend.services.converters.bpmn_event_mapping import (
     parse_event_type,
 )
+from besser.utilities.web_modeling_editor.backend.services.converters.element_ids import EditorIds
 from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
 
 logger = logging.getLogger(__name__)
@@ -342,6 +345,8 @@ def process_bpmn_diagram(json_data: dict) -> BPMNModel:
     relationships = model_data.get("relationships") or {}
     name = json_data.get("title") or "Generated_BPMN_Model"
 
+    editor_ids = EditorIds()
+
     # --- Pass 1: build node objects (no containment yet) -------------------
     node_by_id: dict = {}
     pools: list = []  # (elem_id, Participant) — preserves JSON order
@@ -362,6 +367,7 @@ def process_bpmn_diagram(json_data: dict) -> BPMNModel:
             )
             continue
         obj.layout = _layout_dict(elem_id, elem)
+        editor_ids.assign(obj, elem_id)
         node_by_id[elem_id] = obj
         if isinstance(obj, Participant):
             pools.append((elem_id, obj))
@@ -487,6 +493,7 @@ def process_bpmn_diagram(json_data: dict) -> BPMNModel:
             continue
 
         flow.layout = _flow_layout_dict(rel_id, rel)
+        editor_ids.assign(flow, rel_id)
 
         if isinstance(flow, MessageFlow):
             if collaboration is not None:

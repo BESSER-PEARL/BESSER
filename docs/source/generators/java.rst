@@ -64,3 +64,16 @@ Parameters
 - ``output_dir``: Output directory (optional, default: ``output/`` in the current directory).
 - ``package_name``: Java package declared at the top of every generated file (optional).
   When omitted, no ``package`` line is emitted.
+
+Trace Links
+-----------
+
+The generator records what each ``.java`` file was generated from: after ``generate()``,
+``generator.traced_files["Book.java"]`` names the class (or enumeration) the whole file was generated from
+(``sources``) and lists in ``regions`` the lines rendered from each element of it that has an ``id`` (as every
+element drawn in the web editor does): the class body (``class``, ``enum``), each attribute's field
+(``attribute``) and its getter/setter (``accessors``), each association end's field and accessors
+(``association_end``, ``association_accessors``) with the association itself (``association``), each method
+(``method``) and each enumeration literal (``literal``). Recording them does not change the generated files.
+``build_generation_trace`` in ``besser.utilities.generation_trace`` turns them into a :doc:`traceability model
+<../buml_language/model_types/traceability>`; the web editor shows them on its *Traceability* page.

@@ -20,10 +20,14 @@ from django.core.exceptions import ValidationError
 
 {# Enumeration definition -#}
 {%- for enum in model.get_enumerations()|sort(attribute='name') %}
+{% trace enum, "enumeration" %}
 class {{ enum.name }}(models.TextChoices):
     {% for literal in sort_by_timestamp(enum.literals) %}
+    {% trace literal, "literal" %}
     {{ literal.name }} = '{{ literal.name }}', '{{ literal.name }}'
+    {% endtrace %}
     {% endfor %}
+{% endtrace %}
 
 {% endfor -%}
 
@@ -34,12 +38,15 @@ class {{ enum.name }}(models.TextChoices):
         {%- set _ = generals.names.append(parent.name) %}
     {%- endfor %}
     {%- set inheritance = generals.names | join(', ') %}
+{% trace class_obj, "class" %}
 class {{ class_obj.name }}({{ inheritance | default('models.Model', true) }}):
     """
     Represents a {{ class_obj.name[0].lower() + class_obj.name[1:] }} in the system.
     """
 {% for attr in sort_by_timestamp(class_obj.attributes) %}
+{% trace attr, "attribute" %}
     {{ attr.name }} = {{ django_fields.get_field(attr.type, model.get_enumerations(), attr.is_id, attr.is_external_id) }}
+{% endtrace %}
 {% endfor %}
     {%- for end in class_obj.association_ends()|sort(attribute='name') -%}
         {%- set ns = namespace(opposite_end=end) %}
@@ -50,20 +57,26 @@ class {{ class_obj.name }}({{ inheritance | default('models.Model', true) }}):
         {%- endfor %}
     {# ManyToManyField in Django #}
     {%- if class_obj.name == many_to_many.get(end.owner.name) %}
+    {% trace end.owner, "many_to_many" %}
     {{ end.name.replace(' ', '_') }} = models.ManyToManyField(
         '{{ end.type.name }}', related_name='{{ ns.opposite_end.name }}'{%- if end.multiplicity.min == 0 %}, blank=True{%- endif %})
+    {% endtrace %}
     {% endif -%}
     {# ForeignKey in Django: on the to-one end only (a self association lists both ends) #}
     {%- if class_obj.name == fkeys.get(end.owner.name) and end.multiplicity.max <= 1 %}
+    {% trace end.owner, "foreign_key" %}
     {{ end.name.replace(' ', '_') }} = models.ForeignKey(
         '{{ end.type.name }}', related_name='{{ ns.opposite_end.name }}', on_delete=models.{% if end.is_composite %}CASCADE
                 {%- elif end.multiplicity.min == 0%}SET_NULL, blank=True, null=True{% else %}PROTECT{% endif %})
+    {% endtrace %}
     {% endif -%}
     {# OneToOneField in Django #}
     {%- if class_obj.name == one_to_one.get(end.owner.name) %}
+    {% trace end.owner, "one_to_one" %}
     {{ end.name.replace(' ', '_') }} = models.OneToOneField(
         '{{ end.type.name }}', related_name='{{ ns.opposite_end.name }}', on_delete=models.{% if end.is_composite %}CASCADE
                 {%- elif end.multiplicity.min == 0%}SET_NULL, blank=True, null=True{% else %}PROTECT{% endif %})
+    {% endtrace %}
     {% endif -%}
     {%- endfor %}
 
@@ -143,7 +156,9 @@ class {{ class_obj.name }}({{ inheritance | default('models.Model', true) }}):
     {%- for method in sort_by_timestamp(class_obj.methods) %}
     {%- if method.code %}
     {#- If method has code, use it directly (it should contain the full function definition) #}
+{% trace method, "method" %}
 {{ normalize_code(method.code, method.name) | indent(4, first=true) }}
+{% endtrace %}
     {% else %}
     {#- Otherwise generate method signature from metadata #}
     {%- set param_list = [] %}
@@ -160,12 +175,15 @@ class {{ class_obj.name }}({{ inheritance | default('models.Model', true) }}):
         {%- endif %}
         {%- set _ = param_list.append(param_str) %}
     {%- endfor %}
+    {% trace method, "method" %}
     def {{ method.name }}(self{% if param_list %}, {{ param_list | join(', ') }}{% endif %}){% if method.type %} -> {{ method.type.name }}{% endif %}:
         """
         {{ method.name }} method for {{ class_obj.name }}.
         """
         {{ method_body.infer_body(class_obj, method) }}
+    {% endtrace %}
     {% endif %}
 
     {%- endfor %}
+{% endtrace %}
 {% endfor %}

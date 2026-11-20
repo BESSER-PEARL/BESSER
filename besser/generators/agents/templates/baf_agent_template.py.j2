@@ -480,6 +480,7 @@ from baf.library.entity.base_entities import {{ entity.name }}
 {% endfor %}
 {% for entity in agent.entities %}
 {% if is_class(entity, 'CustomEntity') %}
+{% trace entity, "entity" %}
 {{ entity.name }} = agent.new_entity('{{ entity.name }}',
     {% if entity.description %}
     description='{{ entity.description | py_str }}',
@@ -494,6 +495,7 @@ from baf.library.entity.base_entities import {{ entity.name }}
         {% endfor %}
     }
 )
+{% endtrace %}
 {% endif %}
 {% endfor %}
 {% endif %}
@@ -505,6 +507,7 @@ from baf.library.entity.base_entities import {{ entity.name }}
 {% set suffix_part = '_' ~ suffix if suffix else '' %}
 {% for intent in agent_model.intents %}
 {% set intent_name = intent.name ~ suffix_part %}
+{% trace intent, "intent" %}
 {{ intent_name }} = agent.new_intent('{{ intent_name }}', [
     {% for training_sentence in intent.training_sentences %}
     '{{ training_sentence | replace('\\', '\\\\') | replace("'", "\\'") }}',
@@ -515,6 +518,7 @@ from baf.library.entity.base_entities import {{ entity.name }}
 {% for parameter in intent.parameters %}
 {{ intent_name }}.parameter('{{ parameter.name }}', '{{ parameter.fragment }}', {{ parameter.entity.name }})
 {% endfor %}
+{% endtrace %}
 {% endfor %}
 {% endif %}
 {% endmacro %}
@@ -584,6 +588,7 @@ router_initial_state = agent.new_state('router_initial_state', initial=True)
 {% endif %}
 
 {% for state in agent.states %}
+{% trace state, "state" %}
 {% if is_class(state, 'ReasoningState') %}
 {{ state.name }} = new_reasoning_state(
     agent=agent,
@@ -607,6 +612,7 @@ router_initial_state = agent.new_state('router_initial_state', initial=True)
 {% else %}
 {{ state.name }} = agent.new_state('{{ state.name }}'{% if state.initial and not has_personalization %}, initial=True{% endif %}{% if state.ic_config != None %}, ic_config={{ write_ic_config(state.ic_config) }}{% endif %})
 {% endif %}
+{% endtrace %}
 {% endfor %}
 
 {% if has_personalization %}
@@ -619,7 +625,9 @@ router_initial_state = agent.new_state('router_initial_state', initial=True)
 {% if profile_agent and profile_agent.states %}
 # States for profile {{ profile_suffix }}
 {% for state in profile_agent.states %}
+{% trace state, "state" %}
 {{ state.name }}_{{ profile_suffix }} = agent.new_state('{{ state.name }}_{{ profile_suffix }}'{% if state.ic_config != None %}, ic_config={{ write_ic_config(state.ic_config) }}{% endif %})
+{% endtrace %}
 {% endfor %}
 {% endif %}
 {% endfor %}
@@ -921,7 +929,7 @@ router_initial_state.when_variable_matches_operation('user_profile', operator.eq
     {% endif %}
     {% endif %}
     {% elif is_class(action, 'WebSocketReplyOptions') %}
-    platform.reply_options(session, [{% for opt in action.options %}'{{ opt | replace('\\', '\\\\') | replace("'", "\\'") }}'{% if not loop.last %}, {% endif %}{% endfor %}])
+    platform.reply_options(session, [{% for opt in action.options %}'{{ opt | replace('\\', '\\\\') | replace("'", "\\'") }}'{% if not loop.last %}, {% endif %}{% endfor %}]{% if action.label %}, label='{{ action.label | py_str }}'{% endif %})
     {% elif is_class(action, 'WebSocketReplyLocation') %}
     platform.reply_location(session, {{ action.latitude }}, {{ action.longitude }})
     {% elif is_class(action, 'WebSocketReplyFile') %}
@@ -952,10 +960,12 @@ router_initial_state.when_variable_matches_operation('user_profile', operator.eq
 {% set speech_enabled = configuration and configuration.outputModalities and ('speech' in (configuration.outputModalities | map('lower'))) %}
 {% for state in agent_model.states %}
 {% set state_name = state.name ~ suffix_part %}
+{% trace state, "state_behavior" %}
 # {{ state.name }}{% if suffix %} ({{ suffix }}){% endif %}
 {% set inject_profile_context = has_personalization and suffix and state.initial %}
 
 {% if state.body != None %}
+{% trace state.body, "body" %}
 {% set body_name = state.body.name ~ suffix_part %}
 {% set body_has_custom_ns = namespace(value=false, func_name='') %}
 {% if body_name not in ns.bodies %}
@@ -984,8 +994,10 @@ def {{ body_name }}(session: Session):
 {% set ns.bodies = ns.bodies + [body_name] %}
 {% endif %}
 {{ state_name }}.set_body({{ body_has_custom_ns.func_name if body_has_custom_ns.value and body_has_custom_ns.func_name else body_name }})
+{% endtrace %}
 {% endif %}
 {% if state.fallback_body != None %}
+{% trace state.fallback_body, "fallback_body" %}
 {% set fallback_name = state.fallback_body.name ~ suffix_part %}
 {% set fallback_has_custom_ns = namespace(value=false, func_name='') %}
 {% if fallback_name not in ns.bodies %}
@@ -999,6 +1011,7 @@ def {{ fallback_name }}(session: Session):
 {% set ns.bodies = ns.bodies + [fallback_name] %}
 {% endif %}
 {{ state_name }}.set_fallback_body({{ fallback_has_custom_ns.func_name if fallback_has_custom_ns.value and fallback_has_custom_ns.func_name else fallback_name }})
+{% endtrace %}
 {% endif %}
 {% set auto_ns = namespace(found=False) %}
 {% for transition in state.transitions %}
@@ -1011,6 +1024,7 @@ def {{ fallback_name }}(session: Session):
 {% set transition_conditions = [] %}
 {% endif %}
 {% set primary_condition = transition_conditions[0] if transition_conditions|length > 0 else None %}
+{% trace transition, "transition" %}
 {% if transition_conditions|length == 1 and primary_condition and transition.event and is_class(primary_condition, 'IntentMatcher') %}
 {% if primary_condition.intent.name == 'fallback_intent' %}
 {{ state_name }}.when_no_intent_matched().go_to({{ dest_name }})
@@ -1056,6 +1070,7 @@ def {{ fallback_name }}(session: Session):
 {{ state_name }}.go_to({{ dest_name }})
 {% endif %}
 {% endif %}
+{% endtrace %}
 {% endfor %}
 {% if personalization_mapping and not auto_ns.found %}
 {% for target_profile in personalization_mapping %}
@@ -1065,6 +1080,7 @@ def {{ fallback_name }}(session: Session):
 {% endif %}
 {% endfor %}
 {% endif %}
+{% endtrace %}
 {% endfor %}
 {% endif %}
 {% endmacro %}

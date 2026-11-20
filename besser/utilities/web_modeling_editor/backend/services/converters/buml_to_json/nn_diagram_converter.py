@@ -14,6 +14,7 @@ from typing import Any
 import besser.BUML.metamodel.nn as nn_module
 from besser.BUML.metamodel.nn import NN, Configuration, Dataset
 from besser.utilities.buml_code_builder.nn_model_builder import is_attr_explicitly_set
+from besser.utilities.web_modeling_editor.backend.services.converters.element_ids import is_valid_element_id
 
 # Stable namespace for uuid5-based element IDs. Using a fixed UUID here means
 # the same BUML NN model, converted twice, produces byte-identical JSON — which
@@ -27,8 +28,21 @@ _id_state = threading.local()
 
 
 def _reset_id_state() -> None:
-    """Reset the deterministic-ID counter for a fresh conversion."""
+    """Reset the deterministic-ID counter (and the element ids kept) for a fresh conversion."""
     _id_state.counter = 0
+    _id_state.kept = set()
+
+
+def _element_id(element) -> str:
+    """The id of ``element``'s editor element: its own ``id`` (the editor's, for a network converted
+    from the editor) while valid and unused in this conversion, else the next deterministic id."""
+    element_id = getattr(element, 'id', None)
+    kept = getattr(_id_state, 'kept', set())
+    if is_valid_element_id(element_id) and element_id not in kept:
+        kept.add(element_id)
+        _id_state.kept = kept
+        return element_id
+    return _new_id()
 
 
 def _new_id(hint: str = '') -> str:
@@ -540,7 +554,7 @@ def _emit_module(module, owner_id: str, x: int, y: int,
             f"Cannot emit module of type {cls!r}: no mapping to frontend "
             f"element type. Add {cls!r} to _MODULE_TYPE_MAP."
         ) from exc
-    element_id = _new_id()
+    element_id = _element_id(module)
     attr_ids: list[str] = []
 
     attr_bounds = {'x': x, 'y': y, 'width': 210, 'height': 20}
@@ -565,8 +579,9 @@ def _emit_module(module, owner_id: str, x: int, y: int,
 def _emit_container(name: str, x: int, y: int, width: int, height: int,
                     elements: dict[str, dict[str, Any]],
                     input_var: str | None = None,
-                    return_vars: list[str] | None = None) -> str:
-    container_id = _new_id()
+                    return_vars: list[str] | None = None,
+                    nn: NN | None = None) -> str:
+    container_id = _element_id(nn)
     container_dict = {
         'id': container_id,
         'name': name,
@@ -658,7 +673,7 @@ def _emit_configuration(config: Configuration, x: int, y: int,
 
 def _emit_dataset(dataset: Dataset, parent_type: str, x: int, y: int,
                   elements: dict[str, dict[str, Any]]) -> str:
-    element_id = _new_id()
+    element_id = _element_id(dataset)
     attr_ids: list[str] = []
     attr_bounds = {'x': x, 'y': y, 'width': 210, 'height': 20}
     for field, value, attr_type_hint, mandatory in _dataset_fields(dataset):
@@ -695,7 +710,7 @@ def _emit_nn_container(nn: NN, y_base: int,
     container_id = _emit_container(nn.name, container_x, y_base,
                                     width=width, height=250, elements=elements,
                                     input_var=nn.input_var if nn.input_var else None,
-                                    return_vars=return_vars_list)
+                                    return_vars=return_vars_list, nn=nn)
 
     prev_id: str | None = None
     for i, module in enumerate(nn.modules):

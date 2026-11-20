@@ -9,7 +9,8 @@ class SQLHelper {
 {####- start to define variables ####}
 {# variables for name of tables: #}
 {%- for class in BUMLClasses%}
-static const String table{{class.name[0].upper() + class.name[1:] }}s = '{{class.name[0].lower() + class.name[1:] }}s';
+{% trace class, "table_name" %}static const String table{{class.name[0].upper() + class.name[1:] }}s = '{{class.name[0].lower() + class.name[1:] }}s';
+{%- endtrace %}
 {%- endfor %}
 {#- for many_to_many#}
 {%- for association in model.associations if association.ends|length == 2 %}
@@ -45,7 +46,8 @@ static const String columnId = 'id';
     {%- for atrr in type.attributes%}
       {%- if atrr.name[0].upper() + atrr.name[1:] not in attributeList %}
         {%- set _ = attributeList.append(atrr.name[0].upper() + atrr.name[1:]) %}
-static const String column{{atrr.name[0].upper() + atrr.name[1:]}} = '{{atrr.name}}';
+{% trace atrr, "column_name" %}static const String column{{atrr.name[0].upper() + atrr.name[1:]}} = '{{atrr.name}}';
+{%- endtrace %}
       {%- endif%}
     {%- endfor%}
 {%- endfor%}
@@ -89,7 +91,7 @@ static const String column{{ foreignKeyName|replace("_", "") }} = '{{ foreignKey
 {# end of define variables #}
 static Future<void> createTables(sql.Database database) async {
     {%- for table in BUMLClasses%}
-    await database.execute("""
+    {% trace table, "create_table" %}await database.execute("""
     CREATE TABLE $table{{table.name[0].upper() + table.name[1:] }}s(
         $columnId INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
         {%- for class in BUMLClasses%}
@@ -123,6 +125,7 @@ static Future<void> createTables(sql.Database database) async {
       {%- endfor%}
     )
     """);
+    {%- endtrace %}
     {%- endfor%}
 
 {#- create tables for assoc #} 

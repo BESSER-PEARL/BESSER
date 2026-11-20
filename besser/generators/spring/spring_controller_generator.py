@@ -1,6 +1,7 @@
 """Writes the REST controllers of a generated Spring Boot project."""
 
 from besser.BUML.metamodel.structural import Class, DomainModel
+from besser.utilities.generation_trace import trace_source
 from besser.generators.spring._sub_generator import SpringSubGenerator, build_environment
 from besser.generators.spring.java_types import (
     get_id_attribute,
@@ -71,4 +72,5 @@ class SpringControllerGenerator(SpringSubGenerator):
             "id_accessor": to_java_accessor_suffix(id_attr.name),
         }
 
-        self.write(f"{class_name}Controller.java", controller_template.render(**context))
+        self.write(f"{class_name}Controller.java", controller_template.render(**context),
+                   trace_source(cls, "controller.java.j2#class"))

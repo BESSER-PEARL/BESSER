@@ -1,0 +1,99 @@
+Version 8.11.0
+==============
+
+Minor release: **traceability from the model to the code**, a trace view of
+Spec-Driven Agent runs, and richer agents built from a conversation or a file.
+It adds the traceability metamodel and traced generation endpoints; no change
+to the existing metamodels. Recording traces is opt-in per project. Deploy the
+modeling agent v8.2.0 alongside.
+
+Highlights
+----------
+
+* **Traceability.** A new metamodel records what happened to a project's
+  artifacts: which model elements were created or changed, by whom and with
+  which tool, and which generated code comes from which element. It follows
+  W3C PROV and is stored apart from the models, so recording never changes a
+  model file. Every generator now links the files it writes to the elements
+  they come from, down to attributes, methods and OCL constraints, through
+  ``traced_files`` in ``GeneratorInterface``. ``/traceability/generate-output``
+  and ``/traceability/generate-output-from-project`` return the same files as
+  the plain endpoints together with their trace. The editor gives the elements
+  of every diagram type their editor ids, so the traces reach the GUI, agent,
+  neural network, quantum, BPMN, deployment and component diagrams too. A
+  trace can travel with a JSON or B-UML export. See
+  :doc:`../../buml_language/model_types/traceability` and
+  :doc:`../../generators/traceable_generator`
+  (`#796 <https://github.com/BESSER-PEARL/BESSER/pull/796>`_).
+* **The Traceability page.** Once a project's recording is switched on (new
+  projects start with it off), the editor records the edits of every diagram,
+  every generation from the *Generate* menu, Spec-Driven runs and the
+  assistant's model and token counts. Templates, imports and diagrams the
+  assistant creates are credited to what created them, not to the user. The
+  page shows the trace as a timeline, per diagram, as coverage, as the lineage
+  of an artifact and against the requirements, and lists generators whose code
+  is out of date. Element popups open it with *Show traceability*. Traces stay
+  in the browser (IndexedDB), are safe with two tabs open, and keep the newest
+  runs per generator. The assistant can answer questions about the trace
+  ("which code came from Book?") from a size-capped summary the editor sends
+  (`WME #290 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/290>`_).
+* **A trace view for Spec-Driven Agent runs.** *View files* shows for each
+  line whether the AI wrote it, a BESSER generator produced it or a person
+  edited it between runs, and flags a file changed after the run recorded it.
+  Each phase row shows its duration, LLM turns and estimated cost, and the
+  validation row lists the first check, each fix attempt and what it fixed.
+  The stream gains a ``findings`` event per validation round, and ``phase``
+  events carry the run's cost, turns and time at their start. The run record
+  and the ``spec-driven run end`` log line now hold the token counts and who
+  wrote the delivered lines
+  (`#803 <https://github.com/BESSER-PEARL/BESSER/pull/803>`_,
+  `#804 <https://github.com/BESSER-PEARL/BESSER/pull/804>`_,
+  `WME #295 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/295>`_).
+* **Agents with Markdown replies and option buttons.** An options reply can
+  carry its own label (``ws_options_label``) instead of BAF's English "Choose an
+  option"; it needs BAF 4.6.1, which BESSER now installs. Personalization now
+  covers Markdown replies and option buttons, keeps Markdown structure out of
+  the LLM, undoes a step that breaks a line's inline markup, and only
+  translates button labels so a click still matches its intent. Validation is
+  stricter: a ``when_intent_matched`` transition that names no intent is an
+  error instead of being dropped, an ``auto`` transition must be the only
+  transition of its state, and a custom condition is wired to the function the
+  generated agent calls
+  (`#806 <https://github.com/BESSER-PEARL/BESSER/pull/806>`_,
+  `WME #296 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/296>`_).
+
+Fixes
+-----
+
+* **Java updated for CVE-2026-114938.** Both images install the fixed OpenJDK
+  21 release, fail the build on an affected one, and set the mitigation flags
+  (`#810 <https://github.com/BESSER-PEARL/BESSER/pull/810>`_).
+* **Generated files stay inside the output folder.** A path that resolves
+  outside it (for example an agent skill named ``../../x``) is refused for
+  every generator, and BAF skill files are named from a valid identifier.
+* **Spec-Driven runs behind a proxy.** Proxy variables reach the agent's
+  ``npm`` and ``pip`` installs, which hung until their timeout without them. A
+  proxy URL with credentials is withheld.
+* **Free tier.** A second keyless cloud endpoint
+  (``BESSER_FREE_LLM_SECONDARY_BASE_URL`` / ``_TOKEN`` / ``_MODELS``) sits in the
+  fallback chain before the self-hosted model, and Command Code's newer
+  per-model refusals no longer skip every other model of the key.
+* **Smaller fixes.** The SQL generator writes its DDL as UTF-8, so a class
+  named "Bücher" no longer breaks on Windows; a CNOT converts back as the
+  editor draws it; a project whose owner contains "PROJECT DEFINITION" imports
+  whole; on the Agent Customization page, applying a personalization no longer
+  resets the runtime settings
+  (`WME #296 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/296>`_).
+
+Deploy alongside
+----------------
+
+The modeling agent v8.2.0 answers questions about a project's trace from the
+``context.traceDigest`` the editor sends, opens the Traceability page with a
+``show_trace`` reply, reports the model and tokens of each turn
+(``llmUsage``), and lists the requirements of a long class-diagram request
+only when the project records traces (``context.traceabilityEnabled``). It
+builds agents with Markdown replies, option buttons and custom-condition
+transitions, routes voice and typed messages through the same classifier
+(so it no longer trains an intent classifier per state at startup), and keeps
+a request that is sent again at the replace/keep question.

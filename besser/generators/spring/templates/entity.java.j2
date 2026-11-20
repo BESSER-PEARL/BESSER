@@ -13,6 +13,7 @@ import {{ import }};
 public {% if is_abstract %}abstract {% endif %}class {{ class_name }}{% if parent %} extends {{ parent }}{% endif %} {
 
 {% for attribute in attributes %}
+{% trace attribute.element, "attribute" %}
 {% if attribute.is_id %}
     @Id
 {% endif %}
@@ -29,13 +30,16 @@ public {% if is_abstract %}abstract {% endif %}class {{ class_name }}{% if paren
 {% else %}
     {{ attribute.visibility }}{{ attribute.type }} {{ attribute.name }}{% if attribute.default_value %} = {{ attribute.default_value }}{% endif %};
 {% endif %}
+{% endtrace %}
 
 {% endfor %}
 {% for rel in relations %}
+{% trace rel.element, "relationship" %}
 {% for annotation in rel.annotations %}
     {{ annotation }}
 {% endfor %}
     private {{ rel.type }} {{ rel.target_property }}{% if rel.is_list %} = new ArrayList<>(){% endif %};
+{% endtrace %}
 
 {% endfor %}
 {% if not is_abstract %}
@@ -51,6 +55,7 @@ public {% if is_abstract %}abstract {% endif %}class {{ class_name }}{% if paren
 {% endif %}
 {% endif %}
 {% for method in methods %}
+{% trace method.element, "method" %}
     {{ method.visibility }} {{ method.return_type }} {{ method.name }}({% for parameter in method.parameters %}{{ parameter.type }} {{ parameter.name }}{% if not loop.last %}, {% endif %}{% endfor %}) {
 {% if method.code %}
         {{ method.code }}
@@ -58,9 +63,11 @@ public {% if is_abstract %}abstract {% endif %}class {{ class_name }}{% if paren
         return null;
 {% endif %}
     }
+{% endtrace %}
 
 {% endfor %}
 {% for attribute in attributes %}
+{% trace attribute.element, "accessors" %}
     public {{ attribute.type }} get{{ attribute.accessor }}() {
         return this.{{ attribute.name }};
     }
@@ -68,9 +75,11 @@ public {% if is_abstract %}abstract {% endif %}class {{ class_name }}{% if paren
     public void set{{ attribute.accessor }}({{ attribute.type }} {{ attribute.name }}) {
         this.{{ attribute.name }} = {{ attribute.name }};
     }
+{% endtrace %}
 
 {% endfor %}
 {% for rel in relations %}
+{% trace rel.element, "accessors" %}
     public {{ rel.type }} get{{ rel.accessor }}() {
         return this.{{ rel.target_property }};
     }
@@ -78,6 +87,7 @@ public {% if is_abstract %}abstract {% endif %}class {{ class_name }}{% if paren
     public void set{{ rel.accessor }}({{ rel.type }} {{ rel.target_property }}) {
         this.{{ rel.target_property }} = {{ rel.target_property }};
     }
+{% endtrace %}
 
 {% endfor %}
 }

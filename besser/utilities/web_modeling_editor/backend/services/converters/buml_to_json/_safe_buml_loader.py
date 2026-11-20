@@ -23,7 +23,7 @@ import ast
 import datetime as _datetime
 import sys
 import types
-from typing import Any, Dict, Mapping, Set
+from typing import Any, Dict, Mapping, Optional, Set
 
 
 # Stand-in for the ``datetime`` module, for ``allowed_names``. Generated BUML
@@ -501,6 +501,9 @@ def _collect_assigned_names(module: ast.Module) -> Set[str]:
 def safe_load_buml(
     content: str,
     allowed_names: Mapping[str, Any],
+    max_ast_nodes: int = _MAX_AST_NODES,
+    max_content_chars: int = _MAX_CONTENT_BYTES,
+    shadowable_names: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Parse ``content`` as Python, validate against the allowlist, and execute
@@ -519,6 +522,17 @@ def safe_load_buml(
         reach ``knowledge_graph.copy.dispatch_table.clear()`` and change
         interpreter-wide state). Callers may therefore build the mapping
         from ``dir(package)``, which lists submodules too.
+    max_ast_nodes:
+        Cap on the number of AST nodes. A trace is a long flat list of
+        constructor calls and gets a higher one; the depth cap still applies.
+    max_content_chars:
+        Cap on the source size. A trace section gets the size of a whole
+        project file, which it can fill.
+    shadowable_names:
+        Names allowed like ``allowed_names`` unless the content assigns a
+        variable of that name: then the name is the content's variable only.
+        For a file whose models may use them (a class called ``Person`` in a
+        project file with a trace written before its metaclasses got aliases).
 
     Returns
     -------
@@ -536,9 +550,9 @@ def safe_load_buml(
     # Fail fast on oversized uploads before we spend memory on parsing.
     # ``len(content)`` is char count; bytes would be >= char count for
     # UTF-8 so this is a conservative cap.
-    if len(content) > _MAX_CONTENT_BYTES:
+    if len(content) > max_content_chars:
         raise SafeBumlLoaderError(
-            f"BUML content too large ({len(content)} chars > {_MAX_CONTENT_BYTES})"
+            f"BUML content too large ({len(content)} chars > {max_content_chars})"
         )
 
     allowed_names = {
@@ -574,9 +588,9 @@ def safe_load_buml(
             for kw in node.keywords
         ):
             node_count -= 2  # the keyword and its string
-    if node_count > _MAX_AST_NODES:
+    if node_count > max_ast_nodes:
         raise SafeBumlLoaderError(
-            f"BUML AST too complex ({node_count} nodes > {_MAX_AST_NODES})"
+            f"BUML AST too complex ({node_count} nodes > {max_ast_nodes})"
         )
 
     # Only module-level statements are allowed to be Assign or Expr. Things
@@ -607,6 +621,11 @@ def safe_load_buml(
     allowed_names = {**allowed_names, **aliases}
 
     declared_vars = _collect_assigned_names(tree)
+    allowed_names = {
+        **{name: value for name, value in (shadowable_names or {}).items()
+           if name not in declared_vars and not isinstance(value, types.ModuleType)},
+        **allowed_names,
+    }
 
     # Reject any overlap between declared vars and allowed builtins that
     # contain characters forbidden elsewhere (e.g. starting with ``_``).

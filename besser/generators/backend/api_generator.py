@@ -35,9 +35,10 @@ monolith, just relocated.
 import logging
 import os
 import re
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
-from jinja2 import Environment, FileSystemLoader
+from jinja2 import Environment
+from besser.utilities.generation_trace import trace_source, traced_environment
 
 from besser.BUML.metamodel.structural import AssociationClass, DomainModel
 from besser.BUML.notations.action_language.ActionLanguageASTBuilder import parse_bal
@@ -194,8 +195,8 @@ def cross_router_calls(method_code: str, current_class_name: str, class_names: L
 
 
 def _make_env() -> Environment:
-    env = Environment(
-        loader=FileSystemLoader(_TEMPLATES_DIR),
+    env = traced_environment(
+        _TEMPLATES_DIR,
         trim_blocks=True,
         lstrip_blocks=True,
         extensions=['jinja2.ext.do'],
@@ -219,18 +220,29 @@ def _make_env() -> Environment:
     return env
 
 
+#: Writes a render to a path relative to the output folder and records what it was rendered from:
+#: ``GeneratorInterface._write_traced`` bound to the calling generator and its output folder.
+WriteTraced = Callable[..., str]
+
+
 def generate_modular_api(
     model: DomainModel,
     http_methods: List[str],
     nested_creations: bool,
     port: int,
     output_dir: str,
+    write: WriteTraced,
     api_title: Optional[str] = None,
     api_description: Optional[str] = None,
     api_version: Optional[str] = None,
 ) -> None:
     """Render ``main_api.py``, ``database.py``, ``bal_stdlib.py`` and one
     ``routers/<class>.py`` per class into ``output_dir``.
+
+    Every file is written with ``write(relative_path, rendered, *sources)``, which records what it
+    was rendered from in the calling generator's ``traced_files``: a router is generated as a whole
+    from its class, a methods module has one block per method, and ``main_api.py`` one
+    ``include_router`` block per class (see ``besser.utilities.generation_trace``).
 
     ``main_api.py`` keeps its historical filename (and still exposes the
     module-level ``app`` object) so that existing tooling which shells out to
@@ -276,14 +288,12 @@ def generate_modular_api(
 
     # database.py: engine/session setup shared by main_api.py and every router.
     database_template = env.get_template("database.py.j2")
-    with open(os.path.join(output_dir, "database.py"), mode="w", encoding="utf-8") as f:
-        f.write(database_template.render(name=model.name))
+    write("database.py", database_template.render(name=model.name))
 
     # bal_stdlib.py: BESSER Action Language standard-library helpers, shared
     # by any router whose class methods use them.
     bal_stdlib_template = env.get_template("bal_stdlib.py.j2")
-    with open(os.path.join(output_dir, "bal_stdlib.py"), mode="w", encoding="utf-8") as f:
-        f.write(bal_stdlib_template.render())
+    write("bal_stdlib.py", bal_stdlib_template.render())
 
     # One router module per class.
     router_template = env.get_template("router.py.j2")
@@ -303,9 +313,8 @@ def generate_modular_api(
                 "assoc_by_association": assoc_by_association,
             }
         )
-        router_path = os.path.join(routers_dir, f"{cls.name.lower()}.py")
-        with open(router_path, mode="w", encoding="utf-8") as f:
-            f.write(router_code)
+        write(os.path.join("routers", f"{cls.name.lower()}.py"), router_code,
+              trace_source(cls, f"{router_template.name}#router"))
 
         # Modeled-method endpoints live in their own module: they are the
         # hand-written half of the generation gap, and keeping them out of
@@ -325,11 +334,7 @@ def generate_modular_api(
                     "assoc_by_association": assoc_by_association,
                 }
             )
-            methods_path = os.path.join(
-                routers_dir, f"{cls.name.lower()}_methods.py"
-            )
-            with open(methods_path, mode="w", encoding="utf-8") as f:
-                f.write(methods_code)
+            write(os.path.join("routers", f"{cls.name.lower()}_methods.py"), methods_code)
 
     # main_api.py: slim app setup + router includes (keeps its historical
     # filename so `uvicorn main_api:app` / Docker / deployment tooling that
@@ -348,7 +353,6 @@ def generate_modular_api(
         api_description=repr(api_description or DEFAULT_API_DESCRIPTION),
         api_version=repr(api_version or DEFAULT_API_VERSION),
     )
-    with open(os.path.join(output_dir, "main_api.py"), mode="w", encoding="utf-8") as f:
-        f.write(main_api_code)
+    write("main_api.py", main_api_code)
 
     logger.info("Code generated in the location: %s", os.path.join(output_dir, "main_api.py"))

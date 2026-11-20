@@ -5,7 +5,7 @@ import os
 import re
 from copy import deepcopy
 
-from jinja2 import Environment, FileSystemLoader
+from jinja2 import Environment
 
 from besser.BUML.metamodel.structural import UNLIMITED_MAX_MULTIPLICITY
 from besser.BUML.metamodel.uml_component import AgentCategory
@@ -27,14 +27,15 @@ from besser.generators.docker_compose.runtime_config import (
     resolve_runtime_yaml,
 )
 # Tested tally engine; its source is baked into governed agents.
+from besser.generators.agents.baf_version import BAF_VERSION
 from besser.generators.agents import governance_engine as _gov_engine
 from besser.utilities import sort_by_timestamp
+from besser.utilities.generation_trace import trace_source, traced_environment
 
 logger = logging.getLogger(__name__)
 
-# BESSER Agentic Framework release the BAF generator's templates target (the
-# agent simulator image pins the same version). Baked agent images install it.
-BAF_VERSION = "4.5.1"
+# BESSER Agentic Framework release the BAF generator's templates target (see
+# besser.generators.agents.baf_version). Baked agent images install it.
 
 
 def _safe_service_name(name: str) -> str:
@@ -565,6 +566,11 @@ class DockerComposeGenerator(GeneratorInterface):
     ``Artifact.manifests`` is emitted as a ``# manifests:`` comment only; it is
     not resolved against the Component model.
 
+    Tracing: ``traced_files`` holds ``docker-compose.yml`` with the lines of each service (its artifact) and
+    network (its node), each ``<service>/Dockerfile`` with its artifact as source, and the traces of each
+    baked agent's :class:`BAFGenerator` under ``<service>/``. The traces of a baked file an LLM
+    personalization wrote are left out and the file is listed in ``ai_files`` instead.
+
     Raises:
         ValueError: (from ``generate``) when two artifacts normalise to the same
             Compose service name, or, when agent models are supplied, when an
@@ -584,17 +590,16 @@ class DockerComposeGenerator(GeneratorInterface):
         self.agent_configs_by_id = deepcopy(agent_configs_by_id or {})
         self.agent_config_yamls_by_id = dict(agent_config_yamls_by_id or {})
         self._runtime_by_service = {}
+        # The model elements the last _build_view turned into each service / network, by compose name.
+        self._service_elements = {}
+        self._network_elements = {}
 
     def generate(self):
         file_path = self.build_generation_path(file_name="docker-compose.yml")
         templates_path = os.path.join(
             os.path.dirname(os.path.abspath(__file__)), "templates"
         )
-        env = Environment(
-            loader=FileSystemLoader(templates_path),
-            trim_blocks=True,
-            lstrip_blocks=True,
-        )
+        env = traced_environment(templates_path, trim_blocks=True, lstrip_blocks=True)
         # entry/human-facing — the set whose service publishes host ports + runs the UI;
         # a2a_servers — the set whose service runs the A2A server (≥1 inbound peer). The two
         # are decoupled: a hybrid (a human-facing merge owner) is in BOTH.
@@ -603,8 +608,9 @@ class DockerComposeGenerator(GeneratorInterface):
         self._prepare_runtime_configs(human_facing_services)
         services, networks = self._build_view(self.model, human_facing_services)
         template = env.get_template("docker-compose.yml.j2")
-        with open(file_path, mode="w", encoding="utf-8") as f:
-            f.write(template.render(services=services, networks=networks))
+        self._write_traced("docker-compose.yml", template.render(
+            services=services, networks=networks,
+            service_elements=self._service_elements, network_elements=self._network_elements))
         logger.info("docker-compose.yml generated at %s", file_path)
         # Bake a BAF build context per resolvable agentic LOCAL artifact.
         self._bake_agent_contexts(env, human_facing_services, a2a_server_services)
@@ -744,7 +750,7 @@ class DockerComposeGenerator(GeneratorInterface):
                 for service, runtime in sorted(self._runtime_by_service.items())
             }
             runtime = self._runtime_by_service[svc_name]
-            BAFGenerator(
+            baf = BAFGenerator(
                 agent,
                 output_dir=ctx_dir,
                 config=runtime['config'],
@@ -752,7 +758,10 @@ class DockerComposeGenerator(GeneratorInterface):
                 a2a_descriptor=descriptor if has_boundaries else None,
                 deployment_component_metadata=True,
                 bind_host=CONTAINER_BIND_HOST,
-            ).generate()
+            )
+            baf.generate()
+            # A file the agent's LLM personalization wrote joins ai_files, without its regions.
+            self._merge_traced_files(baf, svc_name)
             if has_boundaries:
                 logger.info("[docker_compose] A2A-wired (%s): %s -> to_peers=%s",
                             descriptor['role'], svc_name, descriptor['to_peers'])
@@ -761,11 +770,9 @@ class DockerComposeGenerator(GeneratorInterface):
             agent_script = f"{agent.name}.py"
             with open(os.path.join(ctx_dir, agent_script), encoding="utf-8") as f:
                 dependency_extras = baf_dependency_extras(f.read())
-            with open(os.path.join(ctx_dir, "Dockerfile"),
-                      mode="w", encoding="utf-8") as f:
-                f.write(dockerfile_tpl.render(agent_script=agent_script,
-                                              dependency_extras=dependency_extras,
-                                              baf_version=BAF_VERSION))
+            self._write_traced(f"{svc_name}/Dockerfile", dockerfile_tpl.render(
+                agent_script=agent_script, dependency_extras=dependency_extras, baf_version=BAF_VERSION),
+                trace_source(art, "Dockerfile.j2#dockerfile"))
             logger.info("[docker_compose] baked build context: %s", ctx_dir)
 
     def _compute_service_flags(self) -> tuple:
@@ -937,6 +944,7 @@ class DockerComposeGenerator(GeneratorInterface):
                 image = f"{svc_name}:latest"
                 is_hybrid = True
 
+            self._service_elements[svc_name] = art
             services.append({
                 'name': svc_name,
                 'build': build,
@@ -960,6 +968,7 @@ class DockerComposeGenerator(GeneratorInterface):
             if net_name not in seen_nets:
                 seen_nets.add(net_name)
                 kind_comment = f"  # kind: {node.kind.value}" if node.kind else ""
+                self._network_elements[net_name] = node
                 networks.append({'name': net_name, 'kind_comment': kind_comment})
         for link in cp_nets:
             if link not in seen_nets:

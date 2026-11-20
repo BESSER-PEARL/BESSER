@@ -18,6 +18,7 @@ from .models import {{ enum.name }}
                     {%- set source_name= source.dataSourceClass%}
 
 
+{% trace source.dataSourceClass, "form" %}
 class {{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]}}Form(forms.ModelForm):
 
     """
@@ -52,6 +53,7 @@ class {{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]
                                 {%- if ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max == 1 %}
                                    {%- if class_obj.name == fkeys.get(ns.end1.owner.name) %}
 
+{% trace association, "association_field" %}
     {{ ns.end2.name.replace(' ', '_') }} = forms.ModelChoiceField(
         queryset={{ class2_name }}.objects.all(),
         {%- for end in association.ends%}
@@ -69,11 +71,13 @@ class {{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]
             )
         })
     )
+{%- endtrace %}
                                  {%- endif %}
                                {%- elif ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max > 1 %}
                                {%- if class_obj.name == many_to_many.get(ns.end1.owner.name) %}
 
 
+{% trace association, "association_field" %}
     {{ ns.end2.name.replace(' ', '_') }} = forms.ModelMultipleChoiceField(
         queryset={{ class2_name }}.objects.all(),
         {%- for end in association.ends%}
@@ -91,11 +95,13 @@ class {{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]
             )
         })
     )
+{%- endtrace %}
                                 {%- endif %}
 
                                 {%- elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max > 1 %}
                                 {%- if class_obj.name == fkeys.get(ns.end2.owner.name) %}
 
+{% trace association, "association_field" %}
     {{ ns.end2.name.replace(' ', '_') }} = forms.ModelMultipleChoiceField(
         queryset={{ class2_name }}.objects.all(),
         {%- for end in association.ends%}
@@ -113,6 +119,7 @@ class {{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]
             )
         })
     )
+{%- endtrace %}
                             {%- else %}
                             {%- endif%}
 
@@ -120,6 +127,7 @@ class {{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]
                                 {%- elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max == 1 %}
                                     {%- if class_obj.name == one_to_one.get(ns.end1.owner.name) %}
 
+{% trace association, "association_field" %}
     {{ ns.end2.name.replace(' ', '_') }} = forms.ModelChoiceField (
         queryset={{ class2_name }}.objects.all(),
         {%- for end in association.ends%}
@@ -137,6 +145,7 @@ class {{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]
             )
         })
     )
+{%- endtrace %}
 
 
                                     {%- endif %}
@@ -326,6 +335,7 @@ class {{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]
         {%- endif %}
     {%- endfor %}
         }
+{%- endtrace %}
 
 
 

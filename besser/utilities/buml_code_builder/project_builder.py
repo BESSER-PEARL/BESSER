@@ -10,7 +10,7 @@ import tempfile
 import uuid
 import shutil
 from collections import Counter
-from typing import Dict, List, Sequence
+from typing import Dict, List, Optional, Sequence
 from besser.BUML.metamodel.structural.structural import DomainModel
 from besser.BUML.metamodel.bpmn import BPMNModel
 from besser.BUML.metamodel.gui import GUIModel
@@ -21,6 +21,7 @@ from besser.BUML.metamodel.project import Project
 from besser.BUML.metamodel.quantum import QuantumCircuit
 from besser.BUML.metamodel.state_machine.agent import Agent
 from besser.BUML.metamodel.state_machine.state_machine import StateMachine
+from besser.BUML.metamodel.traceability import TraceModel
 from besser.BUML.metamodel.uml_component import ComponentModel
 from besser.BUML.metamodel.uml_deployment import DeploymentModel
 from besser.utilities.buml_code_builder.common import _comment_safe, _escape_python_string, buml_header
@@ -38,6 +39,7 @@ from besser.utilities.buml_code_builder.nn_model_builder import nn_model_to_code
 from besser.utilities.buml_code_builder.bpmn_model_builder import bpmn_model_to_code
 from besser.utilities.buml_code_builder.component_model_builder import component_model_to_code
 from besser.utilities.buml_code_builder.deployment_model_builder import deployment_model_to_code
+from besser.utilities.buml_code_builder.trace_model_builder import structural_variables, trace_model_to_code
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +116,8 @@ def _write_temp_to_output(temp_path: str, out_file, section_header: str = ""):
     out_file.write("\n\n")
 
 
-def project_to_code(project: Project, file_path: str, sm: str = "", emit_ids: bool = False):
+def project_to_code(project: Project, file_path: str, sm: str = "", emit_ids: bool = False,
+                    trace: Optional[TraceModel] = None):
     """
     Generates Python code for a complete B-UML project and writes it to a specified file.
 
@@ -132,6 +135,10 @@ def project_to_code(project: Project, file_path: str, sm: str = "", emit_ids: bo
                   are now handled automatically.
         emit_ids (bool): Write element ids in the structural models (see
                   ``domain_model_to_code``). Off by default.
+        trace (TraceModel): The project trace, written as a TRACEABILITY
+                  section bound to ``trace_model``, which references the
+                  elements of the structural sections it is about. It is not one
+                  of the project's models, so it stays out of ``Project(models=...)``.
 
     Outputs:
         - A Python file containing all models in the project
@@ -258,6 +265,9 @@ def project_to_code(project: Project, file_path: str, sm: str = "", emit_ids: bo
             # ---------------------------------------------------------- #
             # DOMAIN MODELS (regular, non-user)                          #
             # ---------------------------------------------------------- #
+            # Association variables by association id, for the trace to reference (see structural_variables).
+            association_vars: Dict[str, str] = {}
+            user_association_vars: Dict[str, str] = {}
             for idx, (dm, om) in enumerate(domain_pairs, start=1):
                 var_name = _suffixed_name("domain_model", idx, n_domain)
                 obj_var_name = _suffixed_name("object_model", idx, n_domain)
@@ -279,6 +289,7 @@ def project_to_code(project: Project, file_path: str, sm: str = "", emit_ids: bo
                         metadata_var_name=meta_var_name,
                         emit_ids=emit_ids,
                         object_model_var_name=obj_var_name,
+                        variables=association_vars,
                     )
                     _write_temp_to_output(tmp_path, f, section_header=section)
                     model_vars.append(var_name)
@@ -290,6 +301,7 @@ def project_to_code(project: Project, file_path: str, sm: str = "", emit_ids: bo
                         model_var_name=var_name,
                         metadata_var_name=meta_var_name,
                         emit_ids=emit_ids,
+                        variables=association_vars,
                     )
                     _write_temp_to_output(tmp_path, f, section_header=section)
                     model_vars.append(var_name)
@@ -347,6 +359,7 @@ def project_to_code(project: Project, file_path: str, sm: str = "", emit_ids: bo
                     metadata_var_name=meta_var,
                     object_model_var_name=obj_var,
                     emit_ids=emit_ids,
+                    variables=user_association_vars,
                 )
                 _write_temp_to_output(tmp_path, f, section_header=section)
                 model_vars.append(var_name)
@@ -581,6 +594,18 @@ def project_to_code(project: Project, file_path: str, sm: str = "", emit_ids: bo
                 f.write(sm)
                 model_vars.append("sm")
                 f.write("\n\n")
+
+            if trace is not None:
+                # The trace references the elements the structural sections above define.
+                references = structural_variables(
+                    [(dm, _suffixed_name("domain_model", idx, n_domain)) for idx, (dm, _) in enumerate(domain_pairs, start=1)],
+                    other_models=[udm for udm, _ in user_pairs],
+                    association_variables=association_vars,
+                    other_association_variables=user_association_vars.values(),
+                )
+                tmp_path = os.path.join(temp_dir, "trace_model.py")
+                trace_model_to_code(trace, tmp_path, references=references)
+                _write_temp_to_output(tmp_path, f)
 
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)

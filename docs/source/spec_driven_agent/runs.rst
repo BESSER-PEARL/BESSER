@@ -168,6 +168,82 @@ the same way: ``POST /besser_api/spec-driven/import-github-run`` re-imports it
 as a run whose ``run_id`` can then seed a ``mode: "modify"`` run. See
 :doc:`api` for both request shapes.
 
+.. _spec-driven-run-trace:
+
+The run's trace
+---------------
+
+A run is recorded in the project's trace (:doc:`../buml_language/model_types/traceability`)
+like a traced generation when the request sets ``traceabilityEnabled`` (the project
+records traces; opt-in, off by default): the ``done`` event carries a trace-file fragment
+(``trace``, ``projectId`` null, ``schemaVersion`` 6), and the same JSON ships in
+the download ZIP as ``.besser_trace_model.json``. Otherwise the run builds no trace:
+``trace`` is ``null``, the ZIP has no ``.besser_trace_model.json`` and no requirement
+item has a ``traceRef``. A run keeps three records of
+itself, with three names: the *run log* (``.besser_trace.jsonl``, for debugging,
+see :doc:`how_it_works`), the *Agent Trace record* (who wrote which lines, below)
+and this *run trace*, a ``TraceModel``. The run trace is built at the end of the
+run from the other two, the recipe and the delivered files
+(``besser/spec_driven_agent/state/trace_model.py``), so it is the same after a
+resumed run.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 70
+
+   * - Element
+     - What it records
+   * - ``CodeGeneration`` ``spec-driven:<run id>``
+     - The run, performed by the ``Agent`` "BESSER Spec-Driven Agent" (with the
+       BESSER version) and the ``Person`` named by ``actorName``. Its status is
+       ``SUCCEEDED`` when the customization loop finished (unresolved findings
+       are in its log records), ``CANCELLED`` or ``TIMED_OUT`` when it was cut
+       short by a cancellation or the time cap, ``FAILED`` otherwise (provider
+       error, cost or turn cap).
+   * - Reads
+     - One root ``ModelArtifact`` per diagram the run read (the diagram id as
+       element id, the B-UML metaclass as type), the instructions as a
+       ``PromptArtifact``, and the requirements the editor sent, by their own ids.
+   * - ``CodeGenerator`` tool calls
+     - One per generator run: Phase 1, a generator tool the LLM called, a modify
+       run's regeneration. ``RuleEvidence`` links go from the models it read to
+       its files and, for the generators that record line ranges, from each
+       element to its lines.
+   * - ``LLM`` tool calls
+     - One per agent turn (Phases 2 and 3), with the model that served it, the
+       provider, and the tokens of that turn, from its start to its LLM response
+       (input counts cache reads and writes; a context compaction before the
+       request is part of the turn). The LLM calls a phase made outside its turns
+       (generator selection, planning, Phase 3 validation, the judge, the runtime
+       gate's checks) are one more call when they used tokens. A turn's tool
+       calls (arguments without file bodies), validation findings, gate outcomes
+       and the run's final findings are its log records, at most 40 per call and
+       500 characters each, redacted.
+   * - Code versions
+     - Every file version the run produced, with its SHA-256 (content kept up to
+       1 MB per file, 4 MB in all, with its credentials redacted as in a traced
+       generation). A file the LLM wrote is linked from the prompt
+       with ``AIEvidence``, at the line ranges the attribution gives to this run's
+       LLM; a generated file the LLM then edited is a new version whose
+       ``revisionOfId`` is the generator's version, which keeps the generator's links.
+   * - ``RequirementExtraction`` ``spec-driven:<run id>:requirements``
+     - Only when the run extracted the requirements itself: one LLM call with the
+       extraction's tokens, writing one ``RequirementArtifact`` per requirement
+       (id ``<run id>:R<n>``), each linked from the prompt.
+   * - Judge's verdicts
+     - One LLM call whose log records are the verdicts. A requirement found
+       implemented is linked to the cited line (or file) with ``AIEvidence`` resting
+       on its verdict and confidence 1, one partly implemented with confidence 0.5;
+       the confidence's explanation is the verdict. A requirement found missing, or
+       that no verdict settled, has no link: as for a model element, a requirement
+       without a link is one the code does not realize, and its verdict says why.
+
+A run that fails before its ``done`` event sends no trace; the editor records it
+from its stream under the same operation id. Known limits: a modify run's edit of a
+file from the previous run is a new version without ``revisionOfId`` (the previous
+version lives in the earlier run's trace); the judge's tokens are counted in the
+phase's call for the LLM calls outside the turns, not on the call holding its verdicts.
+
 .. _spec-driven-agent-trace:
 
 Who wrote which lines (Agent Trace)
@@ -228,6 +304,39 @@ else's lines to the AI; the next run on that code then starts from
 it is part of the commit it would have to name. Older traces in the repository
 are kept, and their ranges refer to the revision they were written for.
 
+.. _spec-driven-trace-view:
+
+The run's trace in the editor
+-----------------------------
+
+The editor's run card shows what a run did, from data the run already records,
+both while it runs and afterwards (see :doc:`../web_editor`):
+
+- **Steps.** Each phase row lists its tool calls (files read, written, edited,
+  commands run) and how long the phase took, how many LLM turns it used and,
+  once the run has ended, its estimated cost. The figures come from the run
+  totals each ``phase`` event carries at its start (see :doc:`api`).
+  ``validate`` starts with Phase 3, so a long first check (``npm``, ``tsc``)
+  counts as validation, not as customization.
+- **Findings and repairs.** The ``validate`` row reads as check, fix attempt,
+  re-check: the blockers each check found (from the ``findings`` events),
+  the tool calls of the fix attempt that followed, and on each re-check which
+  blockers were fixed, which still fail and which are new. When a run goes
+  back to a better earlier tree, the last round says so and lists what the
+  delivered app still has.
+- **Who wrote which lines.** *View files* reads the run's Agent Trace record
+  (see :ref:`spec-driven-agent-trace`) from the ZIP and marks each line as
+  written by the AI, from a BESSER generator, edited by a person between runs,
+  or unattributed, with per-file counts and the AI share of all lines. Each
+  range's ``content_hash`` is checked: a file that no longer matches its record
+  shows no attribution rather than a wrong one. The record is written when the
+  run is packaged, so this view exists once the run has finished.
+
+Everything except the files comes from the run's events, which are stored as
+they are sent (see :ref:`spec-driven-durable-runs`): a page reloaded during a
+run replays them and shows the same timeline. The files come from the download,
+so *View files* works while the server keeps it.
+
 .. _spec-driven-run-record:
 
 The run record
@@ -262,6 +371,10 @@ keys, always in this order:
   fix loop) and ``estimated_cost_usd``.
 - ``counts``: ``turns``, ``tool_calls``, ``files_written``, ``files_edited``,
   ``blockers``.
+- ``lines``: the lines of the delivered files by author, as in the run's Agent
+  Trace record: ``total``, ``generator``, ``ai``, ``human``, ``unknown``, and
+  ``ai_this_run`` (the part of ``ai`` this run wrote). ``null`` when the run has
+  no Agent Trace record.
 - ``besser_version``, ``besser_build`` and ``request_chars`` (the request itself
   is ``instructions``).
 
@@ -276,7 +389,12 @@ The worker logs one line when a run starts and one when it ends, with the same
 names: ``spec-driven run start run_id=... mode=... base_run_id=... key_tier=...
 model=... generator=...`` (``generator=auto`` unless the request bound one; the
 target is decided later) and ``spec-driven run end run_id=... outcome=...
-duration_seconds=... blockers=... estimated_cost_usd=... archive_written=...``.
+duration_seconds=... blockers=... estimated_cost_usd=... input_tokens=...
+output_tokens=... cache_creation_tokens=... cache_read_tokens=... lines_total=...
+lines_generator=... lines_ai=... lines_human=... lines_unknown=...
+lines_ai_this_run=... archive_written=...``: the token counts under the recipe's
+``usage`` names, the line counts as in ``lines``, and ``-`` for a value the run
+does not have.
 ``outcome`` is ``completed``, ``completed_with_blockers``, ``cancelled``,
 ``budget_stop`` or ``failed``. Neither line carries the request or the key.
 They are written by the ``besser.spec_driven.runs`` logger, which the backend

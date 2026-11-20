@@ -146,6 +146,7 @@ FINDING_FAMILIES = (
     ("mapper config:", ("runtime",)),
     ("create contract:", ("runtime", "dependent")),
     ("action call:", ("runtime", "dependent")),
+    ("read contract:", ("runtime", "dependent")),
     ("api scenario:", ("runtime",)),
     ("requirement", ("judge",)),
     ("task ", ("judge",)),
@@ -455,8 +456,9 @@ def _classify_issue(message: str) -> ValidationIssue:
     #
     # ``action call:`` is the action-endpoint twin of ``create contract:`` -
     # constructibility.py observed a 500 from a handler it invoked. It must be
-    # a blocker, or the blocker-only fix loop never consumes it.
-    if lower.startswith(("create contract:", "action call:")):
+    # a blocker, or the blocker-only fix loop never consumes it. ``read contract:`` is
+    # a 5xx reading back a record the probe created.
+    if lower.startswith(("create contract:", "action call:", "read contract:")):
         return ValidationIssue("blocker", text)
 
     # A collector's "+N more ... truncated" note is a count, not a defect; it

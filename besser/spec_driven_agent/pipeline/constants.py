@@ -265,7 +265,7 @@ _RUNTIME_OK, _RUNTIME_UNVERIFIED, _RUNTIME_FAILED = 0, 1, 2
 # An app can pass every acceptance check and still fail its own generated
 # scenario, so a gate keyed on it would refuse a working application.
 _RUNTIME_OBSERVED_FAILURE_PREFIXES = (
-    "mapper config:", "application startup:", "create contract:", "action call:",
+    "mapper config:", "application startup:", "create contract:", "action call:", "read contract:",
 )
 # Source the app cannot survive at runtime even where no probe reached it: it
 # does not parse, imports a module that is not there, or uses a name nothing

@@ -40,6 +40,7 @@ GROUP_SENTENCES = {
     "create_refused": "{n} create operations were refused with the test data used: {subjects}.",
     "create_untested": "{n} create operations could not be tested automatically: {subjects}.",
     "create_failed": "{n} create operations failed with a server error in the test run: {subjects}.",
+    "read_failed": "{n} reads of a created record failed with a server error in the test run: {subjects}.",
     "action_untested": "{n} actions could not be tested automatically: {subjects}.",
     "action_failed": "{n} actions failed or changed nothing in the test run: {subjects}.",
     "requirement_unconfirmed": "{n} requirements could not be confirmed in the code: {subjects}.",
@@ -195,6 +196,9 @@ def _create(message: str) -> Finding:
     what = f"Creating {subject} (POST {path})" if path else f"Creating {subject}"
     if message.startswith("create contract:"):
         return Finding(f"{what} failed with a server error in the test run.", "create_failed", subject)
+    if " it created could not be read back: " in message:
+        return Finding(f"{what} worked, but the record could not be read back in the test run.",
+                       "create_untested", subject)
     unresolved = _UNRESOLVED.search(message)
     if unresolved:
         try:
@@ -265,6 +269,12 @@ def user_finding(message: str) -> Finding:
         return _create(text)
     if lower.startswith(("action unverified:", "action call:")):
         return _action(text)
+    if lower.startswith("read contract:"):
+        route = _ROUTE.search(text)
+        path = route.group("path") if route else ""
+        subject = _route_subject(path)
+        return Finding(f"Reading {subject} (GET {path}) failed with a server error in the test run.",
+                       "read_failed", subject)
     for prefix in ("requirement unverified:", "requirement unsupported:", "requirement partial:", "requirement:"):
         if lower.startswith(prefix):
             return _requirement(text, prefix)

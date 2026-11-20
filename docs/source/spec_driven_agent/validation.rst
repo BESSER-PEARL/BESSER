@@ -338,6 +338,14 @@ flag that the call did not act (``success``/``ok``/``result`` false, an
 object or in every item of a list. A record in any state, such as an offer
 returned with ``"status": "rejected"`` by its reject action, shows the action ran.
 Observed server crashes remain failures even if another scenario passes.
+After each create that answered 2xx with an id, the probe reads the record back:
+a ``GET`` of its item route (``/<name>/{id}/``) and of the collection route OpenAPI
+declares on the create path. A 5xx (or an exception the app raised) on either is
+a ``read contract:`` blocker, an observed failure like a crashed create, with the
+handler that served the read as its fix site. Any other refusal of the item read
+leaves the create ``create unverified:``: an item route may serve its owner only.
+A collection route that refuses without a server error (a required query
+parameter, a 404) is no finding.
 The probe drives only entity creates: a ``POST`` whose body is ``<Name>Create``
 where ``<Name>`` is a mapped ORM class the model does not mark abstract. A
 ``*Create`` body whose handler writes no table (a signup or login form) persists
@@ -650,7 +658,7 @@ Findings are classified into three severities:
        ``mapper config:``, ``application startup:``, ``python contract:``
        (which also reports undefined names, those behind ``from x import *``
        included), ``api scenario:``,
-       ``create contract:``, ``action call:``, ``requirement:``,
+       ``create contract:``, ``action call:``, ``read contract:``, ``requirement:``,
        ``requirement partial:``, ``requirement unsupported:``,
        ``action contract:``, ``task incomplete:``, ``verification setup:``
        (dependencies a permitted install would provide), ``tsc [``,
@@ -721,7 +729,8 @@ severity a finding was built or stored with:
   did not run (stopped, or out of time or budget);
 - ``create unverified:`` and ``action unverified:`` — the probe's own guessed
   request was refused (a 4xx, a login it could not pass, a record it could not set
-  up) and no ``test_api`` scenario settled it; ``runtime unverified:`` is the same
+  up), or the record it created could not be read back by id without a server
+  error (a 401, 403 or 404), and no ``test_api`` scenario settled it; ``runtime unverified:`` is the same
   finding once no scenario did;
 - ``validation unverified:`` — a required check did not run (a runtime check
   without a sandbox, a judge that returned no verdicts, a build that timed out),
@@ -910,8 +919,8 @@ that edited the tree is kept only if all of these hold:
    deferred, failed or was stopped, or the requirements could not be extracted,
    is not retired. Missing and unsupported rank
    the same, so turning one into the other is neither progress nor a fall.
-   A runtime finding (``create contract:``, ``action call:``, ``create
-   unverified:``, ``action unverified:``) is compared by what it tests: its
+   A runtime finding (``create contract:``, ``action call:``, ``read contract:``,
+   ``create unverified:``, ``action unverified:``) is compared by what it tests: its
    kind, backend and route. The same route failing with another message is
    neither retired nor added; the next attempt's prompt says it is still
    failing and quotes the new error. The probe's generated input quoted in the
@@ -925,8 +934,8 @@ that edited the tree is kept only if all of these hold:
    tree before it. Fixing the front failure of a layer shows what it hid: a
    missing module or a startup failure hides the runtime checks (where the
    probe measured that tree, its boot verdict decides instead), an entity the
-   probe could not create hides its own action calls and the creates that need
-   its record (the probe's records of both trees name the entity of each route;
+   probe could not create hides its own action calls, the reads of its record and
+   the creates that need its record (the probe's records of both trees name the entity of each route;
    without them nothing is excused), a judge that was deferred, failed or
    stopped hides its verdicts, and so does a requirement extraction that failed
    (it is retried once, on a later round), missing

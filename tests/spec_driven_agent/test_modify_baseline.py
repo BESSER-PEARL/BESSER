@@ -10,8 +10,11 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from besser.BUML.metamodel.structural import Class, DomainModel, PrimitiveDataType, Property
 from besser.spec_driven_agent.planning.fix_target import parse_reported_target
+from besser.spec_driven_agent.planning.requirements_ledger import source_hashes
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator, ValidationIssue
 from besser.spec_driven_agent.validation.issues import is_completion_issue, is_not_confirmed
 
@@ -98,6 +101,55 @@ def test_in_a_fix_run_the_reported_failure_is_never_labelled_old(tmp_path):
     assert kept.severity == "blocker" and not kept.message.startswith("open since")
 
 
+_STARTUP = "application startup: backend: ImportError: cannot import name 'get_session' from 'database'"
+
+
+@pytest.mark.parametrize("request_text, entity", [
+    ("The backend does not start any more, it crashes with ImportError. Please fix it.", ""),
+    ("Creating an Order fails with a 500.", "Order"),
+])
+def test_in_a_fix_run_a_defect_the_target_cannot_be_checked_past_stays_a_blocker(tmp_path, request_text, entity):
+    """Before: a reported failure that names no entity, or a startup failure that stops the reported one
+    from being checked, was labelled open since the previous version and never repaired."""
+    orch = _orch(tmp_path, "Order")
+    orch._is_fix_run = True
+    orch._fix_target = parse_reported_target(request_text, orch.domain_model, entity)
+    unrelated = _UNDEFINED.format(12)
+    orch._seed_baseline = [_STARTUP, unrelated]
+
+    startup, other = orch._promote_fix_target_findings(
+        [ValidationIssue("blocker", _STARTUP), ValidationIssue("blocker", unrelated)])
+
+    assert startup == ValidationIssue("blocker", _STARTUP)
+    # A target with entities still leaves the previous version's unrelated defects to the user.
+    assert other.severity == ("warning" if entity else "blocker")
+
+
+def _phase2_start(orch, monkeypatch, opening):
+    orch._seed_source_hashes = source_hashes(orch.output_dir)
+    _opening(orch, monkeypatch, opening)
+
+
+@pytest.mark.parametrize("change", ["tree", "model"])
+def test_a_defect_the_run_made_before_phase2_is_not_the_previous_versions(tmp_path, monkeypatch, change):
+    """Before: regeneration after a model change broke startup before Phase 2, and that finding was kept
+    as the previous version's: labelled old, not repaired, and no regression."""
+    orch = _orch(tmp_path, "Order")
+    _phase2_start(orch, monkeypatch, [_STARTUP])
+    if change == "tree":
+        (tmp_path / "main_api.py").write_text("from sql_alchemy import Order\n", encoding="utf-8")
+    else:
+        orch._model_sync_classes = ["Invoice"]
+
+    orch._modify_opening_issues([])
+    [issue] = orch._promote_fix_target_findings([ValidationIssue("blocker", _STARTUP)])
+    orch._validation_issues = [issue]
+    orch._modify_end_checks()
+
+    assert issue == ValidationIssue("blocker", _STARTUP)
+    assert orch._seed_regressions == [_STARTUP]
+
+
 def test_a_hard_blocker_the_previous_version_did_not_have_is_a_regression(tmp_path):
     """Before: nothing told a broken start apart from a defect the app already had."""
     orch = _orch(tmp_path, "Order")
@@ -139,6 +191,7 @@ def test_the_opening_issues_show_a_forwarded_defect_once(tmp_path, monkeypatch):
     forwarded = "Unresolved from the previous run: " + _UNDEFINED.format(12)
     still_open = "Unresolved from the previous run: tsc [frontend]: src/App.tsx(3,1): error TS2304"
     _opening(orch, monkeypatch, [_UNDEFINED.format(14)], ["acceptance: entity Order has no page"])
+    orch._seed_source_hashes = source_hashes(str(tmp_path))
 
     issues = orch._modify_opening_issues([forwarded, still_open, "Fix x", "Fix x"])
 

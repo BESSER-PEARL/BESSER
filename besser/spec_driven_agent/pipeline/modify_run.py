@@ -352,11 +352,15 @@ class ModifyRunMixin:
 
         The checks validate_app runs, unclipped (the probe's result is cached for its call):
         a forwarded seed blocker they find again is left out. On a fresh run (not a resume)
-        they and the seed recipe's findings are the previous version's (``_seed_baseline``).
+        the seed recipe's findings are the previous version's (``_seed_baseline``), and these
+        checks' too unless this run already changed the model or the tree.
         """
         opening = [*self._collect_execution_issues(), *self._static_frontend_issues()]
         if self._seed_baseline is None and self._resume_messages is None:
-            self._seed_baseline = [*opening, *self._seed_recorded_issues]
+            change = getattr(self, "_model_change", None)
+            unchanged = (not ((change is not None and change.changes) or self._model_sync_classes)
+                         and self._seed_source_hashes == source_hashes(self.output_dir))
+            self._seed_baseline = [*(opening if unchanged else []), *self._seed_recorded_issues]
         current = {self._seed_identity(issue) for issue in opening
                    if _classify_issue(issue).severity == "blocker"}
         return list(dict.fromkeys(
@@ -378,9 +382,13 @@ class ModifyRunMixin:
     def _label_seed_findings(self, issues: list[ValidationIssue]) -> list[ValidationIssue]:
         """A modify run's defect the previous version already had, matched by identity (not
         text), becomes ``open since the previous version:``: listed, not a blocker, not
-        repaired. A finding that matches a fix run's reported failure keeps its severity."""
+        repaired. A fix run keeps the severity of a finding that matches its reported failure,
+        or that stops other checks from running (so the failure cannot be checked past it),
+        and of every finding when the failure names no entity to tell them apart."""
         old = Counter(self._seed_identity(message) for message in self._seed_defects())
         if not self._modify_mode or not old:
+            return issues
+        if self._is_fix_run and (self._fix_target is None or not self._fix_target.entities):
             return issues
         from besser.spec_driven_agent.planning.fix_target import finding_matches_target
 
@@ -388,8 +396,8 @@ class ModifyRunMixin:
         for issue in issues:
             if (is_completion_issue(issue) and unresolved_defects([issue])
                     and not issue.message.startswith(self._FIX_TARGET_PREFIX)
-                    and not (self._is_fix_run and self._fix_target is not None
-                             and finding_matches_target(issue.message, self._fix_target))):
+                    and not (self._is_fix_run and (finding_matches_target(issue.message, self._fix_target)
+                                                   or hidden_families([issue])))):
                 key = self._seed_identity(issue.message)
                 if old[key] > 0:
                     old[key] -= 1

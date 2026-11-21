@@ -308,9 +308,11 @@ messages ask to finish it (see
 gates apply as in any run.
 
 The other findings are compared with the previous version the same way. The
-checks ``validate_app`` runs, on the tree Phase 2 starts from, together with the
-seed recipe's ``validation_issues``, are the previous version's findings
-(``_seed_baseline``, kept in the checkpoint). The seed's blockers still open
+seed recipe's ``validation_issues`` are the previous version's findings
+(``_seed_baseline``, kept in the checkpoint), and so are the checks
+``validate_app`` runs on the tree Phase 2 starts from, unless the run already
+changed the model or the files (a model change, model sync or regeneration): a
+defect that change introduced is this run's. The seed's blockers still open
 Phase 2's issues, as ``Unresolved from the previous run:``, once: one that
 ``validate_app`` reports again is listed only by ``validate_app``. In Phase 3 a
 defect the previous version already had is reported as ``open since the previous
@@ -319,8 +321,10 @@ blocker of this run and not repaired. A later modify run forwards it again.
 Findings are matched by what they test, as Phase 3 attempts compare them (a
 runtime finding by its kind, backend and route and the error seen there, any
 other with its line numbers masked), never by text alone: a new error on the
-same route is this run's. A finding that matches a fix run's reported failure
-keeps its severity. A blocker of the kinds that say the app no longer starts,
+same route is this run's. A fix run keeps the severity of a finding that matches
+its reported failure or that stops other checks from running (``application
+startup:``, ``mapper config:``, ``missing module:``, ``tsc [``, a syntax error),
+and labels nothing when the reported failure names no entity. A blocker of the kinds that say the app no longer starts,
 creates a record or builds (``application startup:``, ``mapper config:``,
 ``missing module:``, ``create contract:``, ``read contract:``, ``action call:``,
 ``tsc [``, ``frontend build [``) that the previous version did not have, where

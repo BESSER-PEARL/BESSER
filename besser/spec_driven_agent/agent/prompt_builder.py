@@ -542,6 +542,36 @@ def build_system_prompt(
     - URLs joined without exactly one "/": every API path starts with "/", so
       `${base}${path}` is a valid URL (a missing slash fails before any request).
 """ if spa else ""
+    # Django pages are wired by views and URL patterns, not by API calls and a client router.
+    if spa:
+        home_wiring = """\
+      wired to the routes. The app must NEVER render blank on load: a
+      Router/Routes with no root "/" route does."""
+        crud_wiring = """\
+      each wired to the backend's POST / PUT / DELETE endpoints, not just the GET
+      list."""
+        fetch_states = "Loading, empty, and error states on every data fetch."
+        dead_submit = """\
+    - An empty or no-op form submit handler (an onSubmit that does nothing).
+      A form's submit MUST call the backend (create -> POST, edit -> PUT)
+      through the API layer, then refresh the list or navigate back."""
+        dead_link = """\
+    - A "New"/"Create" link to a path the router does not declare: it renders
+      blank. Put the form on the list page or declare that route."""
+    else:
+        home_wiring = """\
+      wired to the URL patterns. The app must NEVER answer 404 on load: a
+      urls.py with no pattern for "/" does."""
+        crud_wiring = """\
+      each handled by a view: a form view that validates and saves the POSTed
+      form, and a delete view."""
+        fetch_states = "An empty state on every list, and form errors shown on the page."
+        dead_submit = """\
+    - A view that ignores the POSTed form. It MUST validate and save the
+      submitted form (create and edit), then redirect to the list."""
+        dead_link = """\
+    - A "New"/"Create" link to a URL no pattern matches: it answers 404.
+      Declare that pattern or put the form on the list page."""
     crud_rule = f"""\
 15. **A domain-model app needs a COMPLETE, NAVIGABLE CRUD frontend** — unless
     GUI screens specify the UI, or the request scopes the UI to the screens it
@@ -549,24 +579,19 @@ def build_system_prompt(
     For the {frontend} frontend, build:
     - A home route (`"/"`, a landing page) AND a nav bar/header (links or a menu)
       present on every screen, linking every entity's list and its "new" page,
-      wired to the routes. The app must NEVER render blank on load: a
-      Router/Routes with no root "/" route does.
+{home_wiring}
     - Per entity: a list/table view PLUS working **Create** (a real form),
       **Edit** (a pre-filled form), and **Delete** — Edit + Delete on each row —
-      each wired to the backend's POST / PUT / DELETE endpoints, not just the GET
-      list. A page that can only read is half-built (rule 12).
-    - Loading, empty, and error states on every data fetch.
+{crud_wiring} A page that can only read is half-built (rule 12).
+    - {fetch_states}
 {stylesheet_bullet}
 {manifest_bullet}    - Request/form consistency: when a field becomes server-owned, remove its
       writable controls and client validation too, while keeping its read-only
       display. Update shared entity/form metadata, not only a page's payload.
 {typed_form_bullet}    AVOID these exact dead-frontend failures (all are bugs, not shortcuts):
-    - An empty or no-op form submit handler (an onSubmit that does nothing).
-      A form's submit MUST call the backend (create -> POST, edit -> PUT)
-      through the API layer, then refresh the list or navigate back. A form
+{dead_submit} A form
       that collects input but submits nowhere is worse than no form.
-{shared_handler_bullet}    - A "New"/"Create" link to a path the router does not declare: it renders
-      blank. Put the form on the list page or declare that route.
+{shared_handler_bullet}{dead_link}
 {url_join_bullet}{react_bullet}""" if needs_frontend else ""
     if builds_other:
         crud_rule = _other_target_rule(target)

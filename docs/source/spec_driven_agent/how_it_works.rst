@@ -137,7 +137,9 @@ The three phases
    (or a frontend in the scaffold) means a frontend. A Django scaffold has
    templates only with a GUI model; without one the item asks for Django
    templates, views and urls instead of a React app, and the CRUD rule leaves
-   out its single-page-app bullets. A frontend run also puts "build
+   out its single-page-app bullets and wires each page to a view and a URL
+   pattern (a view that saves the POSTed form, a delete view, a pattern for
+   ``/``) instead of API calls and a client router. A frontend run also puts "build
    the frontend" on the checklist, and Phase 3 reports a blocker if the output
    ends with no frontend files. With no GUI model, the item names the classes that have
    backend routes, says that a narrower UI scope in the request wins, and

@@ -104,9 +104,13 @@ def test_a_django_crud_rule_carries_no_single_page_app_bullets():
     rule = _rule_15(scaffold_family="django")
     assert "For the Django frontend" in rule and "React" not in rule
     for spa_only in ("${base}${path}", "raw-JSON textarea", "Create MUST POST to the collection route",
-                     "`package.json` dependencies"):
+                     "`package.json` dependencies", "POST / PUT / DELETE endpoints", "through the API layer",
+                     "onSubmit", "Router/Routes", "on every data fetch", "the router does not declare"):
         assert spa_only not in rule
         assert spa_only in _rule_15()
+    # The server-rendered wiring instead: a view saves the POSTed form, a delete view, a "/" pattern.
+    for server_rendered in ("saves the POSTed", "a delete view", 'no pattern for "/"'):
+        assert server_rendered in rule and server_rendered not in _rule_15()
 
 
 SAME_REQUEST = [

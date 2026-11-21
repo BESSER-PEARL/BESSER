@@ -283,8 +283,10 @@ Context and token budgets
   Replace stale file bodies in older messages by stubs pointing back to disk,
   so they are not sent again on every turn. Stale is a ``read_file`` result
   whose lines a later read shows again or whose file a later ``write_file``
-  or ``delete_file`` replaced; a read of a file edited since, and an applied
-  edit's body, once eight turns old. The newest read of lines of a file not edited since is
+  or ``delete_file`` replaced; a read of a file edited since, once eight
+  turns old; and an applied edit's body once eight turns old, or as soon as a
+  later whole-file read or ``write_file`` of that file supersedes it. The
+  newest read of lines of a file not edited since is
   kept however old, so the model can still quote it and edit with its
   ``read_id``. Each eviction rewrites the cached prompt prefix, so stubs are
   applied in batches: nothing until the stale bodies are a third of the

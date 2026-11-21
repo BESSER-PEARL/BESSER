@@ -67,6 +67,8 @@ def _rule_15(**kwargs):
 @pytest.mark.parametrize("routed_stack, framework", [
     ("Vue 3 + Pinia", "Vue"), ("Angular", "Angular"), ("SvelteKit", "SvelteKit"), ("Next.js", "Next.js"),
     ("Vue.js + Express", "Vue"), ("Spring Boot + Angular", "Angular"),
+    ("Vue3", "Vue"), ("VueJS + Vite", "Vue"), ("Angular17", "Angular"), ("AngularJS", "AngularJS"),
+    ("Express + Angular.js", "AngularJS"), ("Solid.js", "SolidJS"), ("EmberJS", "Ember"),
 ])
 def test_a_routed_frontend_framework_gets_no_react_text(tmp_path, routed_stack, framework):
     task, = _frontend_tasks(_orch(tmp_path, routed_stack=routed_stack))
@@ -79,7 +81,8 @@ def test_a_routed_frontend_framework_gets_no_react_text(tmp_path, routed_stack, 
     assert "React" not in rule
 
 
-@pytest.mark.parametrize("routed_stack", [None, "", "Spring Boot", "Express", "a shop for vintage records"])
+@pytest.mark.parametrize("routed_stack", [None, "", "Spring Boot", "Express", "a shop for vintage records",
+                                          "Spring Boot 3 + H2", "Python3 + Flask", "React18"])
 def test_no_frontend_framework_named_keeps_the_react_guards(tmp_path, routed_stack):
     orch = _orch(tmp_path, routed_stack=routed_stack)
     assert _frontend_tasks(orch) == [orch._FRONTEND_CHECKLIST_TASK]

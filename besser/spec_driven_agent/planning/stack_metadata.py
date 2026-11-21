@@ -526,15 +526,18 @@ def detect_idiom_stack(routed_stack: str | None) -> str | None:
 # before the library it builds on. React, the default, is not one of them.
 _FRONTEND_FRAMEWORK_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Next.js", ("next.js", "nextjs", "next js")), ("Nuxt", ("nuxt",)), ("SvelteKit", ("sveltekit",)),
-    ("Svelte", ("svelte",)), ("Vue", ("vue",)), ("Angular", ("angular",)), ("Remix", ("remix",)),
-    ("SolidJS", ("solidjs",)), ("Ember", ("ember",)), ("Blazor", ("blazor",)),
+    ("Svelte", ("svelte",)), ("Vue", ("vue", "vuejs")), ("AngularJS", ("angularjs", "angular.js")),
+    ("Angular", ("angular",)), ("Remix", ("remix",)), ("SolidJS", ("solidjs", "solid.js", "solid js")),
+    ("Ember", ("ember", "emberjs")), ("Blazor", ("blazor",)),
 )
+# A version written against the name ("Vue3", "Angular17") is split off before matching.
+_VERSION_SUFFIX_RE = re.compile(r"(?<=[a-z])(?=\d)", re.IGNORECASE)
 
 
 def routed_frontend_framework(routed_stack: str | None) -> str:
     """The frontend framework other than React the routed stack names, else "":
     an empty, missing or unknown value keeps the React default."""
-    stack = (routed_stack or "").strip()
+    stack = _VERSION_SUFFIX_RE.sub(" ", (routed_stack or "").strip())
     return next((name for name, needles in _FRONTEND_FRAMEWORK_KEYWORDS
                  if any(_contains_word(stack, needle) for needle in needles)), "")
 

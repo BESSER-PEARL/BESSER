@@ -1071,7 +1071,7 @@ class ToolExecutor:
 
     def forget_full_views(self, paths) -> None:
         """The conversation no longer shows these files whole: write_file needs a read first."""
-        for path in paths:
+        for path in map(self._rel_key, paths):
             if path in self._fully_seen:
                 self._evicted_views.add(path)
             self._fully_seen.discard(path)

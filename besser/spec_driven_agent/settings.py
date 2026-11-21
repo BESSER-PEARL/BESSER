@@ -148,9 +148,9 @@ class AgentSettings(LLMSettings):
         200_000, validation_alias="BESSER_LLM_MAX_COMPACT_THRESHOLD",
         description="Ceiling of the adaptive compaction threshold; blank is 200000.")
     llm_history_eviction: Annotated[bool, BeforeValidator(_not_off)] = Field(
-        True, validation_alias="BESSER_LLM_HISTORY_EVICTION",
-        description="Stub stale file bodies in batches and at the compaction threshold; off for 0, "
-                    "false or no.")
+        False, validation_alias="BESSER_LLM_HISTORY_EVICTION",
+        description="Stub stale file bodies in batches and at the compaction threshold. Off unless "
+                    "set; any value but 0, false or no turns it on.")
     llm_inline_scaffold: Annotated[bool, BeforeValidator(_one_or_true)] = Field(
         False, validation_alias="BESSER_LLM_INLINE_SCAFFOLD",
         description="Inline the Phase 1 scaffold into the Phase 2 prompt (1 or true). Read per run.")

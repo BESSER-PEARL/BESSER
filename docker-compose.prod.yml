@@ -101,9 +101,10 @@ services:
       - BESSER_LLM_DEFAULT_MAX_COST_USD=${BESSER_LLM_DEFAULT_MAX_COST_USD:-5.0}
       - BESSER_LLM_DEFAULT_MAX_RUNTIME_SECONDS=${BESSER_LLM_DEFAULT_MAX_RUNTIME_SECONDS:-2400}
       - BESSER_LLM_MAX_RUNTIME_SECONDS_HARD_CAP=${BESSER_LLM_MAX_RUNTIME_SECONDS_HARD_CAP:-2400}
-      # Compaction threshold in tokens, pinned for the free tier. Set, it also
-      # caps the adaptive threshold of every model this worker runs.
-      - BESSER_LLM_COMPACT_THRESHOLD=${BESSER_LLM_COMPACT_THRESHOLD:-80000}
+      # Compaction threshold in tokens. Unset, a model with an unknown window
+      # compacts at 80000. Set, it also caps every model this worker runs, a
+      # user's own key included.
+      # - BESSER_LLM_COMPACT_THRESHOLD=${BESSER_LLM_COMPACT_THRESHOLD:-80000}
       # LLM credentials -- the only secrets this service is given.
       - BESSER_FREE_LLM_BASE_URL=${BESSER_FREE_LLM_BASE_URL:-}
       - BESSER_FREE_LLM_TOKEN=${BESSER_FREE_LLM_TOKEN:-}

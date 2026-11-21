@@ -301,10 +301,11 @@ reading a trace and wondering why a run did what it did.
        at least 16,000 tokens), so a small model compacts instead of
        overflowing; a hosted model with a known large window gets 80% of
        that difference, capped at ``BESSER_LLM_MAX_COMPACT_THRESHOLD``. A
-       provider catalog's window only ever lowers the threshold. Before any
-       of this, history eviction (``BESSER_LLM_HISTORY_EVICTION``, see
-       :doc:`configuration`) stubs stale file bodies in batches, which keeps
-       most runs below the threshold.
+       provider catalog's window only ever lowers the threshold. When
+       history eviction is turned on (``BESSER_LLM_HISTORY_EVICTION``, off
+       by default, see :doc:`configuration`), stale file bodies are stubbed
+       in batches before any of this, which keeps most runs below the
+       threshold.
    * - Truncation recovery
      - When a response is cut off at the output-token limit, the partial turn
        is discarded rather than executed — nothing lands half-written on disk —

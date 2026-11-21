@@ -262,9 +262,9 @@ Context and token budgets
   of the free and sponsored tiers only lowers the threshold (a small served
   window), never raises it. Setting this variable also caps the adaptive
   value, so lowering it to cut cost applies to every model, not only unknown
-  ones. Floored at 8,000. ``docker-compose.prod.yml`` sets it to 80000 on the
-  generation worker, which caps every model that worker runs, a user's own
-  key included. The resolved value is the ``compact_threshold`` of the run
+  ones. Floored at 8,000. ``docker-compose.prod.yml`` carries it commented out:
+  set on the generation worker it caps every model that worker runs, a user's
+  own key included. The resolved value is the ``compact_threshold`` of the run
   log's Phase 2 ``phase_enter`` record.
 - ``BESSER_LLM_MAX_COMPACT_THRESHOLD`` (``200000``) -- Ceiling on the adaptive
   threshold for models with a known window, so a million-token model does
@@ -279,9 +279,14 @@ Context and token budgets
   (``python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')"`` with
   the variable set); without it tokens are estimated as characters/4, which
   compacts earlier than needed, and a warning is logged.
-- ``BESSER_LLM_HISTORY_EVICTION`` (**on**; ``0``, ``false`` or ``no`` disables it) --
+- ``BESSER_LLM_HISTORY_EVICTION`` (**off**; any value but ``0``, ``false`` or ``no``
+  turns it on) --
   Replace stale file bodies in older messages by stubs pointing back to disk,
-  so they are not sent again on every turn. Stale is a ``read_file`` result
+  so they are not sent again on every turn. It is off by default because it
+  does not lower cost where the provider caches prompts: replaying 13 recorded
+  runs, it sent 7.5% fewer input characters and avoided every compaction, but
+  each batch re-bills the rest of the prompt, for about 2% more cost. Turn it
+  on for an endpoint that does not cache, or to keep requests small. Stale is a ``read_file`` result
   whose lines a later read shows again or whose file a later ``write_file``
   or ``delete_file`` replaced; a read of a file edited since, once eight
   turns old; and an applied edit's body once eight turns old, or as soon as a

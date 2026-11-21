@@ -321,8 +321,8 @@ from besser.spec_driven_agent.pipeline.regeneration import Regeneration
 from besser.spec_driven_agent.settings import AgentSettings
 
 # History eviction (see history_eviction.py): stale file bodies are stubbed in
-# batches, and every older body at the compaction checkpoint. On unless
-# BESSER_LLM_HISTORY_EVICTION is 0, false or no.
+# batches, and every older body at the compaction checkpoint. Off unless
+# BESSER_LLM_HISTORY_EVICTION is set (it does not lower cost on a caching provider).
 _HISTORY_EVICTION_ENABLED = AgentSettings().llm_history_eviction
 
 

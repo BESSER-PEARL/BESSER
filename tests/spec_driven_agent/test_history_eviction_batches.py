@@ -180,15 +180,19 @@ def test_the_evicted_body_placeholder_is_refused_as_file_content(tmp_path, tool)
 
 
 # ----------------------------------------------------------------------
-# In the loop: on by default, recorded, and edits keep working
+# In the loop: opt-in, recorded, and edits keep working
 # ----------------------------------------------------------------------
 
-def test_eviction_is_on_unless_turned_off(monkeypatch):
+def test_eviction_is_off_unless_turned_on(monkeypatch):
+    """Replays of 13 recorded runs: 7.5% less input, about 2% more cost on a caching provider."""
     monkeypatch.delenv("BESSER_LLM_HISTORY_EVICTION", raising=False)
-    assert AgentSettings().llm_history_eviction is True
+    assert AgentSettings().llm_history_eviction is False
     for off in ("0", "false", "no"):
         monkeypatch.setenv("BESSER_LLM_HISTORY_EVICTION", off)
         assert AgentSettings().llm_history_eviction is False
+    for on in ("1", "true"):
+        monkeypatch.setenv("BESSER_LLM_HISTORY_EVICTION", on)
+        assert AgentSettings().llm_history_eviction is True
 
 
 class _Client:
@@ -322,6 +326,18 @@ def test_a_rewrite_refused_after_eviction_says_the_whole_file_is_no_longer_shown
 
     assert "read only part" not in error
     assert "no longer shows" in error and "read_file" in error
+
+
+def test_the_reread_rule_holds_whatever_spelling_the_history_used_for_the_path(tmp_path):
+    """The history names the file as the model spelled it (``./orders.py``); the executor keys it
+    by its workspace path."""
+    executor = ToolExecutor(workspace=str(tmp_path))
+    assert executor.execute_typed("write_file", {"path": "orders.py", "content": BODY}).payload["status"] == "written"
+    executor.forget_full_views(["./orders.py"])
+
+    refused = executor.execute_typed("write_file", {"path": "orders.py", "content": "x = 1\n"}).payload
+
+    assert "no longer shows" in refused.get("error", ""), refused
 
 
 def test_in_a_whole_run_the_prefix_is_rewritten_only_at_a_recorded_batch(tmp_path, monkeypatch):

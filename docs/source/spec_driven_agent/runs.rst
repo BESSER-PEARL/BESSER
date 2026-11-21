@@ -692,7 +692,8 @@ its own, also when the previous version already had that failure). One whose
 backend folder the delivered tree no longer has is dropped, with a log line.
 Those that pass, or that no check could run (the backend did not boot, or the
 probe found nothing to start), are written again for the next run; one that
-failed is not.
+failed is not. One saved without a status (its last pass was on an earlier tree
+of its run) is not replayed and is written again as it is.
 
 ``tool_calls_count`` and every other total stay true, and nothing a later reader
 uses is cut: the model, ``output_files``, ``generator_used``, ``target``,

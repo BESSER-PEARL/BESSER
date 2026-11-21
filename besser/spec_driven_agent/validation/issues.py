@@ -197,10 +197,11 @@ def finding_families(message: str) -> set[tuple[str, str]]:
 
 
 def hidden_families(issues: list) -> set[tuple[str, str]]:
-    """The check families that could not run on the tree ``issues`` (warnings included) describe."""
+    """The check families that could not run on the tree ``issues`` (warnings included) describe.
+    A finding labelled as open since the previous version hides what it hid unlabelled."""
     hidden = set()
     for issue in issues:
-        message = str(getattr(issue, "message", issue))
+        message = str(getattr(issue, "message", issue)).removeprefix(OPEN_SINCE_PREVIOUS)
         lower = message.lower()
         for prefix, family in HIDDEN_BY:
             key = _family_key(family, message) if lower.startswith(prefix) else None

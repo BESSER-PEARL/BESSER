@@ -207,6 +207,19 @@ def test_a_pass_on_an_earlier_tree_is_saved_without_the_passed_claim(tmp_path):
         ("add-book", "passed"), ("old", None)]
 
 
+def test_a_workflow_saved_without_a_status_is_carried_and_not_replayed(tmp_path, monkeypatch):
+    """Before: it was skipped and so left out of the next file, gone after one run."""
+    orch = _orch(tmp_path)
+    orch._modify_mode = True
+    orch._seed_workflows = [_workflow("old", status=None)]
+    calls = _replayed(monkeypatch, _FAILED)
+
+    orch._modify_end_checks()
+
+    assert calls == [] and orch._validation_issues == []
+    assert orch._api_workflows_to_keep() == [_workflow("old", status=None)]
+
+
 def test_a_workflow_this_run_kept_under_the_same_id_is_not_replayed(tmp_path, monkeypatch):
     orch = _orch(tmp_path)
     orch._modify_mode = True

@@ -436,17 +436,17 @@ class ModifyRunMixin:
 
         own = {record.get("scenario_id") for record in self._api_scenarios.values()}
         runnable = (self.enable_import_smoke_check and self._checks_allowed()
-                    and ("runtime", "") not in hidden_families(
-                        [issue.message.removeprefix(OPEN_SINCE_PREVIOUS) for issue in self._validation_issues]))
+                    and ("runtime", "") not in hidden_families(self._validation_issues))
         for workflow in self._seed_workflows:
-            if workflow["scenario_id"] in own or workflow["status"] != "passed":
+            if workflow["scenario_id"] in own or workflow["status"] not in ("passed", None):
                 continue
             backend = workflow["scenario"].get("backend")
             if backend is not None and not os.path.isdir(os.path.join(self.output_dir, backend)):
                 logger.info("Modify run: API workflow %r dropped: its backend %s is no longer in the app",
                             workflow["scenario_id"], backend)
                 continue
-            if not runnable:
+            # One saved without a status claims nothing to compare with: carried, not replayed.
+            if not runnable or workflow["status"] is None:
                 self._carried_seed_workflows.append(workflow)
                 continue
             scenario = workflow["scenario"]

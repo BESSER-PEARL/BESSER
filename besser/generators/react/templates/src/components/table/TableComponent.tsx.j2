@@ -2,7 +2,7 @@ import React, { CSSProperties, useEffect, useMemo, useRef, useState } from "reac
 import axios from "axios";
 import { API_BASE_URL } from "../../api/generated/client";
 import { createPortal } from "react-dom";
-import { useNavigate } from "react-router-dom";
+import { useInRouterContext, useNavigate } from "react-router-dom";
 import { useTableContext } from "../../contexts/TableContext";
 import { notifyDataChanged, useDataVersion } from "../runtime/dataVersion";
 import { applyFilter, parseFilterExpression } from "../runtime/bindingData";
@@ -134,7 +134,8 @@ export const TableComponent: React.FC<Props> = ({
   const rowKeyFields: string[] | undefined = dataBinding?.row_key_fields ?? dataBinding?.rowKeyFields;
   const selectedRowKey = getRowKey(selectedRow, rowKeyFields);
   const [columnFilters, setColumnFilters] = useState<Record<string, string>>(() => ({ ...(options?.initialFilters ?? {}) }));
-  const navigate = useNavigate();
+  // Outside a router (a component test) a row link has nothing to open; that never changes while mounted.
+  const navigate = useInRouterContext() ? useNavigate() : undefined; // eslint-disable-line react-hooks/rules-of-hooks
   // The GUI model's filter on the bound data, applied as charts and metric cards apply it.
   const bindingFilter = useMemo(
     () => parseFilterExpression(dataBinding?.filter_expression || dataBinding?.filter),
@@ -1710,7 +1711,7 @@ export const TableComponent: React.FC<Props> = ({
                     setSelectedRow(id, row);
                     console.log(`[TableComponent] Row selected in table ${id}:`, row);
                     // A button in the row (edit, delete, a row action) does its own thing.
-                    if (resolvedOptions.rowLink && !(event.target as HTMLElement).closest("button")) {
+                    if (resolvedOptions.rowLink && navigate && !(event.target as HTMLElement).closest("button")) {
                       navigate(resolveRowLink(resolvedOptions.rowLink, row));
                     }
                   }}

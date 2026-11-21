@@ -427,21 +427,25 @@ class ModifyRunMixin:
         """Run each workflow that passed on the previous version once on the delivered tree,
         unless this run kept one under its id. One that fails now is a regression to confirm,
         never a blocker: the change may have meant it. Those that pass, and those no check
-        could run, are kept for the next run (``_carried_seed_workflows``)."""
+        could run, are kept for the next run (``_carried_seed_workflows``): none runs when the
+        delivered tree's backend does not start, which is reported on its own."""
         if not self._seed_workflows:
             return
         from besser.spec_driven_agent.validation.api_probe import DID_NOT_RUN_BOOTS, probe_api_scenario
 
         own = {record.get("scenario_id") for record in self._api_scenarios.values()}
+        runnable = (self.enable_import_smoke_check and self._checks_allowed()
+                    and ("runtime", "") not in hidden_families(self._validation_issues))
         for workflow in self._seed_workflows:
             if workflow["scenario_id"] in own or workflow["status"] != "passed":
                 continue
-            if not self.enable_import_smoke_check or not self._checks_allowed():
+            if not runnable:
                 self._carried_seed_workflows.append(workflow)
                 continue
             scenario = workflow["scenario"]
             report = probe_api_scenario(self.output_dir, scenario["requests"], backend=scenario.get("backend"))
-            if report.get("status") == "passed" or report.get("boot") in DID_NOT_RUN_BOOTS:
+            # ``not_started``: the probe found nothing to boot or failed itself, so the workflow did not run.
+            if report.get("status") == "passed" or report.get("boot") in (*DID_NOT_RUN_BOOTS, "not_started"):
                 self._carried_seed_workflows.append(workflow)
                 continue
             detail = report.get("error") or json.dumps({

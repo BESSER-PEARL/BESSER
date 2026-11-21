@@ -13,7 +13,7 @@ import json
 import pytest
 
 from besser.BUML.metamodel.structural import Class, DomainModel, PrimitiveDataType, Property
-from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
+from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator, ValidationIssue
 from besser.spec_driven_agent.state import api_workflows
 from besser.spec_driven_agent.state.api_workflows import WORKFLOWS_FILENAME, load_workflows, save_workflows
 from besser.spec_driven_agent.validation import api_probe
@@ -138,7 +138,9 @@ def test_a_workflow_the_change_broke_is_a_regression_to_confirm_not_a_blocker(tm
 
 
 @pytest.mark.parametrize("report", [{"status": "passed", "boot": "ok", "responses": []},
-                                    {"status": "error", "boot": "timeout", "responses": []}])
+                                    {"status": "error", "boot": "timeout", "responses": []},
+                                    {"status": "error", "boot": "not_started",
+                                     "error": "Select exactly one generated FastAPI backend"}])
 def test_a_workflow_that_passes_or_could_not_run_is_kept_for_the_next_run(tmp_path, monkeypatch, report):
     orch = _orch(tmp_path)
     orch._modify_mode = True
@@ -148,6 +150,21 @@ def test_a_workflow_that_passes_or_could_not_run_is_kept_for_the_next_run(tmp_pa
     orch._modify_end_checks()
 
     assert orch._validation_issues == []
+    assert orch._api_workflows_to_keep() == [_workflow("add-book")]
+
+
+def test_a_workflow_is_not_replayed_on_a_tree_whose_backend_does_not_start(tmp_path, monkeypatch):
+    """Before: each replay booted again and repeated the startup failure as its own regression."""
+    orch = _orch(tmp_path)
+    orch._modify_mode = True
+    orch._seed_workflows = [_workflow("add-book")]
+    startup = ValidationIssue("blocker", "application startup: backend: ImportError: cannot import name 'Book'")
+    orch._validation_issues = [startup]
+    calls = _replayed(monkeypatch, {"status": "error", "boot": "failed", "error": "ImportError", "responses": []})
+
+    orch._modify_end_checks()
+
+    assert calls == [] and orch._validation_issues == [startup]
     assert orch._api_workflows_to_keep() == [_workflow("add-book")]
 
 

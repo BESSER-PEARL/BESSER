@@ -686,8 +686,10 @@ that passed on the previous version once on the delivered tree, unless the run
 kept one under the same id. One that fails now is ``regression to confirm: api
 scenario <id> passed on the previous version and fails now: ...``: not confirmed,
 never a blocker and never repaired, since the requested change may have meant it.
-Those that pass, or that no check could run, are written again for the next run;
-one that failed is not.
+None is run when the delivered tree's backend does not start (that is reported on
+its own). Those that pass, or that no check could run (the backend did not boot,
+or the probe found nothing to start), are written again for the next run; one
+that failed is not.
 
 ``tool_calls_count`` and every other total stay true, and nothing a later reader
 uses is cut: the model, ``output_files``, ``generator_used``, ``target``,

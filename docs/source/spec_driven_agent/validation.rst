@@ -820,7 +820,8 @@ stays reserved for a known defect. The classes are:
   reason "no check can start this kind of backend", marked like a check switched
   off (below): no edit can give it evidence, so it never makes the run not
   verified, and its run record's ``stop_message`` says the runtime could not be
-  checked;
+  checked. A web app the agent wrote without a generator, with a server that is
+  not FastAPI, is not covered by this rule and gets no such line;
 - *records*: the probe started the backend, no entity came back created, and no
   workflow created a record and read it back ("no record could be created through
   the API"); a single refused create stays a finding not confirmed;

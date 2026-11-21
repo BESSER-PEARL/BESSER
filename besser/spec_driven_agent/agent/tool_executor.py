@@ -975,6 +975,8 @@ class ToolExecutor:
         # line displayed (possibly over several windows), inlined or written in
         # full. A partial read or a one-line modify is not enough.
         self._fully_seen: set[str] = set()
+        # Files seen whole whose last whole copy eviction removed from the conversation.
+        self._evicted_views: set[str] = set()
         self._read_coverage: dict[str, tuple[str, set[int]]] = {}
         # Finding replacement text in a file is not proof that an edit happened.
         # Receipts bind the exact request to the entire successful post-write
@@ -1068,6 +1070,8 @@ class ToolExecutor:
     def forget_full_views(self, paths) -> None:
         """The conversation no longer shows these files whole: write_file needs a read first."""
         for path in paths:
+            if path in self._fully_seen:
+                self._evicted_views.add(path)
             self._fully_seen.discard(path)
             self._read_coverage.pop(path, None)
 
@@ -3033,6 +3037,12 @@ class ToolExecutor:
                 "file with modify_file instead."
             )}
         if os.path.isfile(path) and rel_path.strip() not in self._fully_seen:
+            if rel_path.strip() in self._evicted_views:
+                return {"error": (
+                    f"{args['path']} exists and the conversation no longer shows all of it: "
+                    "its earlier copies were omitted. Read it again with read_file before "
+                    "rewriting it, or edit it with modify_file."
+                )}
             return {"error": (
                 f"{args['path']} exists and you have read only part of it this run; "
                 "a full rewrite would drop the lines you have not seen. Read the "

@@ -312,6 +312,18 @@ def test_a_file_whose_only_copy_was_stubbed_must_be_read_again_before_a_rewrite(
     assert shown.payload.get("status") == "written", shown.payload
 
 
+def test_a_rewrite_refused_after_eviction_says_the_whole_file_is_no_longer_shown(tmp_path):
+    """The model wrote the file, so it never read part of it: the refusal names the real reason."""
+    executor = ToolExecutor(workspace=str(tmp_path))
+    assert executor.execute_typed("write_file", {"path": "orders.py", "content": BODY}).payload["status"] == "written"
+    executor.forget_full_views(["orders.py"])
+
+    error = executor.execute_typed("write_file", {"path": "orders.py", "content": "x = 1\n"}).payload["error"]
+
+    assert "read only part" not in error
+    assert "no longer shows" in error and "read_file" in error
+
+
 def test_in_a_whole_run_the_prefix_is_rewritten_only_at_a_recorded_batch(tmp_path, monkeypatch):
     """The real loop on a scripted model that re-reads two scaffold files: batches stub the four
     superseded copies, the requests at those batches are the only ones that are not the previous

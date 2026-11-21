@@ -249,3 +249,34 @@ def test_after_a_batch_the_kept_read_id_edits_and_a_stubbed_read_is_read_again_i
     [event] = [r["payload"] for r in records if r["event"] == "eviction"]
     assert event["reason"] == "superseded" and event["stubbed"] == 4
     assert event["tokens_after"] < event["tokens_before"]
+
+
+def test_in_a_whole_run_the_prefix_is_rewritten_only_at_a_recorded_batch(tmp_path, monkeypatch):
+    """The real loop on a scripted model that re-reads two scaffold files: batches stub the four
+    superseded copies, the requests at those batches are the only ones that are not the previous
+    request plus new messages, and an edit quoting the kept read still lands."""
+    from tests.spec_driven_agent.run_transport import plain, without_cache_control
+    from tests.spec_driven_agent.scripted_rig import ScriptedAgent, run_scripted
+
+    monkeypatch.setattr(orchestrator_module, "_HISTORY_EVICTION_ENABLED", True)
+    monkeypatch.setattr(LLMOrchestrator, "_runtime_probe_issues", lambda self: [])
+    router, other = "backend/routers/book.py", "backend/routers/library.py"
+    rereads = [("read_file", {"path": router, "offset": 0, "limit": 1000 + n}) for n in range(4)]
+    rereads += [("read_file", {"path": other, "offset": 0, "limit": 1000 + n}) for n in range(2)]
+    edit = ("modify_file", {"path": router, "old_text": "from fastapi import",
+                            "new_text": "# Book routes.\nfrom fastapi import"})
+    agent = ScriptedAgent(str(tmp_path), [("list_files", {}), *rereads, ("list_files", {}),
+                                          ("list_files", {}), ("list_files", {}), edit],
+                          ["Add a comment to the book router"])
+    run_scripted(tmp_path, agent)
+
+    records = [json.loads(line) for line in (tmp_path / ".besser_trace.jsonl").read_text(
+        encoding="utf-8").splitlines()]
+    evictions = [r["payload"] for r in records if r["event"] == "eviction"]
+    assert {e["reason"] for e in evictions} == {"superseded"} and sum(e["stubbed"] for e in evictions) == 4
+    assert len(evictions) < 4, "one prefix rewrite per stale body, not per batch"
+    requests = [plain(without_cache_control(kwargs["messages"])) for kwargs in agent.transport.of("phase2")]
+    rewritten = [index + 1 for index in range(1, len(requests))
+                 if requests[index][:len(requests[index - 1]) - 1] != requests[index - 1][:-1]]
+    assert rewritten == [e["turn"] for e in evictions]
+    assert "# Book routes." in (tmp_path / router).read_text(encoding="utf-8")

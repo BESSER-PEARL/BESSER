@@ -633,11 +633,13 @@ Findings are classified into three severities:
        verdict must be found. The extraction states what code meets each
        requirement (``met_by``): a declaration (a field, the state a new
        record starts in), a type (the value is one of listed values) or a
-       check at run time; the text's language plays no part. A validation or
+       check at run time (a change allowed only under a condition, even one
+       that names the initial state); the text's language plays no part. A validation or
        rule requirement not met by a declaration needs a line that enforces
        it, and a column default meets a transition only when a declaration
-       does. A requirement without the field (sent by the editor, or recorded
-       by an earlier run) reads as needing a check. A Python enumeration, cited
+       does. The editor may send the field with its requirements. A
+       requirement without it (from an editor that does not send it, or
+       recorded by an earlier run) reads as needing a check. A Python enumeration, cited
        itself or as the type of a field, enforces a requirement a type meets
        when a field of the same file that the requirement names is of that
        enumeration and its values are exactly the ones the requirement

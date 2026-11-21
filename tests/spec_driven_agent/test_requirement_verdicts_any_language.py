@@ -114,3 +114,16 @@ def test_the_extraction_asks_for_the_field_and_the_ledger_keeps_it():
     assert judged["met_by"] == "declaration"
     recorded = ledger._recorded_verdict({**judged, "status": "implemented", "evidence": "", "note": ""})
     assert recorded["met_by"] == "declaration"
+
+
+_MET_BY_RULE_CHARS = 338  # the rule's size before the counter-example: it must not grow
+
+
+def test_a_conditional_change_that_names_the_initial_state_is_a_check():
+    # A column default is a 'declaration'; a change allowed only under a condition needs a
+    # guard even when its condition names the state a record starts in.
+    prompt = ledger._EXTRACT_SYSTEM_PROMPT
+    rule = prompt[prompt.index("- met_by:"):prompt.index("\n", prompt.index("- met_by:"))]
+    check = rule[rule.index("'check'"):]
+    assert "a change allowed only under a condition, even if it names the initial state" in check
+    assert len(rule) <= _MET_BY_RULE_CHARS

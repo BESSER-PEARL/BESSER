@@ -823,6 +823,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._fix_target = None  # ReportedTarget | None
         self._fix_target_resolved: bool | None = None
         self._fix_target_message: str | None = None
+        # The check that exercised the target on the delivered tree, when resolved is True.
+        self._fix_target_evidence: str | None = None
 
     _LOOP_THRESHOLD = 4
     # Tighter, per-file threshold for the modify_file streak guard.
@@ -6259,6 +6261,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 "entities": list(self._fix_target.entities),
                 "target_resolved": self._fix_target_resolved,
                 "target_message": self._fix_target_message,
+                "target_evidence": self._fix_target_evidence,
             }
         recipe_path = os.path.join(self.output_dir, ".besser_recipe.json")
         try:

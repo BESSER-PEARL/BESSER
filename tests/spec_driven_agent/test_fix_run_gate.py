@@ -192,14 +192,67 @@ def test_gate_marks_unresolved_when_matching_blocker_persists(tmp_path):
     assert orch._FIX_TARGET_PREFIX not in orch._fix_target_message
 
 
-def test_gate_marks_resolved_when_no_matching_blocker(tmp_path):
+def test_no_matching_blocker_is_not_resolved_without_a_check_of_the_target(tmp_path):
+    """Before: resolved True with nothing run on the target. No finding left is not evidence."""
     orch = _orch(tmp_path, _domain("Watchlist"))
     orch._is_fix_run = True
     orch._fix_target = parse_reported_target(_FIX_INSTR, orch.domain_model)
     orch._validation_issues = [ValidationIssue("warning", "ruff: F401 unused import")]
     orch._evaluate_fix_target_gate()
-    assert orch._fix_target_resolved is True
+    assert orch._fix_target_resolved is None
     assert orch._fix_target_message is None
+    assert orch._fix_target_evidence is None
+
+
+def _probed(orch, verdict, revision=None):
+    """The boot-and-create probe's facts for one Order entity, on ``revision`` (default: the current tree)."""
+    orch._runtime_probe_facts = (revision or orch._workspace_revision(), [
+        {"backend": "backend", "boot": "ok", "entities": {"Order": {"verdict": verdict, "path": "/order/"}}}])
+
+
+def test_the_probe_creating_the_target_on_the_delivered_tree_resolves_it(tmp_path):
+    (tmp_path / "main.py").write_text("print('x')\n", encoding="utf-8")
+    orch = _orch(tmp_path, _domain("Order"))
+    orch._is_fix_run = True
+    orch._fix_target = parse_reported_target(_EXCEPTION_INSTR, orch.domain_model, "Order")
+    _probed(orch, "created")
+
+    orch._evaluate_fix_target_gate()
+
+    assert orch._fix_target_resolved is True
+    assert "probe created Order" in orch._fix_target_evidence
+
+
+@pytest.mark.parametrize("verdict, revision", [("created", "an-earlier-tree"), ("rejected", None)])
+def test_a_probe_of_another_tree_or_no_created_record_is_no_evidence(tmp_path, verdict, revision):
+    (tmp_path / "main.py").write_text("print('x')\n", encoding="utf-8")
+    orch = _orch(tmp_path, _domain("Order"))
+    orch._is_fix_run = True
+    orch._fix_target = parse_reported_target(_EXCEPTION_INSTR, orch.domain_model, "Order")
+    _probed(orch, verdict, revision)
+
+    orch._evaluate_fix_target_gate()
+
+    assert orch._fix_target_resolved is None
+
+
+def test_a_workflow_that_created_the_target_on_the_delivered_tree_resolves_it(tmp_path):
+    (tmp_path / "main.py").write_text("print('x')\n", encoding="utf-8")
+    orch = _orch(tmp_path, _domain("Order"))
+    orch._is_fix_run = True
+    orch._fix_target = parse_reported_target(_EXCEPTION_INSTR, orch.domain_model, "Order")
+    _probed(orch, "rejected")
+    orch._api_scenarios = {"named:order-flow": {
+        "scenario_id": "order-flow", "revision": orch._workspace_revision(), "scenario": {"requests": []},
+        "report": {"status": "passed", "boot": "ok", "backend": "backend", "responses": [
+            {"method": "POST", "path": "/order/", "status": 201, "json": {"id": 7, "quantity": 2}},
+            {"method": "GET", "path": "/order/7/", "status": 200, "json": {"id": 7, "quantity": 2}},
+        ]}}}
+
+    orch._evaluate_fix_target_gate()
+
+    assert orch._fix_target_resolved is True
+    assert "order-flow" in orch._fix_target_evidence
 
 
 def test_gate_soft_target_is_unverified(tmp_path):
@@ -241,7 +294,7 @@ def test_gate_ignores_requirement_findings_of_earlier_runs(tmp_path):
 
     orch._evaluate_fix_target_gate()
 
-    assert orch._fix_target_resolved is True
+    assert orch._fix_target_resolved is None
     assert orch._fix_target_message is None
 
 
@@ -285,7 +338,7 @@ def test_a_checklist_item_nothing_confirmed_is_never_promoted(tmp_path):
     assert orch._promote_fix_target_findings(issues) == issues
     orch._validation_issues = issues
     orch._evaluate_fix_target_gate()
-    assert orch._fix_target_resolved is True
+    assert orch._fix_target_resolved is None
 
 
 def test_a_runtime_finding_on_the_entity_still_keeps_the_failure_unconfirmed(tmp_path):
@@ -411,7 +464,7 @@ def test_a_not_confirmed_finding_elsewhere_is_not_the_failure_persisting(tmp_pat
     assert orch._promote_fix_target_findings([skipped]) == [skipped]
     orch._validation_issues = [skipped]
     orch._evaluate_fix_target_gate()
-    assert orch._fix_target_resolved is True
+    assert orch._fix_target_resolved is None
 
 
 def test_a_screen_check_finding_is_never_promoted(tmp_path):
@@ -429,7 +482,7 @@ def test_a_screen_check_finding_is_never_promoted(tmp_path):
     assert orch._promote_fix_target_findings(issues) == issues
     orch._validation_issues = issues
     orch._evaluate_fix_target_gate()
-    assert orch._fix_target_resolved is True
+    assert orch._fix_target_resolved is None
 
 
 @pytest.mark.parametrize("message", [
@@ -452,4 +505,4 @@ def test_no_conclusion_about_the_code_is_never_the_reported_failure(tmp_path, me
     assert orch._promote_fix_target_findings([issue]) == [issue]
     orch._validation_issues = [issue]
     orch._evaluate_fix_target_gate()
-    assert orch._fix_target_resolved is True
+    assert orch._fix_target_resolved is None

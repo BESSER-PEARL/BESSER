@@ -793,7 +793,9 @@ class ModifyRunMixin:
         Sets ``_fix_target_resolved`` / ``_fix_target_message`` from the
         FINAL Phase-3 issue list. A blocker that matches the target (either
         one we promoted or a pre-existing data-contract blocker about the
-        same entity) means the run must NOT claim a clean success.
+        same entity) means the run must NOT claim a clean success. With no
+        such finding it is ``True`` only when a check exercised the target on
+        the delivered tree (``_fix_target_exercised``), else ``None``.
 
         A soft target (no entities we could ground) is left as ``None`` —
         we neither confirm nor deny a specific defect, rather than
@@ -836,17 +838,49 @@ class ModifyRunMixin:
                 self._fix_target.descriptor,
             )
         else:
-            self._fix_target_resolved = True
+            # No finding left is not evidence: resolved only when a check exercised the target.
+            self._fix_target_evidence = self._fix_target_exercised()
+            self._fix_target_resolved = True if self._fix_target_evidence else None
             logger.info(
-                "Fix run: reported target plausibly addressed — %s",
+                "Fix run: no finding matches the reported target %s; %s",
                 self._fix_target.descriptor,
+                self._fix_target_evidence or "no check exercised it on the delivered tree",
             )
         self._trace.write(
             EVENT_PHASE_EXIT,
             phase="fix_target_gate",
             resolved=self._fix_target_resolved,
             target=self._fix_target.descriptor,
+            evidence=self._fix_target_evidence,
         )
+
+    def _fix_target_exercised(self) -> str | None:
+        """The check that created a record of a target entity on the delivered tree, or None:
+        the boot-and-create probe, or a ``test_api`` workflow that created and read back a
+        record on the probe's route for it."""
+        from besser.spec_driven_agent.planning.mutation_inventory import route_serves
+        from besser.spec_driven_agent.validation.api_probe import confirmed_create_paths
+
+        revision = self._workspace_revision()
+        facts = getattr(self, "_runtime_probe_facts", None)
+        routes = []
+        for backend in (facts[1] if facts and facts[0] == revision else None) or []:
+            for name, entry in (backend.get("entities") or {}).items():
+                if name not in self._fix_target.entities:
+                    continue
+                if entry.get("verdict") == "created":
+                    return f"the boot-and-create probe created {name} on the delivered tree"
+                routes.append((backend.get("backend"), entry.get("path"), name))
+        for record in self._api_scenarios.values():
+            report = record["report"]
+            if record["revision"] != revision:
+                continue
+            for path in confirmed_create_paths(report):
+                for backend, route, name in routes:
+                    if backend == report.get("backend") and isinstance(route, str) and route_serves(route, path):
+                        return (f"test_api workflow {record.get('scenario_id')} created {name} "
+                                "on the delivered tree")
+        return None
 
     @staticmethod
     def _is_valid_model_name(name) -> bool:

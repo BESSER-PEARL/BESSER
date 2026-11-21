@@ -72,7 +72,12 @@ The three phases
    (a runtime probe, the data contract, the acceptance matrix), leaves it
    unconfirmed, and so does one on this run's own requirements or fix tasks.
    A finding on a requirement of an earlier run's request never does: it names
-   the app's entities whatever the failure. A call with no usable answer, even as JSON text, keeps the
+   the app's entities whatever the failure. With no such finding the recipe's
+   ``fix_run.target_resolved`` is ``true`` only when a check exercised the
+   reported entity on the delivered tree (the boot-and-create probe created a
+   record of it, or a ``test_api`` workflow created and read one back), with
+   that check in ``fix_run.target_evidence``; otherwise it is ``null``, not
+   confirmed either way. A call with no usable answer, even as JSON text, keeps the
    recorded target and makes no fix run, with a warning. This call is one
    primary-model call more per modify run.
 

@@ -105,6 +105,17 @@ def test_selector_is_asked_for_the_target(tmp_path):
     assert orch.target == Target("other", "native Android/iOS app", True)
 
 
+def test_an_undecided_target_is_recorded_in_the_trace(tmp_path):
+    # Both routing calls answer without a target: the run's record must say so.
+    orch = _orch(tmp_path, TODO_APP, {"generator": "NONE"})
+    orch._select_generator(TODO_APP)
+    assert orch.target is None and len(orch.client.calls) == 2
+    trace = [json.loads(line) for line in
+             (tmp_path / ".besser_trace.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert [r["payload"] for r in trace if r["event"] == "target"] == [
+        {"kind": None, "description": "target undecided"}]
+
+
 def test_keywords_never_overrule_a_decided_none(tmp_path):
     # "REST API" is a FastAPI keyword; before, it turned the NONE back into FastAPI.
     orch = _orch(tmp_path, MOBILE)

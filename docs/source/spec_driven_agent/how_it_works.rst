@@ -388,7 +388,8 @@ reading a trace and wondering why a run did what it did.
    * - Tracing
      - Every run start and end, phase transition, turn, tool call, cost
        update, checkpoint write (or the ``error`` of a failed one), target
-       decision, snapshot, rollback, regeneration and validation finding is
+       decision (a ``target`` record with ``kind`` null and the description
+       ``target undecided`` when the routing calls gave none), snapshot, rollback, regeneration and validation finding is
        appended to ``.besser_trace.jsonl`` in the workspace (events
        ``run_start``, ``phase_enter`` / ``phase_exit``, ``turn_start``,
        ``tool_call``, ``cost_update``, ``llm_call``, ``compaction``, ``eviction``,

@@ -1696,6 +1696,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             call["outcome"] = "ok" if routing is not None else "failed"
         if routing is not None:
             self._record_routing(routing)
+        if self.target is None:
+            # Without a target only the models (a GUI model, a frontend in the scaffold) ask for a frontend.
+            logger.warning("Phase 1: target undecided; a frontend is built only if the models have one")
+            self._trace.write(EVENT_TARGET, kind=None, description="target undecided")
 
     def _record_routing(self, routing: Routing) -> None:
         """A create run's routing answer: the target and the stack no generator builds."""

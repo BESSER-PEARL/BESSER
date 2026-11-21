@@ -97,7 +97,7 @@ runs survive a dropped connection:
   metadata (never the request or the API key). A run that ended in ``done`` is
   ``succeeded`` when its run record's ``outcome`` is ``completed``, the outcome
   itself when it is ``completed_with_blockers`` or ``completed_unverified``,
-  ``partial`` when it is ``incomplete``, and ``cancelled`` or ``abandoned`` when a
+  ``partial`` when the ``done`` event sets ``incomplete``, and ``cancelled`` or ``abandoned`` when a
   cancel or the server's stop ended it. An event stored before the ``done`` event
   carried ``outcome`` reads ``succeeded`` or ``partial`` as before.
 - ``GET /besser_api/spec-driven/runs/{run_id}/events?after=N`` replays every

@@ -57,7 +57,8 @@ from besser.spec_driven_agent.planning.user_request import user_request
 from besser.spec_driven_agent.run_recap import request_text
 from besser.spec_driven_agent.planning.specification import validate_specification
 from besser.spec_driven_agent.agent.history_eviction import (
-    evict_stale_file_bodies,
+    evict_superseded_file_bodies,
+    unseen_after_eviction,
     without_thinking_blocks,
 )
 from besser.spec_driven_agent.validation.frontend_contract import (
@@ -319,11 +320,9 @@ from besser.spec_driven_agent.pipeline.phase3_repair import Phase3RepairMixin, c
 from besser.spec_driven_agent.pipeline.regeneration import Regeneration
 from besser.spec_driven_agent.settings import AgentSettings
 
-# Checkpoint history eviction (see history_eviction.py). When enabled, stale
-# file bodies in older messages are stubbed at the compaction checkpoint to cut
-# the re-sent context. OFF by default: it rewrites history the provider
-# re-serializes and is not yet verified end to end. Enable with
-# BESSER_LLM_HISTORY_EVICTION=1.
+# History eviction (see history_eviction.py): stale file bodies are stubbed in
+# batches, and every older body at the compaction checkpoint. Off unless
+# BESSER_LLM_HISTORY_EVICTION is set (it does not lower cost on a caching provider).
 _HISTORY_EVICTION_ENABLED = AgentSettings().llm_history_eviction
 
 
@@ -939,7 +938,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             self._trace.write(EVENT_VALIDATION_ISSUE, phase="phase1_5", message=issue)
 
         # -- Phase 2: LLM customization -----------------------------------
-        self._trace.write(EVENT_PHASE_ENTER, phase="phase2")
+        self._trace.write(EVENT_PHASE_ENTER, phase="phase2", compact_threshold=self._compact_threshold())
         self._run_phase2(instructions, extra_issues=phase1_issues)
         self._trace.write(
             EVENT_PHASE_EXIT, phase="phase2", turns=self.total_turns,
@@ -1147,7 +1146,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             phase1_issues = self._validate_phase1_output()
             for issue in phase1_issues:
                 self._trace.write(EVENT_VALIDATION_ISSUE, phase="phase1_5", message=issue)
-            self._trace.write(EVENT_PHASE_ENTER, phase="phase2_resume")
+            self._trace.write(EVENT_PHASE_ENTER, phase="phase2_resume", compact_threshold=self._compact_threshold())
             self._run_phase2(instructions, extra_issues=(
                 self._modify_scoped_issues(phase1_issues) if self._modify_mode else phase1_issues))
             self._trace.write(
@@ -5521,39 +5520,37 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         )
 
     def _maybe_compact(self, messages: list[dict]) -> list[dict]:
-        """Delegate to compaction module.
+        """Evict stale file bodies, then delegate to the compaction module.
 
-        When history eviction is enabled (``BESSER_LLM_HISTORY_EVICTION=1``),
-        first run a lossless checkpoint eviction: stub stale write_file/read_file
-        bodies in older messages (the files are on disk, re-readable). This runs
-        ONLY at the compaction checkpoint (when history already exceeds the
-        threshold), never per turn — so it doesn't repeatedly bust the prompt
-        cache. It's lighter-touch than summarization and often drops the history
-        back under the threshold so no summarize is needed; if not, the summarize
-        below still runs on top. Gated OFF by default and not yet verified
-        end to end — see history_eviction.py.
+        With history eviction on (``BESSER_LLM_HISTORY_EVICTION``), stale file
+        bodies are stubbed in batches (``evict_superseded_file_bodies``), so the
+        cached prefix is rewritten once per batch, not every turn. At the
+        compaction threshold every stale body is stubbed at once, however
+        young, which often avoids the lossy summary below; the newest read of
+        a file not edited since is kept. The files stay on disk, re-readable.
         """
         model = getattr(self.client, "model", None)
-        # The reserve must match the output the model is actually ALLOWED to
-        # produce this run. The from-scratch and modify paths raise
-        # client.max_tokens to FROM_SCRATCH_MAX_TOKENS (32_768), which is
-        # double the COMPACT_RESERVE_TOKENS default - so a constant reserve
-        # leaves only half the headroom the response may need.
-        reserve = max(
-            COMPACT_RESERVE_TOKENS, int(getattr(self.client, "max_tokens", 0) or 0)
-        )
+        reserve = self._compaction_reserve()
         evicted = 0
-        if _HISTORY_EVICTION_ENABLED and _estimate_tokens(messages) >= effective_threshold(
-            model, reserve=reserve
-        ):
-            messages, evicted = evict_stale_file_bodies(messages)
+        if _HISTORY_EVICTION_ENABLED:
+            original = messages
+            before = _estimate_tokens(messages)
+            messages, evicted = evict_superseded_file_bodies(messages)
+            reason = "superseded"
+            if (_estimate_tokens(messages) if evicted else before) >= effective_threshold(model, reserve=reserve):
+                messages, more = evict_superseded_file_bodies(
+                    messages, stale_after_turns=0, batch_share=0, min_batch_chars=0)
+                if more:
+                    evicted, reason = evicted + more, "threshold"
             if evicted:
+                # write_file needs the whole file seen; a stubbed last copy is not seen.
+                self.executor.forget_full_views(unseen_after_eviction(original, messages))
                 self._eviction_count = getattr(self, "_eviction_count", 0) + 1
-                logger.info(
-                    "Checkpoint eviction: stubbed %d stale file body/bodies "
-                    "(history now ~%d tokens)", evicted, _estimate_tokens(messages),
-                )
-                self._trace.write(EVENT_EVICTION, turn=self.total_turns, stubbed=evicted)
+                after = _estimate_tokens(messages)
+                logger.info("Eviction (%s): stubbed %d file body/bodies, history ~%d -> ~%d tokens",
+                            reason, evicted, before, after)
+                self._trace.write(EVENT_EVICTION, turn=self.total_turns, stubbed=evicted,
+                                  reason=reason, tokens_before=before, tokens_after=after)
         result, did_compact = maybe_compact(
             messages=messages,
             tool_calls_log=self.tool_calls_log,
@@ -5588,6 +5585,15 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             # Earlier read results may be gone: no "unchanged since" stubs.
             self.executor.forget_shown_results()
         return result
+
+    def _compaction_reserve(self) -> int:
+        """Output headroom of the next response: the run's raised max_tokens,
+        not only the COMPACT_RESERVE_TOKENS floor."""
+        return max(COMPACT_RESERVE_TOKENS, int(getattr(self.client, "max_tokens", 0) or 0))
+
+    def _compact_threshold(self) -> int:
+        """The compaction threshold this run's model resolves to now."""
+        return effective_threshold(getattr(self.client, "model", None), reserve=self._compaction_reserve())
 
     def _drop_stale_thinking(self, messages: list[dict], why: str) -> list[dict]:
         """Remove thinking blocks whose conversation is no longer what is sent.

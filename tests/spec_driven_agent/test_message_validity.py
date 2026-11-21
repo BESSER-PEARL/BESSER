@@ -229,6 +229,7 @@ class _CompactionHost:
     """The orchestrator's own ``_maybe_compact`` and thinking strip, on a stub."""
 
     _maybe_compact = LLMOrchestrator._maybe_compact
+    _compaction_reserve = LLMOrchestrator._compaction_reserve
     _drop_stale_thinking = LLMOrchestrator._drop_stale_thinking
 
     def __init__(self, output_dir: str):
@@ -241,7 +242,7 @@ class _CompactionHost:
         self._compaction_count = 0
         self.total_turns = 0
         self._trace = NullTraceWriter()
-        self.executor = SimpleNamespace(forget_shown_results=lambda: None)
+        self.executor = SimpleNamespace(forget_shown_results=lambda: None, forget_full_views=lambda paths: None)
 
     def _compaction_work_state(self) -> dict:
         return {"tasks": [{"id": 1, "text": "Add login"}]}

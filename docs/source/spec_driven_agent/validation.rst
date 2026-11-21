@@ -1159,12 +1159,17 @@ earlier work, so the previous run's open requirements are judged and repaired.
 Without that field, such a message is extracted like any other
 later message: one call, and verdicts without trace ids.
 
-The judge reads a digest of the app of at most 200,000 characters: the schema
-files first, then the backend code ranked by the share of its lines the agent
-wrote (a module the generator never wrote first, untouched generator output
-last), with 30% reserved for pages and components. The shares are read against
-the stored generator output, which a FastAPI backend and a web app's backend
-and typed client have; without one, routers come first. When the whole app does not
+The judge reads a digest of the app of at most 200,000 characters. Which files
+fit is decided by rank: the schema files first, then the backend code ranked by
+the share of its lines the agent wrote (a module the generator never wrote
+first, untouched generator output last), with 30% reserved for pages and
+components. The shares are read against the stored generator output, which a
+FastAPI backend and a web app's backend and typed client have; without one,
+routers come first. The files that fit are shown in an order no edit changes
+(cited files, schemas, routers, other Python, pages and components, the rest,
+each by path), after the original request and before the previous round's
+feedback and the requirements, so a repeated judge call can reuse the cached
+prompt up to the first file that changed. When the whole app does not
 fit, a generator file the agent edited in under half of its lines is shown as
 its edits with three lines of context; the unchanged generator lines left out,
 and the places where generator lines were removed, are marked. A file over 1,500

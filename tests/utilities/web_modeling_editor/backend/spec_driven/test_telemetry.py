@@ -344,6 +344,32 @@ class TestReportEndpoint:
         assert lines[1].startswith("P1,")
         assert lines[2].startswith("P2,")
 
+    def test_report_counts_runs_that_ended_with_blockers_or_unverified(
+        self, report_env,
+    ):
+        """Every run lands in an outcome column: the report lost these two."""
+        for outcome in (
+            "completed_with_blockers", "completed_with_blockers",
+            "completed_unverified",
+        ):
+            telemetry.record_event("s3", "P3", "run_summary", {"outcome": outcome})
+        headers = {"X-Telemetry-Token": self.TOKEN}
+        text = asyncio.run(_get_report(headers=headers)).text
+        assert (
+            "0 success / 0 incomplete / 0 failed / 2 with blockers / "
+            "1 not verified"
+        ) in text
+        assert "| With blockers | Not verified |" in text
+        rows = asyncio.run(
+            _get_report(headers=headers, params={"format": "csv"})
+        ).text.strip().splitlines()
+        header = rows[0].split(",")
+        p3 = dict(zip(header, next(r for r in rows if r.startswith("P3,")).split(",")))
+        assert header[-2:] == ["completed_with_blockers", "completed_unverified"]
+        assert (p3["runs"], p3["completed_with_blockers"], p3["completed_unverified"]) == (
+            "3", "2", "1",
+        )
+
     def test_participant_filter(self, report_env):
         response = asyncio.run(_get_report(
             headers={"X-Telemetry-Token": self.TOKEN},

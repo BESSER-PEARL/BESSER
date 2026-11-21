@@ -285,7 +285,14 @@ def _observed_inputs(routes, relations, schema_fields, records, current_revision
                 unmatched += 1
                 continue
             state = freshness if ran else "unexecuted"
-            shape, keys, complete = _input_shape(request["json"], previous[:index]) if "json" in request else ({"$": {"no JSON"}}, set(), True)
+            form, files = request.get("form"), request.get("files")
+            if "json" not in request and (isinstance(form, dict) or isinstance(files, dict)):
+                # Form and file fields are the write's inputs; a file is named by its field only.
+                fields = {**(form if isinstance(form, dict) else {}),
+                          **{name: "file" for name in (files if isinstance(files, dict) else {})}}
+                shape, keys, complete = _input_shape(fields, previous[:index])
+            else:
+                shape, keys, complete = _input_shape(request["json"], previous[:index]) if "json" in request else ({"$": {"no JSON"}}, set(), True)
             bucket = observations.setdefault(matches[0], [])
             bucket.append((state, status if ran else None, shape, keys, complete, f"S{number}[{index}]"))
         omitted |= len(requests) > 20 or len(responses) > 20

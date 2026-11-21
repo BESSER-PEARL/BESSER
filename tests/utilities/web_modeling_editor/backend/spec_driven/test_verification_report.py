@@ -128,8 +128,9 @@ def test_tests_the_agent_wrote_are_not_reported_as_rules_the_user_asked_for():
     assert all(i.id != "test_decrease_stock" for i in report.notVerified)
     assert "a test the agent wrote" in failed.why and "not a rule from your request" in failed.why
     retired = next(i for i in report.notVerified if i.id == "test_decrease_stock_proper")
-    assert retired.what == "Test workflow 'test_decrease_stock_proper'"
-    assert retired.why == "the agent retired it: Wrong payload; test_decrease_stock_simple replaces it."
+    assert retired.what == "Test workflow 'test_decrease_stock_proper' (failed, retired)"
+    assert retired.why == ("it ran against the app and failed, then the agent retired it: "
+                           "Wrong payload; test_decrease_stock_simple replaces it.")
     assert _ids(report.verified) == ["test_decrease_stock_simple"]
 
 
@@ -183,6 +184,7 @@ def test_checked_and_missing_is_separated_from_could_not_check():
         "an identified item may appear in exactly one list"
     assert report.counts.model_dump() == {
         "verified": 2, "foundInCode": 0, "notVerified": 2, "shippedUnenforced": 3, "failed": 0,
+        "advisory": 0,
     }
 
 

@@ -38,6 +38,7 @@ from typing import AsyncIterator, Callable, Literal, Optional
 from besser.utilities.web_modeling_editor.backend.services.cleanup import TEMP_DIR_MAX_AGE_HOURS
 from besser.utilities.web_modeling_editor.backend.settings import BackendSettings
 
+from .run_record import FINISHED_UNCLEAN
 from .sse_events import ErrorEvent, format_sse
 
 logger = logging.getLogger(__name__)
@@ -46,6 +47,8 @@ RunStatus = Literal[
     "queued",
     "running",
     "succeeded",
+    "completed_with_blockers",
+    "completed_unverified",
     "partial",
     "failed",
     "cancelled",
@@ -54,7 +57,8 @@ RunStatus = Literal[
 ]
 
 TERMINAL_RUN_STATUSES = frozenset(
-    {"succeeded", "partial", "failed", "cancelled", "abandoned", "interrupted"}
+    {"succeeded", "completed_with_blockers", "completed_unverified", "partial", "failed",
+     "cancelled", "abandoned", "interrupted"}
 )
 _NON_TERMINAL_ERROR_CODES = frozenset({"COST_CAP", "TIMEOUT", "INCOMPLETE"})
 _DEFAULT_DB_NAME = "besser_spec_driven_runs.sqlite3"
@@ -859,10 +863,15 @@ class DurableRunManager:
                     if payload.get("cancelled"):
                         terminal_status = "abandoned" if abandoned else "cancelled"
                     else:
+                        # A finished run with blockers or not verified is stored as
+                        # the run record's outcome, never as ``succeeded``.
+                        outcome = payload.get("outcome")
                         terminal_status = (
                             "abandoned"
                             if abandoned and incomplete
-                            else "partial" if incomplete else "succeeded"
+                            else "partial" if incomplete
+                            else outcome if outcome in FINISHED_UNCLEAN
+                            else "succeeded"
                         )
                     terminal_event = "done"
                     if abandoned:

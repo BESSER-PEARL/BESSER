@@ -101,29 +101,22 @@ _ENFORCEMENT_TOKENS = (
     "httpexception", "valueerror", "min_length", "max_length", "pattern",
     "field(", "constr", "check(", "ge=", "le=", "gt=", "lt=",
 )
-# The extractor still pads the ledger with "a person must have a first name"
-# items and may label them 'rule'; a column IS that requirement. The
-# enforcing-line demand applies to a 'rule' only when its text states a
-# constraint.
-# Whole words with their inflections: as substrings "less" matched "lesson"
-# and "format" matched "information". A word the requirement lists as a value
-# ("one of: positive, mixed, negative") still states the rule that the field
-# takes only those values; an enumeration that has them enforces it.
-_CONSTRAINT_WORDS = re.compile(
-    r"\b(?:unique(?:ly|ness)?|must\s+not|may\s+not|may\s+never|cannot|can\s+not|never|at\s+least|at\s+most"
-    r"|no\s+more\s+than|exceed(?:s|ed|ing)?|only\s+(?:if|when|after)|(?:in)?valid(?:ly|ity|at\w+)?"
-    r"|format(?:s|ted|ting)?|shap(?:e|es|ed|ing)|(?:mis)?match(?:es|ed|ing)?|overlap(?:s|ped|ping)?|before|after"
-    r"|greater|less(?:er)?|between|positive(?:ly)?|non-negative|refus(?:e|es|ed|ing|al)|reject(?:s|ed|ing|ion)?)\b",
-    re.IGNORECASE,
-)
+# Set by the extraction: what code meets the item. "declaration": a field, the state a
+# new record starts in; "type": a field's type or enumeration restricting its values;
+# "check": a check or refusal at run time. An item without it (sent by the editor,
+# recorded by an older run) reads as "check", the strictest.
+MET_BY_FIELD = "met_by"
+MET_BY = ("declaration", "type", "check")
 
 
-def _states_constraint(text: str) -> bool:
-    return bool(_CONSTRAINT_WORDS.search(text))
+def _met_by(item: dict) -> str:
+    value = item.get(MET_BY_FIELD)
+    return value if value in MET_BY else "check"
 
 
-def _demands_enforcement(kind: str, text: str) -> bool:
-    return kind == "uniqueness" or (kind in ("validation", "rule") and _states_constraint(text))
+def _demands_enforcement(item: dict) -> bool:
+    kind = item.get("kind", "")
+    return kind == "uniqueness" or (kind in ("validation", "rule") and _met_by(item) != "declaration")
 
 
 _READ_NUMBER_PREFIX_RE = re.compile(r"^\s*\d+\s*\|\s?")
@@ -489,6 +482,11 @@ _EXTRACT_SYSTEM_PROMPT = (
     "data invented beyond a given source), never a refusal or limit the app "
     "enforces (that is a 'rule'); 'preservation' "
     "for existing behaviour a change must keep working as it is.\n"
+    "- met_by: what code meets the item. 'declaration' when declaring data does (a "
+    "field a record has, the state a new record starts in); 'type' when a field's type "
+    "or enumeration does (the value is one of listed values); 'check' when it takes a "
+    "check or refusal at run time (a limit, a value's shape, a change allowed only "
+    "under a condition).\n"
     "- Skip the technology stack and instructions to the assistant.\n"
     "- Broad goals such as 'functional for any user' or 'no errors' do not add "
     "unstated authentication, authorization, user roles, integrations, or exhaustive "
@@ -517,8 +515,9 @@ _SUBMIT_REQUIREMENTS_TOOL = {
                                      "computed", "transition", "action", "ui",
                                      ABSENCE_KIND, PRESERVATION_KIND],
                         },
+                        MET_BY_FIELD: {"type": "string", "enum": list(MET_BY)},
                     },
-                    "required": ["text"],
+                    "required": ["text", MET_BY_FIELD],
                 },
             },
         },
@@ -784,6 +783,8 @@ def _requirement_items(extracted: list) -> list[dict]:
         # undischargeable gate: an unknown kind is no kind.
         requirements.append({"id": len(requirements) + 1, "text": text.strip(),
                              "kind": kind if kind in _EXTRACTED_KINDS else ""})
+        if isinstance(item, dict) and item.get(MET_BY_FIELD) in MET_BY:
+            requirements[-1][MET_BY_FIELD] = item[MET_BY_FIELD]
     # Preserve every returned item, even if a provider ignores maxItems. A full
     # response may still have omitted the specification's tail; neither slicing
     # it nor treating a saturated extraction as complete is safe.
@@ -1356,6 +1357,8 @@ def _verdict_identity(rid: int, requirement: dict) -> dict:
     identity = {"id": rid, "text": requirement["text"], "kind": requirement.get("kind", "")}
     if requirement.get("ref"):
         identity["ref"] = requirement["ref"]
+    if requirement.get(MET_BY_FIELD) in MET_BY:
+        identity[MET_BY_FIELD] = requirement[MET_BY_FIELD]
     return identity
 
 
@@ -1619,8 +1622,9 @@ _DECLARATION_ONLY = "the cited declaration does not perform the required behavio
 _ROLE_FAILURES = frozenset({_NO_PARSE, _NOT_CODE, _COMMENT, _NOOP_VALIDATOR, _SCAFFOLD, _ACTION_SCAFFOLD})
 
 
-def _python_citation(tree: ast.AST | None, lineno: int, kind: str, text: str) -> tuple[ast.stmt | None, str]:
-    """Check the cited statement's role; this is not a semantic proof."""
+def _python_citation(tree: ast.AST | None, lineno: int, kind: str, met_by: str) -> tuple[ast.stmt | None, str]:
+    """Check the cited statement's role; this is not a semantic proof. ``met_by`` as in
+    :func:`_met_by`: a column default meets a transition only when a declaration does."""
     if tree is None:
         return None, _NO_PARSE
     enclosing = [n for n in ast.walk(tree) if isinstance(n, ast.stmt)
@@ -1651,8 +1655,7 @@ def _python_citation(tree: ast.AST | None, lineno: int, kind: str, text: str) ->
             # these behaviours; a bare enum or required input cannot.
             value = getattr(statement, "value", None)
             if isinstance(statement, (ast.Assign, ast.AnnAssign)) and isinstance(value, ast.Call):
-                if (kind == "transition" and any(word in text.lower() for word in (
-                        "start", "begin", "initial", "default"))
+                if (kind == "transition" and met_by == "declaration"
                         and any(k.arg in {"default", "default_factory", "server_default"}
                                 for k in value.keywords)):
                     return statement, ""
@@ -1745,7 +1748,7 @@ def _span_failure(item: dict, source: _Source, first_line: int, lineno: int, quo
         return "the cited line is punctuation alone (`{`, `/>`); it identifies no code"
     statement = None
     if source.path.endswith(".py"):
-        statement, reason = _python_citation(source.tree, lineno, item.get("kind", ""), item.get("text", ""))
+        statement, reason = _python_citation(source.tree, lineno, item.get("kind", ""), _met_by(item))
         if reason:
             return reason
         invalid = next((d for d in source.diagnostics if (
@@ -1756,11 +1759,12 @@ def _span_failure(item: dict, source: _Source, first_line: int, lineno: int, quo
         if invalid:
             return "the cited implementation is invalid: " + invalid["message"]
     kind, text = item.get("kind", ""), item.get("text", "")
-    if (_demands_enforcement(kind, text)
+    if (_demands_enforcement(item)
             and not isinstance(statement, (ast.If, ast.Raise, ast.Assert))
             and not source.lines[first_line - 1].lstrip().startswith(("if ", "if(", "if\t", "else if "))
             and not any(tok in quote.lower() for tok in _ENFORCEMENT_TOKENS)
-            and not (kind != "uniqueness" and _only_lists_cited_enumeration(text, statement, source.tree))):
+            and not (kind != "uniqueness" and _met_by(item) == "type"
+                     and _only_lists_cited_enumeration(text, statement, source.tree))):
         return "the cited line declares data; it does not demonstrate enforcement"
     return ""
 
@@ -1812,15 +1816,14 @@ def _field_named(text: str, field: str) -> bool:
 
 
 def _only_lists_cited_enumeration(text: str, statement: ast.stmt | None, tree: ast.AST | None) -> bool:
-    """The requirement's constraint words are values of the enumeration cited.
+    """The requirement's values are those of the enumeration cited.
 
     The cited Python statement defines, belongs to or types a field with one
     enumeration of the same file. A field of a class of that file is of that
     enumeration and is the one the requirement names (the cited field, when one
-    is cited). The requirement names every value of the enumeration, lists no
-    other value beside them, and states no constraint once they are taken out.
-    The type then refuses any other value, which is the enforcement. "Must not
-    go from closed back to open" names the values too, and still needs its check."""
+    is cited). The requirement names every value of the enumeration and lists no
+    other value beside them. The type then refuses any other value, which is the
+    enforcement of an item a type meets (:func:`_met_by`)."""
     if statement is None or tree is None:
         return False
     enumerations = {
@@ -1844,11 +1847,7 @@ def _only_lists_cited_enumeration(text: str, statement: ast.stmt | None, tree: a
     if len(members) < 2 or None in members or not all(member.search(text) for member in members):
         return False
     spans = sorted(match.span() for member in members for match in member.finditer(text))
-    if not _lists_only_members(text, spans):
-        return False
-    for member in members:
-        text = member.sub(" ", text)
-    return not _states_constraint(text)
+    return _lists_only_members(text, spans)
 
 
 _UNMATCHED_NOTE_CHARS = 80
@@ -2842,6 +2841,8 @@ def _recorded_verdict(item) -> dict | None:
                "inspection_paths": [p for p in paths if isinstance(p, str)] if isinstance(paths, list) else []}
     if isinstance(item.get("ref"), str):
         verdict["ref"] = item["ref"]
+    if item.get(MET_BY_FIELD) in MET_BY:
+        verdict[MET_BY_FIELD] = item[MET_BY_FIELD]
     return verdict
 
 

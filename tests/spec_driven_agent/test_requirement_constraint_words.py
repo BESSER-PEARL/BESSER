@@ -1,10 +1,9 @@
-"""A constraint word counts as a whole word, and an enumeration enforces the values a requirement lists.
+"""An enumeration enforces the values a requirement lists.
 
-A 'validation' or 'rule' requirement needs an enforcing line only when its text
-states a constraint. Matched as substrings, the words that decide this fired
-inside ordinary words ("lesson", "information"). A value of an enumeration that
-is a constraint word ("one of: positive, mixed, negative") still states the
-rule, and the enumeration that implements it was reported as a blocker.
+A 'validation' or 'rule' requirement the extraction marks enforced needs an
+enforcing line. A value of an enumeration ("one of: positive, mixed, negative")
+still states the rule, and the enumeration that implements it was reported as a
+blocker.
 """
 
 import pytest
@@ -42,74 +41,21 @@ class ArticleCreate(BaseModel):
 '''
 
 
-@pytest.mark.parametrize("text", [
-    "Each lesson must have a title",
-    "Each customer must have contact information",
-    "A class has a morning or afternoon slot",
-    "Each article has a stage: draft, in review or published",
-])
-def test_an_ordinary_word_states_no_constraint(text):
-    assert not ledger._demands_enforcement("validation", text)
-    assert not ledger._demands_enforcement("rule", text)
-
-
-@pytest.mark.parametrize("text", [
-    # A listed value restricts the field to the list: a declaration does not.
-    "Feedback tone must be one of: positive, mixed, negative",
-    "Feedback tone must be one of positive, mixed or negative",
-    "The state of a coupon is either valid or expired",
-    "Record an entry with its date and outcome (match, mismatch, pending)",
-    "Each photo has a 'before' or 'after' label",
-    # A single listed word, or one beside zero, is the rule itself.
-    "Each account has an email (unique)",
-    "A note has a discount (positive)",
-    "The password must be 'valid'",
-    "The discount must be either positive or zero",
-    # Inflections the whole-word match must keep.
-    "Rejecting a payment keeps the order open",
-    "A total mismatch flags the invoice",
-    "Codes are shaped like AB-1234",
-    "The fee is the lesser of the two amounts",
-    "Refusing a booking frees the room",
-    "The score is positively weighted",
-])
-def test_a_listed_value_or_an_inflected_word_still_states_a_constraint(text):
-    assert ledger._demands_enforcement("validation", text)
-    assert ledger._demands_enforcement("rule", text)
-
-
-@pytest.mark.parametrize("text", [
-    "A booking must not overlap another booking of the same room",
-    "The price must be a valid number",
-    "The rating must be between 1 and 5",
-    "The end date must be after the start date",
-    "The stock of an item is never negative",
-    "Guests never exceed the capacity of the rooms",
-    "An order (at least one line) can be confirmed",
-    "The priority must be one of low, medium, high and may never be empty",
-    "The code matches the format AB-1234",
-    "An invalid email address is rejected",
-    "The quantity ordered exceeds the stock only when backorders are allowed",
-    "A member's booking may not start before the member's subscription",
-])
-def test_a_stated_constraint_still_needs_an_enforcing_line(text):
-    assert ledger._demands_enforcement("rule", text)
-    assert ledger._demands_enforcement("validation", text)
-
-
 def test_only_validation_rule_and_uniqueness_demand_enforcement():
-    text = "The end date must be after the start date"
-    assert not ledger._demands_enforcement("action", text)
-    assert not ledger._demands_enforcement("ui", text)
-    assert ledger._demands_enforcement("uniqueness", "Each room has a number")
+    assert not ledger._demands_enforcement({"kind": "action"})
+    assert not ledger._demands_enforcement({"kind": "ui"})
+    assert ledger._demands_enforcement({"kind": "uniqueness", "met_by": "declaration"})
+    assert ledger._demands_enforcement({"kind": "rule"})
+    assert ledger._demands_enforcement({"kind": "rule", "met_by": "type"})
+    assert not ledger._demands_enforcement({"kind": "validation", "met_by": "declaration"})
 
 
-def _check(tmp_path, text, lines, kind="validation"):
+def _check(tmp_path, text, lines, kind="validation", met_by="type"):
     target = tmp_path / SCHEMAS
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(_SCHEMAS_SOURCE, encoding="utf-8")
     return ledger.verify_evidence([{
-        "id": 1, "kind": kind, "text": text, "status": "implemented", "note": "",
+        "id": 1, "kind": kind, "text": text, "status": "implemented", "note": "", "met_by": met_by,
         "evidence": [{"path": SCHEMAS, "line": line} for line in lines],
     }], str(tmp_path))[0]
 
@@ -134,14 +80,12 @@ def test_values_listed_without_a_marker_are_verified_by_their_enumeration(tmp_pa
     """"must be positive, mixed or negative" keeps its constraint word; the cited
     enumeration, its member or the field typed with it has exactly those values."""
     text = "The tone of a feedback must be positive, mixed or negative"
-    assert ledger._demands_enforcement("validation", text)
     verdict = _check(tmp_path, text, lines)
     assert verdict["status"] == "implemented", verdict["note"]
 
 
 def test_member_names_are_read_as_words(tmp_path):
     text = "The slot of an article is before noon or after-noon"
-    assert ledger._demands_enforcement("rule", text)
     verdict = _check(tmp_path, text, ["slot: Slot"], kind="rule")
     assert verdict["status"] == "implemented", verdict["note"]
 
@@ -158,20 +102,20 @@ def test_a_plain_field_does_not_verify_a_listed_rule(tmp_path, text, line):
     assert "declares data" in verdict["note"]
 
 
-@pytest.mark.parametrize("text, lines", [
+@pytest.mark.parametrize("text, lines, met_by", [
     # A numeric rule is not a list of the enumeration's values.
-    ("The price must be positive", ["class Tone(Enum):"]),
-    ("The price must be positive", ["price: float"]),
+    ("The price must be positive", ["class Tone(Enum):"], "check"),
+    ("The price must be positive", ["price: float"], "check"),
     # One value the requirement does not allow: the type is not the rule.
-    ("The tone must be positive or negative, never anything else", ["tone: Tone"]),
+    ("The tone must be positive or negative, never anything else", ["tone: Tone"], "type"),
     # A field of another type declares data.
-    ("The tone must be positive, mixed or negative", ["title: str"]),
-    # The values are all named, and the rule about them is still a rule.
-    ("An article must not go from published back to draft or in review", ["stage: Stage"]),
-    ("The tone is positive, mixed or negative and may never be changed", ["class Tone(Enum):"]),
+    ("The tone must be positive, mixed or negative", ["title: str"], "type"),
+    # The values are all named, and the rule about them still takes a check.
+    ("An article must not go from published back to draft or in review", ["stage: Stage"], "check"),
+    ("The tone is positive, mixed or negative and may never be changed", ["class Tone(Enum):"], "check"),
 ])
-def test_an_enumeration_proves_nothing_else(tmp_path, text, lines):
-    verdict = _check(tmp_path, text, lines)
+def test_an_enumeration_proves_nothing_else(tmp_path, text, lines, met_by):
+    verdict = _check(tmp_path, text, lines, met_by=met_by)
     assert verdict["status"] == "unverified"
     assert "declares data" in verdict["note"]
 
@@ -217,7 +161,7 @@ def _check_notes(tmp_path, text, line):
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(_NOTES_SOURCE, encoding="utf-8")
     return ledger.verify_evidence([{
-        "id": 1, "kind": "validation", "text": text, "status": "implemented", "note": "",
+        "id": 1, "kind": "validation", "text": text, "status": "implemented", "note": "", "met_by": "type",
         "evidence": [{"path": NOTES, "line": line}],
     }], str(tmp_path))[0]
 

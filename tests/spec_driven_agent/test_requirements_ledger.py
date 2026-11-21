@@ -417,10 +417,10 @@ def test_an_action_cannot_be_proven_by_a_relationship_declaration():
 
 def test_a_data_statement_labelled_rule_keeps_its_column():
     """The extractor pads the ledger with 'a person must have a first name'
-    and may call it a rule; the column is that requirement, not a gap."""
+    and may call it a rule; met by a declaration, the column is that requirement."""
     out = ledger.verify_evidence(
-        [_verdict("implemented", f"web_app/backend/sql_alchemy.py: {_DECLARING_LINE}",
-                  kind="rule", text="Each booking must have an employee handling it")],
+        [{**_verdict("implemented", f"web_app/backend/sql_alchemy.py: {_DECLARING_LINE}",
+                     kind="rule", text="Each booking must have an employee handling it"), "met_by": "declaration"}],
         FIXTURE,
     )
     assert out[0]["status"] == "implemented"
@@ -437,10 +437,10 @@ def test_an_at_least_rule_needs_more_than_a_relationship():
 
 def test_a_must_have_field_labelled_validation_keeps_its_column():
     """The extractor labels 'each person must have a first name' a validation;
-    with no constraint in the text, the column is the implementation."""
+    met by a declaration, the column is the implementation."""
     out = ledger.verify_evidence(
-        [_verdict("implemented", f"web_app/backend/sql_alchemy.py: {_DECLARING_LINE}",
-                  kind="validation", text="Each booking must have an employee")],
+        [{**_verdict("implemented", f"web_app/backend/sql_alchemy.py: {_DECLARING_LINE}",
+                     kind="validation", text="Each booking must have an employee"), "met_by": "declaration"}],
         FIXTURE,
     )
     assert out[0]["status"] == "implemented"
@@ -456,7 +456,7 @@ def test_escape_sequences_quote_style_and_later_lines_are_normalised():
         + "\\n    # abridged continuation that is not in the file"
     )
     out = ledger.verify_evidence([
-        _verdict("implemented", quoted, kind="rule", text="Each booking has an employee"),
+        {**_verdict("implemented", quoted, kind="rule", text="Each booking has an employee"), "met_by": "declaration"},
     ], FIXTURE)
     assert out[0]["status"] == "implemented"
 
@@ -600,8 +600,8 @@ class BookingCreate:
     statuses = [v["status"] for v in ledger.verify_evidence(verdicts, str(tmp_path))]
     assert statuses == ["unverified"] * len(invalid) + ["implemented"] * len(valid)
     declarative = [
-        _verdict("implemented", 'app.py: status = mapped_column(default="AWAITING_PAYMENT")',
-                 kind="transition", text="A booking starts awaiting payment"),
+        {**_verdict("implemented", 'app.py: status = mapped_column(default="AWAITING_PAYMENT")',
+                    kind="transition", text="A booking starts awaiting payment"), "met_by": "declaration"},
         _verdict("implemented", 'app.py: amount = mapped_column(Computed("price * nights"))',
                  kind="computed", text="The amount is computed from the price and nights"),
     ]
@@ -673,8 +673,9 @@ class Room:
         ("transition", "status = mapped_column(default=Status.AWAITING_PAYMENT)"),
         ("rule", '__table_args__ = (CheckConstraint("capacity > 0", name="positive_capacity"),)'),
     ]
-    verdicts = [_verdict("implemented", f"models.py: {line}", kind=kind,
-                         text="A record starts awaiting payment" if kind == "transition" else "The value must be valid")
+    verdicts = [{**_verdict("implemented", f"models.py: {line}", kind=kind,
+                            text="A record starts awaiting payment" if kind == "transition" else "The value must be valid"),
+                 "met_by": "declaration" if kind == "transition" else "check"}
                 for kind, line in invalid + valid]
     checked = ledger.verify_evidence(verdicts, str(tmp_path))
     assert [v["status"] for v in checked] == ["unverified"] * len(invalid) + ["implemented"] * len(valid)

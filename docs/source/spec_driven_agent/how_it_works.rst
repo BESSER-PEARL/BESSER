@@ -134,8 +134,10 @@ The three phases
    rule then name instead; a missing or unknown stack keeps React. A
    ``backend`` target (API or backend only) stays backend-only. When no target
    was decided, the models decide, never the request's wording: a GUI model
-   (or a frontend in the scaffold) means a frontend. A Django scaffold renders
-   its own pages, so it gets no frontend item. A frontend run also puts "build
+   (or a frontend in the scaffold) means a frontend. A Django scaffold has
+   templates only with a GUI model; without one the item asks for Django
+   templates, views and urls instead of a React app, and the CRUD rule leaves
+   out its single-page-app bullets. A frontend run also puts "build
    the frontend" on the checklist, and Phase 3 reports a blocker if the output
    ends with no frontend files. With no GUI model, the item names the classes that have
    backend routes, says that a narrower UI scope in the request wins, and

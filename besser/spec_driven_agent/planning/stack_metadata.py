@@ -522,18 +522,21 @@ def detect_idiom_stack(routed_stack: str | None) -> str | None:
     return named[0][0] if named else None
 
 
-# Frontend frameworks a routed stack may name. React, the default, is not one of them.
-_FRONTEND_FRAMEWORK_KEYWORDS: tuple[str, ...] = (
-    "vue", "nuxt", "angular", "svelte", "sveltekit", "next.js", "nextjs", "next js", "remix",
-    "solidjs", "ember", "blazor",
+# Frontend frameworks a routed stack may name, by display name; a meta-framework
+# before the library it builds on. React, the default, is not one of them.
+_FRONTEND_FRAMEWORK_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("Next.js", ("next.js", "nextjs", "next js")), ("Nuxt", ("nuxt",)), ("SvelteKit", ("sveltekit",)),
+    ("Svelte", ("svelte",)), ("Vue", ("vue",)), ("Angular", ("angular",)), ("Remix", ("remix",)),
+    ("SolidJS", ("solidjs",)), ("Ember", ("ember",)), ("Blazor", ("blazor",)),
 )
 
 
 def routed_frontend_framework(routed_stack: str | None) -> str:
-    """The routed stack when it names a frontend framework other than React, else "":
+    """The frontend framework other than React the routed stack names, else "":
     an empty, missing or unknown value keeps the React default."""
     stack = (routed_stack or "").strip()
-    return stack if any(_contains_word(stack, name) for name in _FRONTEND_FRAMEWORK_KEYWORDS) else ""
+    return next((name for name, needles in _FRONTEND_FRAMEWORK_KEYWORDS
+                 if any(_contains_word(stack, needle) for needle in needles)), "")
 
 
 def idiom_guidance_section(routed_stack: str | None) -> str:

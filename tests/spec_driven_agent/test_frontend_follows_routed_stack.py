@@ -3,7 +3,7 @@
 Every web_app target was told to build a React/Vite app: the checklist item and
 Rule 15 ignored the routing answer, so a request routed to Vue got a React task
 beside a role line saying "in the stack the user asked for", and a Django
-scaffold, which renders its own pages, was ordered a React app. With no target
+scaffold was ordered a React app instead of its templates. With no target
 decided, an English word list chose whether a frontend was due at all, so the
 same request got a frontend in English and none in German or Spanish; the
 models decide it now. The idiom block came from request words too, not from
@@ -64,13 +64,18 @@ def _rule_15(**kwargs):
     return prompt[start:prompt.index("\n\n", start)]
 
 
-@pytest.mark.parametrize("routed_stack", ["Vue 3 + Pinia", "Angular", "SvelteKit", "Next.js"])
-def test_a_routed_frontend_framework_gets_no_react_text(tmp_path, routed_stack):
+@pytest.mark.parametrize("routed_stack, framework", [
+    ("Vue 3 + Pinia", "Vue"), ("Angular", "Angular"), ("SvelteKit", "SvelteKit"), ("Next.js", "Next.js"),
+    ("Vue.js + Express", "Vue"), ("Spring Boot + Angular", "Angular"),
+])
+def test_a_routed_frontend_framework_gets_no_react_text(tmp_path, routed_stack, framework):
     task, = _frontend_tasks(_orch(tmp_path, routed_stack=routed_stack))
     assert "React" not in task and "vite" not in task
-    assert routed_stack in task
+    # The framework, not the whole stack: no "Spring Boot + Angular frontend".
+    assert task.startswith(f"Create the {framework} frontend ")
+    assert routed_stack == framework or routed_stack not in task
     rule = _rule_15(routed_stack=routed_stack)
-    assert f"For the {routed_stack} frontend" in rule
+    assert f"For the {framework} frontend" in rule
     assert "React" not in rule
 
 
@@ -82,12 +87,26 @@ def test_no_frontend_framework_named_keeps_the_react_guards(tmp_path, routed_sta
     assert "For the React frontend" in rule and REACT_GUARD in rule
 
 
-def test_a_django_scaffold_is_not_ordered_a_react_app(tmp_path):
+def test_a_django_scaffold_without_pages_is_ordered_django_pages_not_a_react_app(tmp_path):
+    # Without a GUI model the Django generator writes models and admin only: the
+    # item and the blocker are the only things that ask for the pages.
     orch = _orch(tmp_path, generator="generate_django")
-    assert not _frontend_tasks(orch)
-    assert not orch._collect_missing_frontend_issue()
+    task, = _frontend_tasks(orch)
+    assert "Django" in task and "template" in task
+    assert "React" not in task and "vite" not in task
+    assert orch._collect_missing_frontend_issue()
+    (tmp_path / "templates").mkdir()
+    (tmp_path / "templates" / "book_list.html").write_text("<table></table>", encoding="utf-8")
+    assert not _frontend_tasks(orch) and not orch._collect_missing_frontend_issue()
+
+
+def test_a_django_crud_rule_carries_no_single_page_app_bullets():
     rule = _rule_15(scaffold_family="django")
     assert "For the Django frontend" in rule and "React" not in rule
+    for spa_only in ("${base}${path}", "raw-JSON textarea", "Create MUST POST to the collection route",
+                     "`package.json` dependencies"):
+        assert spa_only not in rule
+        assert spa_only in _rule_15()
 
 
 SAME_REQUEST = [

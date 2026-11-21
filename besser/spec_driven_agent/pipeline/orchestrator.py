@@ -3992,9 +3992,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 
     def _asks_for_frontend(self) -> bool:
         """The run must author a web frontend: a ``web_app`` target, or, with no target
-        decided, a GUI model. Not on a Django scaffold, which renders its own pages."""
-        if self._scaffold_family() == "django":
-            return False
+        decided, a GUI model."""
         if self.target is not None:
             return self.target.is_web_app
         return self.gui_model is not None
@@ -4023,7 +4021,14 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 
     def _frontend_task_text(self) -> str:
         """The item's text: React and Vite unless the routing answer names another
-        frontend framework (an unknown or missing one keeps React)."""
+        frontend framework (an unknown or missing one keeps React). A Django
+        scaffold without a GUI model has no templates: the item asks for them."""
+        if self._scaffold_family() == "django":
+            return (
+                "Create the Django pages (none exist yet) — write with write_file the "
+                "templates (a base template with a nav, extended by every page), views and "
+                "urls for a home page and, per entity, a list page with a table plus working "
+                f"Create/Edit/Delete forms. {self._FRONTEND_TASK_FILES_CLAUSE}")
         framework = routed_frontend_framework(self._unsupported_stack)
         if not framework:
             return self._FRONTEND_CHECKLIST_TASK

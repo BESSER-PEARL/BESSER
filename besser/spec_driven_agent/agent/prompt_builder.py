@@ -514,6 +514,33 @@ def build_system_prompt(
       `plugins: [react()]` from `@vitejs/plugin-react`. Every page then dies
       with "React is not defined".
 """ if frontend == "React" else ""
+    # Server-rendered Django pages have no package.json, JSON API client or URL joining.
+    spa = frontend != "Django"
+    manifest_bullet = """\
+    - Internal consistency: `package.json` dependencies match the imports, each
+      with a concrete semver range (`"^18.3.1"`, never `"latest"` or `"*"`); the
+      dev/build scripts actually run the app.
+""" if spa else ""
+    typed_form_bullet = """\
+    - Create/Edit forms follow the create-request schema: one control per
+      writable field, typed by the field - never every field as an untyped text
+      box, nor a raw-JSON textarea as the form: the backend answers 422 to text
+      in a number, date, email or id field, so no record could ever be created
+      from the UI. int/float -> `<input type="number">`
+      sent as a number; bool -> checkbox; date -> `type="date"`; datetime ->
+      `type="datetime-local"`; email -> `type="email"`; enum -> a `<select>` of
+      its literals; a reference to another entity -> a `<select>` filled from
+      that entity's list route, sending the chosen id.
+""" if spa else ""
+    shared_handler_bullet = """\
+    - Create and Edit sharing one handler keyed on a placeholder (`?edit=new`,
+      an empty id): Create MUST POST to the collection route; only an existing
+      record's id may reach PUT.
+""" if spa else ""
+    url_join_bullet = """\
+    - URLs joined without exactly one "/": every API path starts with "/", so
+      `${base}${path}` is a valid URL (a missing slash fails before any request).
+""" if spa else ""
     crud_rule = f"""\
 15. **A domain-model app needs a COMPLETE, NAVIGABLE CRUD frontend** — unless
     GUI screens specify the UI, or the request names its screens: then build
@@ -528,34 +555,17 @@ def build_system_prompt(
       list. A page that can only read is half-built (rule 12).
     - Loading, empty, and error states on every data fetch.
 {stylesheet_bullet}
-    - Internal consistency: `package.json` dependencies match the imports, each
-      with a concrete semver range (`"^18.3.1"`, never `"latest"` or `"*"`); the
-      dev/build scripts actually run the app.
-    - Request/form consistency: when a field becomes server-owned, remove its
+{manifest_bullet}    - Request/form consistency: when a field becomes server-owned, remove its
       writable controls and client validation too, while keeping its read-only
       display. Update shared entity/form metadata, not only a page's payload.
-    - Create/Edit forms follow the create-request schema: one control per
-      writable field, typed by the field - never every field as an untyped text
-      box, nor a raw-JSON textarea as the form: the backend answers 422 to text
-      in a number, date, email or id field, so no record could ever be created
-      from the UI. int/float -> `<input type="number">`
-      sent as a number; bool -> checkbox; date -> `type="date"`; datetime ->
-      `type="datetime-local"`; email -> `type="email"`; enum -> a `<select>` of
-      its literals; a reference to another entity -> a `<select>` filled from
-      that entity's list route, sending the chosen id.
-    AVOID these exact dead-frontend failures (all are bugs, not shortcuts):
+{typed_form_bullet}    AVOID these exact dead-frontend failures (all are bugs, not shortcuts):
     - An empty or no-op form submit handler (an onSubmit that does nothing).
       A form's submit MUST call the backend (create -> POST, edit -> PUT)
       through the API layer, then refresh the list or navigate back. A form
       that collects input but submits nowhere is worse than no form.
-    - Create and Edit sharing one handler keyed on a placeholder (`?edit=new`,
-      an empty id): Create MUST POST to the collection route; only an existing
-      record's id may reach PUT.
-    - A "New"/"Create" link to a path the router does not declare: it renders
+{shared_handler_bullet}    - A "New"/"Create" link to a path the router does not declare: it renders
       blank. Put the form on the list page or declare that route.
-    - URLs joined without exactly one "/": every API path starts with "/", so
-      `${{base}}${{path}}` is a valid URL (a missing slash fails before any request).
-{react_bullet}""" if needs_frontend else ""
+{url_join_bullet}{react_bullet}""" if needs_frontend else ""
     if builds_other:
         crud_rule = _other_target_rule(target)
     if has_scaffold:

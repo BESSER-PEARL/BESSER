@@ -16,7 +16,7 @@ from besser.BUML.metamodel.structural import Class, DomainModel, PrimitiveDataTy
 from besser.spec_driven_agent.planning.fix_target import parse_reported_target
 from besser.spec_driven_agent.planning.requirements_ledger import source_hashes
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator, ValidationIssue
-from besser.spec_driven_agent.validation.issues import is_completion_issue, is_not_confirmed
+from besser.spec_driven_agent.validation.issues import _classify_issue, is_completion_issue, is_not_confirmed
 
 
 class _Usage:
@@ -180,8 +180,8 @@ def test_a_failure_its_check_could_not_reach_before_is_no_regression(tmp_path):
 
 def _opening(orch, monkeypatch, execution, frontend=()):
     """What validate_app's checks find on the tree Phase 2 starts from."""
-    monkeypatch.setattr(orch, "_collect_execution_issues", lambda: list(execution))
-    monkeypatch.setattr(orch, "_static_frontend_issues", lambda: list(frontend))
+    monkeypatch.setattr(orch, "_verify_workspace",
+                        lambda sweep=False: [_classify_issue(message) for message in (*execution, *frontend)])
 
 
 def test_the_opening_issues_show_a_forwarded_defect_once(tmp_path, monkeypatch):

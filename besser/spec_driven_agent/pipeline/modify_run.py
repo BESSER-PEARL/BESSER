@@ -355,7 +355,7 @@ class ModifyRunMixin:
         the seed recipe's findings are the previous version's (``_seed_baseline``), and these
         checks' too unless this run already changed the model or the tree.
         """
-        opening = [*self._collect_execution_issues(), *self._static_frontend_issues()]
+        opening = [issue.message for issue in self._verify_workspace()]
         if self._seed_baseline is None and self._resume_messages is None:
             change = getattr(self, "_model_change", None)
             unchanged = (not ((change is not None and change.changes) or self._model_sync_classes)

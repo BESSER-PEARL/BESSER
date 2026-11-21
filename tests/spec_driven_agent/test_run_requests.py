@@ -29,6 +29,7 @@ import json
 import pytest
 
 import besser.spec_driven_agent.agent.compaction as compaction
+import besser.spec_driven_agent.pipeline.orchestrator as orchestrator_module
 from besser.spec_driven_agent.pipeline.constants import _PHASE3_BUDGET_SHARE
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 from besser.spec_driven_agent.state.checkpoint import load_checkpoint
@@ -128,6 +129,9 @@ def shelf_script() -> list:
 @pytest.fixture(autouse=True)
 def _compact_mid_run(monkeypatch):
     monkeypatch.setattr(compaction, "_OPERATOR_CAP", COMPACT_AT_TOKENS)
+    # Eviction would keep this history under the threshold; its own run-level
+    # test is in test_history_eviction_batches.py.
+    monkeypatch.setattr(orchestrator_module, "_HISTORY_EVICTION_ENABLED", False)
 
 
 @pytest.fixture(autouse=True)

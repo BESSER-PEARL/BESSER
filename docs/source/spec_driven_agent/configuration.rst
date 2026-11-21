@@ -244,21 +244,28 @@ Feature flags
   exactly ``1``, so ``0`` or any other value disables it) -- Add a
   rolling prompt-cache breakpoint on the growing conversation, so the prior
   prefix is served from cache instead of re-billed each turn. Anthropic path
-  only — the OpenAI-compatible path caches by prefix automatically.
+  only. On the OpenAI-compatible path the provider caches a repeated prefix
+  on its own, best effort: a gateway may route a turn to a server without
+  it. Requests to OpenAI's own API also carry a ``prompt_cache_key`` unique
+  to the run, which keeps its turns on the same cache; other endpoints get
+  none, since a strict gateway may refuse an unknown field.
 
 Context and token budgets
 -------------------------
 
 - ``BESSER_LLM_COMPACT_THRESHOLD`` (``80000``) -- Estimated-token threshold at
   which the Phase 2 conversation is compacted, for models whose context
-  window is unknown. Models with a known window (from the model catalogs of
-  the free and sponsored tiers, or the built-in table of hosted frontier
-  models) get an
-  adaptive threshold derived from that window instead: 80% of what is left
-  of the window after a reserve for the reply (the run's output-token
-  ceiling, at least 16,000). Setting this variable
-  also caps the adaptive value, so lowering it to cut cost applies to every
-  model, not only unknown ones. Floored at 8,000.
+  window is unknown. Models in the built-in table of hosted frontier models
+  get an adaptive threshold derived from their window instead: 80% of what
+  is left of the window after a reserve for the reply (the run's
+  output-token ceiling, at least 16,000). A window from the model catalogs
+  of the free and sponsored tiers only lowers the threshold (a small served
+  window), never raises it. Setting this variable also caps the adaptive
+  value, so lowering it to cut cost applies to every model, not only unknown
+  ones. Floored at 8,000. ``docker-compose.prod.yml`` carries it commented out:
+  set on the generation worker it caps every model that worker runs, a user's
+  own key included. The resolved value is the ``compact_threshold`` of the run
+  log's Phase 2 ``phase_enter`` record.
 - ``BESSER_LLM_MAX_COMPACT_THRESHOLD`` (``200000``) -- Ceiling on the adaptive
   threshold for models with a known window, so a million-token model does
   not send prompts of that size every turn. A blank value is 200000. Models
@@ -272,9 +279,28 @@ Context and token budgets
   (``python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')"`` with
   the variable set); without it tokens are estimated as characters/4, which
   compacts earlier than needed, and a warning is logged.
-- ``BESSER_LLM_HISTORY_EVICTION`` (**off**; exactly ``1`` enables it) -- Opt into the lossless
-  alternative to compaction: large file bodies in older messages are replaced
-  by stubs pointing back to disk, instead of whole messages being summarised.
+- ``BESSER_LLM_HISTORY_EVICTION`` (**off**; any value but ``0``, ``false`` or ``no``
+  turns it on) --
+  Replace stale file bodies in older messages by stubs pointing back to disk,
+  so they are not sent again on every turn. It is off by default because it
+  does not lower cost where the provider caches prompts: replaying 13 recorded
+  runs, it sent 7.5% fewer input characters and avoided every compaction, but
+  each batch re-bills the rest of the prompt, for about 2% more cost. Turn it
+  on for an endpoint that does not cache, or to keep requests small. Stale is a ``read_file`` result
+  whose lines a later read shows again or whose file a later ``write_file``
+  or ``delete_file`` replaced; a read of a file edited since, once eight
+  turns old; and an applied edit's body once eight turns old, or as soon as a
+  later whole-file read or ``write_file`` of that file supersedes it. The
+  newest read of lines of a file not edited since is
+  kept however old, so the model can still quote it and edit with its
+  ``read_id``. Each eviction rewrites the cached prompt prefix, so stubs are
+  applied in batches: nothing until the stale bodies are a third of the
+  history (and at least 20,000 characters), then all of them at once. At the
+  compaction threshold every stale body outside the last turns is stubbed,
+  however young, before a summary is tried; the newest read of a file not
+  edited since is still kept. A file whose last whole copy was stubbed must
+  be read again before ``write_file`` may rewrite it. Each eviction is an
+  ``eviction`` record in the run log.
 - ``BESSER_LLM_FROM_SCRATCH_MAX_TOKENS`` (``32768``) -- Output-token ceiling
   for from-scratch generation (no Phase-1 scaffold to build on). Raising it
   costs nothing unless the extra output is actually produced; the truncation

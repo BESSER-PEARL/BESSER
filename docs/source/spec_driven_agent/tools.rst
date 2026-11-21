@@ -40,7 +40,9 @@ them for the requested path.
 
 ``write_file`` over an existing file requires the whole file to have been read
 (or written) this run; a rewrite from memory would drop scaffold code, and a
-landed ``modify_file`` does not count as a read. Like the other
+landed ``modify_file`` does not count as a read. Once history eviction has
+stubbed the last whole copy of a file in the conversation, it must be read
+again before a ``write_file``. Like the other
 editors, it refuses an edit that would make the ORM or Pydantic module
 (``sql_alchemy.py``, ``pydantic_classes.py``) fail to import. Only the
 ``N| `` line numbering that ``read_file`` displays (``7| code``, or the padded
@@ -140,6 +142,10 @@ conversation, returns a short ``unchanged`` stub naming the still-valid
 ``read_id`` and line range instead of the text. Repeating the call right after
 a stub returns the text. Compaction, history eviction, a resume and each
 Phase 3 fix round (a fresh conversation) reset this, so the next read is full.
+From the third read of one file, a read of a window under 40 lines, or of a
+window that continues the previous read of that file, carries a ``hint``: one
+``read_file`` without ``limit`` returns up to 60,000 characters from
+``offset``.
 
 Every tool result reaches the model as JSON with non-ASCII text kept literal
 (``é``, not ``\u00e9``). ``list_files`` returns one ``<path> <size>`` line per

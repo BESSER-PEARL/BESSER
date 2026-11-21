@@ -227,20 +227,19 @@ def effective_threshold(
 ) -> int:
     """Resolve the compaction threshold for ``model``.
 
-    Most trusted source first:
-
     1. ``_SMALL_CONTEXT_WINDOWS`` - measured on the deployment we call.
        Always wins, even over a larger advertised figure: ``window -
        reserve``, never above ``threshold``.
-    2. The keyless tier's catalog ``context_length`` for the exact model id.
-    3. ``_KNOWN_CONTEXT_WINDOWS`` by family substring.
-    4. The unchanged ``threshold`` for anything else (unknown names are
-       assumed frontier-sized - wrongly clamping a big model would compact
-       constantly).
+    2. ``_KNOWN_CONTEXT_WINDOWS`` by family substring, else the unchanged
+       ``threshold`` (unknown names are assumed frontier-sized - wrongly
+       clamping a big model would compact constantly).
+    3. The tiers' catalog ``context_length`` for the exact model id may
+       lower that result, never raise it: a window is what the provider
+       serves, not a budget, and a raise multiplies every turn's prompt.
 
-    An advertised window (2, 3) yields ``(window - reserve) * fraction``,
-    capped at ``MAX_COMPACT_THRESHOLD`` and, when BESSER_LLM_COMPACT_THRESHOLD
-    is set explicitly, at that value too.
+    A window yields ``(window - reserve) * fraction``, capped at
+    ``MAX_COMPACT_THRESHOLD`` and, when BESSER_LLM_COMPACT_THRESHOLD is set
+    explicitly, at that value too.
 
     ``reserve`` should be the live ``client.max_tokens`` when the caller
     has raised it above the default, so the headroom actually matches the
@@ -260,20 +259,19 @@ def effective_threshold(
         for marker, window in _SMALL_CONTEXT_WINDOWS:
             if marker in low:
                 return _guard_floor(model, min(threshold, window - reserve), window, reserve)
-    window = _advertised_window(model)
-    if window is None:
-        for marker, known in _KNOWN_CONTEXT_WINDOWS:
-            if marker in low:
-                window = known
-                break
-    if window:
-        effective = min(
-            MAX_COMPACT_THRESHOLD, int((window - reserve) * _USABLE_WINDOW_FRACTION)
-        )
-        if _OPERATOR_CAP is not None:
-            effective = min(effective, _OPERATOR_CAP)
-        return _guard_floor(model, effective, window, reserve)
-    return threshold
+    known = next((window for marker, window in _KNOWN_CONTEXT_WINDOWS if marker in low), None)
+    advertised = _advertised_window(model)
+    if not (known or advertised):
+        return threshold
+    effective = threshold if not known else _from_window(known, reserve)
+    if advertised:
+        effective = min(effective, _from_window(advertised, reserve))
+    return _guard_floor(model, effective, min(w for w in (known, advertised) if w), reserve)
+
+
+def _from_window(window: int, reserve: int) -> int:
+    effective = min(MAX_COMPACT_THRESHOLD, int((window - reserve) * _USABLE_WINDOW_FRACTION))
+    return effective if _OPERATOR_CAP is None else min(effective, _OPERATOR_CAP)
 
 
 def _guard_floor(model: str, effective: int, window: int, reserve: int) -> int:

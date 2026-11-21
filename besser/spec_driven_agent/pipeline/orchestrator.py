@@ -2291,20 +2291,23 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 blockers = [issue for issue in execution_report["issues"]
                             if _classify_issue(issue).severity == "blocker"]
                 report_state = (self._workspace_revision(), tuple(blockers))
-                if execution_report["blocker_count"] and report_state == shown_blocker_report:
-                    self._phase2_stop_reason = "validation_required"
-                    self._phase2_stop_detail = "end_turn blocker gate"
-                    self._phase2_exited_cleanly = False
-                    break
                 open_items = self.executor.open_tasks()
                 _has_verified_open = any(t.get("verify") for t in open_items)
                 _nudge_cap = (self._MAX_TASK_NUDGES + 2 if _has_verified_open
                               else self._MAX_TASK_NUDGES)
+                # Blockers do not shorten the nudges a verified open item gets.
+                verified_nudge = _has_verified_open and self._end_turn_task_nudges < _nudge_cap
+                if (execution_report["blocker_count"] and report_state == shown_blocker_report
+                        and not verified_nudge):
+                    self._phase2_stop_reason = "validation_required"
+                    self._phase2_stop_detail = "end_turn blocker gate"
+                    self._phase2_exited_cleanly = False
+                    break
                 report_blockers = bool(execution_report["blocker_count"])
                 if report_blockers or (open_items and self._end_turn_task_nudges < _nudge_cap):
                     if report_blockers:
                         shown_blocker_report = report_state
-                    else:
+                    if not report_blockers or verified_nudge:
                         self._end_turn_task_nudges += 1
                     logger.info(
                         "end_turn with %d open checklist item(s), %d blocker(s) — nudge %d/%d",

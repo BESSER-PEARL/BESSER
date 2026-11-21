@@ -128,12 +128,16 @@ The three phases
 
    A ``web_app`` target (an app, web app, UI, website, dashboard or portal
    with no other platform named) gets a frontend even without a GUI model:
-   the FastAPI scaffold, plus a React frontend the LLM writes in Phase 2. An
-   explicitly headless request (API or backend only, a REST API, no UI) stays
-   backend-only, and in a modify run a bare "app" names the existing project
-   rather than asking for a UI. Such a request also puts "build the frontend"
-   on the checklist, and Phase 3 reports a blocker if the output ends with no
-   frontend files. With no GUI model, the item names the classes that have
+   the FastAPI scaffold, plus a frontend the LLM writes in Phase 2: React and
+   Vite, unless the routing answer's stack names another frontend framework
+   (Vue, Angular, Svelte, Next.js ...), which the checklist item and the CRUD
+   rule then name instead; a missing or unknown stack keeps React. A
+   ``backend`` target (API or backend only) stays backend-only. When no target
+   was decided, the models decide, never the request's wording: a GUI model
+   (or a frontend in the scaffold) means a frontend. A Django scaffold renders
+   its own pages, so it gets no frontend item. A frontend run also puts "build
+   the frontend" on the checklist, and Phase 3 reports a blocker if the output
+   ends with no frontend files. With no GUI model, the item names the classes that have
    backend routes, says that a narrower UI scope in the request wins, and
    closes only once a routed app with at least one entity screen exists. A new project with both a class model and an agent model
    gets a checklist item to connect them (with a GUI model, only when a
@@ -146,7 +150,9 @@ The three phases
    same thing as a judged requirement (see :doc:`validation`), in any language
    and however the agent reaches the data. The
    system prompt adapts to the run: the rule that asks for a complete CRUD
-   frontend applies only when the run has or needs a frontend, and when shell
+   frontend applies only when the run has or needs a frontend; an idiom block
+   appears only for a routed stack no generator builds (a generated scaffold
+   is the convention); and when shell
    tools are on and a FastAPI backend is present it gains a runtime
    verification runbook (see :ref:`spec-driven-shell-tools`). For a scaffold
    from the FastAPI backend generator, the endpoint manifest in the system

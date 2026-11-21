@@ -12,6 +12,7 @@ import types
 import pytest
 
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
+from besser.spec_driven_agent.planning.target import WEB_APP, Target
 from besser.spec_driven_agent.providers.llm_client import UsageTracker
 
 WEB_APP_REQUEST = "Build a hotel booking web app with a frontend."
@@ -36,6 +37,7 @@ def orch(tmp_path, simple_library_book_model):
                                    output_dir=str(tmp_path),
                                    enable_tracing=False, enable_checkpointing=False)
     orchestrator._instructions = WEB_APP_REQUEST
+    orchestrator.target = Target(WEB_APP, "web app", True)
     _write(tmp_path, "backend/main_api.py", "from fastapi import FastAPI\napp = FastAPI()\n")
     return orchestrator
 

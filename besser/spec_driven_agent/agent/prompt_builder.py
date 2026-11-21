@@ -27,7 +27,7 @@ from besser.spec_driven_agent.model_serializer import (
 )
 from besser.spec_driven_agent.agent.runbook import runbook_section
 from besser.spec_driven_agent.planning.model_rules import is_dropped_by_model_change
-from besser.spec_driven_agent.planning.stack_metadata import idiom_guidance_section
+from besser.spec_driven_agent.planning.stack_metadata import idiom_guidance_section, routed_frontend_framework
 from besser.spec_driven_agent.providers.llm_client import SYSTEM_CACHE_SPLIT
 from besser.utilities.workspace_fs import walk_plain
 from besser.spec_driven_agent.planning.target import OTHER, Target
@@ -36,36 +36,9 @@ logger = logging.getLogger(__name__)
 
 
 
-# A run needs a frontend when the scaffold has one or the user asks for one.
-# ``requests_frontend`` is also the orchestrator's frontend gate.
+# Without a decided target a run needs a frontend when the scaffold has one.
 _FRONTEND_FILE_RE = re.compile(r"\.(?:jsx?|tsx?|html|vue|svelte)\b|package\.json")
-_FRONTEND_ASK_RE = re.compile(
-    r"\b(web[ -]?app(?:lication)?s?|front[ -]?end|web ?site|"
-    r"web ?interface|single[ -]page app(?:lication)?s?|ui|"
-    r"user interface|dashboard|portal)\b")
-# A bare "app" is a UI ask too ("I want a todo app") unless the request
-# is headless or names a backend kind of app.
-_APP_ASK_RE = re.compile(r"\bapp(?:lication)?s?\b")
-_BACKEND_APP_RE = re.compile(
-    r"\brest(?:ful)? api\b|\b(?:api|fastapi|backend|back[ -]end|server|cli|"
-    r"command[ -]line|console|terminal)[ -]app(?:lication)?s?\b")
-_NO_FRONTEND_RE = re.compile(
-    r"\b(?:api|backend|back[ -]end|server)[ -]only\b|"
-    r"\b(?:only|just) (?:an? |the )?(?:rest(?:ful)? )?(?:api|backend)\b|\bheadless\b|"
-    r"\b(?:no|without(?: an?| the)?) (?:frontend|front[ -]end|ui|gui|user interface)\b")
 
-
-def requests_frontend(instructions: str | None, *, bare_app: bool = True) -> bool:
-    """True when the request asks for something users interact with.
-
-    ``bare_app=False`` for modify runs, where "the app" names the existing project.
-    """
-    low = (instructions or "").lower()
-    if _NO_FRONTEND_RE.search(low):
-        return False
-    if _FRONTEND_ASK_RE.search(low):
-        return True
-    return bare_app and bool(_APP_ASK_RE.search(low)) and not _BACKEND_APP_RE.search(low)
 
 def _other_target_rule(target: Target) -> str:
     """Rule 15 for a target that is not a web app (planning/target.py)."""
@@ -116,6 +89,7 @@ def build_system_prompt(
     target: Target | None = None,
     previous_target: Target | None = None,
     routed_stack: str | None = None,
+    scaffold_family: str | None = None,
 ) -> str:
     """
     Build the system prompt with all available models, inventory, the user's
@@ -168,7 +142,10 @@ def build_system_prompt(
         previous_target: The seed's target when a modify run builds another
             kind of software; it lifts the keep-the-stack constraint.
         routed_stack: The routing answer's ``unsupported_stack``, ``None``
-            without one; picks the idiom block over the request's keywords.
+            without one; picks the idiom block and a frontend framework other
+            than React.
+        scaffold_family: The generated scaffold's family (``"fastapi"``,
+            ``"django"``), ``None`` without one.
 
     Returns:
         The full system prompt string.
@@ -444,11 +421,11 @@ def build_system_prompt(
         }.get(primary_kind, f"Primary model kind: {primary_kind}")
         primary_banner = f"\n> Primary input: {friendly}\n"
 
-    # Stack-specific idiom reminders, keyed on the request's wording (per run).
+    # Stack-specific idiom reminders, keyed on the routed stack (per run).
     # See stack_metadata.idiom_guidance_section for the detection + content.
     # The idiom blocks assume a web / server project.
     builds_other = target is not None and target.kind == OTHER
-    idiom_section = "" if builds_other else idiom_guidance_section(instructions, routed_stack)
+    idiom_section = "" if builds_other else idiom_guidance_section(routed_stack)
 
     # The HARD-CONSTRAINTS header below is deliberately forceful: weaker
     # models (e.g. the free qwen tier) ignore softer wording and delete the
@@ -522,20 +499,27 @@ def build_system_prompt(
             "    - One shared stylesheet applied across the whole app (cards or clean tables,\n"
             "      the look Rule 13 aims for), not unstyled browser-default HTML."
         )
-    # Rule 15 orders a React CRUD frontend; a backend-only run (no GUI, no
-    # frontend in the scaffold, none asked for) must not be told to build one.
+    # Rule 15 orders a CRUD frontend; a backend-only run (no GUI, no frontend in
+    # the scaffold, no web_app target) must not be told to build one.
     if target is not None:
         needs_frontend = target.is_web_app
     else:
         needs_frontend = (
             gui_model is not None or bool(design_system)
             or bool(_FRONTEND_FILE_RE.search(f"{inventory}\n{scaffold_snapshot}"))
-            or requests_frontend(instructions, bare_app=not modify_mode)
         )
+    # React unless the routed stack names another frontend framework or a Django
+    # scaffold renders the pages.
+    frontend = "Django" if scaffold_family == "django" else routed_frontend_framework(routed_stack) or "React"
+    react_bullet = """\
+    - With Vite and JSX files that do not import React: `vite.config` without
+      `plugins: [react()]` from `@vitejs/plugin-react`. Every page then dies
+      with "React is not defined".
+""" if frontend == "React" else ""
     crud_rule = f"""\
 15. **A domain-model app needs a COMPLETE, NAVIGABLE CRUD frontend** — unless
     the UI is already specified by GUI screens. Read-only lists are NOT
-    enough. For the React frontend, build:
+    enough. For the {frontend} frontend, build:
     - A home route (`"/"`, a landing page) AND a nav bar/header (links or a menu)
       present on every screen, linking every entity's list and its "new" page,
       wired to the routes. The app must NEVER render blank on load: a
@@ -573,10 +557,7 @@ def build_system_prompt(
       blank. Put the form on the list page or declare that route.
     - URLs joined without exactly one "/": every API path starts with "/", so
       `${{base}}${{path}}` is a valid URL (a missing slash fails before any request).
-    - With Vite and JSX files that do not import React: `vite.config` without
-      `plugins: [react()]` from `@vitejs/plugin-react`. Every page then dies
-      with "React is not defined".
-""" if needs_frontend else ""
+{react_bullet}""" if needs_frontend else ""
     if builds_other:
         crud_rule = _other_target_rule(target)
     if has_scaffold:

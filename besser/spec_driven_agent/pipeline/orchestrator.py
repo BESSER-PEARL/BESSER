@@ -108,9 +108,7 @@ from besser.spec_driven_agent.agent.prompt_builder import (
     build_inventory,
     build_endpoint_manifest,
     mutation_coverage_applies,
-    requests_frontend,
     ROUTER_TEMPLATE_GENERATORS,
-    _FRONTEND_ASK_RE,
 )
 from besser.spec_driven_agent.planning.agent_wiring import (
     AGENT_DOMAIN_TASK, agent_data_requirement, agent_left_out_note, gui_uses_agent,
@@ -138,6 +136,7 @@ from besser.spec_driven_agent.planning.stack_metadata import (
     detect_routed_stack,
     detect_stack,
     pre_generate_metadata,
+    routed_frontend_framework,
     stack_label,
 )
 from besser.spec_driven_agent.agent.runbook import (
@@ -3991,19 +3990,14 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             f"Remove the rewrite and extend the existing {family} app."
         ]
 
-    # "web application" must match: a trailing \b after "app" cannot match
-    # when the word continues into "lication", and that is the most natural
-    # phrasing of the request. Every alternative here has to tolerate the
-    # word being spelled out.
-    # Deliberately NOT included: "spa" — a hotel spec has one.
-    _WEBAPP_ASK_RE = _FRONTEND_ASK_RE
-
     def _asks_for_frontend(self) -> bool:
-        """The run must ship a web frontend: a ``web_app`` target, or, with no
-        target decided, web-app vocabulary or a bare "app" on create."""
+        """The run must author a web frontend: a ``web_app`` target, or, with no target
+        decided, a GUI model. Not on a Django scaffold, which renders its own pages."""
+        if self._scaffold_family() == "django":
+            return False
         if self.target is not None:
             return self.target.is_web_app
-        return requests_frontend(self._instructions, bare_app=not self._modify_mode)
+        return self.gui_model is not None
 
     def _has_frontend_files(self) -> bool:
         for root, files in walk_app_tree(self.output_dir):
@@ -4027,8 +4021,18 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     )
     _FRONTEND_TASK_FILES_CLAUSE = "This task cannot be marked done until frontend files exist on disk."
 
-    # The text both checklist variants start with; a checkpoint is matched on it.
-    _FRONTEND_TASK_PREFIX = _FRONTEND_CHECKLIST_TASK.split(_FRONTEND_TASK_FILES_CLAUSE)[0].rstrip()
+    def _frontend_task_text(self) -> str:
+        """The item's text: React and Vite unless the routing answer names another
+        frontend framework (an unknown or missing one keeps React)."""
+        framework = routed_frontend_framework(self._unsupported_stack)
+        if not framework:
+            return self._FRONTEND_CHECKLIST_TASK
+        return (
+            f"Create the {framework} frontend (none exists yet) — write its files with "
+            f"write_file: the project manifest and entry point {framework} uses, an app "
+            "shell with a router (a home route + nav), an API module (fetch helpers for "
+            "the backend routes), and per entity a list page with a table plus working "
+            f"Create/Edit/Delete wired to the API. {self._FRONTEND_TASK_FILES_CLAUSE}")
 
     def _routed_entity_pages(self) -> dict[str, bool]:
         """{class: has a frontend page} for each model class with a backend route
@@ -4049,8 +4053,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         file closes it."""
         routed = list(self._routed_entity_pages()) if self.gui_model is None and self.domain_model else []
         if not routed:
-            return {"text": self._FRONTEND_CHECKLIST_TASK, "verify": self._has_frontend_files}
-        text = self._FRONTEND_CHECKLIST_TASK.replace(self._FRONTEND_TASK_FILES_CLAUSE, (
+            return {"text": self._frontend_task_text(), "verify": self._has_frontend_files}
+        text = self._frontend_task_text().replace(self._FRONTEND_TASK_FILES_CLAUSE, (
             f"Build a screen for each class with backend routes ({', '.join(routed)}) unless the request "
             "scopes the UI to fewer screens, in which case the request wins."))
         return {"text": text, "verify": self._frontend_has_entity_screen}
@@ -4066,8 +4070,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         if not self._asks_for_frontend():
             return
         verify = self._frontend_checklist_task()["verify"]
+        # The text both variants start with: the routed classes follow it.
+        prefix = self._frontend_task_text().split(self._FRONTEND_TASK_FILES_CLAUSE)[0].rstrip()
         for task in getattr(self.executor, "_tasks", []):
-            if task.get("verify") is None and task["text"].startswith(self._FRONTEND_TASK_PREFIX):
+            if task.get("verify") is None and task["text"].startswith(prefix):
                 task["verify"] = verify
 
     def _frontend_has_entity_screen(self) -> bool:
@@ -5425,6 +5431,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             target=self.target,
             previous_target=self._previous_target,
             routed_stack=self._unsupported_stack if self._routed else None,
+            scaffold_family=self._scaffold_family(),
             # Without both, the runtime-verification runbook never renders.
             allow_shell=self.allow_shell_tools,
             output_dir=self.output_dir,

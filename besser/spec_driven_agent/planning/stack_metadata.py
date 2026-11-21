@@ -400,19 +400,11 @@ def supported_stacks() -> Iterable[str]:
 # entities reused as request bodies instead of dedicated DTOs.
 #
 # This section adds a SHORT, targeted "idiomatic conventions" block to the
-# system prompt when the instructions name a recognisable stack. It's
-# guidance, not a spec: a handful of bullets, not a style guide -- long
-# enough to redirect the model's defaults, short enough not to drown out
-# the Rules above it for requests where it doesn't apply.
-#
-# Detection here is deliberately independent of ``detect_stack`` above:
-# that function's Python-family early-out exists to protect Phase 0.5
-# (don't pre-write a tsconfig.json for a FastAPI request) -- the opposite
-# of what we want here, since Flask/FastAPI are exactly two of the stacks
-# this guidance targets. It also isn't gated on "no deterministic
-# generator ran": the Phase 2 LLM writes substantial code on top of the
-# FastAPI/Django scaffold too (auth, business endpoints, ...), and that
-# code benefits from the same reminders the from-scratch stacks get.
+# system prompt when the routing answer names a stack no generator builds
+# (``unsupported_stack``). It's guidance, not a spec: a handful of bullets,
+# not a style guide -- long enough to redirect the model's defaults, short
+# enough not to drown out the Rules above it. A run on a generated scaffold
+# gets none: the scaffold's code is the convention to follow.
 
 _IDIOM_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     # Spring Boot conventions apply whether the request says Java or Kotlin.
@@ -424,10 +416,8 @@ _IDIOM_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("python_web", ("flask", "fastapi", "fast api")),
 )
 
-# Stacks without a dedicated idiom block above, but common enough in
-# free-form requests to warrant the generic fallback rather than silence.
-# Limited to stacks the LLM writes largely from scratch (no BESSER
-# deterministic generator already imposing structure).
+# Stacks without a dedicated idiom block above, but common enough as routed
+# stacks to warrant the generic fallback rather than silence.
 _GENERIC_IDIOM_KEYWORDS: tuple[str, ...] = (
     "next.js", "nextjs", "next js", "express", "nestjs", "django",
     "laravel", "rails", "golang", "angular", "vue", "svelte", "nuxt",
@@ -514,33 +504,40 @@ def _named_idioms(text: str) -> list[tuple[str, str]]:
     return named
 
 
-def detect_idiom_stack(instructions: str, routed_stack: str | None = None) -> str | None:
-    """Identify which idiom block (if any) applies to ``instructions``.
+def detect_idiom_stack(routed_stack: str | None) -> str | None:
+    """Identify which idiom block (if any) applies to the routed stack.
 
     Returns one of ``"spring_boot"``, ``"python_web"``, ``"rust_axum"``,
-    ``"generic"``, or ``None`` when no recognisable stack is named.
+    ``"generic"``, or ``None``.
 
-    ``routed_stack`` is the routing answer's ``unsupported_stack`` ("" for a
-    stack BESSER generates), or ``None`` when no routing answer exists. With
-    one, a keyword counts only when it names a Python stack or the routed
-    stack: "rust-proof paint" or "a model rocket club" is the domain.
-
-    See the module comment above ``_IDIOM_KEYWORDS`` for why this is a
-    separate detector from ``detect_stack`` rather than a reuse of it.
+    ``routed_stack`` is the routing answer's ``unsupported_stack``: "" for a
+    stack BESSER generates and ``None`` without a routing answer give no block.
+    The request's own words never pick one.
     """
-    named = _named_idioms(instructions)
-    if routed_stack is None:
-        return named[0][0] if named else None
-    routed = (["rust_axum"] if _routed_name_is_rust(routed_stack)
-              else [idiom_id for idiom_id, _ in _named_idioms(routed_stack)])
-    for idiom_id, needle in named:
-        if needle in _PYTHON_STACK_KEYWORDS or idiom_id in routed:
-            return idiom_id
-    return routed[0] if routed else None
+    if not routed_stack or not routed_stack.strip():
+        return None
+    if _routed_name_is_rust(routed_stack):
+        return "rust_axum"
+    named = _named_idioms(routed_stack)
+    return named[0][0] if named else None
 
 
-def idiom_guidance_section(instructions: str, routed_stack: str | None = None) -> str:
-    """Render the "idiomatic conventions" prompt block for ``instructions``.
+# Frontend frameworks a routed stack may name. React, the default, is not one of them.
+_FRONTEND_FRAMEWORK_KEYWORDS: tuple[str, ...] = (
+    "vue", "nuxt", "angular", "svelte", "sveltekit", "next.js", "nextjs", "next js", "remix",
+    "solidjs", "ember", "blazor",
+)
+
+
+def routed_frontend_framework(routed_stack: str | None) -> str:
+    """The routed stack when it names a frontend framework other than React, else "":
+    an empty, missing or unknown value keeps the React default."""
+    stack = (routed_stack or "").strip()
+    return stack if any(_contains_word(stack, name) for name in _FRONTEND_FRAMEWORK_KEYWORDS) else ""
+
+
+def idiom_guidance_section(routed_stack: str | None) -> str:
+    """Render the "idiomatic conventions" prompt block for the routed stack.
 
     ``routed_stack`` as in :func:`detect_idiom_stack`.
 
@@ -550,7 +547,7 @@ def idiom_guidance_section(instructions: str, routed_stack: str | None = None) -
     ``##`` sections in the caller's prompt template; returns "" (no
     newlines at all) when nothing was detected so it's a true no-op.
     """
-    idiom_id = detect_idiom_stack(instructions, routed_stack)
+    idiom_id = detect_idiom_stack(routed_stack)
     if idiom_id is None:
         return ""
 

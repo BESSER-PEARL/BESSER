@@ -16,6 +16,7 @@ from besser.BUML.metamodel.structural import (
 )
 import besser.spec_driven_agent.pipeline.orchestrator as orchestrator_module
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
+from besser.spec_driven_agent.planning.target import WEB_APP, Target
 from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
 
 
@@ -314,6 +315,7 @@ def test_webapp_ask_without_frontend_seeds_deterministic_task(tmp_path, monkeypa
     client = _ScriptedClient([_end_turn(), _end_turn(), _end_turn()])
     orch = _make_orch(tmp_path, client)
     orch._instructions = "Build a library management web app"
+    orch.target = Target(WEB_APP, "web app", True)
 
     orch._run_phase2("Build a library management web app", extra_issues=[])
 

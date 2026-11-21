@@ -143,7 +143,7 @@ def test_inventory_included_when_non_empty():
 
 
 def test_idiom_guidance_included_for_spring_boot():
-    """#4b: naming a recognised stack must inject its idiom block."""
+    """#4b: a routed stack must inject its idiom block."""
     prompt = build_system_prompt(
         domain_model=_make_minimal_domain(),
         gui_model=None,
@@ -151,6 +151,7 @@ def test_idiom_guidance_included_for_spring_boot():
         inventory="",
         instructions="Build a Spring Boot backend for order management",
         max_turns=20,
+        routed_stack="Spring Boot",
     )
     assert "## Idiomatic conventions for Spring Boot" in prompt
     assert "ResponseStatusException" in prompt
@@ -165,6 +166,7 @@ def test_idiom_guidance_included_for_flask_and_rust():
         inventory="",
         instructions="Build a Flask API for orders",
         max_turns=20,
+        routed_stack="Flask",
     )
     assert "## Idiomatic conventions for Flask / FastAPI (Python)" in flask_prompt
     assert "Decimal" in flask_prompt
@@ -176,6 +178,7 @@ def test_idiom_guidance_included_for_flask_and_rust():
         inventory="",
         instructions="Build a Rust axum backend for orders",
         max_turns=20,
+        routed_stack="Rust + Axum",
     )
     assert "## Idiomatic conventions for Rust (axum)" in rust_prompt
     assert "Option<T>" in rust_prompt

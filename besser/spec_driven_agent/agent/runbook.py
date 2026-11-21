@@ -454,27 +454,29 @@ create whatever it needs at startup.
    A frontend caller you write sends the body exactly as `<-` shows it (a
    `{{"params": {{...}}}}` body keeps that wrapper) and reads `-> object {{...}}`
    by those keys: only `-> list` is an array.
-3. `req GET /health`. Not 200 → step 1's log tail names the cause.
-4. **Create one of every entity**, parents before children, reusing the `id`
-   each create returns. A **500** is your bug: the log tail printed under the
-   response holds the traceback - fix the named file and line, `down`, `up`,
-   and repeat the SAME request. A **422** means your payload disagrees with
-   the schema the app declares: re-read that schema in `routes` and correct
-   the *payload*. Never relax a schema, drop a constraint or delete a
-   validator to make a request pass.
-5. **Call every action the specification describes**, with the literal `{{}}`
-   body the generated button sends, on an entity you just created. Then
-   `req GET /<entity>/<id>` and check the field the action was supposed to
-   change actually changed. An action that answers 200 and changes nothing is
-   a failure, not a pass - it is the single most common defect in these apps.
-6. After any edit: `down`, then `up`. The server does not reload.
-   A **401/403** means the endpoint needs auth: register and log in through
-   the app's own endpoints (`routes auth`), then repeat the request with
-   `-H "Authorization: Bearer <access_token from the login response>"`.
-7. Only when every entity creates and every action both succeeds and has a
-   visible effect may you report the app as working. If an action cannot be
-   made to work, leave its checklist item blocked with what you observed -
-   do not close it.
+3. **Create one of every entity with `test_api`**, not `req`: a scenario
+   creates parents before children, reusing each returned id (`{{{{0.id}}}}`),
+   and reads every record back by id. `test_api` keeps each scenario and
+   reruns it after every edit, so its result is evidence; a `req` result is
+   not. A **422** means the payload disagrees with the schema the app
+   declares: re-read that schema in `routes` and correct the *payload*.
+   Never relax a schema, drop a constraint or delete a validator to make a
+   request pass.
+4. **Call every action the specification describes with `test_api`**, with
+   the literal `{{}}` body the generated button sends, on a record the same
+   scenario created, then GET that record and assert with `expected_fields`
+   the field the action was supposed to change. An action that answers 200
+   and changes nothing is a failure, not a pass - it is the single most
+   common defect in these apps.
+5. A **500** in a scenario is your bug: `log 60` holds the traceback. Fix the
+   named file and line, `down`, `up` (the server does not reload), reproduce
+   the one failing request with `req` while you debug, then rerun the
+   scenario by its scenario_id. A **401/403** means the endpoint needs auth:
+   register and log in through the app's own endpoints (`routes auth`) in the
+   scenario and pass the token as a header on the later requests.
+6. Only when every create and every action scenario passes may you report
+   the app as working. If an action cannot be made to work, leave its
+   checklist item blocked with what you observed - do not close it.
 
 State what you actually observed - a status code and the value you read back -
 not that you "verified" something.

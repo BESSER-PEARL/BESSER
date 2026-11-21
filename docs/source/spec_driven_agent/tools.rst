@@ -535,7 +535,10 @@ Phase 2's system prompt gains a *runtime verification* runbook, and a probe
 script, ``.besser_probe.py``, is written to the workspace root. Its
 subcommands (``up``, ``routes``, ``req``, ``log``, ``down``) boot the server
 detached, list its routes and send requests, so the agent can run the app
-rather than only read it. ``routes`` prints, per route, the JSON body it reads
+rather than only read it. The runbook has the agent create every entity and
+call every action through ``test_api`` scenarios, which are retained and
+replayed as evidence; ``up``, ``log`` and ``req`` are for debugging a failure
+a scenario reported. ``routes`` prints, per route, the JSON body it reads
 as its top-level keys (``<- {"params": {...}}`` for a method route, whose
 values go inside that key) and what a 2xx answer is (``-> list`` or
 ``-> object {...}`` with its keys): the response schema the app's OpenAPI

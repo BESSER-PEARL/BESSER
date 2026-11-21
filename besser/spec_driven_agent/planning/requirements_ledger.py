@@ -1770,6 +1770,9 @@ def _span_failure(item: dict, source: _Source, first_line: int, lineno: int, quo
     kind, text = item.get("kind", ""), item.get("text", "")
     if (_demands_enforcement(item)
             and not isinstance(statement, (ast.If, ast.Raise, ast.Assert))
+            # ``return "F" if score < 50 else grade(score)`` decides on a condition as an ``if`` does.
+            and not (statement is not None
+                     and any(isinstance(node, ast.IfExp) for node in ast.walk(statement)))
             and not source.lines[first_line - 1].lstrip().startswith(("if ", "if(", "if\t", "else if "))
             and not any(tok in quote.lower() for tok in _ENFORCEMENT_TOKENS)
             and not (kind != "uniqueness" and _met_by(item) == "type"

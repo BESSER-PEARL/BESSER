@@ -57,6 +57,14 @@ def test_wide_reads_of_separate_blocks_are_fine(executor):
     assert "hint" not in result
 
 
+def test_overlapping_wide_windows_in_sequence_are_called_out(executor):
+    """Each window starts inside the last one and runs past its end: a crawl, however wide."""
+    results = [read(executor, offset=offset, limit=120) for offset in (0, 100, 200)]
+
+    assert "hint" not in results[0] and "hint" not in results[1]
+    assert "read 3 of router.py" in results[2]["hint"]
+
+
 def test_wide_windows_read_one_after_another_are_a_crawl_too(tmp_path):
     """A recorded run read a 1,876-line component in seven turns of 120-200-line windows, each
     starting where the last one ended; one read without a limit returns about the same text.

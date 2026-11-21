@@ -92,7 +92,8 @@ that was already broken is never refused, so it can be repaired.
   app that has the generated client, a literal ``fetch`` or Axios call to a
   route the client covers is reported too, naming the client function to call
   instead; a route the client does not cover (one the agent added) is not.
-  Warning.
+  Such calls are reported once per file and client function, after the calls
+  to missing routes and under their own cap, so they never hide one. Warning.
 - API call shapes (``api call:``, blocker) — a frontend call with a literal or
   template URL that resolves to exactly one route, checked against that
   route's handler, which is read without importing the app. The calls read are

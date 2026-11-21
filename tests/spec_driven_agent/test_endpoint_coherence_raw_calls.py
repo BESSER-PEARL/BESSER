@@ -61,6 +61,24 @@ def test_a_raw_call_the_client_covers_names_the_client_function(tmp_path):
     assert not any("/report/summary/" in issue for issue in issues)
 
 
+def test_raw_call_warnings_do_not_crowd_out_a_call_to_a_missing_route(tmp_path):
+    """An API layer of many raw calls is one warning per function, after the route mismatches."""
+    workspace = _app(tmp_path)
+    pages = tmp_path / "web_app" / "frontend" / "src" / "pages"
+    (pages / "Customers.tsx").unlink()
+    (pages / "A.tsx").write_text("".join(f'export const f{i} = () => fetch("/customer/");\n' for i in range(12)),
+                                 encoding="utf-8")
+    (pages / "B.tsx").write_text('export const g = () => fetch("/customers/");\n', encoding="utf-8")
+
+    issues = collect_endpoint_coherence_issues(workspace)
+
+    assert "GET /customers/, but no generated backend route matches it" in issues[0], issues
+    # With a client, the covered routes are listed as its functions, not as raw paths.
+    assert "Call the route through its function in src/api/generated/client.ts" in issues[0]
+    raw =[issue for issue in issues if "generated API client has as" in issue]
+    assert len(raw) == 1 and "A.tsx lines 1, 2, 3, 4, 5 (+7 more) call GET /customer/ with fetch" in raw[0], raw
+
+
 def test_without_a_generated_client_raw_calls_are_not_reported(tmp_path):
     """A FastAPI backend writes api_contract.json too; its hand-written frontend has no client to use."""
     issues = collect_endpoint_coherence_issues(_app(tmp_path, client=False))

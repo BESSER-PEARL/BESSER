@@ -269,7 +269,8 @@ The base's workspace is kept for ``BESSER_LLM_DOWNLOAD_TTL_SECONDS`` (3 hours by
 default) and its ZIP download for ``BESSER_LLM_ARCHIVE_TTL_SECONDS`` (24 hours).
 Once the workspace is gone, the run is seeded from the download instead: it holds
 the same source tree and the run files a later run reads (``.besser_recipe.json``,
-``.besser_attribution.json``, ``.besser_generator_output.json``), and it is
+``.besser_attribution.json``, ``.besser_generator_output.json``,
+``.besser_api_workflows.json``), and it is
 unpacked with the checks of an uploaded archive (no path outside the workspace, no
 links, size and file-count limits; of a file's mode only its execute bits are
 kept, so ``mvnw`` or a ``*.sh`` script stays executable). The GitHub source record
@@ -662,6 +663,19 @@ Over it, these cuts apply in order until it fits:
    each file, so the files the run changed are all still listed.
 4. Each API workflow keeps its id, each request's method and path, and its
    status.
+
+The workflow definitions are not lost to these cuts: every run also writes its
+retained workflows, whole and with their last status, to
+``.besser_api_workflows.json`` (at most ten, and at most 128 KiB: a workflow that
+does not fit is left out whole, with a warning). It travels with the app like the
+recipe, and a modify run reads it back (a file over the bound, or one holding an
+invalid definition, is ignored). After Phase 3 a modify run runs each workflow
+that passed on the previous version once on the delivered tree, unless the run
+kept one under the same id. One that fails now is ``regression to confirm: api
+scenario <id> passed on the previous version and fails now: ...``: not confirmed,
+never a blocker and never repaired, since the requested change may have meant it.
+Those that pass, or that no check could run, are written again for the next run;
+one that failed is not.
 
 ``tool_calls_count`` and every other total stay true, and nothing a later reader
 uses is cut: the model, ``output_files``, ``generator_used``, ``target``,

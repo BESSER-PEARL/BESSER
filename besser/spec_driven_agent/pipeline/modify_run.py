@@ -60,6 +60,7 @@ from besser.spec_driven_agent.run_recap import (
     recorded_requests,
     repo_notes,
 )
+from besser.spec_driven_agent.state.api_workflows import load_workflows, workflow_entries
 from besser.spec_driven_agent.state.trace_model import generator_output_record
 from besser.spec_driven_agent.state.tracing import (
     EVENT_PHASE_ENTER,
@@ -72,6 +73,7 @@ from besser.spec_driven_agent.state.tracing import (
 )
 from besser.spec_driven_agent.validation.issues import (
     OPEN_SINCE_PREVIOUS,
+    REGRESSION_TO_CONFIRM,
     ValidationIssue,
     _check_did_not_run,
     _classify_issue,
@@ -172,6 +174,7 @@ class ModifyRunMixin:
         # the copied recipe BEFORE building the inventory (which needs a
         # generator name for its framing line).
         self._seed_generator_files_from_recipe()
+        self._seed_workflows = load_workflows(self.output_dir)
         # One routing call: does the request change the target, does it report a failure.
         self._route_modify_request()
         # Frame the run as editing an existing project. When the seed came
@@ -412,10 +415,49 @@ class ModifyRunMixin:
                            message[:300])
             self._trace.write(EVENT_VALIDATION_ISSUE, phase="seed_regression", message=message[:1000])
 
+    def _replay_seed_workflows(self) -> None:
+        """Run each workflow that passed on the previous version once on the delivered tree,
+        unless this run kept one under its id. One that fails now is a regression to confirm,
+        never a blocker: the change may have meant it. Those that pass, and those no check
+        could run, are kept for the next run (``_carried_seed_workflows``)."""
+        if not self._seed_workflows:
+            return
+        from besser.spec_driven_agent.validation.api_probe import DID_NOT_RUN_BOOTS, probe_api_scenario
+
+        own = {record.get("scenario_id") for record in self._api_scenarios.values()}
+        for workflow in self._seed_workflows:
+            if workflow["scenario_id"] in own or workflow["status"] != "passed":
+                continue
+            if not self.enable_import_smoke_check or not self._checks_allowed():
+                self._carried_seed_workflows.append(workflow)
+                continue
+            scenario = workflow["scenario"]
+            report = probe_api_scenario(self.output_dir, scenario["requests"], backend=scenario.get("backend"))
+            if report.get("status") == "passed" or report.get("boot") in DID_NOT_RUN_BOOTS:
+                self._carried_seed_workflows.append(workflow)
+                continue
+            detail = report.get("error") or json.dumps({
+                "assertion_failures": report.get("assertion_failures", []),
+                "request_errors": [{"path": response.get("path"), "error": response["error"]}
+                                   for response in report.get("responses", []) if response.get("error")],
+            })
+            message = (f"{REGRESSION_TO_CONFIRM}api scenario {workflow['scenario_id']} passed on the previous "
+                       f"version and fails now: {detail[:1500]}")
+            logger.warning("Modify run: %s", message[:300])
+            self._validation_issues.append(ValidationIssue("warning", message))
+            self._trace.write(EVENT_VALIDATION_ISSUE, phase="seed_workflow_replay", message=message[:1000])
+
+    def _api_workflows_to_keep(self) -> list[dict]:
+        """This run's retained workflows, then the previous version's it carried."""
+        own = workflow_entries(self._api_scenarios.values())
+        ids = {entry["scenario_id"] for entry in own}
+        return own + [workflow for workflow in self._carried_seed_workflows if workflow["scenario_id"] not in ids]
+
     def _modify_end_checks(self) -> None:
         """After Phase 3 of a modify run: compare with the previous version, then the fix gate."""
         if not self._modify_mode:
             return
+        self._replay_seed_workflows()
         self._note_seed_regressions()
         # After Phase 3, decide whether the reported failure is plausibly
         # addressed. A matching finding still present marks the run
@@ -775,6 +817,8 @@ class ModifyRunMixin:
             i for i in state.get("seed_unresolved_issues") or [] if isinstance(i, str)]
         baseline = state.get("seed_baseline")
         self._seed_baseline = [i for i in baseline if isinstance(i, str)] if isinstance(baseline, list) else None
+        # Still the seed's file: a run writes its own when it saves its recipe.
+        self._seed_workflows = load_workflows(self.output_dir)
         converted = state.get("seed_converted_rules")
         self._seed_converted_rules = set(converted) if isinstance(converted, list) else None
         self._seed_dropped_rules = [

@@ -241,7 +241,9 @@ request that sends such a field back by reference; other fields that happen to
 hold the same value are shown. References such as ``{{1.access_token}}`` still
 receive the real value.
 Named scenarios are retained during the run and replayed after source changes;
-failures block completion. Correcting a mistaken test requires an explicit
+failures block completion. A later modify run replays the ones that passed on
+its delivered tree, where a failure is a regression to confirm, not a blocker
+(see :ref:`spec-driven-recipe-size`). Correcting a mistaken test requires an explicit
 ``correction_reason``. A correction that removes a request which passed in the
 scenario's last run (same method and route no longer present) is refused: such
 checks stay in the corrected scenario or go under their own ``scenario_id``.

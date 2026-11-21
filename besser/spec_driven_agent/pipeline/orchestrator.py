@@ -216,6 +216,7 @@ from besser.spec_driven_agent.validation.python_source import (
     _ROUTER_READ_RE as _ROUTER_READ_RE,
 )
 from besser.spec_driven_agent.state.agent_trace import harness_writes, record_generated_files
+from besser.spec_driven_agent.state.api_workflows import save_workflows as save_api_workflows
 from besser.spec_driven_agent.state.recipe_size import bounded_recipe
 from besser.spec_driven_agent.state.tracing import (
     EVENT_CHECKPOINT,
@@ -778,6 +779,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._seed_recorded_issues: list[str] = []
         self._seed_baseline: list[str] | None = None
         self._seed_regressions: list[str] = []
+        # The previous version's API workflows, and those of them this run keeps for the next.
+        self._seed_workflows: list[dict] = []
+        self._carried_seed_workflows: list[dict] = []
         # Model-sync during modify (class-diagram only). When a
         # ``modify()`` instruction implies new domain entities (e.g. "add
         # authentication" → a ``User`` class), ``_derive_and_apply_model_deltas``
@@ -6272,6 +6276,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 "target_message": self._fix_target_message,
                 "target_evidence": self._fix_target_evidence,
             }
+        try:
+            save_api_workflows(self.output_dir, self._api_workflows_to_keep())
+        except ValueError:
+            logger.warning("API workflows not kept for later runs", exc_info=True)
         recipe_path = os.path.join(self.output_dir, ".besser_recipe.json")
         try:
             self.saved_recipe, text = bounded_recipe(recipe, full_record=(

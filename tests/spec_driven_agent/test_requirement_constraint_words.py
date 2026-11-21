@@ -1,7 +1,7 @@
 """An enumeration enforces the values a requirement lists.
 
-A 'validation' or 'rule' requirement the extraction marks enforced needs an
-enforcing line. A value of an enumeration ("one of: positive, mixed, negative")
+A 'validation' or 'rule' requirement the extraction says a check meets
+(``met_by``) needs an enforcing line. A value of an enumeration ("one of: positive, mixed, negative")
 still states the rule, and the enumeration that implements it was reported as a
 blocker.
 """

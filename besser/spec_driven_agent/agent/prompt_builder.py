@@ -26,7 +26,7 @@ from besser.spec_driven_agent.model_serializer import (
     to_prompt_json,
 )
 from besser.spec_driven_agent.agent.runbook import runbook_section
-from besser.spec_driven_agent.planning.model_rules import is_dropped_by_model_change
+from besser.spec_driven_agent.planning.model_rules import converted_rule_fingerprints, is_dropped_by_model_change
 from besser.spec_driven_agent.planning.stack_metadata import idiom_guidance_section, routed_frontend_framework
 from besser.spec_driven_agent.providers.llm_client import SYSTEM_CACHE_SPLIT
 from besser.utilities.workspace_fs import walk_plain
@@ -470,7 +470,8 @@ def build_system_prompt(
             "    system.** Restyle by overriding `--ds-*` values (and adding rules if\n"
             "    needed) in `src/design-overrides.css`, so every designed page picks the\n"
             "    change up; never hard-code colours in pages. A colour name that is not a\n"
-            "    CSS keyword (rose, amber, teal, indigo, emerald) takes its hex value.\n"
+            "    CSS keyword (rose, amber, teal, indigo, emerald) takes its hex value:\n"
+            "    `color: rose` renders nothing, rose → `#f43f5e`.\n"
             "    A theme that's only mentioned in a comment but not visibly applied is\n"
             "    a failure."
         )
@@ -543,8 +544,9 @@ def build_system_prompt(
 """ if spa else ""
     crud_rule = f"""\
 15. **A domain-model app needs a COMPLETE, NAVIGABLE CRUD frontend** — unless
-    GUI screens specify the UI, or the request names its screens: then build
-    those. Read-only lists are NOT enough. For the {frontend} frontend, build:
+    GUI screens specify the UI, or the request scopes the UI to the screens it
+    names: then build those. Read-only lists are NOT enough.
+    For the {frontend} frontend, build:
     - A home route (`"/"`, a landing page) AND a nav bar/header (links or a menu)
       present on every screen, linking every entity's list and its "new" page,
       wired to the routes. The app must NEVER render blank on load: a
@@ -618,7 +620,8 @@ exists is not proof that the software satisfies the specification."""
 6. **OCL constraints must run.** For every constraint listed under the
    class, emit a runtime check in the language idiomatic to the target
    (Pydantic `@field_validator`, Zod refine, or a valid local SQL CHECK).
-""" if getattr(domain_model, "constraints", None) else "6. **Rules must run.**\n") + """\
+""" if domain_model is not None and converted_rule_fingerprints(domain_model)
+            else "6. **Rules must run.**\n") + """\
    Cross-record/relationship invariants need shared transactional enforcement
    across every mutation path that can break them: create, update, link/unlink,
    related-entity edits and deletion. SQLite CHECK constraints cannot contain

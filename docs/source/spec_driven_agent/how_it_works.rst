@@ -153,9 +153,10 @@ The three phases
    and however the agent reaches the data. The
    system prompt adapts to the run: the rule that asks for a complete CRUD
    frontend applies only when the run has or needs a frontend, and a request
-   that names its screens wins over its per-entity pages; the state-machine,
-   object-model and OCL rules appear only when the run has those models (the
-   rule numbers stay the same); an idiom block
+   that scopes the UI to the screens it names wins over its per-entity pages;
+   the state-machine, object-model and OCL rules appear only when the run has
+   those models (an OCL invariant or a method pre/postcondition; the rule
+   numbers stay the same); an idiom block
    appears only for a routed stack no generator builds (a generated scaffold
    is the convention); and when shell
    tools are on and a FastAPI backend is present it gains a runtime

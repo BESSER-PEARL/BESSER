@@ -964,6 +964,19 @@ def _ensure_dockerignores(output_dir: str) -> list:
     return written
 
 
+def rewritten_build_scripts(output_dir: str) -> dict:
+    """The ``scripts.build`` :func:`ensure_frontend_scaffold` would write, by frontend
+    folder relative to ``output_dir``, where it changes it. Writes nothing."""
+    rewritten = {}
+    for frontend_dir, manifest in _find_vite_react_frontends(output_dir):
+        before = (manifest.get("scripts") or {}).get("build")
+        _repair_frontend_manifest(frontend_dir, manifest)  # a fresh parse, never written
+        if manifest["scripts"]["build"] != before:
+            rel = os.path.relpath(frontend_dir, output_dir).replace("\\", "/")
+            rewritten[rel] = manifest["scripts"]["build"]
+    return rewritten
+
+
 def ensure_frontend_scaffold(output_dir: str, app_name: str = "") -> list:
     """Make an LLM-authored React frontend actually render, deterministically.
 

@@ -76,6 +76,7 @@ from besser.spec_driven_agent.repair.scaffold_repair import (
     _project_has_npm_lockfile,
     _strip_missing_lockfile_copy,
     ensure_frontend_scaffold,
+    rewritten_build_scripts,
 )
 from besser.spec_driven_agent.state.checkpoint import (
     CHECKPOINT_SCHEMA_VERSION,
@@ -201,6 +202,7 @@ from besser.spec_driven_agent.validation.issues import (
     required_check_unverified,
     DEPENDENCIES_NOT_INSTALLED,
     dependencies_not_installed,
+    dependency_setup_not_run,
     required_dependency_setup as required_dependency_setup,
     runtime_check_unverified,
     runtime_note_unverified,
@@ -3678,13 +3680,14 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     def _verify_workspace(self, sweep: bool = False) -> list[ValidationIssue]:
         """Every deterministic check that decides the run, most urgent first.
 
-        ``validate_app`` and end_turn run it as it is, and it writes nothing to
-        the workspace. The Phase 3 sweep (``sweep=True``, every Phase 3 check
+        ``validate_app`` and end_turn run it as it is, and it writes no source
+        file (a build still writes its output folder). The Phase 3 sweep (``sweep=True``, every Phase 3 check
         and re-check) first stops the agent's processes and applies the
         deterministic repairs, and adds the requirements judgment, the
-        checklist's findings and the authorization check. Outside the sweep tsc
-        does not run on a project whose dependencies the agent can install
-        until it installs them.
+        checklist's findings and the authorization check. Outside the sweep the
+        findings are those of the tree the repairs would leave, and tsc does not
+        run on a project whose dependencies the agent can install until it
+        installs them: a not-run note naming the install, never a blocker.
         """
         if sweep:
             # The checks run in fresh sandboxes, but they read and build this
@@ -3704,8 +3707,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         if sweep:
             self._repair_build_configuration()
         build_contexts = compose_build_contexts(self.output_dir)
-        if sweep:
-            self._restore_scaffold_requirements(build_contexts)
+        restored = self._restore_scaffold_requirements(build_contexts, write=sweep)
         raw_issues: list[str] = [
             required_check_unverified(
                 "model assembly",
@@ -3767,7 +3769,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 
                         # COPY sources resolve against the build context.
                         raw_issues.extend(dockerfile_copy_issues(
-                            self.output_dir, fpath, content, build_contexts))
+                            self.output_dir, fpath, content, build_contexts, restored))
                     except Exception:
                         logger.warning("Dockerfile check failed for %s", rel, exc_info=True)
 
@@ -3910,9 +3912,13 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             self.output_dir, enabled=self.enable_toolchain_validation,
             allow_shell=self.allow_shell_tools, source_revision=self._frontend_revision,
             build_verdicts=build_verdicts, can_run=self._checks_allowed,
-            timeout=remaining,
+            timeout=remaining, rewritten_builds=None if sweep else rewritten_build_scripts(self.output_dir),
         ))
         raw_issues.extend(self._collect_screen_issues())
+        if not sweep:
+            # The install is the agent's to run when it chooses; only the final check holds the run for it.
+            raw_issues = [dependency_setup_not_run(issue) if issue.startswith("verification setup:") else issue
+                          for issue in raw_issues]
 
         issues = [_classify_issue(s) for s in drop_duplicate_python_findings(raw_issues)]
         # For the duration of a fix/modify run, promote findings that match
@@ -3932,15 +3938,17 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     def _scaffold_family(self) -> str | None:
         return self._SCAFFOLD_FAMILIES.get(self._generator_used or "")
 
-    def _restore_scaffold_requirements(self, build_contexts: dict[str, str]) -> None:
+    def _restore_scaffold_requirements(self, build_contexts: dict[str, str], write: bool = True) -> set[str]:
         """Put back a requirements.txt a Phase 2 edit deleted from a FastAPI scaffold.
 
         A repair step, run before validation (which only reports). The default
         it writes is the FastAPI stack, so only that scaffold family gets it,
         and only where a Dockerfile's COPY resolves in the build context.
+        Returns the paths restored; with ``write=False``, those it would restore.
         """
+        restored: set[str] = set()
         if self._scaffold_family() != "fastapi":
-            return
+            return restored
         workspace = os.path.realpath(self.output_dir)
         for root, dirs, files in walk_plain(self.output_dir):
             dirs[:] = [d for d in dirs if d not in ("node_modules", ".git", _SNAPSHOT_DIR)]
@@ -3957,9 +3965,12 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                     target = os.path.dirname(path)
                     inside = os.path.realpath(target).startswith(workspace + os.sep)
                     if (os.path.basename(path) == "requirements.txt" and inside
-                            and os.path.isdir(target) and _ensure_requirements_txt(target)):
-                        logger.info("Auto-fixed: restored missing %s",
-                                    os.path.relpath(path, self.output_dir))
+                            and os.path.isdir(target) and (not write or _ensure_requirements_txt(target))):
+                        restored.add(path)
+                        if write:
+                            logger.info("Auto-fixed: restored missing %s",
+                                        os.path.relpath(path, self.output_dir))
+        return restored
 
     def _install_scaffold_frontend_dependencies(self) -> None:
         """Install the deterministic frontend's declared packages, once.

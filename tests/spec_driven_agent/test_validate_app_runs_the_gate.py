@@ -11,6 +11,7 @@ their dependencies are installed; anything that did not run withholds
 """
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 
@@ -87,17 +88,26 @@ def test_a_type_check_reruns_only_when_the_frontend_changed(tmp_path, compiler):
     assert len(compiler) == 2
 
 
-def test_where_the_agent_can_install_uninstalled_tsc_asks_for_the_install(tmp_path, monkeypatch):
+def test_where_the_agent_can_install_uninstalled_tsc_names_the_install_and_blocks_only_at_the_gate(
+        tmp_path, monkeypatch):
     _host_tsc(monkeypatch, npm=True)
 
     def no_compiler(*args, **kwargs):
         raise AssertionError("tsc ran on a project whose dependencies the agent can install")
 
     monkeypatch.setattr(sandbox_mod, "run_confined", no_compiler)
-    result = _orch(tmp_path, installed=False)._validate_app()
-    assert any(issue.startswith("verification setup: tsc [web] requires installed project dependencies")
-               for issue in result["issues"])
-    assert result["verified"] is False
+    orch = _orch(tmp_path, installed=False)
+    result = orch._validate_app()
+    # Before the final check the install is the agent's to run when it chooses: a not-run note.
+    assert any(issue.startswith("validation unverified: tsc [web]") and "npm install" in issue
+               and "working_dir='web'" in issue for issue in result["issues"]), result["issues"]
+    assert not any(issue.startswith("verification setup:") for issue in result["issues"])
+    assert result["blocker_count"] == 0 and result["verified"] is False
+
+    monkeypatch.setattr(sandbox_mod, "run_confined",
+                        lambda cmd, **kwargs: subprocess.CompletedProcess(cmd, 0, stdout="", stderr=""))
+    assert any(issue.message.startswith("verification setup: tsc [web]") and issue.severity == "blocker"
+               for issue in orch._collect_validation_issues())
 
 
 def test_a_screen_check_that_did_not_run_withholds_verified(tmp_path, monkeypatch):
@@ -168,6 +178,70 @@ def test_an_edit_the_frontend_compiles_from_outside_its_folder_reruns_tsc_at_the
     orch._collect_validation_issues()
 
     assert len(compiler) == 2, "the gate reused a type check made before the edit"
+
+
+def _vite_app(web, build: str) -> None:
+    (web / "src").mkdir(parents=True)
+    (web / "node_modules").mkdir()
+    (web / "package.json").write_text(json.dumps({
+        "name": "orders", "scripts": {"dev": "vite", "build": build},
+        "dependencies": {"react": "^18.3.1", "react-dom": "^18.3.1"},
+        "devDependencies": {"vite": "^5.4.0", "@vitejs/plugin-react": "^4.3.0"}}), encoding="utf-8")
+    (web / "vite.config.js").write_text(
+        "import react from '@vitejs/plugin-react';\nexport default { plugins: [react()] };\n", encoding="utf-8")
+    (web / "index.html").write_text('<div id="root"></div><script type="module" src="/src/main.jsx"></script>',
+                                    encoding="utf-8")
+    (web / "src" / "main.jsx").write_text(
+        "import ReactDOM from 'react-dom/client';\n"
+        "ReactDOM.createRoot(document.getElementById('root')).render(<h1>Orders</h1>);\n", encoding="utf-8")
+
+
+def test_validate_app_does_not_run_a_build_script_the_gate_rewrites(tmp_path, monkeypatch):
+    # "build": "vite" starts a dev server, which runs until the 120 s cap on every call;
+    # the final check rewrites it to "vite build" before it builds.
+    web = tmp_path / "web"
+    _vite_app(web, "vite")
+    _host_tsc(monkeypatch, npm=True)
+    builds = []
+
+    def run(cmd, **kwargs):
+        builds.append(json.loads((web / "package.json").read_text(encoding="utf-8"))["scripts"]["build"])
+        raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout"))
+
+    monkeypatch.setattr(sandbox_mod, "run_confined", run)
+    orch = LLMOrchestrator(llm_client=_Client(), domain_model=DomainModel(name="Shop", types={Class(name="Order")}),
+                           output_dir=str(tmp_path), enable_tracing=False, enable_checkpointing=False,
+                           enable_toolchain_validation=True, allow_shell_tools=True,
+                           enable_import_smoke_check=False, enable_requirements_ledger=False)
+
+    result = orch._validate_app()
+
+    assert builds == [], "validate_app ran a build script that does not end"
+    assert any(issue.startswith("validation unverified: frontend build [web]") and '"vite build"' in issue
+               for issue in result["issues"]), result["issues"]
+    assert result["blocker_count"] == 0
+    orch._collect_validation_issues()
+    assert builds == ["vite build"]
+
+
+def test_a_deleted_scaffold_requirements_file_is_no_blocker_the_gate_then_restores(tmp_path):
+    backend = tmp_path / "backend"
+    backend.mkdir()
+    (backend / "main.py").write_text("from fastapi import FastAPI\napp = FastAPI()\n", encoding="utf-8")
+    (backend / "Dockerfile").write_text(
+        "FROM python:3.11\nWORKDIR /app\nCOPY requirements.txt .\nRUN pip install -r requirements.txt\n"
+        "COPY . .\n", encoding="utf-8")
+    orch = LLMOrchestrator(llm_client=_Client(), domain_model=DomainModel(name="Shop", types={Class(name="Order")}),
+                           output_dir=str(tmp_path), enable_tracing=False, enable_checkpointing=False,
+                           enable_import_smoke_check=False, enable_requirements_ledger=False)
+    orch._generator_used = "generate_fastapi_backend"
+
+    result = orch._validate_app()
+
+    assert not any("requirements.txt" in issue for issue in result["issues"]), result["issues"]
+    assert not (backend / "requirements.txt").exists()
+    assert not any("requirements.txt" in issue.message for issue in orch._collect_validation_issues())
+    assert (backend / "requirements.txt").exists()
 
 
 def _host_tsc(monkeypatch, *, npm: bool):

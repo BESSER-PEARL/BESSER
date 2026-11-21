@@ -201,9 +201,13 @@ type check, frontend build and screen check. Phase 3 alone adds the requirements
 judgment (``validate_app`` lists its last verdicts), the checklist's findings
 (open items are the end-turn gate's) and the authorization check, and first
 applies the deterministic repairs (build configuration, Dockerfile lockfile
-fixes, dependency pins): ``validate_app`` writes nothing to the workspace and
-reports on the tree as the agent left it, except that a Dockerfile lockfile
-fix the sweep would make is not reported. It lists at most 40 findings, blockers
+fixes, dependency pins, a deleted scaffold ``requirements.txt``):
+``validate_app`` writes no source file (a build still writes its output folder)
+and reports on the tree as those repairs would leave it, without making them.
+A Dockerfile lockfile fix or a ``requirements.txt`` the sweep would put back is
+not reported, and a build script the sweep would rewrite (``"build": "vite"``,
+which starts a dev server, becomes ``"vite build"``) is not run but listed as
+not run, naming the rewrite. It lists at most 40 findings, blockers
 first, and counts the rest (``remaining_issue_count``); a finding longer than 1,200
 characters is cut as in the Phase 3 fix prompt, keeping its head and tail. Validation runs after writes in the same tool batch.
 A warning is marked ``advisory, not a blocker``. The acceptance-matrix findings
@@ -212,8 +216,10 @@ build reuse their last verdict while no file they can read changes (any file but
 Python sources and the rest of a Python project's folder) and the installed
 dependencies are the same, and the dependency check while its
 ``requirements.txt`` is unchanged. Where the agent can install a project's
-dependencies, tsc waits for the install and asks for it; otherwise it runs the
-same partial check as Phase 3. The screen check needs a browser. A check that
+dependencies, tsc and the build wait for the install: a not-run note that names
+the ``npm install`` to run, never a blocker, so it neither holds Phase 2 open
+nor is among the findings Phase 2 opens with (the final check still blocks on
+it); otherwise tsc runs the same partial check as Phase 3. The screen check needs a browser. A check that
 did not run is listed as not run, never as a blocker, and ``verified`` is true
 only when none is listed and no blocker remains. When the run has a checklist,
 a result with no blocker also lists its open items (``open_items``: id and a short label, empty when

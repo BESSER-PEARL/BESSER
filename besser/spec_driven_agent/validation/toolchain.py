@@ -388,6 +388,7 @@ def _collect_tsc_issues(
     allow_shell_tools: bool,
     enable_toolchain_validation: bool,
     excluded_dirs: set[str],
+    without_dependencies: bool = True,
 ) -> list[str]:
     """Run ``tsc --noEmit`` for any TypeScript project in the workspace.
 
@@ -395,6 +396,8 @@ def _collect_tsc_issues(
     runs ``tsc --noEmit`` against each project root. A disabled or missing
     compiler is unverified, not a source defect for automatic repair.
     Sandboxed: a project-local tsc is package-authored code.
+    ``without_dependencies=False`` only asks for the install of a project
+    whose dependencies the agent can install, without a partial check on it.
     """
     import shutil as _shutil
     import subprocess
@@ -455,6 +458,8 @@ def _collect_tsc_issues(
         )
         if setup_allowed:
             issues.append(required_dependency_setup(f"tsc [{rel}]", rel))
+        if setup_allowed and not without_dependencies:
+            continue
         if not tsc_bin:
             if not setup_allowed:
                 issues.append(required_check_unverified(f"tsc [{rel}]", "TypeScript compiler is unavailable"))

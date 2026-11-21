@@ -338,13 +338,24 @@ def is_configured_off(issue) -> bool:
 
 # The reason a check carries once the dependency install it needed was left undone.
 DEPENDENCIES_NOT_INSTALLED = "its project dependencies were not installed"
-_SETUP_CHECK_RE = _re.compile(r"^verification setup: (?P<check>.+?) requires installed project dependencies")
+_SETUP_CHECK_RE = _re.compile(r"^verification setup: (?P<check>.+?) requires installed project dependencies"
+                               r"(?:.*?working_dir=(?P<project>'[^']*'|\"[^\"]*\"))?")
 
 
 def dependencies_not_installed(setup: str) -> str:
     """A ``verification setup:`` still open when the run ends: the checks behind it did not run."""
     match = _SETUP_CHECK_RE.match(setup)
     return required_check_unverified(match["check"] if match else "a check", DEPENDENCIES_NOT_INSTALLED)
+
+
+def dependency_setup_not_run(setup: str) -> str:
+    """A ``verification setup:`` before the final check: a check waiting for the install it names."""
+    match = _SETUP_CHECK_RE.match(setup)
+    project = match["project"] if match and match["project"] else "the project folder"
+    return required_check_unverified(
+        match["check"] if match else "a check",
+        f"its project dependencies are not installed; run npm install with run_command, "
+        f"working_dir={project}, timeout=300, to run it")
 
 
 def is_completion_issue(issue: ValidationIssue) -> bool:

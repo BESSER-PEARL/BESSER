@@ -237,6 +237,24 @@ def test_tokens_are_per_turn_and_calls_outside_turns_are_their_own(tmp_path):
     assert [c.sequence_number for c in _operation(trace).tool_calls] == list(range(len(calls)))
 
 
+def test_a_check_nested_in_a_phase_leaves_the_later_turns_in_that_phase(tmp_path):
+    log = _Log(tmp_path)
+    log.write(EVENT_RUN_START)
+    log.write(EVENT_PHASE_ENTER, phase="phase2")
+    log.write(EVENT_TURN_START, turn=1)
+    log.spend(tokens_in=100, tokens_out=10)
+    log.write(EVENT_PHASE_ENTER, phase="phase3_screens")
+    log.write(EVENT_PHASE_EXIT, phase="phase3_screens", screens=1)
+    log.write(EVENT_TURN_START, turn=2)
+    log.spend(tokens_in=100, tokens_out=10)
+    log.write(EVENT_PHASE_EXIT, phase="phase2", stop_reason="completed")
+    log.write(EVENT_RUN_END)
+    _recipe(tmp_path)
+
+    labels = [c.logs[0].content.split(":")[0] for c in _calls(_build(tmp_path), LLM)]
+    assert labels == ["Turn 1 (phase2)", "Turn 2 (phase2)"]
+
+
 def test_a_resumed_run_counts_from_its_new_client(tmp_path):
     log = _Log(tmp_path)
     log.write(EVENT_RUN_START)

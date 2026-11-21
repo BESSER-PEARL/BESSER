@@ -25,7 +25,7 @@ BASELINES = {
     "shelf_client": {"system_chars": 23_310, "tools_chars": 10_657},
     "shelf_no_requirements": {"system_chars": 19_981, "tools_chars": 10_657},
     "conference": {"system_chars": 44_028, "tools_chars": 10_657},
-    "state_machine": {"system_chars": 13_558, "tools_chars": 9_778},
+    "state_machine": {"system_chars": 13_374, "tools_chars": 6_817},
 }
 
 # Per-section and per-tool sizes at the same point, only to name what grew.
@@ -44,7 +44,7 @@ BASELINE_SECTIONS = {
                    "data_contract": 1725, "inventory": 5758, "endpoint_manifest": 17310, "requirements": 351,
                    "request": 302, "checklist": 1202, "phase2_appendix": 613},
     "state_machine": {"role_plan": 993, "rules": 9821, "tail_header": 32, "models": 464, "requirements": 351,
-                      "request": 275, "checklist": 1009, "phase2_appendix": 613},
+                      "request": 275, "checklist": 1009, "phase2_appendix": 429},
 }
 BASELINE_TOOLS = {
     "generate_python_classes": 195, "generate_java_classes": 170, "generate_rdf": 156, "generate_supabase": 358,

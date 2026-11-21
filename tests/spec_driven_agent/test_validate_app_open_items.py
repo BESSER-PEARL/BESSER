@@ -41,6 +41,13 @@ def test_failing_result_does_not_list_open_items(tmp_path):
     assert "open_items" not in _validate(executor)
 
 
+def test_a_result_with_no_blocker_lists_open_items_even_unverified(tmp_path):
+    # A check this server never runs (toolchain off, no browser) withholds verified on every call.
+    executor = _executor(tmp_path, {"verified": False, "blocker_count": 0, "issues": ["validation unverified: x"]})
+
+    assert [item["id"] for item in _validate(executor)["open_items"]] == [1, 2]
+
+
 def test_all_closed_says_so_and_the_validator_cache_is_not_mutated(tmp_path):
     # r10-p61 turn 12: a task_list 'list' alone, after a passing validate_app, found nothing open.
     report = dict(_PASSING)

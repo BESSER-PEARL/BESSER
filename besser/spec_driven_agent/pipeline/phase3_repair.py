@@ -346,6 +346,7 @@ class Phase3RepairMixin:
         """
         if self.phase3_started_at is None:
             self.phase3_started_at = time.monotonic()
+        self._offer_test_api()
         # Announced before the first check, which can take minutes (npm, tsc), so
         # that time is counted as validation, not as the phase before it.
         self._emit_progress(self.total_turns, "__validating__", "")
@@ -1305,8 +1306,8 @@ class Phase3RepairMixin:
         prompt_parts.append("")
         prompt_parts.append(
             "Resolve authorized dependency setup by installing with run_command, then "
-            "validate_app; resolve missing evidence using current exact citations "
-            "or test_api. Do not manufacture source changes to "
+            "validate_app; resolve missing evidence using current exact citations"
+            + (" or test_api" if self._test_api_offered else "") + ". Do not manufacture source changes to "
             "satisfy bookkeeping; make an edit only if behavior is actually missing. "
             "The harness will recheck evidence when this attempt ends."
             if verification_only else
@@ -1327,8 +1328,8 @@ class Phase3RepairMixin:
                 + ". It may also create new files. To edit any other file, add needed_for to that "
                 "call, naming the blocker the file is needed for.")])
 
-        # The one place the toolchain instruction is given. With shell tools on,
-        # the model runs the check itself: the diff alone does not show it compiles.
+        # The one place the toolchain instruction is given: the diff alone does not
+        # show it compiles. validate_app runs the gate's check where it can.
         if toolchain_blockers and not self.allow_shell_tools:
             cmds = self._toolchain_commands_for(toolchain_blockers)
             prompt_parts.append("")
@@ -1345,8 +1346,9 @@ class Phase3RepairMixin:
             cmd_lines = "\n".join(f"  - {c}" for c in cmds)
             prompt_parts.append("")
             prompt_parts.append(
-                "Fix the reported compile / type errors, then re-run the relevant "
-                "toolchain check with run_command, and repeat until it reports zero errors:"
+                "Fix the reported compile / type errors, then call validate_app: it re-runs "
+                "these checks as the end of this attempt does. Repeat until it reports none. "
+                "Where it lists a check as not run, run it with run_command:"
             )
             prompt_parts.append(cmd_lines)
             prompt_parts.append(
@@ -1507,10 +1509,11 @@ class Phase3RepairMixin:
         """
         parts = [
             "You are fixing validation errors in generated code. "
-            "Fix each issue concisely. Call validate_app to recheck startup and "
-            "data entry after a coherent repair. When shell tools are unavailable, "
-            "validate_app and test_api are the supported verification tools. Use test_api "
-            "for specification-based workflow assertions and invalid inputs.", "",
+            "Fix each issue concisely. Call validate_app after a coherent repair: it runs "
+            "the checks that decide whether this attempt is kept, except the requirements "
+            "judgment."
+            + (" Use test_api for specification-based workflow assertions and invalid inputs."
+               if self._test_api_offered else ""), "",
         ]
         if self._instructions:
             parts.extend([

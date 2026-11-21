@@ -76,6 +76,7 @@ from besser.spec_driven_agent.repair.scaffold_repair import (
     _project_has_npm_lockfile,
     _strip_missing_lockfile_copy,
     ensure_frontend_scaffold,
+    rewritten_build_scripts,
 )
 from besser.spec_driven_agent.state.checkpoint import (
     CHECKPOINT_SCHEMA_VERSION,
@@ -200,6 +201,7 @@ from besser.spec_driven_agent.validation.issues import (
     required_check_unverified,
     DEPENDENCIES_NOT_INSTALLED,
     dependencies_not_installed,
+    dependency_setup_not_run,
     required_dependency_setup as required_dependency_setup,
     runtime_check_unverified,
     runtime_note_unverified,
@@ -508,6 +510,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             has_nn_model=self.nn_model is not None,
             allow_shell=allow_shell_tools,
         )
+        # Kept out of the list while no backend it can drive exists (``_offer_test_api``).
+        self._test_api_tool = next((t for t in self.tools if t["name"] == "test_api"), None)
+        self._test_api_offered = self._test_api_tool is not None
         # Phase 3 auto-fix policy. False = report-only (industry default
         # for static analysers — fix on request, never blindly).
         self.auto_fix_issues = auto_fix_issues
@@ -1989,6 +1994,24 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         logger.info("Phase 2: locked %s, the application they write already exists",
                     ", ".join(sorted(locked)))
 
+    def _offer_test_api(self) -> None:
+        """Offer test_api, and the prompt text naming it, only while the workspace holds a
+        FastAPI backend it can drive. Called when a phase starts: the tool list opens the
+        cached prompt prefix."""
+        if self._test_api_tool is None:
+            return
+        try:
+            self._test_api_offered = bool(self._probeable_backends())
+        except Exception:
+            logger.warning("Backend discovery failed; test_api stays offered", exc_info=True)
+            self._test_api_offered = True
+        tools = [t for t in self.tools if (t.get("name") if isinstance(t, dict) else None) != "test_api"]
+        if self._test_api_offered:
+            names = [t.get("name") if isinstance(t, dict) else None for t in tools]
+            tools.insert(names.index("validate_app") if "validate_app" in names else len(tools),
+                         self._test_api_tool)
+        self.tools = tools
+
     def _ensure_gitignore(self) -> None:
         """Write a .gitignore into the output root if the run didn't author one."""
         try:
@@ -2026,6 +2049,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # dirs next to the assembled backend/.
         self._drop_redundant_generator_tools()
         self._lock_application_generators()
+        self._offer_test_api()
 
         # Ship a .gitignore so a pushed/cloned repo doesn't carry caches, a
         # runtime DB, node_modules, or a leaked .env. Deterministic — no LLM.
@@ -2167,10 +2191,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             "your turn runs it by itself: call it after code changes, never just before you finish. "
             "Fix import/DDL errors first, then schema-router contracts and business "
             "behavior. Schema edits require updating all consumers and forms. "
-            "Use test_api to exercise complete workflows with persisted values and negative "
-            "cases from the original specification, not just health endpoints. Read routes "
-            "and request schemas first. "
-            "Never announce the app is functional before verification."
+            + ("Use test_api to exercise complete workflows with persisted values and negative "
+               "cases from the original specification, not just health endpoints. Read routes "
+               "and request schemas first. " if self._test_api_offered else "")
+            + "Never announce the app is functional before verification."
         )
 
         _cost_warning_fired = False
@@ -2285,20 +2309,24 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 blockers = [issue for issue in execution_report["issues"]
                             if _classify_issue(issue).severity == "blocker"]
                 report_state = (self._workspace_revision(), tuple(blockers))
-                if execution_report["blocker_count"] and report_state == shown_blocker_report:
-                    self._phase2_stop_reason = "validation_required"
-                    self._phase2_stop_detail = "end_turn blocker gate"
-                    self._phase2_exited_cleanly = False
-                    break
                 open_items = self.executor.open_tasks()
                 _has_verified_open = any(t.get("verify") for t in open_items)
                 _nudge_cap = (self._MAX_TASK_NUDGES + 2 if _has_verified_open
                               else self._MAX_TASK_NUDGES)
+                # Blockers do not shorten the nudges a verified open item gets: an
+                # unchanged blocker report spends one of them instead of handing off.
+                verified_nudge = _has_verified_open and self._end_turn_task_nudges < _nudge_cap
                 report_blockers = bool(execution_report["blocker_count"])
+                repeated_blockers = report_blockers and report_state == shown_blocker_report
+                if repeated_blockers and not verified_nudge:
+                    self._phase2_stop_reason = "validation_required"
+                    self._phase2_stop_detail = "end_turn blocker gate"
+                    self._phase2_exited_cleanly = False
+                    break
                 if report_blockers or (open_items and self._end_turn_task_nudges < _nudge_cap):
                     if report_blockers:
                         shown_blocker_report = report_state
-                    else:
+                    if not report_blockers or repeated_blockers:
                         self._end_turn_task_nudges += 1
                     logger.info(
                         "end_turn with %d open checklist item(s), %d blocker(s) — nudge %d/%d",
@@ -2320,8 +2348,11 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                         parts.append(
                             "Ending the turn ran validate_app, and it still reports these "
                             f"blockers:\n{shown}" + (f"\n  (+{more} more)" if more > 0 else "")
-                            + "\nFix them now. Ending the turn again without changing them hands "
-                            "the run to validation with them unfixed.")
+                            + "\nFix them now." + (
+                                "" if _has_verified_open
+                                and self._end_turn_task_nudges < _nudge_cap else
+                                " Ending the turn again without changing them hands "
+                                "the run to validation with them unfixed."))
                     if open_items:
                         listing = "\n".join(
                             f"  {t['id']}. {t['text']}" for t in open_items
@@ -2381,8 +2412,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                         "<system-reminder>You have made "
                         f"{no_source_progress} tool calls without changing source. New results are useful, "
                         "but inspection is bounded. "
-                        "Use the code already inspected to implement one coherent missing behavior, "
-                        "or use test_api to verify behavior already present. "
+                        "Use the code already inspected to implement one coherent missing behavior"
+                        + (", or use test_api to verify behavior already present. "
+                           if self._test_api_offered else ". ") +
                         "Do not make cosmetic edits to reset progress or repeat unchanged reads or commands. "
                         "If a prerequisite prevents progress, record the concrete blocker. "
                         "The next stage will retain unresolved work, not treat inspection as completion."
@@ -3407,51 +3439,51 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             logger.warning("Frontend form validation failed", exc_info=True)
             return [_check_did_not_run("the frontend form check", f"it crashed: {type(exc).__name__}")]
 
-    def _static_frontend_issues(self) -> list[str]:
-        """Phase 3's frontend source checks that need no build or node: shown by validate_app too.
-
-        The acceptance matrix is left out with a GUI model: those screens are the
-        user's scope, and the matrix would ask for pages they did not model.
-        """
-        if not self._has_frontend_files():
-            return []
-        from besser.spec_driven_agent.validation.frontend_resolution import collect_frontend_resolution_issues
-
-        return [*self._collect_frontend_contract_issues(), *collect_frontend_resolution_issues(self.output_dir),
-                *self._frontend_form_issues(),
-                *(self._acceptance_matrix_issues() if self.gui_model is None else [])]
-
     def _validate_app(self) -> dict:
-        """Model-facing, revision-bound diagnostics with no additional LLM cost."""
+        """The final gate's deterministic checks (:meth:`_verify_workspace`), for the agent.
+
+        The requirements judgment is not run again: its last verdicts are listed.
+        """
+        from besser.spec_driven_agent.validation.ui_probe import NOT_RUN_PREFIX
+
         # Phase 3's last requirement judgment (no new call): a blocker the run holds is
         # never answered with "verified". Empty until the judge has run.
         ledger = [issue for issue in _requirements_ledger.ledger_issues(self._requirement_verdicts)
                   if _classify_issue(issue).severity == "blocker" or is_not_confirmed(issue)]
-        revision = self._workspace_revision()
-        key = (revision, tuple(ledger))
-        if self._app_validation_cache and self._app_validation_cache[0] == key:
+
+        # An install changes findings without changing the revision.
+        def cache_key() -> tuple:
+            return self._workspace_revision(), tuple(ledger), self._install_state()
+
+        if self._app_validation_cache and self._app_validation_cache[0] == cache_key():
             return self._app_validation_cache[1]
-        raw = self._collect_execution_issues()
-        # A static frontend warning (e.g. an entity with no page) is reported, not refused: say so.
-        raw += [issue if _classify_issue(issue).severity == "blocker" else f"{_ADVISORY_PREFIX}{issue}"
-                for issue in dict.fromkeys(self._static_frontend_issues()) if issue not in raw]
+        checked = self._verify_workspace()
         if ledger and self._requirement_cache_key(self._requirements_to_judge()) != self._requirement_verdicts_key:
             # Judged on other source than the judge would read now: the edit may have settled
             # it, and finishing judges it again. An edit the judge does not read changes nothing.
             ledger = [f"{_ADVISORY_PREFIX}judged before your latest edits; it is re-judged when you finish: {issue}"
                       for issue in ledger]
-        raw += ledger
-        issues = sorted((_classify_issue(s) for s in raw), key=self._repair_priority)
+
+        def skipped(issue: ValidationIssue) -> bool:
+            return is_not_confirmed(issue) or issue.message.startswith(NOT_RUN_PREFIX)
+
+        # A warning is reported, not refused: say so.
+        shown = [issue if issue.severity == "blocker" or skipped(issue)
+                 else ValidationIssue(issue.severity, f"{_ADVISORY_PREFIX}{issue.message}")
+                 for issue in checked]
+        issues = sorted([*shown, *map(_classify_issue, ledger)],
+                        key=lambda issue: (issue.severity != "blocker", self._repair_priority(issue)))
         blockers = [issue for issue in issues if issue.severity == "blocker"]
-        # A check that reached no conclusion is a warning, not a pass.
-        unverified = any(is_not_confirmed(issue) for issue in issues)
+        # A check that reached no conclusion or did not run is a warning, not a pass.
+        unverified = any(skipped(issue) for issue in issues)
         not_confirmed_step = (
             "Findings marked unverified are not confirmed, not defects: do not edit working code for them. "
-            "A check that did not run cannot be settled by a source edit. For create unverified (guessed fixtures), "
-            "each listed endpoint needs a test_api scenario that creates the record with valid unique fixtures "
-            "and then, in that same scenario, GETs it by id under the same path; a scenario holds at most "
-            "20 requests, so split the endpoints across several scenarios; do not remove "
-            "business validation to satisfy guessed samples. ")
+            "A check that did not run cannot be settled by a source edit. "
+            + ("For create unverified (guessed fixtures), "
+               "each listed endpoint needs a test_api scenario that creates the record with valid unique fixtures "
+               "and then, in that same scenario, GETs it by id under the same path; a scenario holds at most "
+               "20 requests, so split the endpoints across several scenarios; do not remove "
+               "business validation to satisfy guessed samples. " if self._test_api_offered else ""))
         result = {
             "verified": not blockers and not unverified,
             "blocker_count": len(blockers),
@@ -3459,14 +3491,16 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             # report alone ran to 2,500 chars.
             "issues": [clip_finding(issue.message) for issue in issues[:self._VALIDATE_APP_MAX_ISSUES]],
             "remaining_issue_count": max(0, len(issues) - self._VALIDATE_APP_MAX_ISSUES),
-            "scope": "Python declarations, schema/router contracts, backend startup and create probes where supported; not complete business acceptance",
+            "scope": ("the deterministic checks that decide the run, as at the end; type check, frontend "
+                      "build and screen check only where they can run, else listed as not run; not the "
+                      "requirements judgment, whose last verdicts are listed; not complete business acceptance"),
             "next_step": ("Repair concrete failures and call validate_app again. "
                           + (not_confirmed_step if unverified else "")).rstrip() if blockers else
                          (not_confirmed_step + "Verify the remaining user requirements and business workflows "
                           "before completion.") if unverified else
                          "These checks pass. Verify the remaining user requirements and business workflows before completion.",
         }
-        self._app_validation_cache = (key, result)
+        self._app_validation_cache = (cache_key(), result)
         return result
 
     def _test_api(self, args: dict) -> dict:
@@ -3656,9 +3690,29 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         Phase 3 fix loop only acts on ``blocker`` items when
         ``auto_fix_issues`` is enabled.
         """
-        # The checks run in fresh sandboxes, but they read and build this
-        # workspace: nothing the model left running may write to it meanwhile.
-        self.executor.stop_shell_processes()
+        # Names its steps on the run card (``_report_round_step``).
+        self._phase3_sweep_running = True
+        try:
+            return self._verify_workspace(sweep=True)
+        finally:
+            self._phase3_sweep_running = False
+
+    def _verify_workspace(self, sweep: bool = False) -> list[ValidationIssue]:
+        """Every deterministic check that decides the run, most urgent first.
+
+        ``validate_app`` and end_turn run it as it is, and it writes no source
+        file (a build still writes its output folder). The Phase 3 sweep (``sweep=True``, every Phase 3 check
+        and re-check) first stops the agent's processes and applies the
+        deterministic repairs, and adds the requirements judgment, the
+        checklist's findings and the authorization check. Outside the sweep the
+        findings are those of the tree the repairs would leave, and tsc does not
+        run on a project whose dependencies the agent can install until it
+        installs them: a not-run note naming the install, never a blocker.
+        """
+        if sweep:
+            # The checks run in fresh sandboxes, but they read and build this
+            # workspace: nothing the model left running may write to it meanwhile.
+            self.executor.stop_shell_processes()
         # Repair the build configuration BEFORE looking for defects in it.
         # The class-only path never asks the model for a Vite config: across
         # 192 recorded class-only runs, 192 had none and 96 also had a JSX
@@ -3668,9 +3722,12 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # nor pays to repair a defect we can settle for free - and, unlike
         # the packaging-time hook, it puts back a config a Phase 3 edit
         # deleted. Idempotent; it never overwrites what a project already has.
-        self._repair_build_configuration()
+        # Only the sweep repairs: mid-Phase 2 a written config would shadow the one
+        # the model has yet to write.
+        if sweep:
+            self._repair_build_configuration()
         build_contexts = compose_build_contexts(self.output_dir)
-        self._restore_scaffold_requirements(build_contexts)
+        restored = self._restore_scaffold_requirements(build_contexts, write=sweep)
         raw_issues: list[str] = [
             required_check_unverified(
                 "model assembly",
@@ -3708,9 +3765,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                                 # Later repairs must start from this content, or
                                 # they write ``npm ci`` back.
                                 content = content.replace("npm ci", "npm install")
-                                with open_plain_write(fpath, "w", root=self.output_dir, encoding="utf-8") as f:
-                                    f.write(content)
-                                logger.info("Auto-fixed: %s: npm ci -> npm install (no lock file)", rel)
+                                if sweep:
+                                    with open_plain_write(fpath, "w", root=self.output_dir, encoding="utf-8") as f:
+                                        f.write(content)
+                                    logger.info("Auto-fixed: %s: npm ci -> npm install (no lock file)", rel)
                         # COPY of a package-lock.json that does not exist is a
                         # HARD build failure ("failed to compute cache key"), and
                         # the LLM cannot write a lockfile - npm resolves it from
@@ -3720,24 +3778,24 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                             self.output_dir
                         ):
                             stripped = _strip_missing_lockfile_copy(content)
-                            if stripped != content:
-                                content = stripped
+                            if stripped != content and sweep:
                                 with open_plain_write(fpath, "w", root=self.output_dir, encoding="utf-8") as f:
-                                    f.write(content)
+                                    f.write(stripped)
                                 logger.info(
                                     "Auto-fixed: %s: dropped COPY of a "
                                     "package-lock.json that does not exist", rel,
                                 )
+                            content = stripped
 
                         # COPY sources resolve against the build context.
                         raw_issues.extend(dockerfile_copy_issues(
-                            self.output_dir, fpath, content, build_contexts))
+                            self.output_dir, fpath, content, build_contexts, restored))
                     except Exception:
                         logger.warning("Dockerfile check failed for %s", rel, exc_info=True)
 
         # Known runtime-incompatible pairs (dependency_pins.py). pip resolves
         # them without complaint, so the dry-run below cannot catch them.
-        for root, files in walk_app_tree(self.output_dir):
+        for root, files in walk_app_tree(self.output_dir) if sweep else ():
             for fname in files:
                 if fname == "requirements.txt":
                     fpath = os.path.join(root, fname)
@@ -3759,8 +3817,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                     if fname == "requirements.txt":
                         req_path = os.path.join(root, fname)
                         rel = os.path.relpath(req_path, self.output_dir).replace("\\", "/")
+                        # Its verdict holds while the file is unchanged.
                         raw_issues.extend(self._revision_cached(
-                            f"pip [{rel}]", (), lambda rel=rel: self._pip_dry_run_issues(rel)))
+                            f"pip [{rel}]", (), lambda rel=rel: self._pip_dry_run_issues(rel),
+                            source=self._files_revision(lambda path, rel=rel: path == rel)))
 
         # Static checks catch per-project compile errors that would
         # otherwise only surface at deploy time. ruff is near-instant
@@ -3796,40 +3856,41 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # page present, create wired. REPORT-ONLY (warnings + recipe
         # field): a GUI-scoped run may legitimately omit entities, so
         # these are visibility, never blockers. It measures web routes and
-        # pages, so it says nothing about a native or CLI target.
-        raw_issues.extend(self._acceptance_matrix_issues())
+        # pages, so it says nothing about a native or CLI target. Outside the
+        # sweep it waits for a frontend, and a GUI model's screens are the user's
+        # scope: the agent is not asked for pages they did not model.
+        if sweep or (self.gui_model is None and self._has_frontend_files()):
+            raw_issues.extend(self._acceptance_matrix_issues())
 
-        # validate_app reaches the probe too (Phase 2, a fix attempt); only this sweep names it.
-        self._phase3_sweep_running = True
-        try:
-            execution_issues = self._collect_execution_issues()
-        finally:
-            self._phase3_sweep_running = False
-        # An enabled ledger that extracted nothing verified nothing. Saying so
-        # is the difference between "the user asked for nothing" and "we never
-        # looked".
-        if (self.enable_requirements_ledger and self._requirements is None
-                and self._requirement_extraction_attempts):
-            raw_issues.append(_check_did_not_run(
-                "the requirements ledger",
-                f"{self._requirement_extraction_attempts} extraction attempt(s) on "
-                f"{getattr(self.client, 'model', 'this model')} returned nothing",
-            ))
-        # Only an observed failure defers the judge; an unverified create or
-        # action (e.g. a guessed POST refused by login) says nothing about the app.
-        if not self.enable_requirements_ledger or not _hard_blockers(
-                [i for i in map(_classify_issue, execution_issues) if i.severity == "blocker"]):
-            raw_issues.extend(self._collect_requirement_issues())
-        else:
-            raw_issues.append(f"{JUDGMENT_DEFERRED} until startup/data-entry blockers are fixed")
-        raw_issues.extend(self._collect_task_issues())
+        execution_issues = self._collect_execution_issues()
+        if sweep:
+            # An enabled ledger that extracted nothing verified nothing. Saying so
+            # is the difference between "the user asked for nothing" and "we never
+            # looked".
+            if (self.enable_requirements_ledger and self._requirements is None
+                    and self._requirement_extraction_attempts):
+                raw_issues.append(_check_did_not_run(
+                    "the requirements ledger",
+                    f"{self._requirement_extraction_attempts} extraction attempt(s) on "
+                    f"{getattr(self.client, 'model', 'this model')} returned nothing",
+                ))
+            # Only an observed failure defers the judge; an unverified create or
+            # action (e.g. a guessed POST refused by login) says nothing about the app.
+            if not self.enable_requirements_ledger or not _hard_blockers(
+                    [i for i in map(_classify_issue, execution_issues) if i.severity == "blocker"]):
+                raw_issues.extend(self._collect_requirement_issues())
+            else:
+                raw_issues.append(f"{JUDGMENT_DEFERRED} until startup/data-entry blockers are fixed")
+            # Open checklist items are Phase 2's own end-turn gate, not findings yet.
+            raw_issues.extend(self._collect_task_issues())
         raw_issues.extend(self._collect_ruff_issues())
         raw_issues.extend(execution_issues)
-        raw_issues.extend(self._authorization_issues())
+        if sweep:
+            raw_issues.extend(self._authorization_issues())
         # The TS collector reports a relevant disabled check as unknown; it
         # never enables tooling. Already-authorized dependency setup is an
         # actionable verification prerequisite, not a request for source edits.
-        raw_issues.extend(self._collect_tsc_issues())
+        raw_issues.extend(self._collect_tsc_issues() if sweep else self._collect_tsc_issues(installed_only=True))
         raw_issues.extend(self._format_notes)
         raw_issues.extend(self._agent_left_out_issues())
         raw_issues.extend(_collect_uncompiled_source_issues(
@@ -3864,16 +3925,20 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         build_verdicts = self._frontend_build_verdicts
         remaining = self.max_runtime_seconds - (
             time.monotonic() - self._start_time if self._start_time is not None else 0)
-        if (self.enable_toolchain_validation and self.allow_shell_tools
+        if (sweep and self.enable_toolchain_validation and self.allow_shell_tools
                 and any(rel.rpartition("/")[2] == "package.json" for rel in self._workspace_file_list())):
             self._report_round_step("building the frontend")
         raw_issues.extend(collect_frontend_build_issues(
             self.output_dir, enabled=self.enable_toolchain_validation,
-            allow_shell=self.allow_shell_tools, source_revision=self._workspace_revision,
+            allow_shell=self.allow_shell_tools, source_revision=self._frontend_revision,
             build_verdicts=build_verdicts, can_run=self._checks_allowed,
-            timeout=remaining,
+            timeout=remaining, rewritten_builds=None if sweep else rewritten_build_scripts(self.output_dir),
         ))
         raw_issues.extend(self._collect_screen_issues())
+        if not sweep:
+            # The install is the agent's to run when it chooses; only the final check holds the run for it.
+            raw_issues = [dependency_setup_not_run(issue) if issue.startswith("verification setup:") else issue
+                          for issue in raw_issues]
 
         issues = [_classify_issue(s) for s in drop_duplicate_python_findings(raw_issues)]
         # For the duration of a fix/modify run, promote findings that match
@@ -3893,15 +3958,17 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     def _scaffold_family(self) -> str | None:
         return self._SCAFFOLD_FAMILIES.get(self._generator_used or "")
 
-    def _restore_scaffold_requirements(self, build_contexts: dict[str, str]) -> None:
+    def _restore_scaffold_requirements(self, build_contexts: dict[str, str], write: bool = True) -> set[str]:
         """Put back a requirements.txt a Phase 2 edit deleted from a FastAPI scaffold.
 
         A repair step, run before validation (which only reports). The default
         it writes is the FastAPI stack, so only that scaffold family gets it,
         and only where a Dockerfile's COPY resolves in the build context.
+        Returns the paths restored; with ``write=False``, those it would restore.
         """
+        restored: set[str] = set()
         if self._scaffold_family() != "fastapi":
-            return
+            return restored
         workspace = os.path.realpath(self.output_dir)
         for root, dirs, files in walk_plain(self.output_dir):
             dirs[:] = [d for d in dirs if d not in ("node_modules", ".git", _SNAPSHOT_DIR)]
@@ -3918,9 +3985,12 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                     target = os.path.dirname(path)
                     inside = os.path.realpath(target).startswith(workspace + os.sep)
                     if (os.path.basename(path) == "requirements.txt" and inside
-                            and os.path.isdir(target) and _ensure_requirements_txt(target)):
-                        logger.info("Auto-fixed: restored missing %s",
-                                    os.path.relpath(path, self.output_dir))
+                            and os.path.isdir(target) and (not write or _ensure_requirements_txt(target))):
+                        restored.add(path)
+                        if write:
+                            logger.info("Auto-fixed: restored missing %s",
+                                        os.path.relpath(path, self.output_dir))
+        return restored
 
     def _install_scaffold_frontend_dependencies(self) -> None:
         """Install the deterministic frontend's declared packages, once.
@@ -4988,6 +5058,31 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         ``_REVISION_HASH_CAP`` bytes plus its size, so a large asset cannot
         stall the check.
         """
+        return self._files_revision()
+
+    def _frontend_revision(self) -> str:
+        """The revision of what a type check or frontend build can read: every file
+        but Python sources and the rest of a Python project's folder (one holding a
+        ``requirements.txt`` or ``pyproject.toml`` and neither a frontend nor holding
+        one). The workspace revision when no folder holds a ``package.json`` or ``tsconfig.json``."""
+        files = self._workspace_file_list()
+
+        def folders(*names: str) -> set[str]:
+            return {rel.rpartition("/")[0] for rel in files if rel.rpartition("/")[2] in names}
+
+        def under(rel: str, folder: str) -> bool:
+            return not folder or rel.startswith(folder + "/")
+
+        frontends = folders("package.json", "tsconfig.json")
+        if not frontends:
+            return self._workspace_revision()
+        backends = {folder for folder in folders("requirements.txt", "pyproject.toml") - frontends - {""}
+                    if not any(under(frontend, folder) for frontend in frontends)}
+        return self._files_revision(lambda rel: not rel.endswith(".py") and (
+            any(under(rel, folder) for folder in frontends) or not any(under(rel, folder) for folder in backends)))
+
+    def _files_revision(self, keep: Callable[[str], bool] | None = None) -> str:
+        """:meth:`_workspace_revision` of the files ``keep`` accepts, all when None."""
         fingerprint = hashlib.sha256()
         workspace = os.path.realpath(self.output_dir)
         rels = sorted(self._workspace_file_list())
@@ -4996,6 +5091,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             folder, _, name = rel.rpartition("/")
             names_by_dir.setdefault(folder, set()).add(name)
         for rel in rels:
+            if keep is not None and not keep(rel):
+                continue
             if (rel.lower().endswith(_REVISION_IGNORED_SUFFIXES)
                     or _REVISION_IGNORED_DIRS.intersection(rel.split("/")[:-1])
                     or self._is_project_tool_output(rel, names_by_dir)):
@@ -5052,18 +5149,21 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         "Android module: the build server has no Android SDK",
     )
 
-    def _revision_cached(self, check: str, inputs: tuple, collect: Callable[[], list[str]]) -> list[str]:
+    def _revision_cached(self, check: str, inputs: tuple, collect: Callable[[], list[str]],
+                         source: str | None = None) -> list[str]:
         """``collect()``'s findings, reused for the same tree and ``inputs``.
 
         Phase 3 re-validates after no-edit rounds and after a rollback
         restore; tsc, cargo, kotlinc and the pip dry-run cost up to 30-180 s
         each for an answer that cannot have changed. A failure is a verdict
         and is reused too; a result holding a check that did not run is not.
-        Keyed by revision, not just the latest one, so a restored tree hits.
-        In memory only, per run, like ``_runtime_probe_issues``.
+        Keyed by revision, not just the latest one, so a restored tree hits;
+        ``source`` is the revision of the files the check reads, when it reads
+        fewer than the whole tree. In memory only, per run, like
+        ``_runtime_probe_issues``.
         """
         results = self._check_results
-        key = (check, self._workspace_revision(), inputs)
+        key = (check, source or self._workspace_revision(), inputs)
         if key in results:
             return list(results[key])
         issues = collect()
@@ -5088,9 +5188,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         )
 
         revision = self._workspace_revision()
-        # A build verdict is keyed (folder, revision, install markers, script); None is a pass.
+        # A build verdict is keyed (folder, frontend revision, install markers, script); None is a pass.
+        frontend = self._frontend_revision()
         built = tuple(sorted({key[0] for key, verdict in self._frontend_build_verdicts.items()
-                              if key[1] == revision and verdict is None}))
+                              if key[1] == frontend and verdict is None}))
         if not built:
             return []
         key = ("screens", revision, built)
@@ -5136,9 +5237,13 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         issue = dependency_check_issue(rel, result.stderr) if result.returncode != 0 else None
         return [issue] if issue else []
 
-    def _collect_tsc_issues(self) -> list[str]:
-        """Delegate to the toolchain module, once per tree, install state and
-        compiler choice (host ``tsc``/``npm``, a project-local ``tsc``)."""
+    def _collect_tsc_issues(self, installed_only: bool = False) -> list[str]:
+        """Delegate to the toolchain module, once per frontend revision, install
+        state and compiler choice (host ``tsc``/``npm``, a project-local ``tsc``).
+
+        ``installed_only``: a project whose dependencies the agent can install
+        is not compiled until they are; the install is asked for.
+        """
         local_tsc = os.path.join("node_modules", ".bin", "tsc.cmd" if os.name == "nt" else "tsc")
         installs = tuple(
             (folder, install_markers(os.path.join(self.output_dir, folder)),
@@ -5146,16 +5251,20 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             for folder in sorted({rel.rpartition("/")[0] for rel in self._workspace_file_list()
                                   if rel.rpartition("/")[2] == "tsconfig.json"}))
         tools = tuple(shutil.which(name) for name in ("tsc", "tsc.cmd", "npm", "npm.cmd"))
+        # The first install marker is node_modules itself.
+        skip_uninstalled = installed_only and any(markers[0] is None for _, markers, _ in installs)
 
         def type_check() -> list[str]:
-            if installs:
+            if installs and self._phase3_sweep_running:
                 self._report_round_step("type-checking the TypeScript code")
             return _collect_tsc_issues(
                 self.output_dir, self.allow_shell_tools,
                 self.enable_toolchain_validation, _RECIPE_EXCLUDED_DIRS,
+                without_dependencies=not skip_uninstalled,
             )
         return self._revision_cached(
-            "tsc", (self.allow_shell_tools, self.enable_toolchain_validation, tools, installs), type_check)
+            "tsc", (self.allow_shell_tools, self.enable_toolchain_validation, tools, installs, skip_uninstalled),
+            type_check, source=self._frontend_revision() if installs else None)
 
     @classmethod
     def _collapse_repeated_names(cls, err_lines: list[str]) -> list[str]:
@@ -5877,8 +5986,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         revision = self._workspace_revision()
         passed = [record["report"] for record in self._api_scenarios.values()
                   if record["revision"] == revision and record["report"].get("status") == "passed"]
-        # A build verdict is keyed (folder, revision, install markers, script); None is a pass.
-        builds = [verdict for key, verdict in self._frontend_build_verdicts.items() if key[1] == revision]
+        # A build verdict is keyed (folder, frontend revision, install markers, script); None is a pass.
+        frontend = self._frontend_revision()
+        builds = [verdict for key, verdict in self._frontend_build_verdicts.items() if key[1] == frontend]
         return {
             "frontend_build": ("passed" if any(verdict is None for verdict in builds) else "failed" if builds
                                else "not_run" if self._has_frontend_files() else "none"),

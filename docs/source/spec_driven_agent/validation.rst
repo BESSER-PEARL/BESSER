@@ -31,8 +31,10 @@ that was already broken is never refused, so it can be repaired.
   Docker does: the compose ``build.context`` when a compose file names the
   Dockerfile, else the Dockerfile's own folder. ``COPY --from=<stage>`` copies
   from a build stage and is not checked. This check only reports; it never
-  writes a file. A separate repair step before validation restores a
-  ``requirements.txt`` that a Phase 2 edit deleted from a FastAPI scaffold.
+  writes a file. A separate repair step before Phase 3 validation restores a
+  ``requirements.txt`` that a Phase 2 edit deleted from a FastAPI scaffold;
+  ``validate_app``, which writes no source file (a build still writes its
+  output folder), does not report a file that step would restore.
   Several other common mistakes are repaired outright without spending
   an LLM turn (``npm ci`` with no lockfile anywhere in the project becomes
   ``npm install``; a ``COPY`` of a non-existent ``package-lock.json`` is
@@ -236,7 +238,10 @@ blocker. One cause of a probe timeout is found without running anything: a
 When both toolchain validation and shell tools are explicitly enabled, npm is
 available, and project dependencies are missing, ``verification setup:`` is
 instead actionable. The agent may use its existing authorized dependency tool,
-then request fresh validation. This is a verification-only obligation: Phase 3
+then request fresh validation. Before the final check (``validate_app``, the
+end-of-turn check, the findings Phase 2 opens with) it is a not-run note that
+names the ``npm install`` to run, never a blocker, and does not hold Phase 2
+open; the final check blocks on it. This is a verification-only obligation: Phase 3
 does not force application edits to satisfy it. Missing system tools or disabled
 permissions remain unverified; validation itself never installs anything.
 Authorized TypeScript checks prefer the project's installed compiler over a
@@ -245,13 +250,18 @@ potentially incompatible global version.
 Frontend production builds are distinct from typechecking. A discovered app's
 configured ``npm run build`` is checked only when both toolchain validation and
 shell tools are explicitly enabled and its dependencies are already installed.
+Before the final check, a build script its repair would rewrite (``"build":
+"vite"`` starts a dev server) is listed as not run instead of run.
 Validation never installs packages or enables shell access. Configured checks
 execute generated build scripts under that explicit permission, inside a fresh
 bubblewrap sandbox with no network. Source is checked before and after execution. Results,
 failures included, are reused only for unchanged source and dependency-install
 markers during the same run; source changes during a build invalidate its
-result. The same holds for ``tsc`` (also keyed by the compiler it would use),
-``cargo check``, ``kotlinc`` and the ``pip install --dry-run`` check: Phase 3
+result. For the build and ``tsc`` the source is every file but Python sources and
+the rest of a folder holding a ``requirements.txt`` or ``pyproject.toml`` (unless
+it is a frontend's or holds one), for the ``pip install --dry-run`` check its
+``requirements.txt``, so a backend edit reuses the frontend's verdicts. The same holds for ``tsc`` (also keyed by the
+compiler it would use), ``cargo check``, ``kotlinc`` and the dependency check: Phase 3
 re-validates after rounds that edit nothing and after a rollback, and those
 passes do not run the same check on the same tree again. A check that did not
 finish (a timeout, no sandbox, an unreachable package index, unfetched crates)
@@ -259,7 +269,8 @@ gave no verdict and runs again on the next pass. With shell tools
 disabled, a separate external build can verify the output, but raw generation
 continues to state that frontend build verification is pending.
 
-Once a frontend's build has passed on the current tree, Phase 3 opens its
+Once a frontend's build has passed on the current tree, Phase 3, and the
+agent's ``validate_app`` when a browser is present, opens its
 screens in a headless browser (``validation/ui_probe.py``). Inside the same
 no-network sandbox it first creates records through the app's own API with the
 create probe described above, into a scratch SQLite database, then boots the

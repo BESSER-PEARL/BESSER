@@ -16,7 +16,8 @@ would immediately fail.
      - ``list_files``, ``read_file``, ``write_file``, ``modify_file``, ``replace_file_lines``,
        ``search_in_files``, ``delete_file``
    * - Validation / bookkeeping
-     - ``validate_app``, ``test_api``, ``task_list``
+     - ``validate_app``, ``test_api`` (while the workspace holds a generated
+       FastAPI backend), ``task_list``
    * - Generators
      - The 19 generator tools listed below.
    * - Shell
@@ -192,21 +193,45 @@ request. Task outcomes are retained in the recipe.
 Application checks during editing
 ---------------------------------
 
-``validate_app`` reports source contracts, startup and create-request failures
-after a coherent edit. It lists at most 40 findings, most urgent first, and
-counts the rest (``remaining_issue_count``); a finding longer than 1,200
+``validate_app`` runs the deterministic checks that decide the run, the same
+function Phase 3 runs after every fix attempt and at the end: source and
+schema/router contracts, startup and create requests, retained ``test_api``
+workflows, frontend, data and model checks, ruff, the dependency check, and the
+type check, frontend build and screen check. Phase 3 alone adds the requirements
+judgment (``validate_app`` lists its last verdicts), the checklist's findings
+(open items are the end-turn gate's) and the authorization check, and first
+applies the deterministic repairs (build configuration, Dockerfile lockfile
+fixes, dependency pins, a deleted scaffold ``requirements.txt``):
+``validate_app`` writes no source file (a build still writes its output folder)
+and reports on the tree as those repairs would leave it, without making them.
+A Dockerfile lockfile fix or a ``requirements.txt`` the sweep would put back is
+not reported, and a build script the sweep would rewrite (``"build": "vite"``,
+which starts a dev server, becomes ``"vite build"``) is not run but listed as
+not run, naming the rewrite. It lists at most 40 findings, blockers
+first, and counts the rest (``remaining_issue_count``); a finding longer than 1,200
 characters is cut as in the Phase 3 fix prompt, keeping its head and tail. Validation runs after writes in the same tool batch.
-Once the app has frontend files, it also reports the static frontend checks
-(contract, import resolution, create forms) and, without a GUI model, the
-acceptance-matrix findings; a warning among them is marked
-``advisory, not a blocker``. When the run has a checklist, a passing result
-also lists its open items (``open_items``: id and a short label, empty when
+A warning is marked ``advisory, not a blocker``. The acceptance-matrix findings
+wait for frontend files and are left out with a GUI model. tsc and the frontend
+build reuse their last verdict while no file they can read changes (any file but
+Python sources and the rest of a Python project's folder) and the installed
+dependencies are the same, and the dependency check while its
+``requirements.txt`` is unchanged. Where the agent can install a project's
+dependencies, tsc and the build wait for the install: a not-run note that names
+the ``npm install`` to run, never a blocker, so it neither holds Phase 2 open
+nor is among the findings Phase 2 opens with (the final check still blocks on
+it); otherwise tsc runs the same partial check as Phase 3. The screen check needs a browser. A check that
+did not run is listed as not run, never as a blocker, and ``verified`` is true
+only when none is listed and no blocker remains. When the run has a checklist,
+a result with no blocker also lists its open items (``open_items``: id and a short label, empty when
 none is open), the ids ``task_list`` needs to close them. Ending a turn runs
 the same checks, so the tool's description asks for a call after a code change
 only, not a second one before finishing.
 
 ``test_api`` executes up to 20 declarative requests against a disposable copy of
-one generated FastAPI backend and a fresh SQLite database. Requests share state
+one generated FastAPI backend and a fresh SQLite database. It is offered, and the
+prompts name it, only while the workspace holds such a backend (``main_api.py``
+next to ``sql_alchemy.py``), decided when Phase 2 and Phase 3 start, so the tool
+list does not change within a phase. Requests share state
 within a scenario; later requests may reference response JSON using
 ``{{0.room.id}}``. When the path is missing from a response that wraps the record
 under exactly one key (``{"todolist": {"id": 1}, "items_ids": []}``), ``{{0.id}}``
@@ -529,7 +554,10 @@ Phase 2's system prompt gains a *runtime verification* runbook, and a probe
 script, ``.besser_probe.py``, is written to the workspace root. Its
 subcommands (``up``, ``routes``, ``req``, ``log``, ``down``) boot the server
 detached, list its routes and send requests, so the agent can run the app
-rather than only read it. ``routes`` prints, per route, the JSON body it reads
+rather than only read it. The runbook has the agent create every entity and
+call every action through ``test_api`` scenarios, which are retained and
+replayed as evidence; ``up``, ``log`` and ``req`` are for debugging a failure
+a scenario reported. ``routes`` prints, per route, the JSON body it reads
 as its top-level keys (``<- {"params": {...}}`` for a method route, whose
 values go inside that key) and what a 2xx answer is (``-> list`` or
 ``-> object {...}`` with its keys): the response schema the app's OpenAPI

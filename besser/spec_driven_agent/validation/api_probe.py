@@ -473,8 +473,8 @@ def declares_failure(body) -> bool:
 
 def request_validation_refusal(response: dict) -> bool:
     """Whether a reported response is FastAPI's request-validation 422: a ``detail`` list of
-    ``loc``/``msg`` errors, answered before the handler ran. A body cut at the report's
-    size limit is judged on how it starts."""
+    ``loc``/``msg`` errors whose ``loc`` starts with a request part, answered before the
+    handler ran. A body cut at the report's size limit is judged on how it starts."""
     if response.get("status") != 422:
         return False
     body = response.get("json")
@@ -482,7 +482,9 @@ def request_validation_refusal(response: dict) -> bool:
         return body.startswith('{"detail": [{')
     detail = body.get("detail") if isinstance(body, dict) else None
     return (isinstance(detail, list) and bool(detail)
-            and all(isinstance(error, dict) and "loc" in error and "msg" in error for error in detail))
+            and all(isinstance(error, dict) and "msg" in error and isinstance(error.get("loc"), list)
+                    and error["loc"][:1] in (["body"], ["query"], ["path"], ["header"], ["cookie"])
+                    for error in detail))
 
 
 def _records(value):

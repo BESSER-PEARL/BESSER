@@ -51,6 +51,14 @@ def test_a_refusal_the_handler_raised_still_counts(tmp_path):
     assert _level(tmp_path, {"status": 409, "json": {"detail": "at most 100 items"}}) == "verified"
 
 
+def test_a_422_the_handler_raised_from_its_own_validation_errors_still_counts(tmp_path):
+    # ``raise HTTPException(422, detail=exc.errors())``: loc/msg errors whose loc names no request part.
+    handler_422 = {"detail": [{"type": "greater_than", "loc": ["quantity"], "msg": "Input should be greater "
+                                                                                  "than 0", "input": -1}]}
+    assert not request_validation_refusal({"status": 422, "json": handler_422})
+    assert _level(tmp_path, {"status": 422, "json": handler_422}) == "verified"
+
+
 def test_a_validation_body_cut_at_the_report_limit_is_still_recognised():
     assert request_validation_refusal({"status": 422, "json": '{"detail": [{"type": "missing", "loc": ["bo'
                                                                       ' [truncated]'})

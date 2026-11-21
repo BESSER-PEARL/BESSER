@@ -3952,8 +3952,9 @@ class ToolExecutor:
         result = self.app_validator()
         if cited is not None and isinstance(result, dict):
             result = {**result, "citations": cited}
-        if isinstance(result, dict) and result.get("verified") is True and self._tasks:
+        if isinstance(result, dict) and result.get("blocker_count") == 0 and self._tasks:
             # The ids task_list(done) needs: without them the next turn was a task_list 'list' alone.
+            # Not only on verified: a check this server never runs withholds that on every call.
             # A copy: the orchestrator caches and re-serves its result.
             result = {**result, "open_items": [
                 {"id": t["id"], "label": _task_label(t["text"])} for t in self.open_tasks()]}

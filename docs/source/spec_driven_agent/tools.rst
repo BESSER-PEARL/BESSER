@@ -210,7 +210,7 @@ dependencies, tsc waits for the install and asks for it; otherwise it runs the
 same partial check as Phase 3. The screen check needs a browser. A check that
 did not run is listed as not run, never as a blocker, and ``verified`` is true
 only when none is listed and no blocker remains. When the run has a checklist,
-a passing result also lists its open items (``open_items``: id and a short label, empty when
+a result with no blocker also lists its open items (``open_items``: id and a short label, empty when
 none is open), the ids ``task_list`` needs to close them. Ending a turn runs
 the same checks, so the tool's description asks for a call after a code change
 only, not a second one before finishing.

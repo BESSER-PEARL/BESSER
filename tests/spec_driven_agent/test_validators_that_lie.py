@@ -3,10 +3,10 @@
 Both were found by comparing a validation verdict against the app it
 judged, on a recorded hotel run:
 
-  1. The missing-frontend blocker never fired on "build a web application",
-     because ``\\b(web ?app|...)\\b`` cannot match when "app" continues into
-     "lication". 9 of 10 sweep runs shipped a backend with no UI at all and
-     reported success.
+  1. The missing-frontend blocker never fired on "build a web application".
+     9 of 10 sweep runs shipped a backend with no UI at all and reported
+     success. It now follows the run's target, not the request's wording
+     (test_frontend_follows_routed_stack.py).
 
   2. ``tsc`` ran without ``node_modules``, so every package import was
      unresolvable. The run reported "3 blocker-level issue(s) remain — the
@@ -24,53 +24,6 @@ import pytest
 
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator, _classify_issue
 from besser.spec_driven_agent.providers.llm_client import UsageTracker
-
-
-# ----------------------------------------------------------------------
-# 1. The missing-frontend ask
-# ----------------------------------------------------------------------
-
-ASKS_FOR_A_UI = [
-    # The exact phrasing that slipped through, and its neighbours.
-    "build a web application to manage a small hotel",
-    "a web applications suite",
-    "build a webapp",
-    "build a web app",
-    "build a web-app",
-    "i need a website for my shop",
-    "with a front-end in react",
-    "a front end please",
-    "just a simple ui",
-    "the user interface should be clean",
-    "an admin dashboard",
-    "a customer portal",
-    "a single page application",
-    "a web interface for staff",
-]
-
-DOES_NOT_ASK_FOR_A_UI = [
-    "a rest api and nothing else",
-    "store the data in postgres",
-    "a command line tool",
-    "model the hotel domain",
-    # The hotel domain word that must NOT be read as "single page app".
-    "the hotel has a spa, a gym and a restaurant",
-]
-
-
-@pytest.mark.parametrize("text", ASKS_FOR_A_UI)
-def test_ui_request_is_recognised(text):
-    assert LLMOrchestrator._WEBAPP_ASK_RE.search(text), text
-
-
-@pytest.mark.parametrize("text", DOES_NOT_ASK_FOR_A_UI)
-def test_non_ui_request_is_not_flagged(text):
-    assert not LLMOrchestrator._WEBAPP_ASK_RE.search(text), text
-
-
-def test_web_application_spelled_out_is_the_regression():
-    """Pinning the specific miss, so a future tightening can't undo it."""
-    assert LLMOrchestrator._WEBAPP_ASK_RE.search("build a web application")
 
 
 # ----------------------------------------------------------------------

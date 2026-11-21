@@ -156,7 +156,9 @@ Request body
      - Requirements the modeling assistant extracted from the user's request,
        each ``{"id", "text", "kind"}``: ``id`` is its ``RequirementArtifact`` id
        in the project trace, ``kind`` a ``RequirementKind`` value (see
-       :doc:`../buml_language/model_types/traceability`). At most 128, ids
+       :doc:`../buml_language/model_types/traceability`). An item may add
+       ``met_by`` (``declaration``, ``type`` or ``check``: what code meets it,
+       as the run's own extraction labels it; left out, ``check``). At most 128, ids
        unique, text up to 1,000 characters. When given, the requirements ledger
        judges these instead of extracting its own (see :doc:`validation`).
        Left out, the run extracts them.

@@ -56,8 +56,10 @@ The three phases
    the same keywords, plus a short list of stacks no generator builds.
 
    The target is recorded in the trace, the checkpoint and
-   ``.besser_recipe.json``, so a resume or a later modify run of the same app
-   keeps it. Every modify run makes the same call once, on the primary model
+   ``.besser_recipe.json``, and the routed stack in the checkpoint and the
+   recipe (``routed_stack``), so a resume or a later modify run of the same app
+   keeps them (its frontend framework and idiom block); a modify run that
+   changes the target takes the new answer's stack. Every modify run makes the same call once, on the primary model
    rather than the cheap planning one (its answer can rebuild the whole app),
    with the recorded target, the model's class names, and the request as
    context with the user's newest message as the change, and it answers three
@@ -133,12 +135,20 @@ The three phases
 
    A ``web_app`` target (an app, web app, UI, website, dashboard or portal
    with no other platform named) gets a frontend even without a GUI model:
-   the FastAPI scaffold, plus a React frontend the LLM writes in Phase 2. An
-   explicitly headless request (API or backend only, a REST API, no UI) stays
-   backend-only, and in a modify run a bare "app" names the existing project
-   rather than asking for a UI. Such a request also puts "build the frontend"
-   on the checklist, and Phase 3 reports a blocker if the output ends with no
-   frontend files. With no GUI model, the item names the classes that have
+   the FastAPI scaffold, plus a frontend the LLM writes in Phase 2: React and
+   Vite, unless the routing answer's stack names another frontend framework
+   (Vue, Angular, Svelte, Next.js ...), which the checklist item and the CRUD
+   rule then name instead; a missing or unknown stack keeps React. A
+   ``backend`` target (API or backend only) stays backend-only. When no target
+   was decided, the models decide, never the request's wording: a GUI model
+   (or a frontend in the scaffold) means a frontend. A Django scaffold has
+   templates only with a GUI model; without one the item asks for Django
+   templates, views and urls instead of a React app, and the CRUD rule leaves
+   out its single-page-app bullets and wires each page to a view and a URL
+   pattern (a view that saves the POSTed form, a delete view, a pattern for
+   ``/``) instead of API calls and a client router. A frontend run also puts "build
+   the frontend" on the checklist, and Phase 3 reports a blocker if the output
+   ends with no frontend files. With no GUI model, the item names the classes that have
    backend routes, says that a narrower UI scope in the request wins, and
    closes only once a routed app with at least one entity screen exists. A new project with both a class model and an agent model
    gets a checklist item to connect them (with a GUI model, only when a
@@ -151,7 +161,13 @@ The three phases
    same thing as a judged requirement (see :doc:`validation`), in any language
    and however the agent reaches the data. The
    system prompt adapts to the run: the rule that asks for a complete CRUD
-   frontend applies only when the run has or needs a frontend, and when shell
+   frontend applies only when the run has or needs a frontend, and a request
+   that scopes the UI to the screens it names wins over its per-entity pages;
+   the state-machine, object-model and OCL rules appear only when the run has
+   those models (an OCL invariant or a method pre/postcondition; the rule
+   numbers stay the same); an idiom block
+   appears only for a routed stack no generator builds (a generated scaffold
+   is the convention); and when shell
    tools are on and a FastAPI backend is present it gains a runtime
    verification runbook (see :ref:`spec-driven-shell-tools`). For a scaffold
    from the FastAPI backend generator, the endpoint manifest in the system
@@ -377,7 +393,8 @@ reading a trace and wondering why a run did what it did.
    * - Tracing
      - Every run start and end, phase transition, turn, tool call, cost
        update, checkpoint write (or the ``error`` of a failed one), target
-       decision, snapshot, rollback, regeneration and validation finding is
+       decision (a ``target`` record with ``kind`` null and the description
+       ``target undecided`` when the routing calls gave none), snapshot, rollback, regeneration and validation finding is
        appended to ``.besser_trace.jsonl`` in the workspace (events
        ``run_start``, ``phase_enter`` / ``phase_exit``, ``turn_start``,
        ``tool_call``, ``cost_update``, ``llm_call``, ``compaction``, ``eviction``,

@@ -7,8 +7,8 @@ Go, NestJS or FastAPI run, and the inventory told Phase 2 to build on it. The
 system prompt's idiom block came from the same words: "rust-proof paint" put
 the Rust (axum) block (about 170 tokens) into a FastAPI run's prompt, and "a
 FastAPI backend for a model rocket club" got it instead of the Python block. The routing call already decided the stack
-(``unsupported_stack``); the keywords are kept only for runs with no routing
-answer.
+(``unsupported_stack``). The keywords are kept only for the manifest of runs with no
+routing answer; the idiom block follows the routing answer alone.
 """
 
 import pytest
@@ -80,32 +80,25 @@ def test_the_routed_stack_still_gets_its_manifest(tmp_path, library_book_author_
 
 # -- the idiom block in the system prompt ------------------------------------
 
-@pytest.mark.parametrize("instructions, routed_stack, expected", [
-    # Domain words: the block the routing answer implies, not Rust's.
-    ("A web app for a paint shop selling rust-proof coatings.", "", None),
-    ("A FastAPI backend for a model rocket club.", "", "Flask / FastAPI (Python)"),
-    ("Build a REST API in Go for a cargo tracking company.", "Go", None),
-    ("Build a NestJS backend for a model rocket club.", "NestJS", "this stack"),
-    ("Build a FastAPI app inspired by Rust services.", "", "Flask / FastAPI (Python)"),
-    # A stack the user really asked for keeps its block.
-    ("Build a REST API in Rust with axum.", "Rust + Axum", "Rust (axum)"),
-    ("Build a Spring Boot API for orders.", "Spring Boot", "Spring Boot"),
-    ("Build a Django project for a library.", "", "this stack"),
-    ("A Next.js frontend on a FastAPI backend.", "Next.js", "Flask / FastAPI (Python)"),
-    # The routing answer names a stack the request spells differently.
-    ("Build the library service on the JVM.", "Spring Boot", "Spring Boot"),
+@pytest.mark.parametrize("routed_stack, expected", [
+    # A stack BESSER generates: the scaffold is the convention.
+    ("", None),
+    ("Go", None),
+    ("NestJS", "this stack"),
+    ("Rust + Axum", "Rust (axum)"),
+    ("Spring Boot", "Spring Boot"),
+    ("Next.js", "this stack"),
 ])
-def test_idiom_block_follows_the_routing_answer(instructions, routed_stack, expected):
-    section = idiom_guidance_section(instructions, routed_stack)
+def test_idiom_block_follows_the_routing_answer(routed_stack, expected):
+    section = idiom_guidance_section(routed_stack)
     if expected is None:
         assert section == ""
     else:
         assert section.startswith(f"## Idiomatic conventions for {expected}\n")
 
 
-def test_without_a_routing_answer_the_keywords_decide():
-    assert idiom_guidance_section("Build a REST API in Rust with axum.").startswith(
-        "## Idiomatic conventions for Rust (axum)")
+def test_without_a_routing_answer_there_is_no_idiom_block():
+    assert idiom_guidance_section(None) == ""
 
 
 def test_the_run_prompt_carries_no_rust_block_for_rust_proof_paint(tmp_path, library_book_author_model):

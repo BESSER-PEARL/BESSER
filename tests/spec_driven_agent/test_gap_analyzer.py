@@ -653,13 +653,15 @@ def _booking_model() -> DomainModel:
 
 class TestPresentEnumerationsAreNotGaps:
 
-    def test_present_enumerations_are_dropped_and_declared_methods_kept(self):
-        """Pins the live run: the two enumeration tasks go, all six method
-        tasks stay, order preserved."""
+    def test_present_enumerations_are_annotated_and_declared_methods_kept(self):
+        """Pins the live run: the two enumeration tasks are annotated with the
+        enumeration the model has, all six method tasks stay, order preserved."""
         from besser.spec_driven_agent.planning.gap_analyzer import _drop_present_enumerations
 
         kept = _drop_present_enumerations(ENUM_TASKS + METHOD_TASKS, _booking_model())
-        assert kept == METHOD_TASKS
+        assert kept[len(ENUM_TASKS):] == METHOD_TASKS
+        for task, noted in zip(ENUM_TASKS, kept):
+            assert noted.startswith(task) and "already has this enumeration" in noted
 
     def test_match_ignores_the_proposed_name_and_casing(self):
         from besser.spec_driven_agent.planning.gap_analyzer import _drop_present_enumerations
@@ -668,7 +670,17 @@ class TestPresentEnumerationsAreNotGaps:
             "Create a new enum Status (awaiting_payment, confirmed, cancelled) for bookings",
             "Define enumeration PhysicalState: NOT_ARRIVED | CHECKED_IN | CHECKED_OUT",
         ]
-        assert _drop_present_enumerations(tasks, _booking_model()) == []
+        kept = _drop_present_enumerations(tasks, _booking_model())
+        assert "as BookingCommercialStatus" in kept[0] and "as BookingPhysicalStatus" in kept[1]
+
+    def test_a_present_enumeration_task_that_also_asks_for_more_is_kept(self):
+        """A text sanitizer annotates; it never drops the rest of the task."""
+        from besser.spec_driven_agent.planning.gap_analyzer import _drop_present_enumerations
+
+        task = ("Create an enum Stage (NOT_ARRIVED, CHECKED_IN, CHECKED_OUT) and show "
+                "the stage of each booking on the booking list page")
+        [noted] = _drop_present_enumerations([task], _booking_model())
+        assert noted.startswith(task)
 
     def test_a_genuinely_new_enumeration_is_still_a_gap(self):
         from besser.spec_driven_agent.planning.gap_analyzer import _drop_present_enumerations
@@ -720,7 +732,8 @@ class TestPresentEnumerationsAreNotGaps:
             inventory="backend/main_api.py 1200\nbackend/booking_methods.py 400",
             llm_client=Planner(),
         )
-        assert tasks == METHOD_TASKS
+        assert tasks[len(ENUM_TASKS):] == METHOD_TASKS
+        assert all("already has this enumeration" in task for task in tasks[:len(ENUM_TASKS)])
 
 
 class TestMatchingInstruction:

@@ -630,16 +630,20 @@ Findings are classified into three severities:
        decorator is located but proves nothing alone; quoted with a ``def``,
        it must be on that definition. A line quoted from the wrong file is
        rejected, and the note names the file it is in. Every citation of a
-       verdict must be found. A validation or rule requirement whose text
-       states a constraint (``must not``, ``at least``, ``between`` ...) needs
-       a line that enforces it, not a declaration. A constraint word counts
-       as a whole word ("lesson" does not state "less"). A value the
-       requirement lists ("one of: positive, mixed, negative") still states
-       that the field takes only those values. A Python enumeration, cited
-       itself or as the type of a field, is such an enforcement when a field
-       of the same file that the requirement names is of that enumeration,
-       its values are exactly the ones the requirement lists, and the
-       requirement states no constraint beyond those values. With a class model and an agent model, the list also holds
+       verdict must be found. The extraction states what code meets each
+       requirement (``met_by``): a declaration (a field, the state a new
+       record starts in), a type (the value is one of listed values) or a
+       check at run time (a change allowed only under a condition, even one
+       that names the initial state); the text's language plays no part. A validation or
+       rule requirement not met by a declaration needs a line that enforces
+       it, and a column default meets a transition only when a declaration
+       does. The editor may send the field with its requirements. A
+       requirement without it (from an editor that does not send it, or
+       recorded by an earlier run) reads as needing a check. A Python enumeration, cited
+       itself or as the type of a field, enforces a requirement a type meets
+       when a field of the same file that the requirement names is of that
+       enumeration and its values are exactly the ones the requirement
+       lists. With a class model and an agent model, the list also holds
        one requirement built from the models: every intent that creates,
        lists or changes the model's records reads or writes them through the
        app's code (its models, database, API or a helper), while a greeting

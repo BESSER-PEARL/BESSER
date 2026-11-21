@@ -26,8 +26,8 @@ from besser.spec_driven_agent.model_serializer import (
     to_prompt_json,
 )
 from besser.spec_driven_agent.agent.runbook import runbook_section
-from besser.spec_driven_agent.planning.model_rules import is_dropped_by_model_change
-from besser.spec_driven_agent.planning.stack_metadata import idiom_guidance_section
+from besser.spec_driven_agent.planning.model_rules import converted_rule_fingerprints, is_dropped_by_model_change
+from besser.spec_driven_agent.planning.stack_metadata import idiom_guidance_section, routed_frontend_framework
 from besser.spec_driven_agent.providers.llm_client import SYSTEM_CACHE_SPLIT
 from besser.utilities.workspace_fs import walk_plain
 from besser.spec_driven_agent.planning.target import OTHER, Target
@@ -36,36 +36,9 @@ logger = logging.getLogger(__name__)
 
 
 
-# A run needs a frontend when the scaffold has one or the user asks for one.
-# ``requests_frontend`` is also the orchestrator's frontend gate.
+# Without a decided target a run needs a frontend when the scaffold has one.
 _FRONTEND_FILE_RE = re.compile(r"\.(?:jsx?|tsx?|html|vue|svelte)\b|package\.json")
-_FRONTEND_ASK_RE = re.compile(
-    r"\b(web[ -]?app(?:lication)?s?|front[ -]?end|web ?site|"
-    r"web ?interface|single[ -]page app(?:lication)?s?|ui|"
-    r"user interface|dashboard|portal)\b")
-# A bare "app" is a UI ask too ("I want a todo app") unless the request
-# is headless or names a backend kind of app.
-_APP_ASK_RE = re.compile(r"\bapp(?:lication)?s?\b")
-_BACKEND_APP_RE = re.compile(
-    r"\brest(?:ful)? api\b|\b(?:api|fastapi|backend|back[ -]end|server|cli|"
-    r"command[ -]line|console|terminal)[ -]app(?:lication)?s?\b")
-_NO_FRONTEND_RE = re.compile(
-    r"\b(?:api|backend|back[ -]end|server)[ -]only\b|"
-    r"\b(?:only|just) (?:an? |the )?(?:rest(?:ful)? )?(?:api|backend)\b|\bheadless\b|"
-    r"\b(?:no|without(?: an?| the)?) (?:frontend|front[ -]end|ui|gui|user interface)\b")
 
-
-def requests_frontend(instructions: str | None, *, bare_app: bool = True) -> bool:
-    """True when the request asks for something users interact with.
-
-    ``bare_app=False`` for modify runs, where "the app" names the existing project.
-    """
-    low = (instructions or "").lower()
-    if _NO_FRONTEND_RE.search(low):
-        return False
-    if _FRONTEND_ASK_RE.search(low):
-        return True
-    return bare_app and bool(_APP_ASK_RE.search(low)) and not _BACKEND_APP_RE.search(low)
 
 def _other_target_rule(target: Target) -> str:
     """Rule 15 for a target that is not a web app (planning/target.py)."""
@@ -116,6 +89,7 @@ def build_system_prompt(
     target: Target | None = None,
     previous_target: Target | None = None,
     routed_stack: str | None = None,
+    scaffold_family: str | None = None,
 ) -> str:
     """
     Build the system prompt with all available models, inventory, the user's
@@ -168,7 +142,10 @@ def build_system_prompt(
         previous_target: The seed's target when a modify run builds another
             kind of software; it lifts the keep-the-stack constraint.
         routed_stack: The routing answer's ``unsupported_stack``, ``None``
-            without one; picks the idiom block over the request's keywords.
+            without one; picks the idiom block and a frontend framework other
+            than React.
+        scaffold_family: The generated scaffold's family (``"fastapi"``,
+            ``"django"``), ``None`` without one.
 
     Returns:
         The full system prompt string.
@@ -225,7 +202,8 @@ def build_system_prompt(
             gui_framing = (
                 "A rough UI sketch from the editor — often auto-generated and "
                 "incomplete. Treat it as a LOOSE HINT for which screens and "
-                "fields matter, NOT a spec to reproduce literally. The domain "
+                "fields matter, NOT a spec to reproduce literally. Screens the "
+                "request names come first; then the domain "
                 "model and good UX take priority: freely restructure, merge, "
                 "add, drop, or relayout screens and components to produce a "
                 "clean app. Do NOT degrade the result just to mirror this "
@@ -444,11 +422,11 @@ def build_system_prompt(
         }.get(primary_kind, f"Primary model kind: {primary_kind}")
         primary_banner = f"\n> Primary input: {friendly}\n"
 
-    # Stack-specific idiom reminders, keyed on the request's wording (per run).
+    # Stack-specific idiom reminders, keyed on the routed stack (per run).
     # See stack_metadata.idiom_guidance_section for the detection + content.
     # The idiom blocks assume a web / server project.
     builds_other = target is not None and target.kind == OTHER
-    idiom_section = "" if builds_other else idiom_guidance_section(instructions, routed_stack)
+    idiom_section = "" if builds_other else idiom_guidance_section(routed_stack)
 
     # The HARD-CONSTRAINTS header below is deliberately forceful: weaker
     # models (e.g. the free qwen tier) ignore softer wording and delete the
@@ -491,9 +469,9 @@ def build_system_prompt(
             "13. **Styling/theme requests must actually RENDER - through the design\n"
             "    system.** Restyle by overriding `--ds-*` values (and adding rules if\n"
             "    needed) in `src/design-overrides.css`, so every designed page picks the\n"
-            "    change up; never hard-code colours in pages. Map informal colour names\n"
-            "    to hex: rose → `#f43f5e`, pink → `#ec4899`, amber/yellow → `#f59e0b` /\n"
-            "    `#eab308`, teal → `#14b8a6`, indigo → `#6366f1`, emerald → `#10b981`.\n"
+            "    change up; never hard-code colours in pages. A colour name that is not a\n"
+            "    CSS keyword (rose, amber, teal, indigo, emerald) takes its hex value:\n"
+            "    `color: rose` renders nothing, rose → `#f43f5e`.\n"
             "    A theme that's only mentioned in a comment but not visibly applied is\n"
             "    a failure."
         )
@@ -509,11 +487,9 @@ def build_system_prompt(
             "    colours or a visual theme, define them as concrete CSS — real hex\n"
             "    values or CSS variables — and apply them consistently across the UI\n"
             "    (backgrounds, buttons, headers, links, accents), not just one element.\n"
-            "    Map informal colour names to hex: rose → `#f43f5e`, pink → `#ec4899`,\n"
-            "    amber/yellow → `#f59e0b` / `#eab308`, teal → `#14b8a6`, indigo →\n"
-            "    `#6366f1`, emerald → `#10b981`. `rose`, `amber`, `teal`, `indigo` and\n"
-            "    `emerald` are not CSS colour keywords, so `color: rose` renders nothing;\n"
-            "    use the hex. A theme that's only mentioned in a comment\n"
+            "    `rose`, `amber`, `teal`, `indigo` and `emerald` are not CSS colour\n"
+            "    keywords, so `color: rose` renders nothing; use the hex value (rose →\n"
+            "    `#f43f5e`). A theme that's only mentioned in a comment\n"
             "    but not visibly applied is a failure. Aim for a clean, modern,\n"
             "    cohesive look (consistent spacing, a primary + accent colour, readable\n"
             "    contrast)."
@@ -522,36 +498,31 @@ def build_system_prompt(
             "    - One shared stylesheet applied across the whole app (cards or clean tables,\n"
             "      the look Rule 13 aims for), not unstyled browser-default HTML."
         )
-    # Rule 15 orders a React CRUD frontend; a backend-only run (no GUI, no
-    # frontend in the scaffold, none asked for) must not be told to build one.
+    # Rule 15 orders a CRUD frontend; a backend-only run (no GUI, no frontend in
+    # the scaffold, no web_app target) must not be told to build one.
     if target is not None:
         needs_frontend = target.is_web_app
     else:
         needs_frontend = (
             gui_model is not None or bool(design_system)
             or bool(_FRONTEND_FILE_RE.search(f"{inventory}\n{scaffold_snapshot}"))
-            or requests_frontend(instructions, bare_app=not modify_mode)
         )
-    crud_rule = f"""\
-15. **A domain-model app needs a COMPLETE, NAVIGABLE CRUD frontend** — unless
-    the UI is already specified by GUI screens. Read-only lists are NOT
-    enough. For the React frontend, build:
-    - A home route (`"/"`, a landing page) AND a nav bar/header (links or a menu)
-      present on every screen, linking every entity's list and its "new" page,
-      wired to the routes. The app must NEVER render blank on load: a
-      Router/Routes with no root "/" route does.
-    - Per entity: a list/table view PLUS working **Create** (a real form),
-      **Edit** (a pre-filled form), and **Delete** — Edit + Delete on each row —
-      each wired to the backend's POST / PUT / DELETE endpoints, not just the GET
-      list. A page that can only read is half-built (rule 12).
-    - Loading, empty, and error states on every data fetch.
-{stylesheet_bullet}
+    # React unless the routed stack names another frontend framework or a Django
+    # scaffold renders the pages.
+    frontend = "Django" if scaffold_family == "django" else routed_frontend_framework(routed_stack) or "React"
+    react_bullet = """\
+    - With Vite and JSX files that do not import React: `vite.config` without
+      `plugins: [react()]` from `@vitejs/plugin-react`. Every page then dies
+      with "React is not defined".
+""" if frontend == "React" else ""
+    # Server-rendered Django pages have no package.json, JSON API client or URL joining.
+    spa = frontend != "Django"
+    manifest_bullet = """\
     - Internal consistency: `package.json` dependencies match the imports, each
       with a concrete semver range (`"^18.3.1"`, never `"latest"` or `"*"`); the
       dev/build scripts actually run the app.
-    - Request/form consistency: when a field becomes server-owned, remove its
-      writable controls and client validation too, while keeping its read-only
-      display. Update shared entity/form metadata, not only a page's payload.
+""" if spa else ""
+    typed_form_bullet = """\
     - Create/Edit forms follow the create-request schema: one control per
       writable field, typed by the field - never every field as an untyped text
       box, nor a raw-JSON textarea as the form: the backend answers 422 to text
@@ -561,22 +532,67 @@ def build_system_prompt(
       `type="datetime-local"`; email -> `type="email"`; enum -> a `<select>` of
       its literals; a reference to another entity -> a `<select>` filled from
       that entity's list route, sending the chosen id.
-    AVOID these exact dead-frontend failures (all are bugs, not shortcuts):
-    - An empty or no-op form submit handler (an onSubmit that does nothing).
-      A form's submit MUST call the backend (create -> POST, edit -> PUT)
-      through the API layer, then refresh the list or navigate back. A form
-      that collects input but submits nowhere is worse than no form.
+""" if spa else ""
+    shared_handler_bullet = """\
     - Create and Edit sharing one handler keyed on a placeholder (`?edit=new`,
       an empty id): Create MUST POST to the collection route; only an existing
       record's id may reach PUT.
-    - A "New"/"Create" link to a path the router does not declare: it renders
-      blank. Put the form on the list page or declare that route.
+""" if spa else ""
+    url_join_bullet = """\
     - URLs joined without exactly one "/": every API path starts with "/", so
-      `${{base}}${{path}}` is a valid URL (a missing slash fails before any request).
-    - With Vite and JSX files that do not import React: `vite.config` without
-      `plugins: [react()]` from `@vitejs/plugin-react`. Every page then dies
-      with "React is not defined".
-""" if needs_frontend else ""
+      `${base}${path}` is a valid URL (a missing slash fails before any request).
+""" if spa else ""
+    # Django pages are wired by views and URL patterns, not by API calls and a client router.
+    if spa:
+        home_wiring = """\
+      wired to the routes. The app must NEVER render blank on load: a
+      Router/Routes with no root "/" route does."""
+        crud_wiring = """\
+      each wired to the backend's POST / PUT / DELETE endpoints, not just the GET
+      list."""
+        fetch_states = "Loading, empty, and error states on every data fetch."
+        dead_submit = """\
+    - An empty or no-op form submit handler (an onSubmit that does nothing).
+      A form's submit MUST call the backend (create -> POST, edit -> PUT)
+      through the API layer, then refresh the list or navigate back."""
+        dead_link = """\
+    - A "New"/"Create" link to a path the router does not declare: it renders
+      blank. Put the form on the list page or declare that route."""
+    else:
+        home_wiring = """\
+      wired to the URL patterns. The app must NEVER answer 404 on load: a
+      urls.py with no pattern for "/" does."""
+        crud_wiring = """\
+      each handled by a view: a form view that validates and saves the POSTed
+      form, and a delete view."""
+        fetch_states = "An empty state on every list, and form errors shown on the page."
+        dead_submit = """\
+    - A view that ignores the POSTed form. It MUST validate and save the
+      submitted form (create and edit), then redirect to the list."""
+        dead_link = """\
+    - A "New"/"Create" link to a URL no pattern matches: it answers 404.
+      Declare that pattern or put the form on the list page."""
+    crud_rule = f"""\
+15. **A domain-model app needs a COMPLETE, NAVIGABLE CRUD frontend** — unless
+    GUI screens specify the UI, or the request scopes the UI to the screens it
+    names: then build those. Read-only lists are NOT enough.
+    For the {frontend} frontend, build:
+    - A home route (`"/"`, a landing page) AND a nav bar/header (links or a menu)
+      present on every screen, linking every entity's list and its "new" page,
+{home_wiring}
+    - Per entity: a list/table view PLUS working **Create** (a real form),
+      **Edit** (a pre-filled form), and **Delete** — Edit + Delete on each row —
+{crud_wiring} A page that can only read is half-built (rule 12).
+    - {fetch_states}
+{stylesheet_bullet}
+{manifest_bullet}    - Request/form consistency: when a field becomes server-owned, remove its
+      writable controls and client validation too, while keeping its read-only
+      display. Update shared entity/form metadata, not only a page's payload.
+{typed_form_bullet}    AVOID these exact dead-frontend failures (all are bugs, not shortcuts):
+{dead_submit} A form
+      that collects input but submits nowhere is worse than no form.
+{shared_handler_bullet}{dead_link}
+{url_join_bullet}{react_bullet}""" if needs_frontend else ""
     if builds_other:
         crud_rule = _other_target_rule(target)
     if has_scaffold:
@@ -613,6 +629,31 @@ request: you write the whole project, in the stack the user asked for, from the
 specification and the models below. Verify its actual behavior; a file that
 exists is not proof that the software satisfies the specification."""
         plan_first_step = "What does the user request need, and in which stack and project layout?"
+    # Rules 4 and 5, and Rule 6's OCL part, only for models the run has; the
+    # numbers stay as they are, so references to a rule hold.
+    model_rules = [
+        """\
+4. **State machines drive code.** When a state machine governs a class
+   (see Cross-model links), generate a state field + transition guards +
+   event handlers that respect the declared transitions. Do not invent
+   states or transitions.""" if sm_json else "",
+        """\
+5. **Object instances are seed data.** Treat the Object Model as concrete
+   examples — emit them as fixtures, seeders, or example payloads in the
+   generated code, not as new domain rules.""" if object_json else "",
+        ("""\
+6. **OCL constraints must run.** For every constraint listed under the
+   class, emit a runtime check in the language idiomatic to the target
+   (Pydantic `@field_validator`, Zod refine, or a valid local SQL CHECK).
+""" if domain_model is not None and converted_rule_fingerprints(domain_model)
+            else "6. **Rules must run.**\n") + """\
+   Cross-record/relationship invariants need shared transactional enforcement
+   across every mutation path that can break them: create, update, link/unlink,
+   related-entity edits and deletion. SQLite CHECK constraints cannot contain
+   subqueries or refer to another table's columns. Reject invalid changes
+   atomically; do not partially persist an aggregate before validation succeeds.""",
+    ]
+    model_rules = "\n".join(rule for rule in model_rules if rule)
     stable_header = f"""\
 {role}{primary_banner}
 
@@ -653,21 +694,7 @@ Keep the plan short (a few lines), then proceed with surgical edits.
    the generated code (never by editing the model — no tool does that), and
    say so in your plan: name the model element and the spec text that decided
    it. Do not silently ship the model's version and do not leave it open.
-4. **State machines drive code.** When a state machine governs a class
-   (see Cross-model links), generate a state field + transition guards +
-   event handlers that respect the declared transitions. Do not invent
-   states or transitions.
-5. **Object instances are seed data.** Treat the Object Model as concrete
-   examples — emit them as fixtures, seeders, or example payloads in the
-   generated code, not as new domain rules.
-6. **OCL constraints must run.** For every constraint listed under the
-   class, emit a runtime check in the language idiomatic to the target
-   (Pydantic `@field_validator`, Zod refine, or a valid local SQL CHECK).
-   Cross-record/relationship invariants need shared transactional enforcement
-   across every mutation path that can break them: create, update, link/unlink,
-   related-entity edits and deletion. SQLite CHECK constraints cannot contain
-   subqueries or refer to another table's columns. Reject invalid changes
-   atomically; do not partially persist an aggregate before validation succeeds.
+{model_rules}
 {hygiene_rule}
 8. **Read before modify** - the WHOLE function or class you intend to change, in
    one call; a file read without offset and limit comes back whole.

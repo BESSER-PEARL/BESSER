@@ -2054,7 +2054,7 @@ class SmartGenerationRunner:
             # The modeling assistant's requirements, when the editor sent
             # them: the ledger is built from them instead of extracted again.
             stated_requirements=(
-                [item.model_dump(mode="json") for item in self.request.requirements]
+                [item.model_dump(mode="json", exclude_none=True) for item in self.request.requirements]
                 if self.request.requirements is not None else None
             ),
             followup_states_nothing_new=self.request.followup_states_nothing_new,

@@ -1,14 +1,14 @@
-"""A full rewrite of a large generated frontend file is judged by what it keeps.
+"""A full rewrite of a large generated file is judged by what it keeps.
 
 Over 200 lines, ``write_file`` on a generator file was refused until two
 ``modify_file`` attempts had been made, whatever the content: a page the
 request asked to redesign was generated in full, thrown away, and generated
-again after two edits. A frontend page or component rewrite that keeps its
-code is now accepted at once. Everything else keeps the two-attempt rule:
-backend files (scaffold lost there is routers, middleware and ORM classes,
-which no name check sees), files whose declarations cannot be listed, and a
-frontend rewrite that shrinks the file, abbreviates it, or drops a
-declaration, its default export or a route.
+again after two edits, and any two edit calls, refused ones included, then
+let a rewrite drop code. A rewrite that keeps its code is now accepted at once,
+and one that loses code is refused however many edits came before: one that
+shrinks the file or abbreviates it, drops a top-level declaration or a Python
+class member (a field, a method), or has
+fewer default exports, routes, re-exports, decorators or module-level calls.
 """
 import json
 import os
@@ -17,8 +17,6 @@ import re
 import pytest
 
 from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
-
-UNLOCK = "after two modify_file attempts"
 
 ROW_LINES = [f'      <p className="row-{n}">Order {n}</p>\n' for n in range(220)]
 ROWS = "".join(ROW_LINES)
@@ -35,8 +33,11 @@ MAIN = ("from fastapi import FastAPI\nfrom routers import order_router\n\napp = 
         + 'if __name__ == "__main__":\n    run(app)\n')
 ORM = "Base = declarative_base()\n\n" + "".join(
     f"class Model{n}(Base):\n    __tablename__ = 'm{n}'\n    a = 1\n    b = 2\n\n\n" for n in range(40))
-CONFIG = "export default {\n" + "".join(f'  route{n}: "/r{n}",\n' for n in range(220)) + "};\n"
 BARREL = "".join(f'export {{ Thing{n} }} from "./thing{n}";\n' for n in range(210))
+SCHEMAS = "from pydantic import BaseModel\n\n" + "".join(
+    f"class Item{n}(BaseModel):\n    name: str\n    price: float\n    qty: int\n    note: str\n    flag: bool\n\n"
+    for n in range(35))
+SERVICE = "class OrderService:\n" + "".join(f"    def step_{n}(self):\n        return {n}\n\n" for n in range(70))
 
 PAGE_PATH = "web_app/frontend/src/pages/OrderList.tsx"
 
@@ -88,8 +89,6 @@ PLACEHOLDER = PAGE.replace("".join(ROW_LINES[150:]), "      {/* remaining rows u
     pytest.param(PAGE_PATH, PAGE, IN_COMMENT, id="name-kept-only-in-a-comment"),
     pytest.param("web_app/frontend/src/App.tsx", APP,
                  APP.replace('      <Route path="/p7" element={<OrderList />} />\n', ""), id="a-route-dropped"),
-    pytest.param("web_app/frontend/src/routes.ts", CONFIG, CONFIG.replace('  route3: "/r3",\n', ""),
-                 id="no-column-0-declarations"),
     pytest.param("web_app/frontend/src/index.ts", BARREL, BARREL.replace('export { Thing3 } from "./thing3";\n', ""),
                  id="barrel-re-export-dropped"),
     pytest.param("web_app/backend/main_api.py", MAIN, MAIN.replace("app.include_router(order_router.router)\n", ""),
@@ -101,16 +100,41 @@ PLACEHOLDER = PAGE.replace("".join(ROW_LINES[150:]), "      {/* remaining rows u
                  id="py-bodies-elided"),
     pytest.param("web_app/backend/sql_alchemy.py", ORM,
                  re.sub(r"(class Model\d+\(Base\):\n)(    .*\n)+", r"\1    pass\n", ORM), id="py-orm-classes-stubbed"),
+    pytest.param("web_app/backend/pydantic_classes.py", SCHEMAS,
+                 SCHEMAS.replace("    note: str\n    flag: bool\n", ""), id="py-class-fields-dropped"),
+    pytest.param("web_app/backend/services.py", SERVICE,
+                 SERVICE.replace("    def step_7(self):\n        return 7\n\n", ""), id="py-method-dropped"),
 ])
-def test_a_rewrite_that_may_lose_scaffold_keeps_the_two_attempt_rule(tmp_path, rel, before, after):
-    refused = _write(tmp_path, rel, before, after)
-    assert UNLOCK in refused.get("error", ""), refused
+def test_a_rewrite_that_loses_scaffold_is_refused(tmp_path, rel, before, after):
+    executor = _generated(tmp_path, rel, before)
+    for junk in ({"old_text": "  ", "new_text": "x"}, {"old_text": "zz_absent", "new_text": "y"}):
+        executor.execute("modify_file", {"path": rel, **junk})
+    refused = json.loads(executor.execute("write_file", {"path": rel, "content": after}))
+    assert refused.get("rejection_kind") == "rewrite_loss", refused
+    with open(os.path.join(str(tmp_path), rel), encoding="utf-8") as fh:
+        assert fh.read() == before
 
 
-def test_a_file_whose_definitions_cannot_be_listed_keeps_the_old_rule(tmp_path):
+def test_a_rewrite_of_a_file_with_no_declarations_that_keeps_its_lines_is_accepted(tmp_path):
     rel = "web_app/frontend/src/styles/theme.css"
     css = "".join(f".row-{n} {{ color: red; }}\n" for n in range(250))
-    assert UNLOCK in _write(tmp_path, rel, css, css.replace("red", "blue")).get("error", "")
+    assert _write(tmp_path, rel, css, css.replace("red", "blue")).get("status") == "written"
+
+
+def test_a_rewrite_that_keeps_a_backend_module_is_accepted(tmp_path):
+    rewritten = MAIN.replace('return {"n": x}', 'return {"n": x, "ok": True}')
+    assert _write(tmp_path, "web_app/backend/main_api.py", MAIN, rewritten).get("status") == "written"
+
+
+def test_a_rewrite_that_keeps_every_class_member_is_accepted(tmp_path):
+    rewritten = SCHEMAS.replace("    price: float\n", "    price: float = 0.0\n    currency: str = 'EUR'\n")
+    assert _write(tmp_path, "web_app/backend/pydantic_classes.py", SCHEMAS, rewritten).get("status") == "written"
+
+
+def test_a_dropped_class_member_is_named(tmp_path):
+    error = _write(tmp_path, "web_app/backend/services.py", SERVICE,
+                   SERVICE.replace("    def step_7(self):\n        return 7\n\n", "")).get("error", "")
+    assert "OrderService.step_7" in error, error
 
 
 def test_declaration_names_are_not_keywords():

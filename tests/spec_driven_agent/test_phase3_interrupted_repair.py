@@ -83,8 +83,8 @@ def _drive(orch, second_attempt, state=None):
     return state
 
 
-@pytest.mark.parametrize("interruption", [_provider_error, _runtime_cap, _cost_cap],
-                         ids=["provider-error", "runtime-cap", "cost-cap"])
+@pytest.mark.parametrize("interruption", [_provider_error, _runtime_cap],
+                         ids=["provider-error", "runtime-cap"])
 def test_an_interrupted_attempt_is_replaced_by_the_best_validated_tree(orchestrator, interruption):
     state = _drive(orchestrator, interruption)
 
@@ -97,6 +97,19 @@ def test_an_interrupted_attempt_is_replaced_by_the_best_validated_tree(orchestra
         "the findings must describe the tree that ships - the best validated one"
     note = [i.message for i in orchestrator._validation_issues if "interrupted" in i.message]
     assert len(note) == 1 and "attempt 2" in note[0] and "discarded" in note[0]
+
+
+def test_an_attempt_cut_by_the_cost_cap_is_checked_not_discarded(orchestrator):
+    """The checks are free: a spent cap stops the repair turns, not the validation of
+    what the attempt wrote. It is kept or rolled back by its own findings."""
+    state = _drive(orchestrator, _cost_cap)
+
+    assert state["collects"] > 2, "attempt 2 was never checked"
+    state["restore"].assert_called_once()   # it retired nothing, so the best tree is restored
+    assert any("attempt 2 was rolled back" in i.message for i in orchestrator._validation_issues)
+    blockers = [i.message for i in orchestrator._validation_issues if i.severity == "blocker"]
+    assert sorted(blockers) == sorted(i.message for i in _blockers(20))
+    assert not [i for i in orchestrator._validation_issues if "interrupted" in i.message]
 
 
 def test_an_interruption_that_wrote_nothing_keeps_the_tree(orchestrator):

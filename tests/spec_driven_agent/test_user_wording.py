@@ -119,11 +119,19 @@ CASES = [
      "The operation POST /order/{order_id}/methods/ship/ of the model is not implemented."),
     ("requirement unverified: requirement extraction failed; the original specification has not been checked.",
      "Your request could not be turned into checkable requirements, so the result was not checked against it."),
-    ("verification setup: the frontend build requires installed project dependencies. Use install_dependencies.",
+    ("verification setup: the frontend build requires installed project dependencies. Use run_command.",
      "The app's dependencies were not installed, so some checks could not run."),
     ("ruff: backend/main_api.py:3:1: F821 Undefined name `Order`",
      "The backend code uses a name that is undefined or defined twice, so it fails when that code runs."),
     ("something new: an agent-facing text nobody has worded yet; use test_api", GENERIC_SENTENCE),
+    # A modify run's labels: before, both read as the generic sentence.
+    ("open since the previous version: ruff: backend/main_api.py:3:1: F821 Undefined name `Order`",
+     "Open since the previous version: The backend code uses a name that is undefined or defined twice, "
+     "so it fails when that code runs."),
+    ("regression to confirm: api scenario add-book passed on the previous version and fails now: "
+     '{"assertion_failures": []}',
+     "The test workflow 'add-book' passed on the previous version and fails now: check whether the requested "
+     "change meant that."),
 ]
 
 

@@ -92,6 +92,7 @@ def test_resumed_modify_run_stays_a_modify_run(tmp_path, monkeypatch):
         "_run_phase3_validation": lambda: None,
         "_save_recipe": lambda instructions, elapsed: None,
         "_remove_snapshot": lambda: None,
+        "_fix_target_exercised": lambda: "a check of Book",
     }.items():
         monkeypatch.setattr(resumed, name, stub)
     resumed.resume(_INSTRUCTIONS)

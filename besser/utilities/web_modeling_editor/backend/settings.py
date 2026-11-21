@@ -143,8 +143,8 @@ class BackendSettings(BaseSettings):
 
     # -- Spec-Driven Agent: per-run caps -----------------------------------
     # The UI reads the hard caps from /spec-driven/config, so they are what a
-    # run is actually allowed. The turns cap fits models that make one tool
-    # call per turn (about 4x the turns of one that batches).
+    # run is actually allowed. max_turns budgets four executed tool calls per
+    # turn; the same multiple of turns is only a runaway guard.
     llm_max_cost_usd_hard_cap: _PositiveFloat = Field(
         5.0, validation_alias="BESSER_LLM_MAX_COST_USD_HARD_CAP",
         description="Ceiling (USD) a run's max_cost_usd is clamped to.")
@@ -216,7 +216,7 @@ class BackendSettings(BaseSettings):
     # Off: on a shared BYOK host they are user-steerable remote code execution.
     llm_enable_shell_tools: _Flag = Field(
         False, validation_alias="BESSER_LLM_ENABLE_SHELL_TOOLS",
-        description="Let the agent run shell commands (run_command, install_dependencies).")
+        description="Let the agent run shell commands (run_command).")
     # Runs LLM-authored Python on the host, with the stripped subprocess
     # environment, no network and a 30 s timeout.
     llm_enable_import_smoke_check: _Flag = Field(

@@ -70,14 +70,15 @@ def test_the_rewrite_step_in_a_modify_run_is_not_refused(tmp_path):
     assert written.get("status") == "written", written
 
 
-def test_the_modify_run_rule_still_refuses_a_cold_rewrite(tmp_path):
+def test_the_modify_run_rule_still_refuses_a_lossy_rewrite(tmp_path):
     _seed(tmp_path, "app.py", 40)
     ex = ToolExecutor(workspace=str(tmp_path))
     ex.enable_modify_guard()
 
     _refused_range_edit(ex, "app.py")
-    refused = _follow_rewrite(ex, "app.py")
-    assert "MODIFY run" in refused.get("error", ""), refused
+    call(ex, "read_file", path="app.py")
+    refused = call(ex, "write_file", path="app.py", content="v_0 = 0\nv_1 = 1\n")
+    assert "existed before this run" in refused.get("error", ""), refused
 
 
 # -- one instruction per result ---------------------------------------------
@@ -162,7 +163,6 @@ def test_the_repeat_escalation_names_the_rewrite_step(stuck):
     text = messages[-1]["content"][0]["text"]
     assert "read_file on the WHOLE file" in text and "write_file" in text, text
     assert "use replace_file_lines" not in text and "select the whole enclosing block" not in text
-    assert stuck._force_tool_next == "read_file"
 
 
 def test_the_per_file_reminder_names_the_rewrite_step(stuck):
@@ -173,10 +173,12 @@ def test_the_per_file_reminder_names_the_rewrite_step(stuck):
     assert "switch to replace_file_lines" not in reminder and "focused edit" not in reminder
 
 
-def test_the_tool_descriptions_name_the_same_ladder():
+def test_the_tool_descriptions_state_the_result_fields_not_the_ladder():
+    """The ladder's steps arrive in the refused call's result; a description only
+    names the fields a result carries."""
     from besser.spec_driven_agent.agent.tools import FILE_TOOLS
 
     described = {tool["name"]: tool["description"] for tool in FILE_TOOLS}
-    assert "After matching failures, read the target block and use replace_file_lines" not in described["modify_file"]
-    assert "located_range" in described["modify_file"] and "write_file" in described["modify_file"]
-    assert "located_range" in described["replace_file_lines"]
+    assert "located_range" in described["modify_file"] and "located_range" in described["replace_file_lines"]
+    assert "after two refused" not in described["modify_file"].lower()
+    assert "write_file it back" not in described["modify_file"]

@@ -12,14 +12,17 @@ in the model's block order so tool_use/tool_result pairing holds.
 
 import json
 import os
+import time
 
 import pytest
 
 from besser.BUML.metamodel.structural import (
     Class, DomainModel, PrimitiveDataType, Property,
 )
+from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
 from besser.spec_driven_agent.providers.llm_client import UsageTracker
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
+from tests.spec_driven_agent.scripts.trace_metrics import load_runs
 
 
 @pytest.fixture
@@ -174,6 +177,30 @@ def test_a_failing_call_does_not_lose_its_sibling_result(simple_model, tmp_path)
     assert "alpha = 111" in _read(tmp_path, "app.py")
 
 
+def test_each_traced_call_records_its_place_in_the_models_batch(simple_model, tmp_path, monkeypatch):
+    """Parallel calls are traced as each finishes; batch_index keeps the order the model emitted them."""
+    def read_file(self, args):
+        if args.get("path") == "a.py":
+            time.sleep(0.3)
+        return {"content": args.get("path")}
+
+    monkeypatch.setitem(ToolExecutor._handlers, "read_file", read_file)
+    orch = _orch(simple_model, tmp_path)
+    blocks = [_Block(f"t{i}", "read_file", {"path": path}) for i, path in enumerate(("a.py", "b.py", "c.py"))]
+
+    orch._execute_tool_blocks(blocks, turn=0)
+
+    trace = str(tmp_path / ".besser_trace.jsonl")
+    with open(trace, encoding="utf-8") as handle:
+        records = [json.loads(line) for line in handle]
+    traced = [record["payload"] for record in records if record["event"] == "tool_call"]
+    assert traced[-1]["input"]["path"] == "a.py", "the slow first call should be traced last"
+    assert [event["input"]["path"] for event in sorted(traced, key=lambda e: e["batch_index"])] == [
+        "a.py", "b.py", "c.py"]
+    [run] = load_runs(trace)
+    assert [call.input["path"] for call in run.calls] == ["a.py", "b.py", "c.py"]
+
+
 def test_single_block_path_is_unchanged(simple_model, tmp_path):
     _seed(tmp_path, "app.py", "a = 1\n")
     orch = _orch(simple_model, tmp_path)
@@ -185,3 +212,76 @@ def test_single_block_path_is_unchanged(simple_model, tmp_path):
     )
     assert len(results) == 1
     assert json.loads(results[0]["content"]).get("status") == "modified"
+
+
+# -- shell calls and writes in one batch --------------------------------------
+# A shell call ran in the thread pool beside the batch's writes, so a build
+# emitted after an edit could read a half-edited tree, and the write-time
+# import probe (which puts a candidate module on disk while it imports it)
+# could overlap a command that imports the same module.
+
+def _recording_orch(simple_model, tmp_path, events, barrier=None):
+    import threading
+    import time
+
+    orch = _orch(simple_model, tmp_path)
+    lock = threading.Lock()
+
+    def note(what):
+        with lock:
+            events.append(what)
+
+    def fake(block, turn):
+        note(f"{block.id}:start")
+        if block.name == "read_file" and barrier is not None:
+            barrier.wait()
+        time.sleep(0.3 if block.name in orch._WRITE_TOOLS else 0.05)
+        note(f"{block.id}:end")
+        return {"type": "tool_result", "tool_use_id": block.id, "content": "{}"}
+
+    orch._execute_single_tool = fake
+    return orch
+
+
+def test_a_command_waits_for_the_edits_emitted_before_it(simple_model, tmp_path):
+    events = []
+    orch = _recording_orch(simple_model, tmp_path, events)
+    blocks = [_Block("edit", "modify_file", {"path": "a.py", "old_text": "x", "new_text": "y"}),
+              _Block("cmd", "run_command", {"command": "npm run build"})]
+
+    results = orch._execute_tool_blocks(blocks, turn=0)
+
+    assert events.index("edit:end") < events.index("cmd:start"), events
+    assert [r["tool_use_id"] for r in results] == ["edit", "cmd"]
+
+
+def test_an_edit_emitted_after_a_command_waits_for_it(simple_model, tmp_path):
+    events = []
+    orch = _recording_orch(simple_model, tmp_path, events)
+    blocks = [_Block("cmd", "run_command", {"command": "pytest"}),
+              _Block("edit", "write_file", {"path": "a.py", "content": "x = 1\n"}),
+              _Block("cmd2", "run_command", {"command": "pytest"})]
+
+    results = orch._execute_tool_blocks(blocks, turn=0)
+
+    assert events.index("cmd:end") < events.index("edit:start") < events.index("edit:end") \
+        < events.index("cmd2:start"), events
+    assert [r["tool_use_id"] for r in results] == ["cmd", "edit", "cmd2"]
+
+
+def test_reads_in_a_batch_with_a_command_still_run_in_parallel(simple_model, tmp_path):
+    import threading
+
+    events = []
+    # Each read waits for the other: serialized reads would time the barrier out.
+    barrier = threading.Barrier(2, timeout=5)
+    orch = _recording_orch(simple_model, tmp_path, events, barrier)
+    blocks = [_Block("r1", "read_file", {"path": "a.py"}),
+              _Block("r2", "read_file", {"path": "b.py"}),
+              _Block("edit", "modify_file", {"path": "a.py", "old_text": "x", "new_text": "y"}),
+              _Block("cmd", "run_command", {"command": "pytest"})]
+
+    orch._execute_tool_blocks(blocks, turn=0)
+
+    assert not barrier.broken
+    assert events.index("edit:end") < events.index("cmd:start"), events

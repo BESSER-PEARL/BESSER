@@ -134,8 +134,8 @@ def test_fix_loop_runs_when_under_all_budgets(tmp_path) -> None:
     assert orch.total_turns == turns_before + 1
 
     # Repair continuation is budgeted by the run's total turns too; it must
-    # never get a fresh allowance after Phase 2 has spent that budget.
-    orch.total_turns = orch.max_turns
+    # never get a fresh allowance after Phase 2 has reached the turn guard.
+    orch.total_turns = orch._turn_guard()
     assert orch._invoke_phase3_fix_loop([_BLOCKER], is_first_attempt=False) == 0
     assert client.calls == 1
 

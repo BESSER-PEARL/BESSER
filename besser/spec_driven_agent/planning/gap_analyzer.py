@@ -438,7 +438,8 @@ _IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
 def _drop_present_enumerations(tasks: list, domain_model) -> list:
-    """Drop add-enumeration tasks whose literal set the model already has.
+    """Annotate add-enumeration tasks whose literal set the model already has;
+    the task may ask for more, so it is never dropped.
 
     A planner may propose adding 'commercialStatus' with AWAITING_PAYMENT/
     CONFIRMED/CANCELLED while the model already carries an enumeration with
@@ -464,10 +465,10 @@ def _drop_present_enumerations(tasks: list, domain_model) -> list:
                 None,
             )
             if match:
-                logger.warning(
-                    "Gap sanitizer dropped enumeration already in the model as %s: %r",
-                    match, task[:100],
-                )
+                logger.info("Gap sanitizer annotated enumeration already in the model as %s: %r",
+                            match, task[:100])
+                kept.append(f"{task.rstrip()} (NOTE: the model already has this enumeration as "
+                            f"{match}; use it, do not add another.)")
                 continue
         kept.append(task)
     return kept
@@ -481,26 +482,6 @@ def _drop_present_enumerations(tasks: list, domain_model) -> list:
 _ADD_VERB_RE = re.compile(r"\b(?:add|create|introduce|define|declare)\b", re.IGNORECASE)
 _ATTR_KEYWORD_RE = re.compile(r"\battributes?\b", re.IGNORECASE)
 _QUOTED_IDENT_RE = re.compile(r"['\"`]([A-Za-z_][A-Za-z0-9_]*)['\"`]")
-
-# Naming the attribute is not the same as asking for the BEHAVIOUR behind it:
-# "add a computed 'commercialStatus' attribute ... transitioning from
-# 'awaiting payment' to 'confirmed' when the bill is settled" names an
-# existing attribute, but the transition LOGIC the model does not encode is
-# the real ask. This downgrades a drop to an annotation so the requirement
-# itself is never lost. A rule on the attribute (unique, a check, an index,
-# reject ...) is the same: the declaration is present, the rule is not. The
-# rule words are prefixes ("valid" covers "validate"); they follow
-# requirements_ledger._CONSTRAINT_WORDS, which this module cannot import (that
-# module imports this one).
-_ATTR_BEHAVIOR_RE = re.compile(
-    r"\b(?:derive[ds]?\s+from|computed?\s+from|transition\w*|based\s+on|"
-    r"calculat\w+|whenever|logic)\b"
-    r"|\b(?:unique|constrain|check|index|valid|enforc|reject|refus|must|cannot|can\s+not|"
-    r"may\s+not|never|at\s+least|at\s+most|no\s+more\s+than|exceed|only\s+(?:if|when|after)|"
-    r"format|match|overlap|before|after|greater|less|between|positive|non-negative|"
-    r"minimum|maximum|default|search|filter|sort)",
-    re.IGNORECASE,
-)
 _TYPE_SYNONYMS = {"boolean": "bool", "string": "str", "text": "str", "integer": "int"}
 _TYPE_WORD_RE = re.compile(
     r"\b(float|double|int|integer|str|string|text|bool|boolean|date|datetime|time)\b",
@@ -557,8 +538,9 @@ def _mentioned_classes(sentence: str, classes: list) -> list:
 
 
 def _drop_present_attributes(tasks: list, domain_model) -> list:
-    """Drop (or, when behaviour is also being asked for, annotate) an
-    add-attribute task whose (class, attribute) pair the model already has.
+    """Annotate an add-attribute task whose (class, attribute) pair the model
+    already has. The task may also ask for behaviour, a rule or screen work on
+    the attribute, so it is never dropped.
 
     Example: "Add a 'extraCharges' attribute to the ReservedRoom class" when
     ReservedRoom already declares extraCharges and the generated ORM and
@@ -568,10 +550,7 @@ def _drop_present_attributes(tasks: list, domain_model) -> list:
     the NAMED class's OWN attributes: not a same-named attribute on an
     unrelated class, not a class the sentence never mentions. A type word
     (float/int/bool/...) that contradicts the model's actual type blocks the
-    match entirely - that names a real gap, not a duplicate. Only a task
-    that is PURELY a declaration is dropped; one that also asks for derived
-    behaviour or a rule (see ``_ATTR_BEHAVIOR_RE``) is annotated instead, so the
-    requirement is never silently lost.
+    match entirely - that names a real gap, not a duplicate.
     """
     if domain_model is None:
         return tasks
@@ -588,7 +567,7 @@ def _drop_present_attributes(tasks: list, domain_model) -> list:
                 or _mentions_rejected_constraint(task, rejected):
             noted.append(task)
             continue
-        decision = None  # "drop" | "annotate"
+        present = False
         for sentence in _sentences(task):
             if not (_ADD_VERB_RE.search(sentence) and _ATTR_KEYWORD_RE.search(sentence)):
                 continue
@@ -605,20 +584,16 @@ def _drop_present_attributes(tasks: list, domain_model) -> list:
                     type_name = getattr(getattr(attr_by_lower[quoted[0].lower()], "type", None), "name", None)
                     if type_name and word != str(type_name).lower():
                         continue  # names a type the model disagrees with - a real gap
-                # The whole task: the rule may sit in another sentence.
-                decision = "annotate" if _ATTR_BEHAVIOR_RE.search(task) else "drop"
+                present = True
                 break
-            if decision:
+            if present:
                 break
-        if decision == "drop":
-            logger.warning("Gap sanitizer dropped already-present attribute task: %r", task[:100])
-            continue
-        if decision == "annotate":
+        if present:
             noted.append(
                 f"{task.rstrip()} (NOTE: the model already declares this "
                 "attribute and the generator already carries it into the generated "
-                "ORM/Pydantic code - focus on the requested BEHAVIOUR, not on "
-                "re-adding the field.)"
+                "ORM/Pydantic code - do not re-add the field; do the rest of this "
+                "task, and drop it as already done if nothing else remains.)"
             )
             logger.info("Gap sanitizer annotated already-present attribute task: %r", task[:100])
             continue
@@ -1487,8 +1462,8 @@ def _build_user_prompt(
         "Work in two passes.\n\n"
         "PASS 1 — USER REQUEST vs DOMAIN MODEL. Re-read the request and "
         "enumerate every concrete thing it names:\n"
-        "  - operations an entity must support (\"a booking can be "
-        "cancelled\", \"produces a bill\") — one method each, using the "
+        "  - operations an entity must support (\"an order can be "
+        "cancelled\", \"produces an invoice\") — one method each, using the "
         "user's own count and names;\n"
         "  - status or state vocabularies, INCLUDING the exact words used. "
         "Two independent dimensions of status are TWO enumerations, not one "
@@ -1498,14 +1473,14 @@ def _build_user_prompt(
         "\"cannot overlap\", \"must be a valid ...\") — one enforced "
         "constraint each;\n"
         "  - facts that belong to a RELATIONSHIP rather than to either "
-        "entity (\"the price agreed for that room in that booking\") — a "
+        "entity (\"the quantity of that product in that order\") — a "
         "link attribute, which needs its own table or column;\n"
         "  - screens, roles, integrations, styling.\n"
         "For each item, check whether it appears in the DOMAIN MODEL JSON "
         "above. Match on MEANING and on member sets, not on exact names: an "
         "enumeration whose literals are the vocabulary the request describes "
         "IS that element even when its name carries a prefix "
-        "(BookingCommercialStatus for 'commercial status'); the same goes for "
+        "(OrderPaymentStatus for 'payment status'); the same goes for "
         "attributes and methods named with a prefix or different casing. "
         "Every item that does NOT appear is a gap the modelling step "
         "lost: emit a task stating the exact names and values from the "

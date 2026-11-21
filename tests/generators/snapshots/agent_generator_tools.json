@@ -328,18 +328,6 @@
     ],
     "generate_tensorflow": [
       "nn"
-    ],
-    "query_class": [
-      "domain"
-    ],
-    "list_classes_with": [
-      "domain"
-    ],
-    "get_constraints_for": [
-      "domain"
-    ],
-    "validate_model": [
-      "domain"
     ]
   },
   "all_tool_names": [
@@ -370,14 +358,8 @@
     "search_in_files",
     "delete_file",
     "run_command",
-    "install_dependencies",
-    "query_class",
-    "list_classes_with",
-    "get_constraints_for",
     "test_api",
     "validate_app",
-    "validate_model",
-    "check_syntax",
     "task_list"
   ],
   "available_all_models": [

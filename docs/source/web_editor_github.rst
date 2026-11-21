@@ -164,9 +164,10 @@ compares the run's files with GitHub's recursive tree of the base commit:
 - a repository path the run could not hold (build and dependency output,
   ``*.db``, BESSER's other ``.besser_*`` files, a scrubbed secret ``.env``) is
   never deleted. The records a run carries (``.besser_recipe.json``,
-  ``.besser_attribution.json``, ``.besser_generator_output.json``) are the run's
-  own: a seeded run deletes one it no longer has;
-- the push marks those three records ``linguist-generated`` in
+  ``.besser_attribution.json``, ``.besser_generator_output.json``,
+  ``.besser_api_workflows.json``) are the run's own: a seeded run deletes one it
+  no longer has;
+- the push marks those records ``linguist-generated`` in
   ``.gitattributes``, so GitHub folds their diffs. The repository's own lines are
   kept, and a record a line already sets ``linguist-generated`` for keeps that
   setting;

@@ -65,6 +65,6 @@ def test_done_accepts_the_done_ids_key_its_own_reply_uses(executor):
     assert result["done_ids"] == [1]
 
 
-def test_the_missing_ids_error_names_every_key_done_accepts(executor):
+def test_the_missing_ids_error_says_how_to_find_them(executor):
     error = executor._task_list({"action": "done"})["error"]
-    assert "`ids`" in error and "`done_ids`" in error
+    assert "ids" in error and "no fields" in error

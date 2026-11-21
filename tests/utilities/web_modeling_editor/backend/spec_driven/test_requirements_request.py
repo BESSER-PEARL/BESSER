@@ -23,6 +23,7 @@ from tests.utilities.web_modeling_editor.backend.spec_driven.test_modify_seed im
 )
 
 REQUIREMENT = {"id": "call-1:R2", "text": "A room is identified by its number", "kind": "uniqueness"}
+LABELLED = {"id": "call-1:R3", "text": "A room's status is one of free or taken", "kind": "rule", "met_by": "type"}
 
 
 def test_requirements_are_optional():
@@ -33,6 +34,7 @@ def test_requirements_are_optional():
     ([dict(REQUIREMENT, kind="feature")], "kind"),
     ([REQUIREMENT, dict(REQUIREMENT)], "unique ids"),
     ([dict(REQUIREMENT, text="")], "text"),
+    ([dict(REQUIREMENT, met_by="sometimes")], "met_by"),
     ([dict(REQUIREMENT, text="x" * (MAX_REQUIREMENT_CHARS + 1))], "text"),
     ([dict(REQUIREMENT, id=f"r{i}") for i in range(MAX_REQUIREMENTS + 1)], "requirements"),
 ])
@@ -47,14 +49,22 @@ def test_the_runner_hands_the_requirements_to_the_orchestrator(monkeypatch):
     class CaptureRequirements(_StubOrchestrator):
         def __init__(self, **kwargs):
             super().__init__(**kwargs)
-            observed.append(kwargs["stated_requirements"])
+            observed.append((kwargs["stated_requirements"], kwargs["followup_states_nothing_new"]))
             self._validation_issues = []
 
     monkeypatch.setattr(runner_module, "create_llm_client", lambda **kwargs: _FakeClient())
     monkeypatch.setattr(runner_module, "LLMOrchestrator", CaptureRequirements)
     try:
-        asyncio.run(_collect_frames(SmartGenerationRunner(_build_request(requirements=[REQUIREMENT]), runtime=current_runtime())))
+        asyncio.run(_collect_frames(SmartGenerationRunner(
+            _build_request(requirements=[REQUIREMENT, LABELLED], followup_states_nothing_new=True),
+            runtime=current_runtime())))
         asyncio.run(_collect_frames(SmartGenerationRunner(_build_request(), runtime=current_runtime())))
     finally:
         _cleanup()
-    assert observed == [[REQUIREMENT], None]
+    # A requirement without ``met_by`` reaches the run as before.
+    assert observed == [([REQUIREMENT, LABELLED], True), (None, False)]
+
+
+def test_a_field_this_server_does_not_know_is_ignored():
+    """An editor newer than the server may send fields it lacks; the run must still start."""
+    assert not hasattr(_build_request(field_from_a_newer_editor=True), "field_from_a_newer_editor")

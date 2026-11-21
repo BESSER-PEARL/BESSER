@@ -31,8 +31,10 @@ that was already broken is never refused, so it can be repaired.
   Docker does: the compose ``build.context`` when a compose file names the
   Dockerfile, else the Dockerfile's own folder. ``COPY --from=<stage>`` copies
   from a build stage and is not checked. This check only reports; it never
-  writes a file. A separate repair step before validation restores a
-  ``requirements.txt`` that a Phase 2 edit deleted from a FastAPI scaffold.
+  writes a file. A separate repair step before Phase 3 validation restores a
+  ``requirements.txt`` that a Phase 2 edit deleted from a FastAPI scaffold;
+  ``validate_app``, which writes no source file (a build still writes its
+  output folder), does not report a file that step would restore.
   Several other common mistakes are repaired outright without spending
   an LLM turn (``npm ci`` with no lockfile anywhere in the project becomes
   ``npm install``; a ``COPY`` of a non-existent ``package-lock.json`` is
@@ -43,8 +45,9 @@ that was already broken is never refused, so it can be repaired.
   hashes, so every password hash fails). Each ``requirements.txt`` that
   declares the first package gets the second pinned, unless its declared range
   is already compatible. The same table is applied when scaffold repair writes
-  a ``requirements.txt`` and by ``install_dependencies`` before it installs,
-  so the delivered file is pinned even when Phase 3 is skipped.
+  a ``requirements.txt`` and after every agent write to a ``requirements.txt``
+  (the write's result lists the change under ``pinned`` and says that packages
+  installed from the file before no longer match it), so the delivered file is pinned even when Phase 3 is skipped.
 - Local-import resolution — an import naming a module the app does not ship
   where it is used. ``ruff`` is structurally blind to this (a star import
   excuses every name), and it is fatal at startup. Imports the app starts
@@ -87,7 +90,12 @@ that was already broken is never refused, so it can be repaired.
   the generated client's ``apiRequest(<METHOD>, <path>)`` calls, that match no
   generated backend route, and calls of a typed client function
   (``bookApi.create``) the generated client does not have. The typed functions
-  are resolved to their routes through the app's ``api_contract.json``.
+  are resolved to their routes through the app's ``api_contract.json``. In an
+  app that has the generated client, a literal ``fetch`` or Axios call to a
+  route the client covers is reported too, naming the client function to call
+  instead; a route the client does not cover (one the agent added) is not.
+  Such calls are reported once per file and client function, after the calls
+  to missing routes and under their own cap, so they never hide one. Warning.
 - API call shapes (``api call:``, blocker) — a frontend call with a literal or
   template URL that resolves to exactly one route, checked against that
   route's handler, which is read without importing the app. The calls read are
@@ -230,7 +238,10 @@ blocker. One cause of a probe timeout is found without running anything: a
 When both toolchain validation and shell tools are explicitly enabled, npm is
 available, and project dependencies are missing, ``verification setup:`` is
 instead actionable. The agent may use its existing authorized dependency tool,
-then request fresh validation. This is a verification-only obligation: Phase 3
+then request fresh validation. Before the final check (``validate_app``, the
+end-of-turn check, the findings Phase 2 opens with) it is a not-run note that
+names the ``npm install`` to run, never a blocker, and does not hold Phase 2
+open; the final check blocks on it. This is a verification-only obligation: Phase 3
 does not force application edits to satisfy it. Missing system tools or disabled
 permissions remain unverified; validation itself never installs anything.
 Authorized TypeScript checks prefer the project's installed compiler over a
@@ -239,13 +250,18 @@ potentially incompatible global version.
 Frontend production builds are distinct from typechecking. A discovered app's
 configured ``npm run build`` is checked only when both toolchain validation and
 shell tools are explicitly enabled and its dependencies are already installed.
+Before the final check, a build script its repair would rewrite (``"build":
+"vite"`` starts a dev server) is listed as not run instead of run.
 Validation never installs packages or enables shell access. Configured checks
 execute generated build scripts under that explicit permission, inside a fresh
 bubblewrap sandbox with no network. Source is checked before and after execution. Results,
 failures included, are reused only for unchanged source and dependency-install
 markers during the same run; source changes during a build invalidate its
-result. The same holds for ``tsc`` (also keyed by the compiler it would use),
-``cargo check``, ``kotlinc`` and the ``pip install --dry-run`` check: Phase 3
+result. For the build and ``tsc`` the source is every file but Python sources and
+the rest of a folder holding a ``requirements.txt`` or ``pyproject.toml`` (unless
+it is a frontend's or holds one), for the ``pip install --dry-run`` check its
+``requirements.txt``, so a backend edit reuses the frontend's verdicts. The same holds for ``tsc`` (also keyed by the
+compiler it would use), ``cargo check``, ``kotlinc`` and the dependency check: Phase 3
 re-validates after rounds that edit nothing and after a rollback, and those
 passes do not run the same check on the same tree again. A check that did not
 finish (a timeout, no sandbox, an unreachable package index, unfetched crates)
@@ -253,7 +269,8 @@ gave no verdict and runs again on the next pass. With shell tools
 disabled, a separate external build can verify the output, but raw generation
 continues to state that frontend build verification is pending.
 
-Once a frontend's build has passed on the current tree, Phase 3 opens its
+Once a frontend's build has passed on the current tree, Phase 3, and the
+agent's ``validate_app`` when a browser is present, opens its
 screens in a headless browser (``validation/ui_probe.py``). Inside the same
 no-network sandbox it first creates records through the app's own API with the
 create probe described above, into a scratch SQLite database, then boots the
@@ -316,8 +333,11 @@ tried again, and a check stopped midway keeps the screens it opened. Its time
 shows in the trace as the ``phase3_screens`` phase.
 
 Generated create probes use distinct fixture values and native association-link
-payloads. A legitimate 4xx rejection of guessed data is **unknown**, not proof
-that every valid request fails. An unresolved create probe can be discharged by
+payloads. Required date and date-time fields get later days in the order they
+are declared (a start before its end), and a retry reverses that order; a
+date-time is fixed per day and instance, not read from the clock. A
+legitimate 4xx rejection of guessed data is **unknown**, not proof that every
+valid request fails. An unresolved create probe can be discharged by
 a current-revision ``test_api`` scenario on the same backend in which the app
 booted and a successful ``POST`` to that endpoint (a path its route template
 serves: ``/order/7/line/`` for ``/order/{order_id}/line/``) is followed by a
@@ -334,6 +354,17 @@ flag that the call did not act (``success``/``ok``/``result`` false, an
 object or in every item of a list. A record in any state, such as an offer
 returned with ``"status": "rejected"`` by its reject action, shows the action ran.
 Observed server crashes remain failures even if another scenario passes.
+After each create that answered 2xx with an id, the probe reads the record back:
+a ``GET`` of its item route (``/<name>/{id}/``) and of the collection route OpenAPI
+declares on the create path. A 5xx (or an exception the app raised) on either is
+a ``read contract:`` blocker, an observed failure like a crashed create, with the
+handler that served the read as its fix site. Any other refusal of the item read
+leaves the create ``create unverified:`` (an item route may serve its owner only,
+or look records up by another field than the id), unless the collection read
+answered 2xx with the record's id in it. A read refused 401 or 403 before the
+probe logged in is retried after logging in through the app's register/login
+routes, as a refused create is. A collection route that refuses without a server
+error (a required query parameter, a 404) is no finding.
 The probe drives only entity creates: a ``POST`` whose body is ``<Name>Create``
 where ``<Name>`` is a mapped ORM class the model does not mark abstract. A
 ``*Create`` body whose handler writes no table (a signup or login form) persists
@@ -610,16 +641,24 @@ Findings are classified into three severities:
        decorator is located but proves nothing alone; quoted with a ``def``,
        it must be on that definition. A line quoted from the wrong file is
        rejected, and the note names the file it is in. Every citation of a
-       verdict must be found. A validation or rule requirement whose text
-       states a constraint (``must not``, ``at least``, ``between`` ...) needs
-       a line that enforces it, not a declaration. A constraint word counts
-       as a whole word ("lesson" does not state "less"). A value the
-       requirement lists ("one of: positive, mixed, negative") still states
-       that the field takes only those values. A Python enumeration, cited
-       itself or as the type of a field, is such an enforcement when a field
-       of the same file that the requirement names is of that enumeration,
-       its values are exactly the ones the requirement lists, and the
-       requirement states no constraint beyond those values. With a class model and an agent model, the list also holds
+       verdict must be found. The extraction states what code meets each
+       requirement (``met_by``): a declaration (a field, the state a new
+       record starts in), a type (the value is one of listed values) or a
+       check at run time (a change allowed only under a condition, even one
+       that names the initial state); the text's language plays no part. A validation or
+       rule requirement not met by a declaration needs a line that enforces
+       it, and a column default meets a transition only when a declaration
+       does. The editor may send the field with its requirements. A
+       requirement without it (from an editor that does not send it, or
+       recorded by an earlier run) is read as before the field existed, so
+       its verdict does not change: it needs an enforcing line only when its
+       text states a constraint in English words ("must not", "at least",
+       "positive"), and a column default meets its transition only when the
+       text names the start. A Python enumeration, cited
+       itself or as the type of a field, enforces a requirement a type meets
+       when a field of the same file that the requirement names is of that
+       enumeration and its values are exactly the ones the requirement
+       lists. With a class model and an agent model, the list also holds
        one requirement built from the models: every intent that creates,
        lists or changes the model's records reads or writes them through the
        app's code (its models, database, API or a helper), while a greeting
@@ -646,7 +685,7 @@ Findings are classified into three severities:
        ``mapper config:``, ``application startup:``, ``python contract:``
        (which also reports undefined names, those behind ``from x import *``
        included), ``api scenario:``,
-       ``create contract:``, ``action call:``, ``requirement:``,
+       ``create contract:``, ``action call:``, ``read contract:``, ``requirement:``,
        ``requirement partial:``, ``requirement unsupported:``,
        ``action contract:``, ``task incomplete:``, ``verification setup:``
        (dependencies a permitted install would provide), ``tsc [``,
@@ -717,14 +756,21 @@ severity a finding was built or stored with:
   did not run (stopped, or out of time or budget);
 - ``create unverified:`` and ``action unverified:`` — the probe's own guessed
   request was refused (a 4xx, a login it could not pass, a record it could not set
-  up) and no ``test_api`` scenario settled it; ``runtime unverified:`` is the same
+  up), or the record it created could not be read back by id without a server
+  error (a 401, 403 or 404) and its list did not show it, and no ``test_api`` scenario settled it; ``runtime unverified:`` is the same
   finding once no scenario did;
 - ``validation unverified:`` — a required check did not run (a runtime check
   without a sandbox, a judge that returned no verdicts, a build that timed out),
   and the runtime gate's "no runtime evidence at all" when nothing started the
   app on the delivered tree;
 - ``task unverified:`` — a checklist item no check and no ``task_list`` close
-  settled.
+  settled;
+- ``open since the previous version:`` and ``regression to confirm:`` — on a
+  modify run, a defect the previous version already had, and a workflow that
+  passed on the previous version and fails now (see
+  :ref:`modifying a previous run <spec-driven-modify-mode>` and
+  :ref:`the recipe <spec-driven-recipe-size>`): not this run's to repair, and
+  the app is not verified while they are open.
 
 ``requirement unsupported:`` is the judge saying implemented while the verifier
 found the cited code does not do it: every line it cites was found whole and none
@@ -798,8 +844,14 @@ stays reserved for a known defect. The classes are:
   test workflow that booted it or passed. When no runtime check note already says
   why, the runtime gate records it as ``validation unverified: runtime gate:
   ...``, so a timed-out probe is listed once. Only the FastAPI backends the probe
-  drives count: another kind of backend is never started by the check, and its
-  run reports no runtime class;
+  drives are started. A run that built another kind of server (a
+  whole-application generator ran, or the target is a backend, and the workspace
+  holds no backend the probe drives, as a Django app) records the class with the
+  reason "no check can start this kind of backend", marked like a check switched
+  off (below): no edit can give it evidence, so it never makes the run not
+  verified, and its run record's ``stop_message`` says the runtime could not be
+  checked. A web app the agent wrote without a generator, with a server that is
+  not FastAPI, is not covered by this rule and gets no such line;
 - *records*: the probe started the backend, no entity came back created, and no
   workflow created a record and read it back ("no record could be created through
   the API"); a single refused create stays a finding not confirmed;
@@ -836,7 +888,14 @@ counts the blockers still standing when the run ended and
 carries ``notConfirmedCount`` and, for released editors, a ``blockerCount`` that
 on a run that is not incomplete adds the two (see :doc:`api`). The
 ``verification`` report reads the same split: a finding not confirmed is listed
-under ``notVerified``, a blocker never is.
+under ``notVerified``, a blocker never is. A plain warning, which is neither (an
+endpoint-coherence or form-field-type finding, a screen warning, an acceptance
+cell, a lint finding), is listed under ``advisory``, "Seen, not blocking" in
+``BESSER_GENERATION.md`` with its count: it withholds nothing and is not counted as
+not confirmed. The screen check's notes on what it could not look at (``screen
+warning: ... not checked:`` and ``screens: not run``) and the note that the
+requirements judgment was deferred are listed under ``notVerified`` instead, and a
+finding not confirmed is never listed under ``advisory`` as well.
 
 .. _spec-driven-design-fidelity:
 
@@ -887,9 +946,18 @@ edits, say, other routers is kept unless those edits change a finding. The
 scope reduces drift; it does not prevent it. Keeping or reverting each attempt
 is what protects the tree.
 
-An attempt that edited the tree is kept only if all of these hold:
+An attempt is never kept when the runtime probe, which measured the tree before
+it, no longer finds one of the entities it measured there on a backend that
+still starts (compared by entity name, so a create the probe already maps onto
+its table counts as the same entity). Removing a crashing create route, or
+moving its body off the schema the probe reads, makes that create absent, not
+fixed. The same holds for a create the probe can no longer read, for example
+one whose request body was renamed or whose handler now writes a table the
+probe does not map, even when the restructure was meant. Otherwise an attempt
+that edited the tree is kept only if all of these hold:
 
-1. It retired at least one blocker it faced. Attempts compare requirements by
+1. It retired at least one blocker it faced, or a runtime blocker it faced now
+   fails with another error. Attempts compare requirements by
    id and status rank, since a re-judge rewords its note: a requirement is
    retired when its status rises (missing to partial is progress, though it
    still blocks), or when it no longer has a blocker and the judge ran on the
@@ -897,16 +965,23 @@ An attempt that edited the tree is kept only if all of these hold:
    deferred, failed or was stopped, or the requirements could not be extracted,
    is not retired. Missing and unsupported rank
    the same, so turning one into the other is neither progress nor a fall.
-   Other findings are compared with line and column numbers ignored, since an
-   edit moves the errors it leaves; any other number (``/e2/`` against
-   ``/e3/``) tells them apart.
+   A runtime finding (``create contract:``, ``action call:``, ``read contract:``,
+   ``create unverified:``, ``action unverified:``) is compared by what it tests: its
+   kind, backend and route. The same route failing with another message is
+   neither retired nor added; the next attempt's prompt says it is still
+   failing and quotes the new error. The probe's generated input quoted in the
+   message is not part of the comparison, nor is a memory address
+   (``0x7f...``) an exception text prints, new in every process. Other
+   findings are compared by their message with line and column numbers
+   ignored, since an edit moves the errors it leaves; any other number
+   (``/e2/`` against ``/e3/``) tells them apart.
 2. Every observed failure it added (a check that watched something fail, not a
    judgment or an unknown) belongs to a check family that could not run on the
    tree before it. Fixing the front failure of a layer shows what it hid: a
    missing module or a startup failure hides the runtime checks (where the
    probe measured that tree, its boot verdict decides instead), an entity the
-   probe could not create hides its own action calls and the creates that need
-   its record (the probe's records of both trees name the entity of each route;
+   probe could not create hides its own action calls, the reads of its record and
+   the creates that need its record (the probe's records of both trees name the entity of each route;
    without them nothing is excused), a judge that was deferred, failed or
    stopped hides its verdicts, and so does a requirement extraction that failed
    (it is retried once, on a later round), missing
@@ -929,10 +1004,19 @@ implemented to missing is kept at an equal count.
 An attempt that is not kept is rolled back to the tree from before it, which is
 checked again; the findings only the discarded tree showed are listed in a
 ``validation:`` note, the tool calls it made are marked ``rolled_back`` in the
-run record, checklist items it had verified are reopened, and the loop ends.
+run record, and checklist items it had verified are reopened. When the attempt
+had retired a blocker, or changed a runtime blocker's error, one more attempt
+starts from the restored tree, its prompt naming why the previous one was
+rolled back; the loop ends if that attempt is rolled back too. Once an attempt
+is kept the loop continues as usual, and a later rollback may be retried again.
+The note of the rolled-back attempt stays in the findings, and the run reports
+a rollback only while the restored tree is the one that ships. An attempt that
+moved nothing forward ends the loop when it is rolled back. The tree that ships
+is always the last one kept, so a retry can cost one more attempt but never
+stacks a regression on the shipped tree.
 An attempt that edits nothing is checked again when it moved evidence (a
 checklist item, a corrected scenario, an accepted citation) or dependencies (a
-successful ``install_dependencies`` or ``run_command``, or a change in a
+successful ``run_command``, or a change in a
 project's installed ``node_modules``). It continues the loop only if that check
 meets the same five conditions; having no edit to undo, it otherwise ends the
 loop. An attempt whose every write was refused gets one more attempt, with the
@@ -944,8 +1028,8 @@ A fix turn whose reply is cut off at the output-token limit is retried with
 an instruction to emit less, up to four times per attempt, rather than
 applying a half-written edit.
 
-No tool is forced in a fix attempt: it ends when the model ends its turn or
-its ten turns are spent, and an attempt without a successful edit is logged as
+No tool is forced in a fix attempt, as in Phase 2: it ends when the model ends its turn or
+it has made 40 tool calls, and an attempt without a successful edit is logged as
 ``ended with no successful edit``. Phase 3 tool calls are recorded in the trace
 and the recipe exactly like Phase 2's.
 
@@ -969,7 +1053,14 @@ so stopping a run does not trigger another paid coverage judgment.
 Repair prompts retain the original specification, current files/symbols, actual
 action handlers and recent rejected operations. Each attempt is a new
 conversation, so its prompt also lists the files the run has edited and, after a
-kept attempt, what that attempt edited and which blockers it retired. The parts that are fixed for the
+kept attempt, what that attempt edited, which blockers it retired and which are
+still failing with another error. Its prompt also carries the current text of
+the files its blockers name, in repair order, as ``read_file`` returns it (with
+a ``read_id`` for ``replace_file_lines``), up to 24,000 characters in all; a
+file that does not fit gets the excerpt around its line instead, and an
+identical ``read_file`` of a shown file in that attempt returns a short
+"unchanged" note. An attempt whose blockers are all unverified evidence gets no
+file text. The parts that are fixed for the
 run (the original specification, the inspection handoff, the domain model and the
 requirements ledger) form the system prompt, identical in every repair round so
 the provider can serve it from its prompt cache; each round's message carries the
@@ -1023,11 +1114,16 @@ A modify run is answerable for its own request and for what it breaks, not for
 the whole application again. When the seeded recipe records requirement
 verdicts, the run keeps the previous run's requirements (same ``R`` numbers, at
 most 128) and extracts only the user messages the previous run's request did not
-hold: the messages after the previous run's when those start the conversation,
-otherwise all later messages (a message sent to a run that was cancelled counts
-as new, and so does one repeated after the previous run), with the earlier
-conversation and the numbered requirements as context, so "retry", "yes" or "the
-same for the other screen" resolve. Their requirements follow the previous ones.
+hold: the later messages after those the conversation shares, from its start,
+with the previous run's (a message sent to a run that was cancelled counts as
+new; a retry the conversation did not keep does not make the messages before it
+new), with the earlier conversation and the numbered requirements as context, so
+"retry", "yes" or "the same for the other screen" resolve. When the new messages
+are empty or are only the previous run's newest message (the same request sent
+again, also the request as it was before a retry the conversation did not keep),
+the run continues earlier work without that call. Any other message is
+extracted, also one that repeats an older message of the previous run (a change
+asked for, reversed and asked for again). Their requirements follow the previous ones.
 The extraction also names the previous requirements a new message changes, asks
 for again or removes. Those stay in the ledger and are judged as usual (an
 extraction that names every requirement cannot empty it): met, they are met;
@@ -1074,11 +1170,26 @@ Each verdict keeps the requirement's trace id as ``ref``, and the recipe's
 ``requirements_source`` says where the ledger came from (``editor`` or
 ``extracted``). The assistant extracts from the user's first request only, so a
 request carrying later messages is extracted as before, with a warning in the log.
+A newest message that only asks to retry, continue or fix earlier work ("try
+again", "fix it"; a bare "continue" sends the earlier request unchanged) does not
+count when the request says so (``followup_states_nothing_new``, set from the
+assistant's verdict): the editor's requirements and their trace ids are used, with
+no extraction call, and on a modify run the message counts as asking to finish
+earlier work, so the previous run's open requirements are judged and repaired.
+Without that field, such a message is extracted like any other
+later message: one call, and verdicts without trace ids.
 
-The judge reads a digest of the app of at most 200,000 characters: the schema
-files first, then the backend code ranked by the share of its lines the agent
-wrote (a module the generator never wrote first, untouched generator output
-last), with 30% reserved for pages and components. When the whole app does not
+The judge reads a digest of the app of at most 200,000 characters. Which files
+fit is decided by rank: the schema files first, then the backend code ranked by
+the share of its lines the agent wrote (a module the generator never wrote
+first, untouched generator output last), with 30% reserved for pages and
+components. The shares are read against the stored generator output, which a
+FastAPI backend and a web app's backend and typed client have; without one,
+routers come first. The files that fit are shown in an order no edit changes
+(cited files, schemas, routers, other Python, pages and components, the rest,
+each by path), after the original request and before the previous round's
+feedback and the requirements, so a repeated judge call can reuse the cached
+prompt up to the first file that changed. When the whole app does not
 fit, a generator file the agent edited in under half of its lines is shown as
 its edits with three lines of context; the unchanged generator lines left out,
 and the places where generator lines were removed, are marked. A file over 1,500
@@ -1140,7 +1251,11 @@ whose request runs the cited code: its decorator, its handler (also one register
 with ``add_api_route``), or a function of the same file the handler calls or names in
 ``Depends(...)`` (not a parameter, variable or nested function of the handler with
 that name), under the literal ``prefix=`` of its router (a router whose prefix
-is not a literal verifies nothing). An abridged citation ("a ... b") counts a route
+is not a literal verifies nothing). A call FastAPI refused before the handler ran
+(its request-validation 422, a ``detail`` list of ``loc``/``msg`` errors, each ``loc``
+starting with ``body``, ``query``, ``path``, ``header`` or ``cookie``) hit no handler and
+exercises nothing; a refusal the handler raised, any 4xx a dependency or the handler
+answered (a 422 built from its own validation errors among them), still counts. An abridged citation ("a ... b") counts a route
 only when the route runs every part of it; when a part is too short to locate, the
 parts left may be code several routes share, so it counts no route ("API: not run
 (a part of the abridged citation is too short to tell its route)"). The note names that call ("API: a passing

@@ -394,6 +394,8 @@ class _RunTraceBuilder:
         baseline: Optional[dict] = None
         carved = {key: 0 for key in _TOKEN_KEYS}
         phase = "run"
+        # Open phases: a nested one (a check inside Phase 2) hands back to its enclosing phase.
+        open_phases: list[str] = []
         turn: Optional[_Call] = None
         turn_label = ""
         segment_start: Optional[datetime] = None
@@ -444,6 +446,7 @@ class _RunTraceBuilder:
                 close_turn(when)
             if event == EVENT_PHASE_ENTER:
                 phase = str(payload.get("phase") or phase)
+                open_phases.append(phase)
             elif event == EVENT_TURN_START:
                 close_turn(when)
                 turn_phase = str(payload.get("phase") or phase)
@@ -479,6 +482,9 @@ class _RunTraceBuilder:
                     turn.status = ExecutionStatus.FAILED
                 note(f"Error ({payload.get('phase')}): {payload.get('reason')}", LogType.ERROR, when)
             elif event == EVENT_PHASE_EXIT:
+                if open_phases and open_phases[-1] == payload.get("phase"):
+                    open_phases.pop()
+                    phase = open_phases[-1] if open_phases else phase
                 details = [f"{key}={payload[key]}" for key in ("stop_reason", "stop_detail", "exit_reason",
                                                                 "unresolved_blockers", "not_confirmed",
                                                                 "generator_used")

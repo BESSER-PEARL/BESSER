@@ -11,6 +11,7 @@ Run it directly for the table: ``python -m tests.spec_driven_agent.prompt_budget
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from unittest import mock
 
@@ -20,6 +21,7 @@ from besser.BUML.metamodel.structural import (
     FloatType, IntegerType, Method, MethodImplementationType, Multiplicity, Parameter, Property,
     StringType,
 )
+from besser.generators.react import ReactGenerator
 from besser.spec_driven_agent.agent.prompt_builder import build_inventory
 from besser.spec_driven_agent.pipeline import orchestrator as orchestrator_module
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
@@ -47,7 +49,6 @@ REQUIREMENTS = [
 # runs from its heading to the next heading present in the prompt.
 _SECTION_MARKERS = (
     ("rules", "\n## Rules\n"),
-    ("model_tools", "\n## Tools for deeper model inspection"),
     # The cached block shared across runs ends here (llm_client.SYSTEM_CACHE_SPLIT).
     ("tail_header", "\n## Variable context"),
     ("models", ("\n## Domain Model", "\n## GUI Model", "\n## Agent Model", "\n## Object Model",
@@ -95,6 +96,8 @@ class Fixture:
     # The extracted ledger. Empty and known (no requirement stated) omits the
     # mutation coverage block when the model holds no rule either.
     requirements: tuple = tuple(REQUIREMENTS)
+    # The generated typed client beside the backend: the endpoint section leads with it.
+    client: bool = False
 
 
 def shelf_fixture() -> Fixture:
@@ -156,6 +159,12 @@ def conference_model() -> DomainModel:
     return DomainModel(name="Conference", types={*classes.values(), kind}, associations=associations)
 
 
+def shelf_client_fixture() -> Fixture:
+    """The shelf run with the frontend's generated typed client in the workspace."""
+    return Fixture("shelf_client", domain_model=shelf_model(isbn=True, author=True, library_method=True),
+                   scaffold=True, client=True)
+
+
 def shelf_no_requirements_fixture() -> Fixture:
     """The shelf run with a known-empty ledger: the prompt without the mutation coverage block."""
     return Fixture("shelf_no_requirements", domain_model=shelf_model(isbn=True, author=True, library_method=True),
@@ -183,7 +192,8 @@ def state_machine_fixture() -> Fixture:
     return Fixture("state_machine", state_machines=(order_state_machine(),))
 
 
-FIXTURES = {"shelf": shelf_fixture, "shelf_no_requirements": shelf_no_requirements_fixture,
+FIXTURES = {"shelf": shelf_fixture, "shelf_client": shelf_client_fixture,
+            "shelf_no_requirements": shelf_no_requirements_fixture,
             "conference": conference_fixture, "state_machine": state_machine_fixture}
 
 
@@ -214,6 +224,8 @@ def phase2_request(fixture: Fixture, workspace) -> tuple[str, list[dict]]:
     orch._requirement_extraction_attempts = 1  # extracted by this process, as in a run
     if fixture.scaffold:
         generate_backend(workspace, fixture.domain_model)
+        if fixture.client:
+            ReactGenerator(fixture.domain_model, None, output_dir=os.path.join(str(workspace), "frontend")).generate_api_client()
         orch._generator_used = GENERATOR
         orch._inventory = build_inventory(str(workspace), fixture.domain_model, GENERATOR)
     with mock.patch.object(orchestrator_module, "analyze_gaps_via_llm", return_value=list(GAP_TASKS)), \

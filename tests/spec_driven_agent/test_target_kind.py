@@ -105,6 +105,17 @@ def test_selector_is_asked_for_the_target(tmp_path):
     assert orch.target == Target("other", "native Android/iOS app", True)
 
 
+def test_an_undecided_target_is_recorded_in_the_trace(tmp_path):
+    # Both routing calls answer without a target: the run's record must say so.
+    orch = _orch(tmp_path, TODO_APP, {"generator": "NONE"})
+    orch._select_generator(TODO_APP)
+    assert orch.target is None and len(orch.client.calls) == 2
+    trace = [json.loads(line) for line in
+             (tmp_path / ".besser_trace.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert [r["payload"] for r in trace if r["event"] == "target"] == [
+        {"kind": None, "description": "target undecided"}]
+
+
 def test_keywords_never_overrule_a_decided_none(tmp_path):
     # "REST API" is a FastAPI keyword; before, it turned the NONE back into FastAPI.
     orch = _orch(tmp_path, MOBILE)
@@ -335,6 +346,41 @@ def test_a_modify_that_keeps_the_kind_keeps_the_stack(tmp_path):
     assert orch.target.is_web_app and orch._previous_target is None
     orch._inventory = "backend/main_api.py, frontend/src/App.tsx (generate_fastapi_backend)"
     assert STACK_LOCK in orch._build_system_prompt(instructions)
+
+
+def _modify_a_vue_app(tmp_path, instructions, answer):
+    """A modify run seeded with the recipe a create run routed to Vue wrote."""
+    seed = _orch(tmp_path, "Build a workouts web app with Vue and Express")
+    seed.target = Target("web_app", "workouts web app", True)
+    seed._routed, seed._unsupported_stack = True, "Vue 3 + Express"
+    seed._save_recipe(seed._instructions, 1.0)
+    orch = _orch(tmp_path, instructions, answer)
+    orch._modify_mode = True
+    orch._seed_generator_files_from_recipe()
+    orch._route_modify_request()
+    return orch
+
+
+def test_a_modify_run_keeps_the_routed_stack_of_the_app_it_edits(tmp_path):
+    instructions = "add a search box to the workout list"
+    orch = _modify_a_vue_app(tmp_path, instructions, {**WEB, **KEEP, "generator": "NONE"})
+    task, = [t["text"] for t in orch._deterministic_gap_tasks()
+             if isinstance(t, dict) and t["text"].startswith("Create the ")]
+    assert task.startswith("Create the Vue frontend ")
+    prompt = orch._build_system_prompt(instructions)
+    assert "For the Vue frontend" in prompt and "Idiomatic conventions for" in prompt
+
+
+def test_a_modify_run_that_changes_the_target_takes_the_new_stack(tmp_path):
+    orch = _modify_a_vue_app(tmp_path, "No, make it a native mobile app instead.",
+                             {**NATIVE, **SWITCH, "generator": "NONE", "unsupported_stack": "Flutter"})
+    assert orch.target.kind == "other" and orch._unsupported_stack == "Flutter"
+
+
+def test_a_recipe_without_a_routed_stack_keeps_the_react_default(tmp_path):
+    orch = _modify(tmp_path, "add a search box", Target("web_app", "workouts web app", True),
+                   {**WEB, **KEEP, "generator": "NONE"})
+    assert not orch._routed and _frontend_task(orch)
 
 
 def test_a_failed_modify_decision_keeps_the_seed_target(tmp_path):

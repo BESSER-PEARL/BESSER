@@ -50,7 +50,7 @@ def test_a_routed_rust_framework_name_gets_the_cargo_manifest(tmp_path, library_
 
 @pytest.mark.parametrize("stack", ["Rocket", "Cargo"])
 def test_a_routed_rust_framework_name_gets_the_rust_idioms(stack):
-    assert detect_idiom_stack("Build the library backend.", routed_stack=stack) == "rust_axum"
+    assert detect_idiom_stack(stack) == "rust_axum"
 
 
 def test_routed_names_still_follow_the_stack_order():
@@ -80,4 +80,4 @@ def test_free_text_still_ignores_the_bare_words(request_text):
 ])
 def test_a_longer_routed_name_reads_the_words_as_the_domain(stack, idiom):
     assert detect_routed_stack(stack) is None
-    assert detect_idiom_stack("Build it.", routed_stack=stack) == idiom
+    assert detect_idiom_stack(stack) == idiom

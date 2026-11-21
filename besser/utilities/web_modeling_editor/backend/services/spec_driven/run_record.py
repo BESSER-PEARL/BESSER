@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from besser.spec_driven_agent.state import agent_trace
+from besser.spec_driven_agent.validation.issues import RUNTIME_NOT_CHECKABLE
 from besser.utilities.provenance import get_besser_version, get_build_sha
 
 # The two lines per run. A logger of its own: the backend installs no handler for
@@ -81,9 +82,10 @@ RESUMED = "resumed"
 FINISHED, TIME_LIMIT, COST_LIMIT, TURN_LIMIT = "finished", "time limit", "cost limit", "turn limit"
 PROVIDER_ERROR, INTERNAL_ERROR, CANCELLED = "provider error", "internal error", "cancelled"
 STUCK, HANDED_OFF = "repeated edits did not land", "handed off to validation"
+OUTPUT_LIMIT = "output limit"
 _STOP_REASONS = {"max_turns": TURN_LIMIT, "api_error": PROVIDER_ERROR, "cancelled": CANCELLED,
                  "cost_cap": COST_LIMIT, "timeout": TIME_LIMIT, "stuck_edit_loop": STUCK,
-                 "validation_required": HANDED_OFF}
+                 "validation_required": HANDED_OFF, "output_limit": OUTPUT_LIMIT}
 
 # ``stop_message``: the run card's sentence for each way a run ends, without its variable parts.
 _STOP_MESSAGES = {
@@ -95,6 +97,8 @@ _STOP_MESSAGES = {
     CANCELLED: "The run was cancelled before it finished.",
     STUCK: "The customization loop stopped because repeated edits to the same file were not landing.",
     HANDED_OFF: "The customization loop handed off to validation before finishing every requested change.",
+    OUTPUT_LIMIT: ("The model's replies were cut off at its output limit too often, so the customization "
+                   "loop stopped before finishing every requested change."),
 }
 _UNRESOLVED = ("The app was generated, but unresolved implementation or verification issues remain; "
                "it is not verified complete.")
@@ -109,6 +113,11 @@ _GAP_CLAUSES = {
 }
 
 
+# The outcomes of a run that finished without being cut short, other than ``completed``: the run
+# store's status and the telemetry outcome carry them as they are.
+FINISHED_UNCLEAN = ("completed_with_blockers", "completed_unverified")
+
+
 def as_gap(gap) -> tuple[str, str, bool]:
     """``(class, reason, configured_off)`` of a gap given with or without its third member."""
     kind, reason, *rest = gap
@@ -118,6 +127,11 @@ def as_gap(gap) -> tuple[str, str, bool]:
 def run_gaps(gaps) -> list[tuple[str, str, bool]]:
     """The gaps of this run: not the classes the server has switched off."""
     return [gap for gap in map(as_gap, gaps or ()) if not gap[2]]
+
+
+def not_checkable(gaps) -> bool:
+    """Whether the run built a server no check can start (``RUNTIME_NOT_CHECKABLE``)."""
+    return any(kind == "runtime" and reason == RUNTIME_NOT_CHECKABLE for kind, reason, _ in map(as_gap, gaps or ()))
 
 
 def not_verified_message(gaps, *, updated: bool = False) -> Optional[str]:
@@ -224,6 +238,8 @@ class RunFacts:
             self.stopped_by = _STOP_REASONS.get(stop_reason, FINISHED)
         self.stop_message = (_STOP_MESSAGES.get(self.stopped_by) or (_UNRESOLVED if incomplete else None)
                              or not_verified_message(gaps, updated=self.mode == "modify") or (
+            f"The app was {'updated' if self.mode == 'modify' else 'generated'}, but its runtime could not be "
+            f"checked: {RUNTIME_NOT_CHECKABLE}." if not_checkable(gaps) else None) or (
             f"The app was generated; {not_confirmed} finding(s) could not be confirmed and are listed "
             "for review." if not_confirmed else None))
         self.blocker_count = blocker_count
@@ -238,7 +254,9 @@ class RunFacts:
             self.outcome = "failed"
         else:
             self.outcome = ("completed_with_blockers" if incomplete or blocker_count
-                            else "completed_unverified" if run_gaps(gaps) else "completed")
+                            # Work handed off unfinished is never plain "completed".
+                            else "completed_unverified" if run_gaps(gaps) or self.stopped_by == HANDED_OFF
+                            else "completed")
 
 
 def _files(tool_calls: list) -> tuple[int, int]:

@@ -184,7 +184,7 @@ def test_a_long_blocker_is_cut_with_a_marker_keeping_its_tail(tmp_path):
     assert "chars cut ...]" in bullet
     assert bullet.endswith("NameError: name 'Base' is not defined. Fix site: app/main.py line 1")
     assert len(bullet) < _FIX_PROMPT_BLOCKER_CHARS + 60
-    assert "The offending lines" in message, "excerpts still come from the full message"
+    assert "app/main.py (read_id " in message, "the file shown still comes from the full message"
 
 
 def test_validate_app_cuts_each_finding_as_the_fix_prompt_does(tmp_path, monkeypatch):

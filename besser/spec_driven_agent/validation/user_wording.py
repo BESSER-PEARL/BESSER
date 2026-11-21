@@ -15,7 +15,13 @@ import json
 import re
 from dataclasses import dataclass
 
-from besser.spec_driven_agent.validation.issues import _TRUNCATION_NOTE_RE, _classify_issue
+from besser.spec_driven_agent.validation.issues import (
+    JUDGMENT_DEFERRED,
+    OPEN_SINCE_PREVIOUS,
+    REGRESSION_TO_CONFIRM,
+    _TRUNCATION_NOTE_RE,
+    _classify_issue,
+)
 
 # The app's own refusal and a requirement's text are quoted; longer is cut.
 _MAX_QUOTED = 100
@@ -40,6 +46,7 @@ GROUP_SENTENCES = {
     "create_refused": "{n} create operations were refused with the test data used: {subjects}.",
     "create_untested": "{n} create operations could not be tested automatically: {subjects}.",
     "create_failed": "{n} create operations failed with a server error in the test run: {subjects}.",
+    "read_failed": "{n} reads of a created record failed with a server error in the test run: {subjects}.",
     "action_untested": "{n} actions could not be tested automatically: {subjects}.",
     "action_failed": "{n} actions failed or changed nothing in the test run: {subjects}.",
     "requirement_unconfirmed": "{n} requirements could not be confirmed in the code: {subjects}.",
@@ -75,6 +82,7 @@ _ACTION = re.compile(r"POST \S+ - (?P<action>\w+) (?:on (?P<entity>\w+)|answered
 _ACTION_CALLING = re.compile(r"failure calling (?P<action>\w+) on a (?P<entity>\w+)")
 _ACTION_ENTITY = re.compile(r"the (?P<entity>\w+) created one request earlier")
 _SCENARIO = re.compile(r"^api scenario: (?P<id>.+?) failed:")
+_SEED_WORKFLOW = re.compile(re.escape(REGRESSION_TO_CONFIRM) + r"api scenario (?P<id>.+?) passed on the previous version")
 _TASK = re.compile(r"(?:remains unresolved|was not confirmed|is not done|was closed by the agent, not checked): "
                    r"(?P<text>.*?)\.(?: |$)", re.S)
 # What an unconfirmed item's message says about it, said for the user.
@@ -104,6 +112,7 @@ _SIMPLE = (
     ("form field type:", "A form field does not match the type of value it collects."),
     ("screen warning:", "A screen of the app reported a problem when it was opened in a browser."),
     ("api call:", "A screen sends a request, or reads its answer, in a shape the backend does not use."),
+    ("endpoint coherence:", "A screen calls an API route or client function the backend does not have."),
     ("data contract", "The code does not match the class diagram (an identifier or a field type)."),
     ("model conformance:", "The backend does not match the latest changes to the class diagram."),
     ("missing module:", "The code imports a module that is not in the output, so the app cannot start."),
@@ -112,6 +121,10 @@ _SIMPLE = (
     ("python contract:", "The backend code has a defect that stops part of it from running."),
     ("open account writes:", "A route lets a request change records it should not be allowed to change."),
     ("verification setup:", "The app's dependencies were not installed, so some checks could not run."),
+    (JUDGMENT_DEFERRED.lower(), "Your request's requirements were not checked: the app first has to start and save "
+                                "records."),
+    ("validation: phase 3 fix attempt ", "An automatic fix attempt was undone because it made the app worse; the "
+                                         "run's detailed report lists what was seen only in the undone version."),
     ("runtime gate:", "The app could not be shown to start and save a record."),
     ("validation unverified: runtime gate:", "Nothing started the app, so nothing shows that it runs."),
     ("entity coverage:", "Not every class can be created, viewed, edited and deleted in the app."),
@@ -195,6 +208,9 @@ def _create(message: str) -> Finding:
     what = f"Creating {subject} (POST {path})" if path else f"Creating {subject}"
     if message.startswith("create contract:"):
         return Finding(f"{what} failed with a server error in the test run.", "create_failed", subject)
+    if " it created could not be read back: " in message:
+        return Finding(f"{what} worked, but the record could not be read back in the test run.",
+                       "create_untested", subject)
     unresolved = _UNRESOLVED.search(message)
     if unresolved:
         try:
@@ -260,11 +276,23 @@ def user_finding(message: str) -> Finding:
     text = " ".join(str(message or "").split())
     if text.startswith("runtime unverified: "):
         text = text[len("runtime unverified: "):]
+    # A modify run's labels (modify_run.py): the finding itself, said as old or as to confirm.
+    if text.startswith(OPEN_SINCE_PREVIOUS):
+        return Finding(f"Open since the previous version: {user_sentence(text[len(OPEN_SINCE_PREVIOUS):])}")
+    if replayed := _SEED_WORKFLOW.match(text):
+        return Finding(f"The test workflow '{replayed.group('id')}' passed on the previous version and fails now: "
+                       "check whether the requested change meant that.")
     lower = text.lower()
     if lower.startswith(("create unverified:", "create contract:")):
         return _create(text)
     if lower.startswith(("action unverified:", "action call:")):
         return _action(text)
+    if lower.startswith("read contract:"):
+        route = _ROUTE.search(text)
+        path = route.group("path") if route else ""
+        subject = _route_subject(path)
+        return Finding(f"Reading {subject} (GET {path}) failed with a server error in the test run.",
+                       "read_failed", subject)
     for prefix in ("requirement unverified:", "requirement unsupported:", "requirement partial:", "requirement:"):
         if lower.startswith(prefix):
             return _requirement(text, prefix)
@@ -325,6 +353,12 @@ def user_finding(message: str) -> Finding:
         if lower.startswith(prefix):
             return Finding(sentence)
     return Finding(GENERIC_SENTENCE)
+
+
+def not_checked(message: str) -> bool:
+    """A screen-check note saying what it could not look at, as opposed to what it saw."""
+    text = " ".join(str(message or "").split())
+    return bool(_SCREEN_COVERAGE.match(text) or _SCREENS_NOT_RUN.match(text))
 
 
 def user_sentence(message: str) -> str:

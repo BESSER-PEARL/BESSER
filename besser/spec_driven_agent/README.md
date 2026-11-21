@@ -42,7 +42,7 @@ paths so a test's descriptive name is not mistaken for exercising those paths.
 
 ## Shell tools: a deployment decision
 
-`run_command` / `install_dependencies` are off by default on every path
+`run_command` is off by default on every path
 (`LLMOrchestrator`, `LLMGenerator`, the web runner). The web runner takes its
 value from `BESSER_LLM_ENABLE_SHELL_TOOLS`, read once per process as
 `get_settings().llm_enable_shell_tools` (`backend/settings.py`); no request

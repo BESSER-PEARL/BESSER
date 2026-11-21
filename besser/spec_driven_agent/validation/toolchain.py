@@ -174,46 +174,6 @@ def _toolchain_commands_for(
     return commands
 
 
-def _build_toolchain_reminder(
-    toolchain_blockers: list[ValidationIssue], *, shell_tools: bool = True
-) -> str:
-    """High-salience reminder text for the toolchain-fix loop.
-
-    Mirrors the shape of ``_build_modify_loop_reminder`` (the
-    per-file modify-loop guard the LLM already recognises) so the
-    model treats the toolchain errors with the same urgency as a
-    rewrite-or-quit warning. The verbatim error lines are quoted
-    in the reminder so they sit in the model's working memory
-    right before its next response.
-    """
-    # Cap the reminder body so a runaway report (e.g. 100 type
-    # errors after a single missing import) doesn't blow out the
-    # context window. The prompt's blocker list carries the rest.
-    lines = [i.message for i in toolchain_blockers[:8]]
-    bulleted = "\n".join(f"  - {ln}" for ln in lines)
-    more = (
-        f"\n  - (+{len(toolchain_blockers) - 8} more in the prompt's blocker list)"
-        if len(toolchain_blockers) > 8 else ""
-    )
-    return (
-        "<system-reminder>"
-        "The generated project does not compile on its own toolchain. "
-        "The project is not deliverable until these errors are fixed:\n"
-        f"{bulleted}{more}\n\n"
-        + ("You MUST drive these to zero. After EACH edit, invoke "
-           "run_command with the appropriate toolchain check (npx tsc "
-           "--noEmit / cargo check / kotlinc) and read the output. "
-           "Only call end_turn once the toolchain reports zero errors, "
-           if shell_tools else
-           "You MUST drive these to zero. run_command is unavailable in this "
-           "run; the harness re-runs the toolchain when this attempt ends. "
-           "Only call end_turn once every reported error is fixed, ")
-        + "or after you have made a clear good-faith attempt that the "
-        "remaining errors require dependencies you cannot add."
-        "</system-reminder>"
-    )
-
-
 # How many ruff lines Phase 3 reports. Blocker-code lines are always kept
 # even past this, then files the LLM edited, then the rest.
 _RUFF_MAX_REPORTED = 20
@@ -428,6 +388,7 @@ def _collect_tsc_issues(
     allow_shell_tools: bool,
     enable_toolchain_validation: bool,
     excluded_dirs: set[str],
+    without_dependencies: bool = True,
 ) -> list[str]:
     """Run ``tsc --noEmit`` for any TypeScript project in the workspace.
 
@@ -435,6 +396,8 @@ def _collect_tsc_issues(
     runs ``tsc --noEmit`` against each project root. A disabled or missing
     compiler is unverified, not a source defect for automatic repair.
     Sandboxed: a project-local tsc is package-authored code.
+    ``without_dependencies=False`` only asks for the install of a project
+    whose dependencies the agent can install, without a partial check on it.
     """
     import shutil as _shutil
     import subprocess
@@ -495,6 +458,8 @@ def _collect_tsc_issues(
         )
         if setup_allowed:
             issues.append(required_dependency_setup(f"tsc [{rel}]", rel))
+        if setup_allowed and not without_dependencies:
+            continue
         if not tsc_bin:
             if not setup_allowed:
                 issues.append(required_check_unverified(f"tsc [{rel}]", "TypeScript compiler is unavailable"))

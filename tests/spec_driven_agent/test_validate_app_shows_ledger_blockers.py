@@ -29,7 +29,6 @@ def _orch(tmp_path, monkeypatch):
     orch = LLMOrchestrator(llm_client=_Client(), domain_model=DomainModel(name="M", types={Class(name="Company")}),
                            output_dir=str(tmp_path))
     monkeypatch.setattr(orch, "_collect_execution_issues", lambda: [])
-    monkeypatch.setattr(orch, "_static_frontend_issues", lambda: [])
     return orch
 
 

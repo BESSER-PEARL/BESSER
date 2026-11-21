@@ -38,6 +38,7 @@ from besser.BUML.metamodel.structural import DomainModel
 from besser.utilities.provenance import get_besser_version
 # The canonical set, shared with get_tools_for() so the advertised list and the
 # dispatch gate can never disagree about which tools are shell tools.
+from besser.spec_driven_agent.agent.history_eviction import EVICTED_EDIT_BODY, REJECTED_DRAFT_PLACEHOLDER
 from besser.spec_driven_agent.agent.runbook import backend_files, files_the_app_wrote
 from besser.spec_driven_agent.agent.tools import _SHELL_TOOLS as _SHELL_TOOL_NAMES
 from besser.spec_driven_agent.agent.tools import dumps_for_model
@@ -79,10 +80,12 @@ from besser.spec_driven_agent.agent.edit_apply import (
 )
 from besser.spec_driven_agent.planning.agent_wiring import gui_uses_agent
 from besser.spec_driven_agent.planning.gap_analyzer import task_paths
+from besser.spec_driven_agent.providers.tool_input import coerce_to_schema
 from besser.spec_driven_agent.pipeline.constants import (
     _APPLICATION_OUTPUT_DIRS,
     REGENERABLE_GENERATORS,
     WORKSPACE_SKIP_DIRS,
+    is_regenerated,
 )
 from besser.spec_driven_agent.run_report import RECIPE_FILENAME
 from besser.spec_driven_agent.state.agent_trace import TRACE_DIRNAME, record_generated_files
@@ -101,7 +104,8 @@ _INPUT_SCHEMAS = {
     tool["name"]: tool["input_schema"] for tool in get_all_tools_including_generators()
 }
 
-_REGENERABLE_OUTPUT_DIRS = frozenset(_APPLICATION_OUTPUT_DIRS[name] for name in REGENERABLE_GENERATORS)
+# The folder of each regenerable generator, to its generator.
+_REGENERABLE_OUTPUT_DIRS = {_APPLICATION_OUTPUT_DIRS[name]: name for name in REGENERABLE_GENERATORS}
 
 
 # OpenCode edit.ts serializes the complete read/validate/write transaction by
@@ -258,11 +262,16 @@ class ToolExecutionResult:
     def to_json(self) -> str:
         return dumps_for_model(self.payload)
 
+# The file tools' arguments that carry code or text to match.
+_EDIT_BODY_KEYS = ("content", "old_text", "new_text")
+# task_list's earlier shape, still accepted: action=list|done|add|drop|blocked|mixed.
+_TASK_LIST_ACTION_ARGUMENTS = frozenset({"action", "id", "ids", "reason", "text", "texts", "done_ids", "add_texts"})
+_TASK_LIST_ACTION_SCHEMA = {"properties": {key: {"type": "array"} for key in ("ids", "texts", "done_ids", "add_texts")}}
+
 # Default time a shell command can run (seconds); the model may ask for up to
-# MAX_COMMAND_TIMEOUT for a long build. install_dependencies gets INSTALL_TIMEOUT.
+# MAX_COMMAND_TIMEOUT for a long build or a first install.
 COMMAND_TIMEOUT = 120
 MAX_COMMAND_TIMEOUT = 600
-INSTALL_TIMEOUT = 300
 
 # What the model sees when run_command cannot be confined. The cause and the
 # operator override go to the server log only: named here, the model tried to
@@ -471,27 +480,6 @@ def _joins_commands_unconditionally(command: str) -> bool:
     return commands + bool(words) >= 2
 
 
-_CD_FAILED_RE = re.compile(r"\bcd: (.+?): No such file or directory")
-# The line's first cd: a later one runs wherever the earlier ones left the shell.
-_FIRST_CD_RE = re.compile(r"(?:^|[;&|(\n])\s*cd\s+(['\"]?)([^\s;&|)'\"]+)\1")
-
-
-def _cd_hint(stderr: str, command: str, workspace: str, started_in: str | None) -> str | None:
-    """One line for the line's first ``cd P``, relative, that failed off the workspace
-    root while ``P`` exists from the root, inside the workspace."""
-    first_cd = _FIRST_CD_RE.search(command)
-    if started_in in (None, ".") or first_cd is None:
-        return None
-    target = first_cd.group(2)
-    from_root = _normalize_path_for_comparison(os.path.realpath(os.path.join(workspace, target)))
-    if (target not in _CD_FAILED_RE.findall(stderr) or os.path.isabs(target) or target.startswith("~")
-            or os.path.commonpath([from_root, workspace]) != workspace or not os.path.isdir(from_root)):
-        return None
-    from_here = os.path.relpath(from_root, os.path.join(workspace, started_in)).replace(os.sep, "/")
-    return (f"The shell was in {started_in}, not the workspace root, and {target} is a path from the root: "
-            f"use cd {from_here} from here, or working_dir='{target}'.")
-
-
 def ends_shell_session(method):
     """Close ``self.executor``'s shell session when a run entry point returns
     or raises: its servers must not outlive the run."""
@@ -577,8 +565,16 @@ _TOP_LEVEL_DECL_RE = re.compile(
 )
 _EXPORT_DEFAULT_RE = re.compile(r"^export\s+default\b", re.MULTILINE)
 _ROUTE_ELEMENT_RE = re.compile(r"<Route\b")
+# `export { A } from "./a"` / `export * from "./b"`: a barrel's re-exports.
+_REEXPORT_RE = re.compile(r"^export\s+(?:type\s+)?(?:\*|\{)[^;\n]*\bfrom\b", re.MULTILINE)
 # A rewrite of a large file shorter than this share of its non-blank lines has left code out.
 _MIN_REWRITE_SHARE = 0.6
+# A range edit over at least this share of a file's non-blank lines rewrites the file,
+# so one that writes new code there is held to the rewrite rule.
+_REWRITE_SPAN_SHARE = 0.9
+# Above these sizes a rewrite of a file this run did not create must keep its code.
+_GENERATED_REWRITE_LINES = 200
+_MODIFY_RUN_REWRITE_LINES = 15
 # A line that is only a comment (`// ...`, `/* ... */`, JSX `{/* ... */}`).
 _COMMENT_ONLY_LINE_RE = re.compile(r"^\s*\{?\s*(?:/\*.*\*/|//.*?)\s*\}?\s*$")
 # Fewer lost lines beside a new "remaining unchanged" comment is an edit, not left-out code.
@@ -617,31 +613,77 @@ def _placeholder_standing_in(before: str, after: str) -> str | None:
     return None
 
 
-def _frontend_rewrite_loss(rel_path: str, before: str, after: str) -> str | None:
-    """Why a whole rewrite of a large generated frontend file may lose code.
+class _Outline(NamedTuple):
+    """What a rewrite must keep of a source file: its top-level names (and a Python
+    class's members), and counts of the registrations a name check misses
+    (decorators, routes, module-level calls)."""
+    names: set[str]
+    counts: dict[str, int]
 
-    ``""`` when it keeps the file's code; ``None`` when the file is not frontend
-    source with listable declarations, which keeps the two-attempt rule.
-    """
-    if not frontend_source.supports(rel_path) or "frontend" not in rel_path.split("/")[:-1]:
-        return None
-    old_code, new_code = _strip_comments(before, rel_path), _strip_comments(after, rel_path)
-    old_names = set(_TOP_LEVEL_DECL_RE.findall(old_code))
-    if not old_names:
-        return None
-    old_lines, new_lines = (sum(1 for line in text.splitlines() if line.strip()) for text in (before, after))
+
+def _declared_names(body: list) -> set[str]:
+    """The functions, classes and assigned names a Python block defines."""
+    names = set()
+    for node in body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+        elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            names.update(target.id for target in targets if isinstance(target, ast.Name))
+    return names
+
+
+def _outline(rel_path: str, code: str) -> _Outline | None:
+    """The outline of Python or TS/JS source; None for other files and unparsable Python."""
+    if rel_path.lower().endswith(".py"):
+        try:
+            tree = ast.parse(code)
+        except (SyntaxError, ValueError):
+            return None
+        names, decorators, calls = _declared_names(tree.body), 0, 0
+        for node in tree.body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                decorators += len(node.decorator_list)
+            if isinstance(node, ast.ClassDef):
+                names.update(f"{node.name}.{member}" for member in _declared_names(node.body))
+            elif isinstance(node, ast.Expr) and isinstance(node.value, ast.Call):
+                calls += 1
+        return _Outline(names, {"decorators": decorators, "module-level calls": calls})
+    if frontend_source.supports(rel_path):
+        code = _strip_comments(code, rel_path)
+        return _Outline(set(_TOP_LEVEL_DECL_RE.findall(code)), {
+            "`export default` statements": len(_EXPORT_DEFAULT_RE.findall(code)),
+            "<Route> elements": len(_ROUTE_ELEMENT_RE.findall(code)),
+            "re-exports": len(_REEXPORT_RE.findall(code))})
+    return None
+
+
+def _non_blank_lines(text: str) -> int:
+    return sum(1 for line in text.splitlines() if line.strip())
+
+
+def _rewrites_whole_file(before: str, replaced: str, replacement: str, times: int = 1) -> bool:
+    """True when an edit writes new code over at least ``_REWRITE_SPAN_SHARE`` of the
+    file (``replaced`` counted ``times``); a pure removal (blank replacement) is a targeted edit."""
+    return bool(replacement.strip()) and (
+        times * _non_blank_lines(replaced) >= _REWRITE_SPAN_SHARE * _non_blank_lines(before))
+
+
+def _rewrite_loss(rel_path: str, before: str, after: str) -> str:
+    """Why a whole rewrite of an existing file loses its code; ``""`` when it keeps it."""
+    old_lines, new_lines = (_non_blank_lines(text) for text in (before, after))
     if new_lines < _MIN_REWRITE_SHARE * old_lines:
         return (f"this rewrite has {new_lines} non-blank lines, under {_MIN_REWRITE_SHARE:.0%} "
                 f"of the file's {old_lines}")
-    dropped = sorted(old_names - set(_TOP_LEVEL_DECL_RE.findall(new_code)))
-    if dropped:
-        shown = ", ".join(dropped[:20]) + (f" and {len(dropped) - 20} more" if len(dropped) > 20 else "")
-        return f"this rewrite drops {len(dropped)} of its declarations: {shown}"
-    if _EXPORT_DEFAULT_RE.search(old_code) and not _EXPORT_DEFAULT_RE.search(new_code):
-        return "this rewrite drops its `export default`"
-    old_routes, new_routes = (len(_ROUTE_ELEMENT_RE.findall(code)) for code in (old_code, new_code))
-    if new_routes < old_routes:
-        return f"this rewrite has {new_routes} <Route> elements where the file has {old_routes}"
+    old, new = _outline(rel_path, before), _outline(rel_path, after)
+    if old and new:
+        dropped = sorted(old.names - new.names)
+        if dropped:
+            shown = ", ".join(dropped[:20]) + (f" and {len(dropped) - 20} more" if len(dropped) > 20 else "")
+            return f"this rewrite drops {len(dropped)} of its declarations: {shown}"
+        for what, count in old.counts.items():
+            if new.counts[what] < count:
+                return f"this rewrite has {new.counts[what]} {what} where the file has {count}"
     elision = find_elision(after)
     if elision and elision[1].strip() not in elided_lines(before):
         return f"this rewrite abbreviates code at line {elision[0]} ({elision[1].strip()[:80]})"
@@ -865,7 +907,6 @@ class ToolExecutor:
         object_model: Any = None,
         bpmn_model: Any = None,
         nn_model: Any = None,
-        protect_scaffold: bool = False,
         per_write_diagnostics: bool = True,
         allow_shell: bool = False,
         app_name: str | None = None,
@@ -873,8 +914,8 @@ class ToolExecutor:
         self.workspace = _normalize_path_for_comparison(os.path.realpath(workspace))
         self.app_name = app_name
         self.allow_shell = allow_shell
-        # The run's one shell: cwd, exported env and background processes
-        # carry over between run_command calls. No process until first use.
+        # The run's one shell: exported env and background processes carry
+        # over between run_command calls; each command starts in the root. No process until first use.
         self._shell = ShellSession(self.workspace)
         # Seconds left in the run, set by the orchestrator; caps every command.
         self.time_left: Callable[[], float | None] | None = None
@@ -901,11 +942,8 @@ class ToolExecutor:
         # Per generator output dir: file stamps taken just before the
         # generator ran (see _gen_dir / _track_generated_files).
         self._pre_generation: dict[str, dict[str, tuple[int, int]]] = {}
-        # Per-path targeted edit attempts (modify_file and replace_file_lines,
-        # landed or refused). Two unlock write_file on a large generator file
-        # and in a modify run - the rewrite the recovery ladder sends to after
-        # two refused edits of either kind.
-        self._edit_attempts: dict[str, int] = {}
+        # Files write_file created this run: rewritten without the loss check.
+        self._created_files: set[str] = set()
         # Consecutive failed modify_file attempts per path. Escalates the
         # error message from "not found" to "stop retyping old_text, read the
         # file".
@@ -939,6 +977,8 @@ class ToolExecutor:
         # line displayed (possibly over several windows), inlined or written in
         # full. A partial read or a one-line modify is not enough.
         self._fully_seen: set[str] = set()
+        # Files seen whole whose last whole copy eviction removed from the conversation.
+        self._evicted_views: set[str] = set()
         self._read_coverage: dict[str, tuple[str, set[int]]] = {}
         # Finding replacement text in a file is not proof that an edit happened.
         # Receipts bind the exact request to the entire successful post-write
@@ -951,18 +991,14 @@ class ToolExecutor:
         self._read_epoch = uuid4().hex[:12]
         # Reads per path, to catch a model crawling one file in tiny windows.
         self._read_counts: dict[str, int] = {}
+        # path -> (start, end) of its last read, 0-based end-exclusive: a crawl continues it.
+        self._last_read_spans: dict[str, tuple[int, int]] = {}
         self._read_views: dict[str, tuple[str, str, int, int]] = {}
         # Consecutive refused edits per path: the edit-recovery ladder's rung.
         self._edit_recovery: dict[str, int] = {}
         self.app_validator = None  # supplied by the orchestrator; no arbitrary command input
         self.requirement_citer = None  # validate_app citations; supplied by the orchestrator
         self.api_tester = None
-        # When True (weak / free-tier models only), the deterministic Phase-1
-        # scaffold is IMMUTABLE to delete_file: the model may edit those files
-        # in place but cannot tear them down and rebuild in another framework.
-        # Observed with the free qwen tier deleting a whole FastAPI backend to
-        # rewrite it in Flask; capable cloud models keep full delete_file.
-        self._protect_scaffold = protect_scaffold
         self._per_write_diagnostics = per_write_diagnostics
         # Data contract from the domain model (id types, server-owned
         # fields). Every write_file/modify_file result carries the lint
@@ -980,11 +1016,9 @@ class ToolExecutor:
         # items are open.
         self._tasks: list[dict] = []
         self._autoclose_lock = threading.Lock()
-        # Edit-first guardrail for MODIFY runs (set via
-        # ``enable_modify_guard``). In a modify run every existing file
-        # is a user's working app, so whole-file rewrites are rejected
-        # until the model has demonstrably tried targeted edits — the
-        # rewrite habit is where modify-run regressions come from.
+        # MODIFY runs (set via ``enable_modify_guard``): every existing file is
+        # part of the user's working app, so a rewrite of one over
+        # _MODIFY_RUN_REWRITE_LINES must keep its code.
         self._modify_guard = False
         # Whole-application generators refused once the scaffold exists (#666).
         self._locked_generators: frozenset[str] = frozenset()
@@ -1034,6 +1068,14 @@ class ToolExecutor:
         self._shown_reads.clear()
         self._stubbed_reads.clear()
         self._reported_findings.clear()
+
+    def forget_full_views(self, paths) -> None:
+        """The conversation no longer shows these files whole: write_file needs a read first."""
+        for path in map(self._rel_key, paths):
+            if path in self._fully_seen:
+                self._evicted_views.add(path)
+            self._fully_seen.discard(path)
+            self._read_coverage.pop(path, None)
 
     def close(self) -> None:
         """End the run's shell session; every process it holds is killed."""
@@ -1332,6 +1374,22 @@ class ToolExecutor:
         return row
 
     def _task_list(self, args: dict) -> dict:
+        """``{done, add, drop, blocked}``, any combination; none lists the checklist.
+
+        The earlier ``action=...`` shape (``_TASK_LIST_ACTION_ARGUMENTS``) is still accepted.
+        """
+        if "action" not in args:
+            # An empty array is a field left unused: models fill every optional one.
+            verbs = {verb: args.get(field) for verb, field in (
+                ("done_ids", "done"), ("add_texts", "add"), ("drop", "drop"), ("blocked", "blocked"))
+                if args.get(field) not in (None, [])}
+            result = self._do_mixed(verbs) if verbs else self._task_list({"action": "list"})
+            # Once per result, as labels: the conversation re-sends every result.
+            result.get("results", {}).get("done", {}).pop("open_items", None)
+            result["open_items"] = [{"id": t["id"], "label": _task_label(t["text"])} for t in self.open_tasks()]
+            return result
+        # Its arrays are not in the schema, so the provider did not decode them.
+        args = coerce_to_schema(args, _TASK_LIST_ACTION_SCHEMA)
         action = args.get("action")
         if action == "list":
             return {
@@ -1364,8 +1422,7 @@ class ToolExecutor:
         ids, bad = self._requested_task_ids(args)
         if not ids:
             return {"error": (
-                "action='done' requires `id` (an integer) or `ids` (a list of integers; "
-                "`done_ids` works too). Use action='list' to see ids."
+                "done requires item ids (integers). Call task_list with no fields to see ids."
                 + (f" Not integers: {bad}." if bad else "")
             )}
 
@@ -1426,7 +1483,7 @@ class ToolExecutor:
             # and "don't re-attempt" memory all depend on seeing a call that
             # accepted nothing as one. `advice` already says what to do next.
             parts = [f"Task {item['id']} is NOT done - {item['reason']}." for item in refused]
-            parts += [f"No task with id {task_id}. Use action='list' to see ids." for task_id in unknown]
+            parts += [f"No task with id {task_id}. Call task_list with no fields to see ids." for task_id in unknown]
             if parts:
                 result["error"] = " ".join(parts)
         return result
@@ -1436,10 +1493,10 @@ class ToolExecutor:
         ids, bad = self._requested_task_ids(args)
         reason = str(args.get("reason") or "").strip()
         if not ids or bad or not reason:
-            return {"error": "action='blocked' requires id or ids and a non-empty reason explaining what remains unresolved."}
+            return {"error": "blocked requires an item id and a non-empty reason explaining what remains unresolved."}
         by_id = {t["id"]: t for t in self._tasks}
         if any(task_id not in by_id for task_id in ids):
-            return {"error": "Unknown task id. Use action='list' to see ids."}
+            return {"error": "Unknown task id. Call task_list with no fields to see ids."}
         for task_id in ids:
             task = by_id[task_id]
             task.pop("dropped", None)
@@ -1456,7 +1513,7 @@ class ToolExecutor:
         reason = str(args.get("reason") or "").strip()
         if task_id is None or not reason:
             return {"error": (
-                "action='drop' requires `id` (an integer) and a non-empty `reason` "
+                "drop requires an item `id` (an integer) and a non-empty `reason` "
                 "saying why the user did not ask for it."
             )}
         for t in self._tasks:
@@ -1470,7 +1527,7 @@ class ToolExecutor:
             t.pop("blocked_reason", None)
             logger.info("Checklist item %d dropped (%s): %r", task_id, reason, t["text"][:80])
             return {"status": "dropped", "id": task_id, "open": len(self.open_tasks())}
-        return {"error": f"Unknown task id {task_id}. Use action='list' to see ids."}
+        return {"error": f"Unknown task id {task_id}. Call task_list with no fields to see ids."}
 
     def _do_add(self, args: dict) -> dict:
         """action='add' — also the `add_texts` verb inside a mixed call.
@@ -1486,8 +1543,7 @@ class ToolExecutor:
         items = [t.strip() for t in raw if isinstance(t, str) and t.strip()]
         if not items:
             return {"error": (
-                "action='add' requires non-empty `text`, or `texts` with "
-                "at least one non-empty item."
+                "add requires at least one non-empty item text."
             )}
         ids: list[int] = []
         appended: set[int] = set()
@@ -1841,6 +1897,10 @@ class ToolExecutor:
                 f"{tool_name} is missing required argument(s): {', '.join(missing)}. "
                 "Nothing was done; resend the call with every required field."
             )})
+        declared = schema.get("properties") or {}
+        ignored = [name for name in arguments if name not in declared and name != "needed_for"
+                   and not (tool_name == "task_list" and "action" in arguments
+                            and name in _TASK_LIST_ACTION_ARGUMENTS)]
         arguments, problems = _normalize_arguments(schema, arguments)
         if problems:
             return ToolExecutionResult("error", {"error": (
@@ -1863,6 +1923,15 @@ class ToolExecutor:
                             "BESSER (trace, checkpoint, attribution, logs). It can be read but "
                             "not written, edited or deleted. Change the project's own files instead."
                         )})
+                    placeholder = next((key for key in _EDIT_BODY_KEYS if any(
+                        marker in str(arguments.get(key) or "")
+                        for marker in (REJECTED_DRAFT_PLACEHOLDER, EVICTED_EDIT_BODY))), None)
+                    if placeholder:
+                        return ToolExecutionResult("error", {"error": (
+                            f"{tool_name} refused: {placeholder} holds a placeholder the "
+                            "conversation shows in place of an omitted body, not code. Nothing "
+                            "was written. Read the current source and send the real text."
+                        ), "rejection_kind": "placeholder"})
                     if tool_name != "read_file":
                         needed_for = str(arguments.pop("needed_for", None) or "").strip()
                         refusal = self._edit_scope_refusal(tool_name, arguments["path"], needed_for)
@@ -1873,13 +1942,35 @@ class ToolExecutor:
                 raw_result = handler(self, arguments)
                 if file_tool and isinstance(raw_result, dict):
                     self._add_edit_recovery(tool_name, arguments, raw_result)
+                    self._pin_written_requirements(tool_name, arguments["path"], raw_result)
             payload = raw_result if isinstance(raw_result, dict) else {"result": raw_result}
+            if ignored:
+                payload["ignored_arguments"] = (
+                    f"{', '.join(ignored)} not used: {tool_name} takes "
+                    f"{', '.join(declared) or 'no arguments'}.")
             return ToolExecutionResult(self._result_status(payload), payload)
         except Exception as e:
             logger.warning("Tool %s failed: %s", tool_name, e, exc_info=True)
             return ToolExecutionResult(
                 "error", {"error": f"{tool_name} failed: {self._model_error_text(e)}"}
             )
+
+    def _pin_written_requirements(self, tool_name: str, rel_path: str, result: dict) -> None:
+        """Apply the known-incompatible pins to a requirements.txt a write tool just wrote."""
+        if (tool_name not in ("write_file", "modify_file", "replace_file_lines")
+                or os.path.basename(rel_path) != "requirements.txt" or self._result_status(result) != "ok"):
+            return
+        try:
+            pinned = pin_requirements_file(self._safe_path(rel_path), self.workspace)
+        except OSError:
+            logger.warning("dependency pin failed for %s", rel_path, exc_info=True)
+            return
+        if pinned:
+            result["pinned"] = pinned
+            result["pinned_note"] = (
+                "The file was pinned after your write, so it now differs from what you sent. "
+                "Packages installed from it earlier no longer match it: install them again "
+                "before running the app.")
 
     def _model_error_text(self, error: Exception) -> str:
         """``error`` as the model may see it: no absolute server path.
@@ -2040,8 +2131,9 @@ class ToolExecutor:
         out_dir = os.path.basename(os.path.normpath(directory))
         record_generated_files(self.workspace, written, out_dir, get_besser_version())
         if out_dir in _REGENERABLE_OUTPUT_DIRS:
-            # The base a later model change is merged against (#659).
-            store_written_files(self.workspace, out_dir, written, get_besser_version())
+            # The base a later model change is merged against (#659): the part a regeneration writes.
+            regenerated = [path for path in written if is_regenerated(_REGENERABLE_OUTPUT_DIRS[out_dir], path)]
+            store_written_files(self.workspace, out_dir, regenerated, get_besser_version())
         started = self._generation_started.pop(os.path.normpath(directory), time.time())
         if self.on_generated is not None and tool:
             try:
@@ -2508,6 +2600,14 @@ class ToolExecutor:
                 del self._read_views[next(iter(self._read_views))]
         return read_id
 
+    def _whole_view_id(self, path: str, content: str) -> str | None:
+        """A live ``read_id`` that shows all of ``content`` at ``path``, or None."""
+        key, digest = os.path.normcase(path), self._content_digest(content)
+        last = content.count("\n") + (not content.endswith("\n"))
+        with self._bookkeeping_lock:
+            return next((read_id for read_id, view in reversed(self._read_views.items())
+                         if view[:2] == (key, digest) and view[2] == 1 and view[3] >= last), None)
+
     def _read_file_once(self, args: dict) -> dict:
         """read_file, except for an identical re-read of unchanged content.
 
@@ -2641,19 +2741,25 @@ class ToolExecutor:
             # model to crawl a file in tiny windows.
             result["total_lines"] = total_lines
 
-        # Crawling a file that fits in one read in 10-line windows can burn a
-        # third of the turn budget. Prose in the tool description does not
-        # stop it, so say it where the behaviour happens.
+        # Crawling a file in narrow windows, or in wide ones each continuing the
+        # last, can burn a third of the turn budget. Prose in the tool
+        # description does not stop it, so say it where the behaviour happens.
         rel = args["path"].replace("\\", "/").strip()
         self._read_counts[rel] = self._read_counts.get(rel, 0) + 1
         window = end - start
+        last = self._last_read_spans.get(rel)
+        self._last_read_spans[rel] = (start, end)
+        # Paging without a limit through a file larger than one read is not a crawl.
+        continues = (args.get("limit") is not None and last is not None
+                     and last[0] < start <= last[1] < end)
         if (self._read_counts[rel] >= 3 and not truncated
-                and 0 < window < 40 and total_lines > 2 * window):
+                and 0 < window and (window < 40 or continues) and total_lines > 2 * window):
             result["hint"] = (
                 f"This is read {self._read_counts[rel]} of {rel}, covering {window} "
                 f"of {total_lines} lines. Read the whole function or class you intend "
-                "to change in one call - a file this size fits in a single read. "
-                "Each narrow window costs a turn and still omits the enclosing block."
+                f"to change in one call: read_file without limit returns up to "
+                f"{MAX_FILE_READ:,} characters from offset. Each window costs a turn "
+                "and still omits the enclosing block."
             )
 
         return result
@@ -2752,8 +2858,6 @@ class ToolExecutor:
         frozen = self._frozen(args["path"])
         if frozen:
             return frozen
-        rel_path = args["path"].replace("\\", "/")
-        self._edit_attempts[rel_path] = self._edit_attempts.get(rel_path, 0) + 1
         view = self._read_views.get(args.get("read_id", ""))
         if view is None or view[0] != os.path.normcase(path):
             return {"error": "Unknown read_id for this file. Call read_file on the target region first.",
@@ -2833,6 +2937,10 @@ class ToolExecutor:
                              "read_file on the region to see what is actually there, then send "
                              "the change you meant - or mark the task blocked with a reason.",
                     "status": "no_change", "replacements": 0}
+        if _rewrites_whole_file(before, old, replacement):
+            refusal = self._rewrite_refusal(args["path"].replace("\\", "/"), path, before, after)
+            if refusal:
+                return refusal
         broke = _new_syntax_error(args["path"], before, after)
         if broke:
             message, line = broke
@@ -2932,76 +3040,25 @@ class ToolExecutor:
                 "file with modify_file instead."
             )}
         if os.path.isfile(path) and rel_path.strip() not in self._fully_seen:
+            if rel_path.strip() in self._evicted_views:
+                return {"error": (
+                    f"{args['path']} exists and the conversation no longer shows all of it: "
+                    "its earlier copies were omitted. Read it again with read_file before "
+                    "rewriting it, or edit it with modify_file."
+                )}
             return {"error": (
                 f"{args['path']} exists and you have read only part of it this run; "
                 "a full rewrite would drop the lines you have not seen. Read the "
                 "rest with read_file, or edit the part you read with modify_file."
             )}
 
-        # Edit-first guardrail (MODIFY runs only): every existing
-        # non-trivial file is part of the user's working app — reject a
-        # whole-file rewrite until the model has tried at least two
-        # targeted edits on it. The >= 2 relaxation is what lets the
-        # recovery ladder's rewrite step (two refused edits) run.
-        if (
-            self._modify_guard
-            and os.path.isfile(path)
-            and self._edit_attempts.get(rel_path, 0) < 2
-        ):
-            with open_plain(path, "r", root=self.workspace, encoding="utf-8", errors="ignore") as f:
-                existing_lines = f.read().count("\n") + 1
-            if existing_lines > 15:
-                return {
-                    "error": (
-                        f"'{rel_path}' already exists ({existing_lines} lines) and "
-                        "this is a MODIFY run — edit it in place with modify_file "
-                        "(exact old_text → new_text). A full rewrite risks dropping "
-                        "the customisations the app already carries. write_file "
-                        "unlocks for this file after two modify_file attempts, as "
-                        "a last resort."
-                    ),
-                }
-
-        # Size rule: a whole-file rewrite is cheapest and
-        # safest on a SMALL file (<=200 lines), which the model can reproduce
-        # faithfully after one read; it is a large file that risks dropping
-        # code. So small generated files unlock write_file immediately; a
-        # large one after two modify_file attempts, or at once for a frontend
-        # rewrite that keeps the file's code (_frontend_rewrite_loss).
-        if rel_path in self._generator_files and os.path.isfile(path):
-            with open_plain(path, "r", root=self.workspace, encoding="utf-8") as f:
-                existing = f.read()
-            existing_lines = existing.count("\n") + 1
-            if existing_lines > 200 and self._edit_attempts.get(rel_path, 0) < 2:
-                loss = _frontend_rewrite_loss(rel_path, existing, args["content"])
-                if loss is None:
-                    return {
-                        "error": (
-                            f"'{rel_path}' was created by a BESSER generator and is large "
-                            f"({existing_lines} lines) - too large to reproduce faithfully "
-                            "from one read. Use modify_file for targeted edits. write_file "
-                            "unlocks for this file after two modify_file attempts."
-                        ),
-                    }
-                if loss:
-                    return {
-                        "error": (
-                            f"'{rel_path}' was created by a BESSER generator ({existing_lines} lines) "
-                            f"and {loss}. Rewrite it in full keeping that code, or use modify_file "
-                            "for targeted edits. write_file also unlocks for this file after two "
-                            "modify_file attempts."
-                        ),
-                    }
-            # Rewrite allowed (large file, or repeated modifies already tried) — log it
-            logger.info(
-                "Allowing rewrite of generated file: %s (%d lines, %d prior targeted edits)",
-                rel_path, existing_lines, self._edit_attempts.get(rel_path, 0),
-            )
-
         before = None
         if os.path.isfile(path):
             with open_plain(path, "r", root=self.workspace, encoding="utf-8", errors="ignore") as f:
                 before = f.read()
+            refusal = self._rewrite_refusal(rel_path, path, before, args["content"])
+            if refusal:
+                return refusal
             broke = _new_syntax_error(rel_path, before, args["content"])
             if broke:
                 msg, line_no = broke
@@ -3035,6 +3092,8 @@ class ToolExecutor:
         makedirs_plain(os.path.dirname(path), root=self.workspace)
         with open_plain_write(path, "w", root=self.workspace, encoding="utf-8") as f:
             f.write(args["content"])
+        if before is None:
+            self._created_files.add(rel_path)
         if before != args["content"]:
             self._note_task_write(args["path"])
         result = {"status": "written", "path": args["path"], "size": len(args["content"])}
@@ -3046,6 +3105,29 @@ class ToolExecutor:
         self._fully_seen.add(args["path"].replace("\\", "/").strip())
         self._append_write_feedback(result, rel_path, args["content"])
         return result
+
+    def _rewrite_refusal(self, rel_path: str, path: str, before: str, after: str) -> dict | None:
+        """The rewrite rule: ``after`` must keep the code of a file this run did not
+        create, when it is a generated file over 200 lines or, in a modify run, any
+        file over 15 lines. Small files and the model's own files change freely."""
+        limit = (_MODIFY_RUN_REWRITE_LINES if self._modify_guard
+                 else _GENERATED_REWRITE_LINES if rel_path in self._generator_files else None)
+        existing_lines = before.count("\n") + 1
+        if not limit or rel_path in self._created_files or existing_lines <= limit:
+            return None
+        loss = _rewrite_loss(rel_path, before, after)
+        if not loss:
+            return None
+        origin = ("was created by a BESSER generator" if rel_path in self._generator_files
+                  else "existed before this run")
+        read_id = self._whole_view_id(path, before)
+        tools = (f"modify_file, or replace_file_lines with read_id {read_id}"
+                 if read_id else "modify_file or replace_file_lines")
+        return {"error": (
+            f"'{rel_path}' {origin} ({existing_lines} lines) and {loss}. Keep that code. To remove "
+            f"code on purpose, replace only its own lines with an empty new_text ({tools}); to "
+            "rename it, edit only the line that names it."
+        ), "rejection_kind": "rewrite_loss"}
 
     def mark_known(self, paths) -> None:
         """Record files whose contents the model was shown (scaffold snapshot)."""
@@ -3153,7 +3235,6 @@ class ToolExecutor:
         if frozen:
             self._note_rejection(rel_path, old_text, new_text)
             return frozen
-        self._edit_attempts[rel_path] = self._edit_attempts.get(rel_path, 0) + 1
         with open_plain(path, "r", root=self.workspace, encoding="utf-8") as f:
             content = f.read()
         replace_all = args.get("replace_all") is True
@@ -3442,6 +3523,13 @@ class ToolExecutor:
                          "this is not evidence of completion. Read the current region for a different change.",
             }
 
+        if _rewrites_whole_file(content, old_text, new_text, occurrences if replace_all and occurrences else 1):
+            refusal = self._rewrite_refusal(rel_path, path, content, new_content)
+            if refusal:
+                self._failed_modifies[rel_path] = self._failed_modifies.get(rel_path, 0) + 1
+                self._note_rejection(rel_path, old_text, new_text)
+                return refusal
+
         # A valid file must never leave this tool unparseable.
         broke = _new_syntax_error(rel_path, content, new_content)
         if broke:
@@ -3492,9 +3580,6 @@ class ToolExecutor:
         self._last_missed_old_text.pop(rel_path, None)
         self._clear_rejections(rel_path)
         self._known_paths.add(rel_path.strip())
-        # Keeps the modify guard's "write_file unlocks after two modify_file
-        # attempts" escalation reachable.
-        self._fully_seen.add(rel_path.strip())
         result = {
             "status": "modified",
             "path": args["path"],
@@ -3512,27 +3597,12 @@ class ToolExecutor:
         self._append_write_feedback(result, rel_path, new_content)
         return result
 
-    def _scaffold_edit_route(self, rel_path: str, path: str) -> str:
-        """The write route ``_write_file`` actually permits for a generator file.
+    def _import_findings(self) -> list[str]:
+        """The workspace's Python and frontend imports that resolve to no file."""
+        from besser.spec_driven_agent.validation.frontend_resolution import collect_frontend_resolution_issues
+        from besser.spec_driven_agent.validation.python_imports import _unresolvable_local_imports
 
-        A rewrite of a generator file over 200 lines is itself refused until
-        two modify_file edits have been tried, so blanket "or write_file"
-        advice in another refusal walks the model into a second refusal.
-        """
-        try:
-            with open_plain(path, "r", root=self.workspace, encoding="utf-8", errors="ignore") as fh:
-                existing_lines = fh.read().count("\n") + 1
-        except OSError:
-            existing_lines = 0
-        if existing_lines > 200 and self._edit_attempts.get(rel_path, 0) < 2:
-            return (
-                "Edit it in place with modify_file; write_file on this file "
-                "unlocks only after two modify_file attempts."
-            )
-        return (
-            "Edit it in place with modify_file, or read it in full and "
-            "write_file it back."
-        )
+        return [*_unresolvable_local_imports(self.workspace), *collect_frontend_resolution_issues(self.workspace)]
 
     def _delete_file(self, args: dict) -> dict:
         """Delete a regular file from the workspace.
@@ -3541,7 +3611,7 @@ class ToolExecutor:
         recursively wipe a tree, and an accidental glob expansion at the
         prompt level would be catastrophic. Path traversal is blocked by
         ``_safe_path`` (same containment check used by every other file
-        tool).
+        tool). The result names the imports the delete left unresolved.
         """
         path = self._safe_path(args["path"])
         if not os.path.exists(path):
@@ -3553,25 +3623,17 @@ class ToolExecutor:
                     "delete_file only removes regular files."
                 ),
             }
-        # Scaffold protection (weak / free-tier models only): the deterministic
-        # Phase-1 scaffold is the app's foundation and must not be torn down and
-        # rebuilt in another framework. Files the model created this run are not
-        # tracked here, so it can still delete its own junk.
-        rel_path = args["path"].replace("\\", "/")
-        if self._protect_scaffold and rel_path in self._generator_files:
-            return {
-                "error": (
-                    f"Refused to delete: '{args['path']}' is part of the generated "
-                    "scaffold — the app's foundation. Do NOT remove or replace it. "
-                    f"{self._scaffold_edit_route(rel_path, path)} Keep the existing "
-                    "framework and build on top of what is already generated."
-                ),
-            }
+        unresolved_before = set(self._import_findings())
         try:
             remove_plain(path, root=self.workspace)
         except OSError as exc:
             return {"error": f"Failed to delete {args['path']}: {exc}"}
-        return {"status": "deleted", "path": args["path"]}
+        result = {"status": "deleted", "path": args["path"]}
+        still_imported = [finding for finding in self._import_findings() if finding not in unresolved_before]
+        if still_imported:
+            result["still_imported"] = still_imported[:10]
+            result["note"] = "Other files still import what was deleted: change or remove those imports."
+        return result
 
     def _search_in_files(self, args: dict) -> dict:
         """Search for a pattern across workspace files."""
@@ -3699,7 +3761,7 @@ class ToolExecutor:
                 pass
         return max(1, min(timeout, MAX_COMMAND_TIMEOUT))
 
-    def _run_command(self, args: dict, *, adopt_state: bool = True) -> dict:
+    def _run_command(self, args: dict) -> dict:
         """
         Run a shell command in the run's shell session.
 
@@ -3712,13 +3774,10 @@ class ToolExecutor:
         - Timeout enforced per command
         - Output truncated to prevent context blow-up, full log spilled to
           the workspace when it is
-
-        ``adopt_state=False`` (install_dependencies) runs in the same session
-        without moving its directory or changing its environment.
         """
         command = args["command"]
-        working_dir = args.get("working_dir")
-        start_dir = self._safe_cwd(working_dir) if working_dir else None
+        # The workspace root unless working_dir says otherwise: a cd never carries over.
+        start_dir = self._safe_cwd(args.get("working_dir") or ".")
         own_timeout = self._command_timeout(args.get("timeout"))
         left = self.time_left() if self.time_left else None
         # Never past the run's deadline; when that is what sets the timeout, a
@@ -3742,12 +3801,7 @@ class ToolExecutor:
             return {"error": f"Command stopped: {OUT_OF_TIME}. It was not run.",
                     "stopped": OUT_OF_TIME, "command": command}
 
-        logger.info("Running command: %s (in %s)", command, start_dir or self._shell.cwd)
-        # Read before the outcome: relative paths resolved against a directory an earlier `cd` left.
-        carried_over = None if working_dir else self._shell.relative_cwd()
-        started_in = carried_over or os.path.relpath(start_dir, self.workspace).replace(os.sep, "/")
-        located = ({"ran_in": f"{carried_over} (an earlier cd still applies; not the workspace root)"}
-                   if carried_over not in (None, ".") else {})
+        logger.info("Running command: %s (in %s)", command, start_dir)
         records = {name: self._guarded_record(name) for name in _COMMAND_GUARDED_RECORDS}
         before = backend_files(self.workspace)
         try:
@@ -3755,7 +3809,7 @@ class ToolExecutor:
             # Falling back to an unconfined shell would silently restore both
             # holes the sandbox exists to close.
             result = self._shell.run(command, working_dir=start_dir,
-                                     timeout=timeout, adopt_state=adopt_state)
+                                     timeout=timeout)
         except SandboxUnavailable as exc:
             logger.error("run_command refused, sandbox unavailable: %s", exc)
             return {
@@ -3786,9 +3840,6 @@ class ToolExecutor:
                 + "; ".join(f"{name} ({why})" for name, why in sorted(not_restored.items()))
                 + ". Undo what the command did to them and do not write, move or delete .besser_* files."
             )
-        cwd = self._shell.relative_cwd()
-        if cwd != ".":
-            extra["cwd"] = cwd
         if result.notes:
             extra["notes"] = result.notes
 
@@ -3823,7 +3874,6 @@ class ToolExecutor:
         stderr = self._truncate(raw_stderr, MAX_OUTPUT_SIZE // 2, keep_tail=True)
 
         payload = {
-            **located,
             "exit_code": result.returncode,
             "stdout": stdout,
             "stderr": stderr,
@@ -3837,9 +3887,6 @@ class ToolExecutor:
                 "new line and stderr reports a failure, so an earlier command did not do its job: "
                 "read stderr, and join commands with && to stop at the first failure."
             )
-        cd_hint = _cd_hint(raw_stderr, command, self.workspace, started_in)
-        if cd_hint:
-            payload["cd_hint"] = cd_hint
         # A missing binary is a failure like any other: the model must not
         # read a check whose tool is absent as a passed one.
         if result.returncode != 0 and _looks_like_command_not_found(stderr):
@@ -3917,84 +3964,9 @@ class ToolExecutor:
             restored.append(name)
         return restored, failed
 
-    def _install_dependencies(self, args: dict) -> dict:
-        """
-        Install project dependencies with auto-detection.
-
-        Checks for requirements.txt (pip) or package.json (npm) and runs
-        the appropriate install command.
-        """
-        working_dir = self._safe_cwd(args.get("working_dir", "."))
-        custom_command = args.get("command")
-        requirements_txt = os.path.join(working_dir, "requirements.txt")
-
-        # Pin known-incompatible pairs before pip resolves them: the rewritten
-        # file is also what ships.
-        pinned: list[str] = []
-        if os.path.isfile(requirements_txt) and self._resolves_inside(requirements_txt):
-            try:
-                pinned = pin_requirements_file(requirements_txt, self.workspace)
-            except OSError:
-                logger.warning("dependency pin failed for %s", requirements_txt, exc_info=True)
-
-        result = self._install_detected(args, working_dir, custom_command, requirements_txt)
-        if pinned:
-            result["pinned"] = pinned
-        return result
-
-    def _install_detected(self, args: dict, working_dir: str, custom_command, requirements_txt: str) -> dict:
-        if custom_command:
-            return self._run_command({"command": custom_command, "working_dir": args.get("working_dir", "."), "timeout": INSTALL_TIMEOUT},
-                                     adopt_state=False)
-
-        # Auto-detect
-        package_json = os.path.join(working_dir, "package.json")
-
-        results = []
-
-        if os.path.isfile(requirements_txt):
-            pip_cmd = f"{sys.executable} -m pip install -r requirements.txt --quiet"
-            pip_result = self._run_command({"command": pip_cmd, "working_dir": args.get("working_dir", "."), "timeout": INSTALL_TIMEOUT},
-                                           adopt_state=False)
-            results.append({"type": "pip", "result": pip_result})
-
-        if os.path.isfile(package_json):
-            npm_result = self._run_command({"command": "npm install --quiet", "working_dir": args.get("working_dir", "."), "timeout": INSTALL_TIMEOUT},
-                                           adopt_state=False)
-            results.append({"type": "npm", "result": npm_result})
-
-        if not results:
-            return {"error": "No requirements.txt or package.json found. Specify a custom install command."}
-
-        # The status classifier reads only the top level, so a failed install
-        # must surface here or the whole call is recorded as a success.
-        failed = [
-            r for r in results
-            if r["result"].get("error") is not None or r["result"].get("success") is False
-        ]
-        if failed:
-            details = []
-            for r in failed:
-                res = r["result"]
-                tail = "\n".join(str(res.get("stderr") or res.get("error") or "").strip().splitlines()[-6:])
-                details.append(f"{r['type']} install failed (exit code {res.get('exit_code')}):\n{tail}")
-            return {"installs": results, "success": False, "error": "\n\n".join(details)}
-
-        return {"installs": results}
-
     # ------------------------------------------------------------------
     # Validation tools
     # ------------------------------------------------------------------
-
-    def _validate_model(self, args: dict) -> dict:
-        err = self._require_domain_model("validate_model")
-        if err:
-            return err
-        try:
-            result = self.domain_model.validate()
-            return {"validation": result}
-        except Exception as e:
-            return {"error": f"Validation failed: {e}"}
 
     def _validate_app(self, args: dict) -> dict:
         if self.app_validator is None:
@@ -4005,8 +3977,9 @@ class ToolExecutor:
         result = self.app_validator()
         if cited is not None and isinstance(result, dict):
             result = {**result, "citations": cited}
-        if isinstance(result, dict) and result.get("verified") is True and self._tasks:
+        if isinstance(result, dict) and result.get("blocker_count") == 0 and self._tasks:
             # The ids task_list(done) needs: without them the next turn was a task_list 'list' alone.
+            # Not only on verified: a check this server never runs withholds that on every call.
             # A copy: the orchestrator caches and re-serves its result.
             result = {**result, "open_items": [
                 {"id": t["id"], "label": _task_label(t["text"])} for t in self.open_tasks()]}
@@ -4016,145 +3989,6 @@ class ToolExecutor:
         if self.api_tester is None:
             return {"error": "API workflow verification is unavailable; do not claim workflows were tested."}
         return self.api_tester(args)
-
-    def _check_syntax(self, args: dict) -> dict:
-        path = self._safe_path(args["path"])
-        if not os.path.isfile(path):
-            return {"error": f"File not found: {args['path']}"}
-        with open_plain(path, "r", root=self.workspace, encoding="utf-8") as f:
-            source = f.read()
-        try:
-            ast.parse(source, filename=args["path"])
-            return {"status": "ok", "message": "Syntax is valid"}
-        except SyntaxError as e:
-            return {"error": f"Syntax error at line {e.lineno}: {e.msg}"}
-
-    # ------------------------------------------------------------------
-    # Model query tools
-    # ------------------------------------------------------------------
-
-    def _find_class_by_name(self, name: str):
-        """Case-sensitive class lookup in the domain model.
-
-        Returns the ``Class`` or ``None`` if not found. Used by every
-        model-query tool handler below.
-        """
-        if not self.domain_model or not name:
-            return None
-        for cls in self.domain_model.get_classes():
-            if cls.name == name:
-                return cls
-        return None
-
-    def _query_class(self, args: dict) -> dict:
-        """Return a richer view of one class than the prompt summary."""
-        name = args.get("name", "")
-        cls = self._find_class_by_name(name)
-        if cls is None:
-            return {"error": f"Class {name!r} not found in the domain model"}
-
-        from besser.spec_driven_agent.model_serializer import (
-            _attribute_entry,
-            _method_entry,
-            _type_name,
-        )
-
-        attrs = [_attribute_entry(a) for a in sorted(cls.attributes, key=lambda a: a.name)]
-        methods = [_method_entry(m) for m in sorted(cls.methods, key=lambda m: m.name)]
-
-        try:
-            parents = sorted([p.name for p in cls.parents()])
-        except Exception:
-            parents = []
-
-        try:
-            assoc_ends = []
-            for end in cls.all_association_ends():
-                assoc_ends.append({
-                    "role": end.name,
-                    "type": _type_name(end.type),
-                    "navigable": getattr(end, "is_navigable", True),
-                })
-        except Exception:
-            assoc_ends = []
-
-        return {
-            "name": cls.name,
-            "is_abstract": bool(getattr(cls, "is_abstract", False)),
-            "attributes": attrs,
-            "methods": methods,
-            "parents": parents,
-            "association_ends": assoc_ends,
-        }
-
-    def _list_classes_with(self, args: dict) -> dict:
-        """Filter the domain model's classes by a simple predicate."""
-        predicate = (args.get("predicate") or "").strip()
-        if not predicate:
-            return {"error": "predicate is required"}
-        if not self.domain_model:
-            return {"error": "No domain model loaded"}
-
-        classes = list(self.domain_model.get_classes())
-
-        # Predicate parsing — ``prefix:value`` or single keyword.
-        if ":" in predicate:
-            key, _, value = predicate.partition(":")
-            key = key.strip()
-            value = value.strip()
-        else:
-            key, value = predicate, None
-
-        def _has_constraint(cls) -> bool:
-            try:
-                return any(
-                    c for c in self.domain_model.constraints
-                    if getattr(c, "context", None) is cls
-                )
-            except Exception:
-                return False
-
-        matchers = {
-            "is_abstract": lambda c: bool(getattr(c, "is_abstract", False)),
-            "is_root": lambda c: not list(c.parents()),
-            "has_constraint": _has_constraint,
-            "has_attribute": lambda c: any(a.name == value for a in c.attributes),
-            "has_method": lambda c: any(m.name == value for m in c.methods),
-            "extends": lambda c: any(p.name == value for p in c.all_parents()),
-        }
-        if key not in matchers:
-            return {
-                "error": (
-                    f"Unknown predicate {predicate!r}. Supported: "
-                    f"{', '.join(sorted(matchers))}"
-                )
-            }
-        if key in {"has_attribute", "has_method", "extends"} and not value:
-            return {"error": f"predicate '{key}' requires a value (e.g. '{key}:name')"}
-
-        matched = sorted([c.name for c in classes if matchers[key](c)])
-        return {"predicate": predicate, "matches": matched, "count": len(matched)}
-
-    def _get_constraints_for(self, args: dict) -> dict:
-        """Return OCL / constraint expressions scoped to a given class."""
-        name = args.get("class_name", "")
-        cls = self._find_class_by_name(name)
-        if cls is None:
-            return {"error": f"Class {name!r} not found in the domain model"}
-        if not self.domain_model:
-            return {"error": "No domain model loaded"}
-
-        out = []
-        for c in self.domain_model.constraints:
-            context = getattr(c, "context", None)
-            if context is not cls:
-                continue
-            out.append({
-                "name": getattr(c, "name", ""),
-                "expression": getattr(c, "expression", ""),
-                "language": getattr(c, "language", None),
-            })
-        return {"class": name, "constraints": out, "count": len(out)}
 
     # ------------------------------------------------------------------
     # Handler dispatch table
@@ -4191,16 +4025,9 @@ class ToolExecutor:
         "delete_file": _delete_file,
         # Execution
         "run_command": _run_command,
-        "install_dependencies": _install_dependencies,
-        # Model queries
-        "query_class": _query_class,
-        "list_classes_with": _list_classes_with,
-        "get_constraints_for": _get_constraints_for,
         # Validation
-        "validate_model": _validate_model,
         "validate_app": _validate_app,
         "test_api": _test_api,
-        "check_syntax": _check_syntax,
         # Work checklist
         "task_list": _task_list,
     }

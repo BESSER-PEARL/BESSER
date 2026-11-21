@@ -12,6 +12,7 @@ from besser.BUML.metamodel.structural import (
 )
 from besser.spec_driven_agent.agent import design_system
 from besser.spec_driven_agent.agent.prompt_builder import build_system_prompt
+from besser.spec_driven_agent.planning.target import WEB_APP, Target
 
 CRUD_RULE = "COMPLETE, NAVIGABLE CRUD frontend"
 BACKEND_INVENTORY = (
@@ -26,10 +27,10 @@ def _model() -> DomainModel:
     return DomainModel(name="M", types={user})
 
 
-def _prompt(instructions, inventory=BACKEND_INVENTORY, gui_model=None):
+def _prompt(instructions, inventory=BACKEND_INVENTORY, gui_model=None, target=None):
     return build_system_prompt(
         _model(), gui_model, None, inventory=inventory,
-        instructions=instructions, max_turns=10,
+        instructions=instructions, max_turns=10, target=target,
     )
 
 
@@ -38,7 +39,7 @@ def test_a_backend_only_run_is_not_told_to_build_a_frontend():
 
 
 def test_a_web_app_request_keeps_the_crud_rule():
-    assert CRUD_RULE in _prompt("Build a library web app")
+    assert CRUD_RULE in _prompt("Build a library web app", target=Target(WEB_APP, "web app", True))
 
 
 def test_a_scaffold_with_a_frontend_keeps_the_crud_rule():

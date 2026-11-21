@@ -31,7 +31,6 @@ def _run(executor, tool, args):
     ("run_command", {"command": "echo hi", "timeout": float("nan")}, "timeout must be an integer, got a number"),
     ("modify_file", {"path": "a.py", "old_text": "c = 3", "new_text": "c", "replace_all": "yes"},
      "replace_all must be a boolean, got a string"),
-    ("task_list", {"action": "finish"}, "action must be one of"),
 ])
 def test_wrong_types_are_refused_by_name(executor, tool, args, message):
     result = _run(executor, tool, args)
@@ -42,11 +41,6 @@ def test_wrong_types_are_refused_by_name(executor, tool, args, message):
 def test_an_explicit_null_for_an_optional_argument_means_absent(executor):
     assert _run(executor, "search_in_files", {"pattern": "c = 3", "file_glob": None})["total"] == 1
     assert "error" not in _run(executor, "read_file", {"path": "a.py", "offset": None, "limit": None})
-
-
-def test_install_dependencies_null_working_dir_is_the_default(executor):
-    result = _run(executor, "install_dependencies", {"working_dir": None})
-    assert "join() argument" not in json.dumps(result)
 
 
 def test_boolean_strings_are_coerced(executor):
@@ -70,9 +64,9 @@ def test_integer_strings_and_integral_floats_are_coerced(executor):
 
 def test_a_lone_value_for_an_array_is_one_item(executor):
     executor.set_tasks(["first", "second"])
-    result = _run(executor, "task_list", {"action": "drop", "id": "1", "reason": "not asked"})
-    assert result["status"] == "dropped"
-    assert _run(executor, "task_list", {"action": "add", "texts": "third"})["status"] == "added"
+    result = _run(executor, "task_list", {"drop": {"id": "1", "reason": "not asked"}})
+    assert result["results"]["drop"]["dropped_ids"] == [1]
+    assert _run(executor, "task_list", {"add": "third"})["results"]["add"]["status"] == "added"
 
 
 def test_invalid_json_arguments_still_report_the_parse_error(executor):

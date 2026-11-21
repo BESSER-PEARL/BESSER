@@ -118,6 +118,21 @@ def test_the_client_is_read_from_the_contract_not_from_router_source(tmp_path):
     assert "- customerApi (Customer, body CustomerCreate): CRUD(customer_id) at /customer/" in section
 
 
+def test_the_inventory_keeps_functions_ahead_of_type_exports_under_its_cap(tmp_path):
+    """A client of many types and per-class objects still names every object it can."""
+    source = tmp_path / "src"
+    source.mkdir()
+    (source / "client.ts").write_text(
+        "".join(f"export interface Shape{index} {{\n  id: number;\n}}\n" for index in range(9))
+        + "export const apiRequest = () => null;\nexport const orderApi = {};\nexport const taskApi = {};\n",
+        encoding="utf-8")
+
+    inventory = build_inventory(str(tmp_path), None, "x")
+
+    line = next(line for line in inventory.splitlines() if "client.ts" in line)
+    assert "apiRequest@28, orderApi@29, taskApi@30, Shape0@1" in line and "(+2 more)" in line, line
+
+
 def test_the_inventory_lists_type_exports_and_component_props(tmp_path):
     source = tmp_path / "src"
     source.mkdir()

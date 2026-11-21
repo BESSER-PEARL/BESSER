@@ -1391,6 +1391,8 @@ _SYMBOL_PATTERNS = {
 _SYMBOL_PATTERNS[".jsx"] = _SYMBOL_PATTERNS[".mjs"] = _SYMBOL_PATTERNS[".js"]
 _SYMBOL_PATTERNS[".tsx"] = _SYMBOL_PATTERNS[".ts"]
 _SYMBOL_CAP = 10
+# Listed after the functions, constants and classes, so the cap drops types first.
+_TYPE_ONLY_KEYWORDS = ("interface", "type")
 # A component's configuration surface: the fields of its ``...Props`` / ``...Options``
 # interfaces, so a generated component is configured, not read whole or patched.
 _PROPS_INTERFACE_RE = re.compile(
@@ -1418,10 +1420,8 @@ def _symbol_map(path: str) -> str:
             text = fh.read()
     except OSError:
         return ""
-    found = [
-        f"{m.group(1)}@{text.count(chr(10), 0, m.start()) + 1}"
-        for m in pattern.finditer(text)
-    ]
+    matches = sorted(pattern.finditer(text), key=lambda m: m.group(0).split()[-2] in _TYPE_ONLY_KEYWORDS)
+    found = [f"{m.group(1)}@{text.count(chr(10), 0, m.start()) + 1}" for m in matches]
     if len(found) > _SYMBOL_CAP:
         symbols = ", ".join(found[:_SYMBOL_CAP]) + f" (+{len(found) - _SYMBOL_CAP} more)"
     else:

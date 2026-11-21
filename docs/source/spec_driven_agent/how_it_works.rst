@@ -159,8 +159,9 @@ The three phases
    Only the served routes the client does not cover are then listed as raw
    routes, for ``test_api`` and the runbook. The inventory lists each
    TypeScript file's exported functions, constants, classes, interfaces, types
-   and enumerations, and the fields of its ``...Props`` and ``...Options``
-   interfaces, so a generated component is configured rather than read whole.
+   and enumerations (up to ten, interfaces and types last), and the fields of
+   its ``...Props`` and ``...Options`` interfaces, so a generated component is
+   configured rather than read whole.
    The relationship
    mutation coverage block is left out only when the requirements ledger is
    known to be empty and the model has no constraint. The shell is

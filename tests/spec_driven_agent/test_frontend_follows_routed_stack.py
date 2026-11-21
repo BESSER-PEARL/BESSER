@@ -103,6 +103,18 @@ def test_a_django_scaffold_without_pages_is_ordered_django_pages_not_a_react_app
     assert not _frontend_tasks(orch) and not orch._collect_missing_frontend_issue()
 
 
+@pytest.mark.parametrize("generator, routed_stack", [("generate_django", None), ("generate_python", "Vue 3")])
+def test_the_phase_1_note_names_no_framework_the_run_does_not_build(tmp_path, monkeypatch, generator, routed_stack):
+    orch = _orch(tmp_path, routed_stack=routed_stack)
+    notes = []
+    orch.on_phase_details = lambda phase, note: notes.append(note)
+    monkeypatch.setattr(orch, "_select_generator", lambda instructions: generator)
+    monkeypatch.setattr(orch.executor, "execute", lambda name, args: '{"status": "ok", "files": []}')
+    orch._run_phase1(orch._instructions)
+    note, = notes
+    assert "has no UI" in note and "React" not in note
+
+
 def test_a_django_crud_rule_carries_no_single_page_app_bullets():
     rule = _rule_15(scaffold_family="django")
     assert "For the Django frontend" in rule and "React" not in rule

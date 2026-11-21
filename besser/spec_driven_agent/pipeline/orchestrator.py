@@ -1303,7 +1303,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 logger.info("Phase 1: Generated %d files", len(result.get("files", [])))
                 self._install_scaffold_frontend_dependencies()
                 if self._asks_for_frontend() and not self._has_frontend_files():
-                    note = (f"{generator_name} has no UI; the React frontend "
+                    note = (f"{generator_name} has no UI; the frontend "
                             "will be authored in the customization phase")
                     logger.info("Phase 1: %s", note)
                     if self.on_phase_details:

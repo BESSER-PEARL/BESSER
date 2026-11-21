@@ -15,7 +15,7 @@ import json
 import re
 from dataclasses import dataclass
 
-from besser.spec_driven_agent.validation.issues import _TRUNCATION_NOTE_RE, _classify_issue
+from besser.spec_driven_agent.validation.issues import JUDGMENT_DEFERRED, _TRUNCATION_NOTE_RE, _classify_issue
 
 # The app's own refusal and a requirement's text are quoted; longer is cut.
 _MAX_QUOTED = 100
@@ -114,6 +114,10 @@ _SIMPLE = (
     ("python contract:", "The backend code has a defect that stops part of it from running."),
     ("open account writes:", "A route lets a request change records it should not be allowed to change."),
     ("verification setup:", "The app's dependencies were not installed, so some checks could not run."),
+    (JUDGMENT_DEFERRED.lower(), "Your request's requirements were not checked: the app first has to start and save "
+                                "records."),
+    ("validation: phase 3 fix attempt ", "An automatic fix attempt was undone because it made the app worse; the "
+                                         "run's detailed report lists what was seen only in the undone version."),
     ("runtime gate:", "The app could not be shown to start and save a record."),
     ("validation unverified: runtime gate:", "Nothing started the app, so nothing shows that it runs."),
     ("entity coverage:", "Not every class can be created, viewed, edited and deleted in the app."),

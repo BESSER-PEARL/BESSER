@@ -9,7 +9,14 @@ nothing: they are not counted as not confirmed. What the screen check could not
 look at is a "could not verify" item, apart from what it saw.
 """
 
-from besser.spec_driven_agent.validation.issues import _classify_issue, is_completion_issue, is_not_confirmed
+from besser.spec_driven_agent.validation.issues import (
+    JUDGMENT_DEFERRED,
+    REQUIREMENTS_NOT_EXTRACTED,
+    _classify_issue,
+    is_completion_issue,
+    is_not_confirmed,
+)
+from besser.spec_driven_agent.validation.user_wording import GENERIC_SENTENCE
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
     build_verification_report,
     run_summary_markdown,
@@ -66,3 +73,30 @@ def test_blockers_and_counts_notes_stay_out_of_the_list():
         "ruff: (+3 more issues truncated)",
     ))
     assert report.counts.advisory == 0 and report.advisory == []
+
+
+def test_an_unconfirmed_requirement_is_listed_once_as_not_confirmed():
+    recipe = _recipe("requirement unverified: R1 — An order records its quantity — the cited evidence was "
+                     "not located in the delivered source", REQUIREMENTS_NOT_EXTRACTED)
+    recipe["requirements"] = [{"id": 1, "text": "An order records its quantity", "status": "unverified"}]
+
+    report = build_verification_report(recipe)
+
+    assert report.counts.advisory == 0 and report.advisory == []
+    assert [item.id for item in report.notVerified] == ["R1"]
+    assert "### Seen, not blocking" not in "\n".join(run_summary_markdown(recipe, report))
+
+
+def test_a_deferred_requirements_judgment_is_not_confirmed_and_a_rollback_has_its_own_sentence():
+    report = build_verification_report(_recipe(
+        f"{JUDGMENT_DEFERRED} until startup/data-entry blockers are fixed",
+        "validation: Phase 3 fix attempt 2 was rolled back - it added blockers - to the tree from before it. "
+        "Findings seen only in the discarded tree (they may still be real): none",
+    ))
+
+    assert [item.what for item in report.notVerified] == [
+        "Your request's requirements were not checked: the app first has to start and save records."]
+    assert [item.what for item in report.advisory] == [
+        "An automatic fix attempt was undone because it made the app worse; the run's detailed report lists "
+        "what was seen only in the undone version."]
+    assert GENERIC_SENTENCE not in {item.what for item in report.notVerified + report.advisory}

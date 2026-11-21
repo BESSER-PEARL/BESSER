@@ -101,6 +101,7 @@ from besser.spec_driven_agent.validation.user_wording import (
     Finding, not_checked, plain_check, plain_reason, summary_lines, user_finding, user_sentence,
 )
 from besser.spec_driven_agent.validation.issues import (
+    JUDGMENT_DEFERRED,
     RUNTIME_NOT_CHECKABLE,
     _classify_issue,
     is_completion_issue,
@@ -379,7 +380,7 @@ def _ran(verdict: dict) -> bool:
 # A judge note's citation annotation: a file path and a remark for the agent.
 _CITATION_NOTE_RE = re.compile(r"\s*\[citation [^\]]*\]")
 # "agent left out:": the project's agent is not in the web app, so nothing about it was checked there.
-_UNCHECKED_PREFIXES = ("task unverified:", "runtime unverified:", "agent left out:")
+_UNCHECKED_PREFIXES = ("task unverified:", "runtime unverified:", "agent left out:", JUDGMENT_DEFERRED)
 
 
 def _user_facing_cost(usage: Any, cost_usd: float) -> float:
@@ -803,7 +804,7 @@ def build_verification_report(recipe: dict, run_id: Optional[str] = None) -> Ver
             # Every other finding the counts call not confirmed (the runtime gate's "no runtime
             # evidence"); requirements are listed from their verdicts above and below.
             not_verified.append(_item("check", "", user_sentence(message)))
-        elif _classify_issue(message).severity == "warning":
+        elif not is_not_confirmed(message) and _classify_issue(message).severity == "warning":
             # A plain warning: what a check could not look at is not verified; what it saw is advisory.
             (not_verified if not_checked(message) else advisory).append(
                 _item("check", "", user_sentence(message)))

@@ -862,8 +862,9 @@ endpoint-coherence or form-field-type finding, a screen warning, an acceptance
 cell, a lint finding), is listed under ``advisory``, "Seen, not blocking" in
 ``BESSER_GENERATION.md`` with its count: it withholds nothing and is not counted as
 not confirmed. The screen check's notes on what it could not look at (``screen
-warning: ... not checked:`` and ``screens: not run``) are listed under
-``notVerified`` instead, apart from what it saw.
+warning: ... not checked:`` and ``screens: not run``) and the note that the
+requirements judgment was deferred are listed under ``notVerified`` instead, and a
+finding not confirmed is never listed under ``advisory`` as well.
 
 .. _spec-driven-design-fidelity:
 

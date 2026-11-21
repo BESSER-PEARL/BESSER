@@ -150,7 +150,10 @@ The three phases
    same thing as a judged requirement (see :doc:`validation`), in any language
    and however the agent reaches the data. The
    system prompt adapts to the run: the rule that asks for a complete CRUD
-   frontend applies only when the run has or needs a frontend; an idiom block
+   frontend applies only when the run has or needs a frontend, and a request
+   that names its screens wins over its per-entity pages; the state-machine,
+   object-model and OCL rules appear only when the run has those models (the
+   rule numbers stay the same); an idiom block
    appears only for a routed stack no generator builds (a generated scaffold
    is the convention); and when shell
    tools are on and a FastAPI backend is present it gains a runtime

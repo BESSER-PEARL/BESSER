@@ -202,7 +202,8 @@ def build_system_prompt(
             gui_framing = (
                 "A rough UI sketch from the editor — often auto-generated and "
                 "incomplete. Treat it as a LOOSE HINT for which screens and "
-                "fields matter, NOT a spec to reproduce literally. The domain "
+                "fields matter, NOT a spec to reproduce literally. Screens the "
+                "request names come first; then the domain "
                 "model and good UX take priority: freely restructure, merge, "
                 "add, drop, or relayout screens and components to produce a "
                 "clean app. Do NOT degrade the result just to mirror this "
@@ -468,9 +469,8 @@ def build_system_prompt(
             "13. **Styling/theme requests must actually RENDER - through the design\n"
             "    system.** Restyle by overriding `--ds-*` values (and adding rules if\n"
             "    needed) in `src/design-overrides.css`, so every designed page picks the\n"
-            "    change up; never hard-code colours in pages. Map informal colour names\n"
-            "    to hex: rose → `#f43f5e`, pink → `#ec4899`, amber/yellow → `#f59e0b` /\n"
-            "    `#eab308`, teal → `#14b8a6`, indigo → `#6366f1`, emerald → `#10b981`.\n"
+            "    change up; never hard-code colours in pages. A colour name that is not a\n"
+            "    CSS keyword (rose, amber, teal, indigo, emerald) takes its hex value.\n"
             "    A theme that's only mentioned in a comment but not visibly applied is\n"
             "    a failure."
         )
@@ -486,11 +486,9 @@ def build_system_prompt(
             "    colours or a visual theme, define them as concrete CSS — real hex\n"
             "    values or CSS variables — and apply them consistently across the UI\n"
             "    (backgrounds, buttons, headers, links, accents), not just one element.\n"
-            "    Map informal colour names to hex: rose → `#f43f5e`, pink → `#ec4899`,\n"
-            "    amber/yellow → `#f59e0b` / `#eab308`, teal → `#14b8a6`, indigo →\n"
-            "    `#6366f1`, emerald → `#10b981`. `rose`, `amber`, `teal`, `indigo` and\n"
-            "    `emerald` are not CSS colour keywords, so `color: rose` renders nothing;\n"
-            "    use the hex. A theme that's only mentioned in a comment\n"
+            "    `rose`, `amber`, `teal`, `indigo` and `emerald` are not CSS colour\n"
+            "    keywords, so `color: rose` renders nothing; use the hex value (rose →\n"
+            "    `#f43f5e`). A theme that's only mentioned in a comment\n"
             "    but not visibly applied is a failure. Aim for a clean, modern,\n"
             "    cohesive look (consistent spacing, a primary + accent colour, readable\n"
             "    contrast)."
@@ -518,8 +516,8 @@ def build_system_prompt(
 """ if frontend == "React" else ""
     crud_rule = f"""\
 15. **A domain-model app needs a COMPLETE, NAVIGABLE CRUD frontend** — unless
-    the UI is already specified by GUI screens. Read-only lists are NOT
-    enough. For the {frontend} frontend, build:
+    GUI screens specify the UI, or the request names its screens: then build
+    those. Read-only lists are NOT enough. For the {frontend} frontend, build:
     - A home route (`"/"`, a landing page) AND a nav bar/header (links or a menu)
       present on every screen, linking every entity's list and its "new" page,
       wired to the routes. The app must NEVER render blank on load: a
@@ -594,6 +592,30 @@ request: you write the whole project, in the stack the user asked for, from the
 specification and the models below. Verify its actual behavior; a file that
 exists is not proof that the software satisfies the specification."""
         plan_first_step = "What does the user request need, and in which stack and project layout?"
+    # Rules 4 and 5, and Rule 6's OCL part, only for models the run has; the
+    # numbers stay as they are, so references to a rule hold.
+    model_rules = [
+        """\
+4. **State machines drive code.** When a state machine governs a class
+   (see Cross-model links), generate a state field + transition guards +
+   event handlers that respect the declared transitions. Do not invent
+   states or transitions.""" if sm_json else "",
+        """\
+5. **Object instances are seed data.** Treat the Object Model as concrete
+   examples — emit them as fixtures, seeders, or example payloads in the
+   generated code, not as new domain rules.""" if object_json else "",
+        ("""\
+6. **OCL constraints must run.** For every constraint listed under the
+   class, emit a runtime check in the language idiomatic to the target
+   (Pydantic `@field_validator`, Zod refine, or a valid local SQL CHECK).
+""" if getattr(domain_model, "constraints", None) else "6. **Rules must run.**\n") + """\
+   Cross-record/relationship invariants need shared transactional enforcement
+   across every mutation path that can break them: create, update, link/unlink,
+   related-entity edits and deletion. SQLite CHECK constraints cannot contain
+   subqueries or refer to another table's columns. Reject invalid changes
+   atomically; do not partially persist an aggregate before validation succeeds.""",
+    ]
+    model_rules = "\n".join(rule for rule in model_rules if rule)
     stable_header = f"""\
 {role}{primary_banner}
 
@@ -634,21 +656,7 @@ Keep the plan short (a few lines), then proceed with surgical edits.
    the generated code (never by editing the model — no tool does that), and
    say so in your plan: name the model element and the spec text that decided
    it. Do not silently ship the model's version and do not leave it open.
-4. **State machines drive code.** When a state machine governs a class
-   (see Cross-model links), generate a state field + transition guards +
-   event handlers that respect the declared transitions. Do not invent
-   states or transitions.
-5. **Object instances are seed data.** Treat the Object Model as concrete
-   examples — emit them as fixtures, seeders, or example payloads in the
-   generated code, not as new domain rules.
-6. **OCL constraints must run.** For every constraint listed under the
-   class, emit a runtime check in the language idiomatic to the target
-   (Pydantic `@field_validator`, Zod refine, or a valid local SQL CHECK).
-   Cross-record/relationship invariants need shared transactional enforcement
-   across every mutation path that can break them: create, update, link/unlink,
-   related-entity edits and deletion. SQLite CHECK constraints cannot contain
-   subqueries or refer to another table's columns. Reject invalid changes
-   atomically; do not partially persist an aggregate before validation succeeds.
+{model_rules}
 {hygiene_rule}
 8. **Read before modify** - the WHOLE function or class you intend to change, in
    one call; a file read without offset and limit comes back whole.

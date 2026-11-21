@@ -298,6 +298,27 @@ messages ask to finish it (see
 :ref:`requirements of a modify run <spec-driven-modify-requirements>`). The build, type-check, boot and runtime
 gates apply as in any run.
 
+The other findings are compared with the previous version the same way. The
+checks ``validate_app`` runs, on the tree Phase 2 starts from, together with the
+seed recipe's ``validation_issues``, are the previous version's findings
+(``_seed_baseline``, kept in the checkpoint). The seed's blockers still open
+Phase 2's issues, as ``Unresolved from the previous run:``, once: one that
+``validate_app`` reports again is listed only by ``validate_app``. In Phase 3 a
+defect the previous version already had is reported as ``open since the previous
+version: <finding>``: not confirmed, so the run is not verified, but not a
+blocker of this run and not repaired. A later modify run forwards it again.
+Findings are matched by what they test, as Phase 3 attempts compare them (a
+runtime finding by its kind, backend and route and the error seen there, any
+other with its line numbers masked), never by text alone: a new error on the
+same route is this run's. A finding that matches a fix run's reported failure
+keeps its severity. A blocker of the kinds that say the app no longer starts,
+creates a record or builds (``application startup:``, ``mapper config:``,
+``missing module:``, ``create contract:``, ``read contract:``, ``action call:``,
+``tsc [``, ``frontend build [``) that the previous version did not have, where
+that check could run on it, is a regression to confirm: it stays a blocker, the
+recipe lists it under ``seed_regressions``, and the incomplete reason names it
+first ("New since the previous version, a regression to confirm: ...").
+
 Every run records the class diagram it was given in the run's
 ``.besser_recipe.json`` as ``model.user_model``: classes (abstract, parents,
 attributes with their type and optional/required), enumerations with their

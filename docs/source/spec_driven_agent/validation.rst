@@ -745,7 +745,11 @@ severity a finding was built or stored with:
   and the runtime gate's "no runtime evidence at all" when nothing started the
   app on the delivered tree;
 - ``task unverified:`` — a checklist item no check and no ``task_list`` close
-  settled.
+  settled;
+- ``open since the previous version:`` — on a modify run, a defect the
+  previous version already had (see
+  :ref:`modifying a previous run <spec-driven-modify-mode>`): not this run's to
+  repair, and the app is not verified while it is open.
 
 ``requirement unsupported:`` is the judge saying implemented while the verifier
 found the cited code does not do it: every line it cites was found whole and none

@@ -17,11 +17,13 @@ import json
 import logging
 import os
 import time
+from collections import Counter
 
 from besser.spec_driven_agent.agent.prompt_builder import build_inventory
 from besser.spec_driven_agent.agent.tool_executor import ends_shell_session
 from besser.spec_driven_agent.errors import EmptyInstructionsError
 from besser.spec_driven_agent.execution.deadline import under_deadline
+from besser.spec_driven_agent.pipeline.phase3_repair import _RUNTIME_TARGET_RE, _finding_text
 from besser.spec_driven_agent.pipeline.regeneration import MAX_REASON_CHARS, regenerate
 from besser.spec_driven_agent.planning.model_change import (
     FULL_MODEL,
@@ -69,8 +71,12 @@ from besser.spec_driven_agent.state.tracing import (
     EVENT_VALIDATION_ISSUE,
 )
 from besser.spec_driven_agent.validation.issues import (
+    OPEN_SINCE_PREVIOUS,
     ValidationIssue,
     _check_did_not_run,
+    _classify_issue,
+    could_not_run,
+    hidden_families,
     is_completion_issue,
     is_not_confirmed,
     unresolved_defects,
@@ -96,6 +102,15 @@ _NEVER_PROMOTED = (
     "screen:",
     "screen warning:",
     "screens: not run",
+)
+
+# How a seed run's forwarded blocker opens this run's issues.
+_SEED_FORWARD_PREFIX = "Unresolved from the previous run: "
+# A blocker of these kinds that the previous version did not have is a regression to confirm:
+# the app no longer starts, creates a record, or builds.
+_REGRESSION_PREFIXES = (
+    "application startup:", "mapper config:", "missing module:",
+    "create contract:", "read contract:", "action call:", "tsc [", "frontend build [",
 )
 
 
@@ -282,12 +297,8 @@ class ModifyRunMixin:
             exit_reason=self._phase3_exit_reason,
         )
 
-        # -- Fix/modify success gate --------------------------------------
-        # After Phase 3, decide whether the reported failure is plausibly
-        # addressed. A matching finding still present marks the run
-        # incomplete with an honest, target-specific message instead of a
-        # clean "success / 0 blockers".
-        self._evaluate_fix_target_gate()
+        # -- Against the previous version, and the fix/modify success gate --
+        self._modify_end_checks()
 
         elapsed = time.monotonic() - self._start_time
         logger.info(
@@ -331,6 +342,86 @@ class ModifyRunMixin:
             leading = fix_seed_issues[:1] + leading
             fix_seed_issues = fix_seed_issues[1:]
         return leading + phase1_issues + self._seed_unresolved_issues + fix_seed_issues
+
+    def _modify_opening_issues(self, issues: list[str]) -> list[str]:
+        """Phase 2's opening issues of a modify run, before validate_app adds its blockers on
+        the tree Phase 2 starts from: each fact once.
+
+        The checks validate_app runs, unclipped (the probe's result is cached for its call):
+        a forwarded seed blocker they find again is left out. On a fresh run (not a resume)
+        they and the seed recipe's findings are the previous version's (``_seed_baseline``).
+        """
+        opening = [*self._collect_execution_issues(), *self._static_frontend_issues()]
+        if self._seed_baseline is None and self._resume_messages is None:
+            self._seed_baseline = [*opening, *self._seed_recorded_issues]
+        current = {self._seed_identity(issue) for issue in opening
+                   if _classify_issue(issue).severity == "blocker"}
+        return list(dict.fromkeys(
+            issue for issue in issues
+            if not (issue.startswith(_SEED_FORWARD_PREFIX)
+                    and self._seed_identity(issue[len(_SEED_FORWARD_PREFIX):]) in current)))
+
+    def _seed_identity(self, message: str) -> tuple:
+        """What a finding tests, as Phase 3 attempts compare them (``_blocker_key``), and for a
+        runtime finding its error too: a new error on the same route is a new finding."""
+        return (self._blocker_key(ValidationIssue("blocker", message)),
+                _finding_text(message) if _RUNTIME_TARGET_RE.match(message) else None)
+
+    def _seed_defects(self) -> list[str]:
+        """The previous version's observed defects: blockers of ``_seed_baseline`` that are no unknown."""
+        return unresolved_defects([message for message in self._seed_baseline or []
+                                   if _classify_issue(message).severity == "blocker"])
+
+    def _label_seed_findings(self, issues: list[ValidationIssue]) -> list[ValidationIssue]:
+        """A modify run's defect the previous version already had, matched by identity (not
+        text), becomes ``open since the previous version:``: listed, not a blocker, not
+        repaired. A finding that matches a fix run's reported failure keeps its severity."""
+        old = Counter(self._seed_identity(message) for message in self._seed_defects())
+        if not self._modify_mode or not old:
+            return issues
+        from besser.spec_driven_agent.planning.fix_target import finding_matches_target
+
+        labelled = []
+        for issue in issues:
+            if (is_completion_issue(issue) and unresolved_defects([issue])
+                    and not issue.message.startswith(self._FIX_TARGET_PREFIX)
+                    and not (self._is_fix_run and self._fix_target is not None
+                             and finding_matches_target(issue.message, self._fix_target))):
+                key = self._seed_identity(issue.message)
+                if old[key] > 0:
+                    old[key] -= 1
+                    labelled.append(ValidationIssue("warning", OPEN_SINCE_PREVIOUS + issue.message))
+                    continue
+            labelled.append(issue)
+        return labelled
+
+    def _note_seed_regressions(self) -> None:
+        """The hard blockers (no start, no create, no build) the run ends with that the
+        previous version did not have, where that check could run on it: regressions to
+        confirm (``_seed_regressions``)."""
+        if self._seed_baseline is None:
+            return
+        old = {self._seed_identity(message) for message in self._seed_defects()}
+        hidden = hidden_families(self._seed_baseline)
+        self._seed_regressions = [
+            issue.message for issue in self._validation_issues
+            if is_completion_issue(issue) and issue.message.lower().startswith(_REGRESSION_PREFIXES)
+            and self._seed_identity(issue.message) not in old and not could_not_run(issue.message, hidden)]
+        for message in self._seed_regressions:
+            logger.warning("Modify run: new since the previous version, a regression to confirm: %s",
+                           message[:300])
+            self._trace.write(EVENT_VALIDATION_ISSUE, phase="seed_regression", message=message[:1000])
+
+    def _modify_end_checks(self) -> None:
+        """After Phase 3 of a modify run: compare with the previous version, then the fix gate."""
+        if not self._modify_mode:
+            return
+        self._note_seed_regressions()
+        # After Phase 3, decide whether the reported failure is plausibly
+        # addressed. A matching finding still present marks the run
+        # incomplete with an honest, target-specific message instead of a
+        # clean "success / 0 blockers".
+        self._evaluate_fix_target_gate()
 
     def _render_model_change(self) -> str:
         """Every model change since the seed run, so the edit follows the new
@@ -513,12 +604,14 @@ class ModifyRunMixin:
         # contract (Phase 0 checks the current model) and the runtime gate's
         # verdict (it quotes findings forwarded on their own).
         try:
+            recorded = [i for i in recipe.get("validation_issues", [])
+                        if isinstance(i, dict) and isinstance(i.get("message"), str) and i["message"]]
+            # A defect an earlier modify run found open since its previous version is still one.
+            self._seed_recorded_issues = [i["message"].removeprefix(OPEN_SINCE_PREVIOUS) for i in recorded]
             seed_blockers = [
-                ValidationIssue("blocker", i["message"])
-                for i in recipe.get("validation_issues", [])
-                if isinstance(i, dict)
-                and i.get("severity") == "blocker"
-                and isinstance(i.get("message"), str) and i["message"]
+                ValidationIssue("blocker", i["message"].removeprefix(OPEN_SINCE_PREVIOUS))
+                for i in recorded
+                if i.get("severity") == "blocker" or i["message"].startswith(OPEN_SINCE_PREVIOUS)
             ]
             forwarded = [
                 i for i in unresolved_defects(seed_blockers)
@@ -528,8 +621,7 @@ class ModifyRunMixin:
                 logger.info(
                     "Seed run: %d of %d blocker(s) not forwarded (unknowns, model contract, runtime gate)",
                     len(seed_blockers) - len(forwarded), len(seed_blockers))
-            self._seed_unresolved_issues = [
-                f"Unresolved from the previous run: {i.message}" for i in forwarded]
+            self._seed_unresolved_issues = [f"{_SEED_FORWARD_PREFIX}{i.message}" for i in forwarded]
         except Exception:
             logger.debug("Seed recipe validation_issues malformed", exc_info=True)
         try:
@@ -644,6 +736,7 @@ class ModifyRunMixin:
             "seed_llm_modified": sorted(self._seed_llm_modified),
             # The seed recipe's findings. The run's own recipe may replace it before a resume.
             "seed_unresolved_issues": self._seed_unresolved_issues,
+            "seed_baseline": self._seed_baseline,
             "seed_converted_rules": sorted(converted) if converted is not None else None,
             "seed_dropped_rules": getattr(self, "_seed_dropped_rules", []),
             "fix_target": dataclasses.asdict(self._fix_target) if self._fix_target else None,
@@ -680,6 +773,8 @@ class ModifyRunMixin:
         self._model_change = model_change_from_dict(state.get("model_change"))
         self._seed_unresolved_issues = [
             i for i in state.get("seed_unresolved_issues") or [] if isinstance(i, str)]
+        baseline = state.get("seed_baseline")
+        self._seed_baseline = [i for i in baseline if isinstance(i, str)] if isinstance(baseline, list) else None
         converted = state.get("seed_converted_rules")
         self._seed_converted_rules = set(converted) if isinstance(converted, list) else None
         self._seed_dropped_rules = [
@@ -757,9 +852,11 @@ class ModifyRunMixin:
         Phase 3 classification is identical). A promoted finding is
         rewritten with a stable prefix + the target descriptor so it reads
         honestly in the recipe and the end-of-run gate can identify it.
+        Then, on any modify run, the previous version's defects are
+        labelled (``_label_seed_findings``).
         """
         if not self._is_fix_run or self._fix_target is None:
-            return issues
+            return self._label_seed_findings(issues)
         from besser.spec_driven_agent.planning.fix_target import finding_matches_target
 
         earlier = self._earlier_requirement_findings()
@@ -779,7 +876,7 @@ class ModifyRunMixin:
                 ))
             else:
                 promoted.append(issue)
-        return promoted
+        return self._label_seed_findings(promoted)
 
     def _earlier_requirement_findings(self) -> frozenset[str]:
         """The ledger's findings on requirements of earlier runs: they judge those requests and

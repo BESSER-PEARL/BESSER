@@ -64,7 +64,11 @@ NOT_CONFIRMED_PREFIXES = (
     "validation unverified:",
     # A checklist item no check and no ``task_list`` close settled.
     "task unverified:",
+    # A modify run's defect the previous version already had (``modify_run.py``): not this
+    # run's to repair.
+    "open since the previous version:",
 )
+OPEN_SINCE_PREVIOUS = "open since the previous version: "
 
 # The judge said implemented, but the code it cited is not an implementation (a
 # stub, a no-op validator, a comment or import, a declaration where behaviour is

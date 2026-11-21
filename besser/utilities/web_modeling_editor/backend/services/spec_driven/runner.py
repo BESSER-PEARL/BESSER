@@ -2522,11 +2522,14 @@ class SmartGenerationRunner:
                     ))
                 else:
                     # Phase 2 finished cleanly, but Phase 3 left unfixed blockers.
+                    # A modify run names first a hard blocker its previous version did not have.
+                    _regressions = getattr(orchestrator, "_seed_regressions", None) or []
                     incomplete_reason_msg = (
                         f"The app was generated, but {len(_unfixed_blockers)} unresolved "
                         "implementation or verification issue(s) remain. "
-                        "The generated app is not verified complete. First: "
-                        + user_sentence(_unfixed_blockers[0])
+                        "The generated app is not verified complete. "
+                        + (f"New since the previous version, a regression to confirm: {user_sentence(_regressions[0])}"
+                           if _regressions else f"First: {user_sentence(_unfixed_blockers[0])}")
                     )
                     yield self._sse(ErrorEvent(
                         code="INCOMPLETE",

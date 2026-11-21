@@ -155,8 +155,9 @@ The three phases
    web app generator), the section leads with it instead: where it is, that
    frontend code calls the backend only through it (``apiRequest`` for a route
    the agent adds), and its functions per class, read from the
-   ``api_contract.json`` it was rendered from and capped at 4,000 characters.
-   Only the served routes the client does not cover are then listed as raw
+   ``api_contract.json`` it was rendered from and capped at 4,000 characters,
+   then its ``apiSystem`` functions for the contract's system routes. Only the
+   served routes the client does not cover are then listed as raw
    routes, for ``test_api`` and the runbook. The inventory lists each
    TypeScript file's exported functions, constants, classes, interfaces, types
    and enumerations (up to ten, interfaces and types last), and the fields of

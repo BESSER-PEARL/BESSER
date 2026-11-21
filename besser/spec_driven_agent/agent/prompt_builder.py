@@ -1151,6 +1151,7 @@ def api_client_section(output_dir: str, max_chars: int = API_CLIENT_SECTION_CHAR
         functions = client_functions(contract)
         names = type_names(contract)
         paths = {entity["name"]: entity["path"] for entity in contract["entities"]}
+        system = [route for route in contract["routes"] if route["group"] == "system"]
     except (OSError, ValueError, KeyError, TypeError):
         logger.debug("api_contract.json not readable for the client section", exc_info=True)
         return None
@@ -1169,6 +1170,10 @@ def api_client_section(output_dir: str, max_chars: int = API_CLIENT_SECTION_CHAR
         lines.append(line)
         covered |= routes
         uses_crud |= crud
+    if system:
+        # The client's apiSystem object calls the contract's system routes.
+        lines.append("- apiSystem: " + "; ".join(f"{r['op']}() {r['method']} {r['path']}" for r in system))
+        covered |= {(route["method"], route["path"]) for route in system}
     folder = client.rsplit("/", 1)[0]
     text = (
         f"`{client}` is the frontend's typed API client, with the record and body types in "

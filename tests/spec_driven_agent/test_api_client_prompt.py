@@ -65,8 +65,10 @@ def test_routes_the_client_covers_are_not_listed_again_but_custom_ones_are(tmp_p
     routes = [line for line in section.splitlines() if line.startswith("  ") and " /" in line]
 
     assert any(line.endswith(" /report/summary/") for line in routes)
-    assert any(line.endswith(" /health") for line in routes)
     assert not any("/customer/" in line or "/order/" in line for line in routes)
+    # The system routes are the client's apiSystem object, read from the contract.
+    assert "- apiSystem: root() GET /; health() GET /health; statistics() GET /statistics" in section
+    assert not any(line.endswith((" /", " /health", " /statistics")) for line in routes)
     # The response shapes and request bodies test_api needs stay.
     assert "Response shapes (generated routers)" in section
     assert "Request shapes" in section

@@ -56,6 +56,10 @@ def test_the_section_names_the_client_and_its_functions(tmp_path):
     assert "- customerApi (Customer, body CustomerCreate): CRUD(customer_id) at /customer/" in section
     assert "; relations.orders: list(customer_id) GET /customer/{customer_id}/orders/" in section
     assert "; methods: close(order_id) POST /order/{order_id}/methods/close/" in section
+    # Every served route is in the client: no heading over an empty route list.
+    assert "The backend serves no other routes" in section
+    assert "not in the client" not in section
+    assert "\n\n\n" not in section
 
 
 def test_routes_the_client_covers_are_not_listed_again_but_custom_ones_are(tmp_path):

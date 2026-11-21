@@ -1055,10 +1055,16 @@ def build_endpoint_manifest(output_dir: str, max_routes: int = 250, *,
             methods.difference_update(m for m in list(methods) if (m, path) in covered)
             if not methods:
                 del methods_by_path[path]
-        header = (
-            f"{client_text}\n\nOther routes the backend serves (base URL {base_url}), not in the client: "
-            "call them with apiRequest. test_api takes the client's routes above and these."
-        )
+        if methods_by_path:
+            header = (
+                f"{client_text}\n\nOther routes the backend serves (base URL {base_url}), not in the client: "
+                "call them with apiRequest. test_api takes the client's routes above and these."
+            )
+        else:
+            header = (
+                f"{client_text}\n\nThe backend serves no other routes (base URL {base_url}); "
+                "call a route you add with apiRequest. test_api takes the client's routes above."
+            )
     else:
         header = (
             "The FastAPI backend is ALREADY generated and serves only the routes below "
@@ -1093,10 +1099,8 @@ def build_endpoint_manifest(output_dir: str, max_routes: int = 250, *,
     if truncated:
         body += f"\n\n  ... and {truncated} more routes (same conventions)."
     shapes = _response_shape_note(response_model) if response_model is not None else ""
-    if shapes:
-        body += f"\n\n{shapes}"
     mutations = build_mutation_manifest(output_dir, coverage=mutation_coverage)
-    return f"{header}\n\n{body}" + (f"\n\n{mutations}" if mutations else "")
+    return "\n\n".join(part for part in (header, body, shapes, mutations) if part)
 
 
 # The typed client the React generator writes, and its listing's share of the prompt.

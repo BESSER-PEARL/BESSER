@@ -155,12 +155,10 @@ class WebAppGenerator(GeneratorInterface):
         self._generate_docker_files(self.env)
         self._generate_readme(self.env)
 
-    # The folders ``generate_model_output`` writes, relative to the output directory.
-    MODEL_OUTPUT_PATHS = ("backend/", "frontend/src/api/generated/")
-
     def generate_model_output(self):
         """Write only the output derived from the domain model alone, as ``generate`` writes it:
-        the backend and the frontend's typed API client (``MODEL_OUTPUT_PATHS``). Needs no GUI model."""
+        the backend and the frontend's typed API client
+        (``backend/`` and ``frontend/src/api/generated/``). Needs no GUI model."""
         self._generate_backend(self.env)
         self._generate_backend_dockerfile(self.env)
         frontend_dir = os.path.join(self.output_dir, "frontend") if self.output_dir else "frontend"

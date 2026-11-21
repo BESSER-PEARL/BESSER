@@ -251,6 +251,67 @@ def test_after_a_batch_the_kept_read_id_edits_and_a_stubbed_read_is_read_again_i
     assert event["tokens_after"] < event["tokens_before"]
 
 
+def _idle(messages, turns):
+    for n in range(turns):
+        messages.append({"role": "assistant", "content": [{"type": "text", "text": f"checking {n}"}]})
+        messages.append({"role": "user", "content": [{"type": "text", "text": "go on"}]})
+
+
+def test_at_the_compaction_threshold_the_newest_read_of_a_file_not_edited_is_kept(tmp_path, monkeypatch):
+    """Over the threshold, eviction stubs what is stale even if young, but not the read the model
+    works from: a read five turns old of a file never edited stays verbatim through the
+    compaction that follows, as it does with eviction off."""
+    monkeypatch.setattr(orchestrator_module, "_HISTORY_EVICTION_ENABLED", True)
+    orchestrator = _orchestrator(tmp_path)
+    customers = BODY.replace("order", "customer")
+    messages = [{"role": "user", "content": "Build the order service."}]
+    for n in range(60):    # earlier work, enough to pass the threshold
+        messages.append({"role": "assistant", "content": [
+            {"type": "text", "text": f"step {n} " + " ".join(f"w{n}q{i}" for i in range(700))}]})
+        messages.append({"role": "user", "content": [{"type": "text", "text": "go on"}]})
+    messages += _history(_read("r1", "orders.py"), _edit("e1", "orders.py"),
+                         _read("c1", "customers.py", content=customers))[1:]
+    _idle(messages, 4)
+
+    out = orchestrator._maybe_compact(messages)
+
+    assert "compute(customer_200)" in _shown(out, "c1")
+    assert "elided" in _shown(out, "r1"), "a read of a file edited since is stale at the threshold"
+    records = [json.loads(line) for line in (tmp_path / ".besser_trace.jsonl").read_text(
+        encoding="utf-8").splitlines()]
+    assert [r["payload"]["reason"] for r in records if r["event"] == "eviction"] == ["threshold"]
+
+
+def test_a_file_whose_only_copy_was_stubbed_must_be_read_again_before_a_rewrite(tmp_path, monkeypatch):
+    """write_file may replace an existing file only after the model has seen all of it. Once a
+    batch stubs the last copy the conversation held, it has not: a rewrite would be from memory."""
+    monkeypatch.setattr(orchestrator_module, "_HISTORY_EVICTION_ENABLED", True)
+    body = "".join(f"def f_{n}(order):\n    return order.total_{n}\n\n" for n in range(500))
+    (tmp_path / "orders.py").write_text(body, encoding="utf-8")
+    (tmp_path / "customers.py").write_text(body.replace("order", "customer"), encoding="utf-8")
+    orchestrator = _orchestrator(tmp_path)
+    executor = orchestrator.executor
+    messages = [{"role": "user", "content": "Build the order service."}]
+    _call(executor, messages, ("r1", "read_file", {"path": "orders.py"}))
+    _call(executor, messages, ("e1", "modify_file", {"path": "orders.py", "old_text": "def f_0(order):",
+                                                     "new_text": "def f_0(order, *, rounded=False):"}))
+    # customers.py: an older copy is stubbed, but a later whole read of it is still shown.
+    _call(executor, messages, ("c1", "read_file", {"path": "customers.py"}))
+    _call(executor, messages, ("e2", "modify_file", {"path": "customers.py", "old_text": "def f_0(customer):",
+                                                     "new_text": "def f_0(customer, *, rounded=False):"}))
+    _call(executor, messages, ("c2", "read_file", {"path": "customers.py"}))
+    _idle(messages, 9)
+
+    messages = orchestrator._maybe_compact(messages)
+    assert "elided" in _shown(messages, "r1") and "elided" in _shown(messages, "c1")
+
+    rewrite = executor.execute_typed("write_file", {"path": "orders.py", "content": "def f_0(order):\n    return 0\n"})
+    assert "error" in rewrite.payload and "read_file" in rewrite.payload["error"], rewrite.payload
+    assert "return order.total_250" in (tmp_path / "orders.py").read_text(encoding="utf-8")
+    shown = executor.execute_typed("write_file", {"path": "customers.py", "content": "def g(customer):\n    return 0\n"})
+    assert shown.payload.get("status") == "written", shown.payload
+
+
 def test_in_a_whole_run_the_prefix_is_rewritten_only_at_a_recorded_batch(tmp_path, monkeypatch):
     """The real loop on a scripted model that re-reads two scaffold files: batches stub the four
     superseded copies, the requests at those batches are the only ones that are not the previous

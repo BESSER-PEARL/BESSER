@@ -242,7 +242,7 @@ class _CompactionHost:
         self._compaction_count = 0
         self.total_turns = 0
         self._trace = NullTraceWriter()
-        self.executor = SimpleNamespace(forget_shown_results=lambda: None)
+        self.executor = SimpleNamespace(forget_shown_results=lambda: None, forget_full_views=lambda paths: None)
 
     def _compaction_work_state(self) -> dict:
         return {"tasks": [{"id": 1, "text": "Add login"}]}

@@ -1065,6 +1065,12 @@ class ToolExecutor:
         self._stubbed_reads.clear()
         self._reported_findings.clear()
 
+    def forget_full_views(self, paths) -> None:
+        """The conversation no longer shows these files whole: write_file needs a read first."""
+        for path in paths:
+            self._fully_seen.discard(path)
+            self._read_coverage.pop(path, None)
+
     def close(self) -> None:
         """End the run's shell session; every process it holds is killed."""
         self._shell.close()

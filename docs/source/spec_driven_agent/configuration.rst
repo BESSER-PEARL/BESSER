@@ -283,15 +283,17 @@ Context and token budgets
   Replace stale file bodies in older messages by stubs pointing back to disk,
   so they are not sent again on every turn. Stale is a ``read_file`` result
   whose lines a later read shows again or whose file a later ``write_file``
-  replaced; a read of a file edited since, and an applied edit's body, once
-  eight turns old. The newest read of lines of a file not edited since is
+  or ``delete_file`` replaced; a read of a file edited since, and an applied
+  edit's body, once eight turns old. The newest read of lines of a file not edited since is
   kept however old, so the model can still quote it and edit with its
   ``read_id``. Each eviction rewrites the cached prompt prefix, so stubs are
   applied in batches: nothing until the stale bodies are a third of the
   history (and at least 20,000 characters), then all of them at once. At the
-  compaction threshold every file body outside the last turns is stubbed
-  before a summary is tried. Each eviction is an ``eviction`` record in the
-  run log.
+  compaction threshold every stale body outside the last turns is stubbed,
+  however young, before a summary is tried; the newest read of a file not
+  edited since is still kept. A file whose last whole copy was stubbed must
+  be read again before ``write_file`` may rewrite it. Each eviction is an
+  ``eviction`` record in the run log.
 - ``BESSER_LLM_FROM_SCRATCH_MAX_TOKENS`` (``32768``) -- Output-token ceiling
   for from-scratch generation (no Phase-1 scaffold to build on). Raising it
   costs nothing unless the extra output is actually produced; the truncation

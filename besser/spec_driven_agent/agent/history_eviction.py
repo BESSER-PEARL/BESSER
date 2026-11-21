@@ -400,6 +400,46 @@ def evict_superseded_file_bodies(
     return _stub_bodies(messages, lambda index, block: id(block) in stale, min_body_chars)
 
 
+def unseen_after_eviction(before: list[dict], after: list[dict]) -> set[str]:
+    """Paths whose body ``after`` stubbed and of which it shows no whole copy:
+    no whole-file read and no ``write_file`` body left."""
+    calls = _answered_calls(before)
+    stubbed: set[str] = set()
+    for index, (old, new) in enumerate(zip(before, after)):
+        if old is new:
+            continue
+        for block, stub in zip(old["content"], new["content"]):
+            if block is stub:
+                continue
+            if _block_type(block) == "tool_use":
+                stubbed.add(_path_key((_block_get(block, "input") or {}).get("path")))
+            else:
+                stubbed.add(_path_key(calls[index].get(_block_get(block, "tool_use_id"), {}).get("path")))
+    shown: set[str] = set()
+    for index, message in enumerate(after[:-1] if stubbed else ()):
+        content, answer = message.get("content"), after[index + 1].get("content")
+        if message.get("role") != "assistant" or not isinstance(content, list) or not isinstance(answer, list):
+            continue
+        results = {_block_get(block, "tool_use_id"): block for block in answer
+                   if _block_type(block) == "tool_result"}
+        for block in content:
+            args = _block_get(block, "input")
+            result = _parsed_result(results.get(_block_get(block, "id")))
+            if _block_type(block) != "tool_use" or not isinstance(args, dict) or not result or result.get("error"):
+                continue
+            name = _block_get(block, "name")
+            if (name == "write_file" and args.get("content") != EVICTED_EDIT_BODY) or (
+                    name == "read_file" and "content" in result and not result.get("truncated")
+                    and not args.get("offset") and args.get("limit") is None):
+                shown.add(_path_key(args.get("path")))
+    return stubbed - shown
+
+
+def _path_key(path: Any) -> str:
+    """A path as the executor keys what the model has seen."""
+    return str(path or "").replace("\\", "/").strip()
+
+
 def _parsed_result(block: Any) -> dict | None:
     """A tool result's JSON object, or None (no result, or not a JSON object)."""
     if block is None:

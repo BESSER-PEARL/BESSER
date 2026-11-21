@@ -57,8 +57,8 @@ from besser.spec_driven_agent.planning.user_request import user_request
 from besser.spec_driven_agent.run_recap import request_text
 from besser.spec_driven_agent.planning.specification import validate_specification
 from besser.spec_driven_agent.agent.history_eviction import (
-    evict_stale_file_bodies,
     evict_superseded_file_bodies,
+    unseen_after_eviction,
     without_thinking_blocks,
 )
 from besser.spec_driven_agent.validation.frontend_contract import (
@@ -5432,21 +5432,26 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         With history eviction on (``BESSER_LLM_HISTORY_EVICTION``), stale file
         bodies are stubbed in batches (``evict_superseded_file_bodies``), so the
         cached prefix is rewritten once per batch, not every turn. At the
-        compaction threshold every older body is stubbed first, which often
-        avoids the lossy summary below. The files stay on disk, re-readable.
+        compaction threshold every stale body is stubbed at once, however
+        young, which often avoids the lossy summary below; the newest read of
+        a file not edited since is kept. The files stay on disk, re-readable.
         """
         model = getattr(self.client, "model", None)
         reserve = self._compaction_reserve()
         evicted = 0
         if _HISTORY_EVICTION_ENABLED:
+            original = messages
             before = _estimate_tokens(messages)
             messages, evicted = evict_superseded_file_bodies(messages)
             reason = "superseded"
             if (_estimate_tokens(messages) if evicted else before) >= effective_threshold(model, reserve=reserve):
-                messages, more = evict_stale_file_bodies(messages)
+                messages, more = evict_superseded_file_bodies(
+                    messages, stale_after_turns=0, batch_share=0, min_batch_chars=0)
                 if more:
                     evicted, reason = evicted + more, "threshold"
             if evicted:
+                # write_file needs the whole file seen; a stubbed last copy is not seen.
+                self.executor.forget_full_views(unseen_after_eviction(original, messages))
                 self._eviction_count = getattr(self, "_eviction_count", 0) + 1
                 after = _estimate_tokens(messages)
                 logger.info("Eviction (%s): stubbed %d file body/bodies, history ~%d -> ~%d tokens",

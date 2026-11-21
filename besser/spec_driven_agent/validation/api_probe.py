@@ -29,7 +29,10 @@ from urllib.parse import quote, unquote, urlsplit
 _MARKER = "BESSER_API_SCENARIO_REPORT:"
 _PROBE_TIMEOUT_SECONDS = 60
 _MAX_REQUESTS = 20
-_REQUEST_KEYS = frozenset({"method", "path", "json", "headers", "expected_status", "expected_fields"})
+_REQUEST_KEYS = frozenset({"method", "path", "json", "form", "files", "headers", "expected_status",
+                           "expected_fields"})
+_MAX_FORM_FIELDS = 50
+_FILE_KEYS = frozenset({"filename", "content", "content_type"})
 _MAX_INPUT_BYTES = 64_000
 _BODY_CHARS = 2000
 _MAX_REPORTED_FAILURES = 5
@@ -193,7 +196,7 @@ def _sent_credentials(request, previous):
     """Credential-named response values ``request`` names by reference, e.g. /reset/{{1.reset_token}}."""
     sent = set()
     for match in _REFERENCE.finditer(json.dumps(
-            [request.get(key) for key in ("path", "headers", "json", "expected_fields")])):
+            [request.get(key) for key in ("path", "headers", "json", "form", "expected_fields")])):
         if _credential_reference(match) and int(match.group(1)) < len(previous):
             body = previous[int(match.group(1))]
             value = _walk(body, _reference_path(body, match.group(2) or ""))
@@ -244,6 +247,7 @@ def _validate_requests(requests):
         _local_path(request.get("path"))
         if "headers" in request:
             _validate_headers(request["headers"], index)
+        _validate_body(request, index)
         if "expected_status" in request:
             statuses = request["expected_status"]
             statuses = statuses if isinstance(statuses, list) else [statuses]
@@ -256,6 +260,24 @@ def _validate_requests(requests):
         ):
             raise ValueError(f"request {index}: expected_fields must map dotted JSON paths to literals")
     return requests
+
+
+def _validate_body(request, index):
+    """A body is ``json``, or a ``form`` (urlencoded; multipart beside ``files``), never both."""
+    if "json" in request and ("form" in request or "files" in request):
+        raise ValueError(f"request {index}: send either json or form/files, not both")
+    form = request.get("form", {})
+    if not isinstance(form, dict) or len(form) > _MAX_FORM_FIELDS or any(
+            not isinstance(name, str) or not name or isinstance(value, (dict, list)) for name, value in form.items()):
+        raise ValueError(f"request {index}: form must map at most {_MAX_FORM_FIELDS} field names to scalar values")
+    files = request.get("files", {})
+    if not isinstance(files, dict) or len(files) > _MAX_FORM_FIELDS or any(
+            not isinstance(name, str) or not name or not isinstance(upload, dict)
+            or not set(upload) <= _FILE_KEYS or not isinstance(upload.get("filename"), str)
+            or not isinstance(upload.get("content"), str)
+            or not isinstance(upload.get("content_type", ""), str) for name, upload in files.items()):
+        raise ValueError(f"request {index}: files must map field names to {{filename, content, content_type}} "
+                         "with text content")
 
 
 def _walk(body, path):
@@ -449,6 +471,22 @@ def declares_failure(body) -> bool:
     return any(declares_failure(value) for value in body.values() if isinstance(value, (dict, list)))
 
 
+def request_validation_refusal(response: dict) -> bool:
+    """Whether a reported response is FastAPI's request-validation 422: a ``detail`` list of
+    ``loc``/``msg`` errors whose ``loc`` starts with a request part, answered before the
+    handler ran. A body cut at the report's size limit is judged on how it starts."""
+    if response.get("status") != 422:
+        return False
+    body = response.get("json")
+    if isinstance(body, str):
+        return body.startswith('{"detail": [{')
+    detail = body.get("detail") if isinstance(body, dict) else None
+    return (isinstance(detail, list) and bool(detail)
+            and all(isinstance(error, dict) and "msg" in error and isinstance(error.get("loc"), list)
+                    and error["loc"][:1] in (["body"], ["query"], ["path"], ["header"], ["cookie"])
+                    for error in detail))
+
+
 def _records(value):
     if isinstance(value, dict):
         if type(value.get("id")) in (int, str):
@@ -600,6 +638,14 @@ async def _run_requests(app, requests):
                     item["path"] = _resolve_references(request["path"], previous, in_path=True, redact=True)
                     kwargs = ({"json": _resolve_references(request["json"], previous, notes=notes)}
                               if "json" in request else {})
+                    if "form" in request:
+                        form = _resolve_references(request["form"], previous, notes=notes)
+                        kwargs["data"] = {name: value if isinstance(value, str) else json.dumps(value)
+                                          for name, value in form.items()}
+                    if request.get("files"):
+                        kwargs["files"] = {name: (upload["filename"], upload["content"].encode("utf-8"),
+                                                  upload.get("content_type") or "application/octet-stream")
+                                           for name, upload in request["files"].items()}
                     if request.get("headers"):
                         headers = {}
                         for name, raw in request["headers"].items():

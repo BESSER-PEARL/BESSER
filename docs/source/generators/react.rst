@@ -52,6 +52,9 @@ and the runtime blocks' requests go through the client's ``apiRequest``, which j
 to the path it is given (pass a path, not a URL already joined to the base). The client assumes the backend generated with every HTTP method, as the
 :doc:`full_web_app` generator does.
 
+``ReactGenerator(model, None, output_dir).generate_api_client()`` writes only these two
+files, byte for byte as ``generate()`` writes them; it needs the domain model alone.
+
 Generated Components
 --------------------
 
@@ -78,6 +81,13 @@ Dynamic data tables with:
 - Display-only form fields: a ``formColumns`` entry with ``"readOnly": true``
   is shown in the Add/Edit dialog but cannot be edited, is not validated as
   required, and is left out of the POST/PUT body (the server owns the value)
+- The binding's filter (``DataBinding.filter_expression``) applied to the rows,
+  as charts and metric cards apply it, also after a write reloads them
+- Opt-in options a page can pass in ``options``: ``rowLink`` (a route a row
+  click opens, each ``{field}`` replaced by the row's value), ``initialFilters``
+  (column filter values to start with), ``emptyText`` (the empty state's text)
+  and ``rowActions`` (``[{label, onClick(row)}]``, extra buttons per row). A
+  table that sets none renders as before.
 
 MethodButton
 ^^^^^^^^^^^^
@@ -337,8 +347,10 @@ after ``App``, so the design's class, ``:root``, ``@media`` and ``:hover`` rules
 apply to the generated pages and win ties with the components' own CSS. Components
 render their ``css_classes`` as ``className``; tables, charts and metric cards
 forward it through their runtime blocks to the rendered root element.
-Per-element ``Styling`` is still emitted as inline styles. Without a stylesheet
-neither the file nor the import is generated.
+Per-element ``Styling`` is still emitted as inline styles, without the chart
+palette when it is ``"default"`` (what a pie chart falls back to) and no bar
+colour would take its place. Without a stylesheet neither the file nor the
+import is generated.
 
 A design is written against the browser's defaults, and the Tailwind reset the
 app imports (``index.css``) removes them. ``design.css`` therefore starts with a

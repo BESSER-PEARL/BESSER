@@ -148,6 +148,11 @@ deprecated back-compat shims but map to a one-element list under the hood.
 README headings. The web editor passes the project's name; without it the README is titled
 after the domain model and the browser tab reads ``BESSER App``.
 
+``generate_model_output()`` writes only the output derived from the domain model alone,
+byte for byte as ``generate()`` writes it: ``backend/`` and the frontend's typed client
+``frontend/src/api/generated/``. It needs no GUI model; the Spec-Driven Agent regenerates
+that part of a web app after a model change.
+
 
 How It Works
 ------------

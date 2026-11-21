@@ -1362,8 +1362,10 @@ class GuiSerializationMixin:
             style["--chart-line-color"] = color.line_color
         if getattr(color, "bar_color", None):
             style["--chart-bar-color"] = color.bar_color
-        if getattr(color, "color_palette", None):
-            style["--chart-color-palette"] = color.color_palette
+        # "default" is what a pie chart falls back to anyway, unless a bar colour would take its place.
+        palette = getattr(color, "color_palette", None)
+        if palette and (palette != "default" or style.get("--chart-bar-color") not in (None, "#CCCCCC")):
+            style["--chart-color-palette"] = palette
         return style
 
     def _extract_layout_style(self, layout) -> Dict[str, Any]:

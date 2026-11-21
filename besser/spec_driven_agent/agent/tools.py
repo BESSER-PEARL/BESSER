@@ -278,6 +278,7 @@ VALIDATION_TOOLS: list[dict[str, Any]] = [
             "Accept-Language, If-Match, If-None-Match, Idempotency-Key and X-* API headers such as "
             "X-API-Key; cookies set by a response are kept for the rest of the scenario. "
             "Credential header values are redacted from results. "
+            "A request body is json, or form (urlencoded fields) and/or files (multipart, text content). "
             "Omitted expected_status means 2xx. Assert business results with expected_fields "
             "(dotted JSON path -> expected value). Test happy paths AND invalid input/state transitions "
             "from the original specification. Valid scenarios (at most 10) are retained and rerun after "
@@ -310,6 +311,12 @@ VALIDATION_TOOLS: list[dict[str, Any]] = [
                             "method": {"type": "string", "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"]},
                             "path": {"type": "string", "description": "Local API path beginning with /"},
                             "json": {},
+                            "form": {"type": "object", "additionalProperties": True},
+                            "files": {"type": "object", "additionalProperties": {
+                                "type": "object", "required": ["filename", "content"],
+                                "properties": {"filename": {"type": "string"}, "content": {"type": "string"},
+                                               "content_type": {"type": "string"}},
+                                "additionalProperties": False}},
                             "headers": {"type": "object", "additionalProperties": {"type": "string"}},
                             "expected_status": {"anyOf": [{"type": "integer"}, {"type": "array", "items": {"type": "integer"}}]},
                             "expected_fields": {"type": "object", "additionalProperties": True},

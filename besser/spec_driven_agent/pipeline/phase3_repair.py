@@ -108,11 +108,13 @@ _FIX_PROMPT_MAX_SCOPE_FILES = 40
 # Masked when attempts compare findings: an edit moves the lines and columns of the
 # errors it leaves. Other numbers (``/e2/`` and ``/e3/``) tell findings apart.
 _LINE_NUMBERS_RE = re.compile(r"line \d+|:\d+(?::\d+)?|\(\d+,\d+\)")
-# The route a runtime finding names: ``create contract: backend: POST /order/ - ...``.
-_POST_ROUTE_RE = re.compile(r": POST (\S+) - ")
+# The route a runtime finding names: ``create contract: backend: POST /order/ - ...``
+# (``GET`` for a ``read contract:``).
+_POST_ROUTE_RE = re.compile(r": (?:POST|GET) (\S+) - ")
 # What a runtime finding tests: its kind, backend and route. Its text is the error seen there.
 _RUNTIME_TARGET_RE = re.compile(
-    r"(?:runtime unverified: )?(create contract|action call|create unverified|action unverified): (\S+): POST (\S+) - ")
+    r"(?:runtime unverified: )?(create contract|action call|create unverified|action unverified|read contract): "
+    r"(\S+): (?:POST|GET) (\S+) - ")
 # The probe's generated input, quoted in a runtime finding: not part of the error.
 _PROBE_INPUT_RE = re.compile(r"attempted input: .*?(?=\. Th(?:is|ese) )", re.S)
 # An object's memory address in an exception text (``<Order at 0x7f...>``): new in every process.
@@ -785,9 +787,9 @@ class Phase3RepairMixin:
 
     @staticmethod
     def _newly_reachable(before_facts: list | None, after_facts: list | None):
-        """``(finding, entity)`` predicates: whether a ``create contract:`` / ``action call:``
-        finding, or a probed entity, belongs to an entity the probe could not create on the
-        tree before the attempt. The route's entity comes from the probe's records of the
+        """``(finding, entity)`` predicates: whether a ``create contract:`` / ``action call:`` /
+        ``read contract:`` finding, or a probed entity, belongs to an entity the probe could not
+        create on the tree before the attempt. The route's entity comes from the probe's records of the
         tree after it; without records of both trees nothing is excused."""
         if not before_facts or not after_facts:
             return (lambda message: False), (lambda entity: False)
@@ -797,11 +799,14 @@ class Phase3RepairMixin:
         for backend in after_facts:
             for name, entry in (backend.get("entities") or {}).items():
                 entity_of[("create contract:", entry.get("path"))] = name
+                for read in entry.get("reads") or []:
+                    entity_of[("read contract:", read.get("route"))] = name
             for call in [*(backend.get("action_calls") or []), *(backend.get("actions") or [])]:
                 entity_of[("action call:", call.get("route"))] = call.get("entity")
 
         def finding(message: str) -> bool:
-            prefix = next((p for p in ("create contract:", "action call:") if message.startswith(p)), None)
+            prefix = next((p for p in ("create contract:", "action call:", "read contract:")
+                           if message.startswith(p)), None)
             match = _POST_ROUTE_RE.search(message)
             entity = entity_of.get((prefix, match.group(1))) if prefix and match else None
             return entity is not None and entity not in created
@@ -1611,7 +1616,7 @@ class Phase3RepairMixin:
         # They belong beside the startup classes, not below a lint finding.
         if message.startswith((
             "syntax", "python contract:", "mapper config:", "application startup:",
-            "missing module:", "create contract:", "action call:",
+            "missing module:", "create contract:", "action call:", "read contract:",
         )):
             return 0, message
         if message.startswith(("data contract:", "runtime unverified:")):

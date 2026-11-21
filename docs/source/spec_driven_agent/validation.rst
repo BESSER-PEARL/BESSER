@@ -88,7 +88,12 @@ that was already broken is never refused, so it can be repaired.
   the generated client's ``apiRequest(<METHOD>, <path>)`` calls, that match no
   generated backend route, and calls of a typed client function
   (``bookApi.create``) the generated client does not have. The typed functions
-  are resolved to their routes through the app's ``api_contract.json``.
+  are resolved to their routes through the app's ``api_contract.json``. In an
+  app that has the generated client, a literal ``fetch`` or Axios call to a
+  route the client covers is reported too, naming the client function to call
+  instead; a route the client does not cover (one the agent added) is not.
+  Such calls are reported once per file and client function, after the calls
+  to missing routes and under their own cap, so they never hide one. Warning.
 - API call shapes (``api call:``, blocker) — a frontend call with a literal or
   template URL that resolves to exactly one route, checked against that
   route's handler, which is read without importing the app. The calls read are
@@ -338,6 +343,17 @@ flag that the call did not act (``success``/``ok``/``result`` false, an
 object or in every item of a list. A record in any state, such as an offer
 returned with ``"status": "rejected"`` by its reject action, shows the action ran.
 Observed server crashes remain failures even if another scenario passes.
+After each create that answered 2xx with an id, the probe reads the record back:
+a ``GET`` of its item route (``/<name>/{id}/``) and of the collection route OpenAPI
+declares on the create path. A 5xx (or an exception the app raised) on either is
+a ``read contract:`` blocker, an observed failure like a crashed create, with the
+handler that served the read as its fix site. Any other refusal of the item read
+leaves the create ``create unverified:`` (an item route may serve its owner only,
+or look records up by another field than the id), unless the collection read
+answered 2xx with the record's id in it. A read refused 401 or 403 before the
+probe logged in is retried after logging in through the app's register/login
+routes, as a refused create is. A collection route that refuses without a server
+error (a required query parameter, a 404) is no finding.
 The probe drives only entity creates: a ``POST`` whose body is ``<Name>Create``
 where ``<Name>`` is a mapped ORM class the model does not mark abstract. A
 ``*Create`` body whose handler writes no table (a signup or login form) persists
@@ -650,7 +666,7 @@ Findings are classified into three severities:
        ``mapper config:``, ``application startup:``, ``python contract:``
        (which also reports undefined names, those behind ``from x import *``
        included), ``api scenario:``,
-       ``create contract:``, ``action call:``, ``requirement:``,
+       ``create contract:``, ``action call:``, ``read contract:``, ``requirement:``,
        ``requirement partial:``, ``requirement unsupported:``,
        ``action contract:``, ``task incomplete:``, ``verification setup:``
        (dependencies a permitted install would provide), ``tsc [``,
@@ -721,7 +737,8 @@ severity a finding was built or stored with:
   did not run (stopped, or out of time or budget);
 - ``create unverified:`` and ``action unverified:`` — the probe's own guessed
   request was refused (a 4xx, a login it could not pass, a record it could not set
-  up) and no ``test_api`` scenario settled it; ``runtime unverified:`` is the same
+  up), or the record it created could not be read back by id without a server
+  error (a 401, 403 or 404) and its list did not show it, and no ``test_api`` scenario settled it; ``runtime unverified:`` is the same
   finding once no scenario did;
 - ``validation unverified:`` — a required check did not run (a runtime check
   without a sandbox, a judge that returned no verdicts, a build that timed out),
@@ -802,8 +819,14 @@ stays reserved for a known defect. The classes are:
   test workflow that booted it or passed. When no runtime check note already says
   why, the runtime gate records it as ``validation unverified: runtime gate:
   ...``, so a timed-out probe is listed once. Only the FastAPI backends the probe
-  drives count: another kind of backend is never started by the check, and its
-  run reports no runtime class;
+  drives are started. A run that built another kind of server (a
+  whole-application generator ran, or the target is a backend, and the workspace
+  holds no backend the probe drives, as a Django app) records the class with the
+  reason "no check can start this kind of backend", marked like a check switched
+  off (below): no edit can give it evidence, so it never makes the run not
+  verified, and its run record's ``stop_message`` says the runtime could not be
+  checked. A web app the agent wrote without a generator, with a server that is
+  not FastAPI, is not covered by this rule and gets no such line;
 - *records*: the probe started the backend, no entity came back created, and no
   workflow created a record and read it back ("no record could be created through
   the API"); a single refused create stays a finding not confirmed;
@@ -840,7 +863,14 @@ counts the blockers still standing when the run ended and
 carries ``notConfirmedCount`` and, for released editors, a ``blockerCount`` that
 on a run that is not incomplete adds the two (see :doc:`api`). The
 ``verification`` report reads the same split: a finding not confirmed is listed
-under ``notVerified``, a blocker never is.
+under ``notVerified``, a blocker never is. A plain warning, which is neither (an
+endpoint-coherence or form-field-type finding, a screen warning, an acceptance
+cell, a lint finding), is listed under ``advisory``, "Seen, not blocking" in
+``BESSER_GENERATION.md`` with its count: it withholds nothing and is not counted as
+not confirmed. The screen check's notes on what it could not look at (``screen
+warning: ... not checked:`` and ``screens: not run``) and the note that the
+requirements judgment was deferred are listed under ``notVerified`` instead, and a
+finding not confirmed is never listed under ``advisory`` as well.
 
 .. _spec-driven-design-fidelity:
 
@@ -910,8 +940,8 @@ that edited the tree is kept only if all of these hold:
    deferred, failed or was stopped, or the requirements could not be extracted,
    is not retired. Missing and unsupported rank
    the same, so turning one into the other is neither progress nor a fall.
-   A runtime finding (``create contract:``, ``action call:``, ``create
-   unverified:``, ``action unverified:``) is compared by what it tests: its
+   A runtime finding (``create contract:``, ``action call:``, ``read contract:``,
+   ``create unverified:``, ``action unverified:``) is compared by what it tests: its
    kind, backend and route. The same route failing with another message is
    neither retired nor added; the next attempt's prompt says it is still
    failing and quotes the new error. The probe's generated input quoted in the
@@ -925,8 +955,8 @@ that edited the tree is kept only if all of these hold:
    tree before it. Fixing the front failure of a layer shows what it hid: a
    missing module or a startup failure hides the runtime checks (where the
    probe measured that tree, its boot verdict decides instead), an entity the
-   probe could not create hides its own action calls and the creates that need
-   its record (the probe's records of both trees name the entity of each route;
+   probe could not create hides its own action calls, the reads of its record and
+   the creates that need its record (the probe's records of both trees name the entity of each route;
    without them nothing is excused), a judge that was deferred, failed or
    stopped hides its verdicts, and so does a requirement extraction that failed
    (it is retried once, on a later round), missing
@@ -1128,11 +1158,13 @@ The judge reads a digest of the app of at most 200,000 characters. Which files
 fit is decided by rank: the schema files first, then the backend code ranked by
 the share of its lines the agent wrote (a module the generator never wrote
 first, untouched generator output last), with 30% reserved for pages and
-components. The files that fit are shown in an order no edit changes (cited
-files, schemas, routers, other Python, pages and components, the rest, each by
-path), after the original request and before the previous round's feedback and
-the requirements, so a repeated judge call can reuse the cached prompt up to the
-first file that changed. When the whole app does not
+components. The shares are read against the stored generator output, which a
+FastAPI backend and a web app's backend and typed client have; without one,
+routers come first. The files that fit are shown in an order no edit changes
+(cited files, schemas, routers, other Python, pages and components, the rest,
+each by path), after the original request and before the previous round's
+feedback and the requirements, so a repeated judge call can reuse the cached
+prompt up to the first file that changed. When the whole app does not
 fit, a generator file the agent edited in under half of its lines is shown as
 its edits with three lines of context; the unchanged generator lines left out,
 and the places where generator lines were removed, are marked. A file over 1,500
@@ -1194,7 +1226,11 @@ whose request runs the cited code: its decorator, its handler (also one register
 with ``add_api_route``), or a function of the same file the handler calls or names in
 ``Depends(...)`` (not a parameter, variable or nested function of the handler with
 that name), under the literal ``prefix=`` of its router (a router whose prefix
-is not a literal verifies nothing). An abridged citation ("a ... b") counts a route
+is not a literal verifies nothing). A call FastAPI refused before the handler ran
+(its request-validation 422, a ``detail`` list of ``loc``/``msg`` errors, each ``loc``
+starting with ``body``, ``query``, ``path``, ``header`` or ``cookie``) hit no handler and
+exercises nothing; a refusal the handler raised, any 4xx a dependency or the handler
+answered (a 422 built from its own validation errors among them), still counts. An abridged citation ("a ... b") counts a route
 only when the route runs every part of it; when a part is too short to locate, the
 parts left may be code several routes share, so it counts no route ("API: not run
 (a part of the abridged citation is too short to tell its route)"). The note names that call ("API: a passing

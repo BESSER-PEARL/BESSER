@@ -389,9 +389,11 @@ SSE event types
        by running the app (``verified``), found cited in the code without
        running it (``foundInCode``), could not verify (``notVerified``),
        checked and found not met (``shippedUnenforced``: a rule missing in the
-       code, a cited implementation that does not do it) and ran and saw fail
+       code, a cited implementation that does not do it), ran and saw fail
        (``failed``, additive: a test workflow the agent wrote, which is not a
-       rule from the request), with true totals in
+       rule from the request) and saw without blocking anything (``advisory``,
+       additive: a warning a check observed, such as a screen that reported an
+       error, one item per finding), with true totals in
        ``counts``; a finding counted as a blocker is never in ``notVerified``),
        ``incomplete`` / ``incompleteReason``, ``cancelled`` (true
        when a cancel request was honoured after the run had written files, so
@@ -432,10 +434,15 @@ SSE event types
        ``The app was generated, but it was never started, so nothing shows it
        runs (its startup timed out).`` (``The app was updated, but ...`` on a
        modify run); it is ``null`` otherwise.
+       ``outcome`` is the run record's outcome (``completed``,
+       ``completed_with_blockers``, ``completed_unverified``, ``cancelled``,
+       ``budget_stop`` or ``failed``, see :ref:`spec-driven-run-record`); the
+       run's stored status and its telemetry derive from it.
        ``checksOff`` lists the classes (``requirements``, ``runtime``,
        ``build``) the server has switched off (the requirements check, the
-       startup check, the build check or shell tools): the same on every run
-       there, so it never sets ``unverified`` and never counts in
+       startup check, the build check or shell tools), and ``runtime`` for a
+       server the run built that no check can start (a Django app): no edit of
+       the run can change either, so it never sets ``unverified`` and never counts in
        ``blockerCount`` beyond its own finding notes. These fields,
        ``notConfirmedCount`` and ``unresolvedBlockerCount`` are additive: a
        client that ignores them still reads ``blockerCount`` as before.

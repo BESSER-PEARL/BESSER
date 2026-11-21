@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from besser.spec_driven_agent.state import agent_trace
+from besser.spec_driven_agent.validation.issues import RUNTIME_NOT_CHECKABLE
 from besser.utilities.provenance import get_besser_version, get_build_sha
 
 # The two lines per run. A logger of its own: the backend installs no handler for
@@ -112,6 +113,11 @@ _GAP_CLAUSES = {
 }
 
 
+# The outcomes of a run that finished without being cut short, other than ``completed``: the run
+# store's status and the telemetry outcome carry them as they are.
+FINISHED_UNCLEAN = ("completed_with_blockers", "completed_unverified")
+
+
 def as_gap(gap) -> tuple[str, str, bool]:
     """``(class, reason, configured_off)`` of a gap given with or without its third member."""
     kind, reason, *rest = gap
@@ -121,6 +127,11 @@ def as_gap(gap) -> tuple[str, str, bool]:
 def run_gaps(gaps) -> list[tuple[str, str, bool]]:
     """The gaps of this run: not the classes the server has switched off."""
     return [gap for gap in map(as_gap, gaps or ()) if not gap[2]]
+
+
+def not_checkable(gaps) -> bool:
+    """Whether the run built a server no check can start (``RUNTIME_NOT_CHECKABLE``)."""
+    return any(kind == "runtime" and reason == RUNTIME_NOT_CHECKABLE for kind, reason, _ in map(as_gap, gaps or ()))
 
 
 def not_verified_message(gaps, *, updated: bool = False) -> Optional[str]:
@@ -227,6 +238,8 @@ class RunFacts:
             self.stopped_by = _STOP_REASONS.get(stop_reason, FINISHED)
         self.stop_message = (_STOP_MESSAGES.get(self.stopped_by) or (_UNRESOLVED if incomplete else None)
                              or not_verified_message(gaps, updated=self.mode == "modify") or (
+            f"The app was {'updated' if self.mode == 'modify' else 'generated'}, but its runtime could not be "
+            f"checked: {RUNTIME_NOT_CHECKABLE}." if not_checkable(gaps) else None) or (
             f"The app was generated; {not_confirmed} finding(s) could not be confirmed and are listed "
             "for review." if not_confirmed else None))
         self.blocker_count = blocker_count

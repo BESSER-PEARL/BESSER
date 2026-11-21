@@ -5,6 +5,7 @@ Builds the system prompt that guides the LLM's behavior during Phase 2,
 including domain model context, file inventory, and scoped task lists.
 """
 
+import json
 import logging
 import os
 import re
@@ -360,7 +361,7 @@ def build_system_prompt(
     endpoint_section = ""
     if endpoint_manifest:
         endpoint_section = (
-            "\n## Backend REST API — the EXACT routes your frontend must call\n\n"
+            "\n## Backend REST API — the EXACT routes the generated backend serves\n\n"
             f"{endpoint_manifest}\n"
         )
 
@@ -973,7 +974,8 @@ def _norm_path(*parts: str) -> str:
 
 
 def build_endpoint_manifest(output_dir: str, max_routes: int = 250, *,
-                            response_model=None, mutation_coverage: bool = True) -> str:
+                            response_model=None, mutation_coverage: bool = True,
+                            use_client: bool = False) -> str:
     """List the EXACT HTTP routes the generated backend serves.
 
     The LLM-authored frontend otherwise reconstructs each URL from the router
@@ -989,6 +991,9 @@ def build_endpoint_manifest(output_dir: str, max_routes: int = 250, *,
     ``response_model``: the domain model the routers were generated from by
     ``router.py.j2``; adds what create/update return. ``mutation_coverage``:
     False keeps only the request shapes of the mutation inventory.
+    ``use_client``: with a generated typed client in the workspace, the section
+    leads with its functions (``api_client_section``) and lists only the
+    routes they do not cover; the checks that parse the routes leave it off.
     """
     port = None
     app_prefix_by_module: dict[str, str] = {}
@@ -1042,6 +1047,32 @@ def build_endpoint_manifest(output_dir: str, max_routes: int = 250, *,
     if not methods_by_path:
         return ""
 
+    base_url = f"http://localhost:{port or 8000}"
+    client = api_client_section(output_dir) if use_client else None
+    if client is not None:
+        client_text, covered = client
+        for path, methods in list(methods_by_path.items()):
+            methods.difference_update(m for m in list(methods) if (m, path) in covered)
+            if not methods:
+                del methods_by_path[path]
+        if methods_by_path:
+            header = (
+                f"{client_text}\n\nOther routes the backend serves (base URL {base_url}), not in the client: "
+                "call them with apiRequest. test_api takes the client's routes above and these."
+            )
+        else:
+            header = (
+                f"{client_text}\n\nThe backend serves no other routes (base URL {base_url}); "
+                "call a route you add with apiRequest. test_api takes the client's routes above."
+            )
+    else:
+        header = (
+            "The FastAPI backend is ALREADY generated and serves only the routes below "
+            f"(base URL {base_url}); a request to any other path will 404. Call them "
+            "from the frontend verbatim: do NOT add an `/api` prefix, do NOT "
+            "pluralize entity names, and keep the trailing slash."
+        )
+
     def _group_key(path: str) -> str:
         segs = [s for s in path.split("/") if s and not s.startswith("{")]
         return segs[0] if segs else path
@@ -1064,21 +1095,134 @@ def build_endpoint_manifest(output_dir: str, max_routes: int = 250, *,
         methods = sorted(methods_by_path[path], key=lambda x: _METHOD_ORDER.get(x, 99))
         lines.append(f"  {', '.join(methods):<20} {path}")
 
-    base_url = f"http://localhost:{port or 8000}"
-    header = (
-        "The FastAPI backend is ALREADY generated and serves only the routes below "
-        f"(base URL {base_url}); a request to any other path will 404. Call them "
-        "from the frontend verbatim: do NOT add an `/api` prefix, do NOT "
-        "pluralize entity names, and keep the trailing slash."
-    )
     body = "\n".join(lines)
     if truncated:
         body += f"\n\n  ... and {truncated} more routes (same conventions)."
     shapes = _response_shape_note(response_model) if response_model is not None else ""
-    if shapes:
-        body += f"\n\n{shapes}"
     mutations = build_mutation_manifest(output_dir, coverage=mutation_coverage)
-    return f"{header}\n\n{body}" + (f"\n\n{mutations}" if mutations else "")
+    return "\n\n".join(part for part in (header, body, shapes, mutations) if part)
+
+
+# The typed client the React generator writes, and its listing's share of the prompt.
+_API_CLIENT_FILE = "api/generated/client.ts"
+API_CLIENT_SECTION_CHARS = 4_000
+# The CRUD functions of a class's client object, with the route of each relative to its path P.
+_CRUD_FUNCTIONS = {
+    "list": ("list()", "GET", ""), "listDetailed": ("listDetailed()", "GET", ""),
+    "create": ("create(body)", "POST", ""), "get": ("get(id)", "GET", "{id}/"),
+    "update": ("update(id, body)", "PUT", "{id}/"), "delete": ("delete(id)", "DELETE", "{id}/"),
+    "count": ("count()", "GET", "count/"), "page": ("page({skip, limit})", "GET", "paginated/"),
+    "search": ("search(filters)", "GET", "search/"), "bulkCreate": ("bulkCreate(items)", "POST", "bulk/"),
+    "bulkDelete": ("bulkDelete(ids)", "DELETE", "bulk/"),
+}
+_ID_WORD = re.compile(r"\bid\b")
+_CRUD_LEGEND = (
+    "CRUD(id) at P: list() listDetailed() GET P; create(body) POST P; get(id) update(id, body) delete(id) "
+    "GET, PUT, DELETE P{id}/; count() GET Pcount/; page({skip, limit}) GET Ppaginated/; search(filters) "
+    "GET Psearch/; bulkCreate(items) POST and bulkDelete(ids) DELETE Pbulk/."
+)
+
+
+def _find_file(output_dir: str, suffix: str) -> str | None:
+    """The first file, in sorted walk order, whose workspace path ends with ``suffix``."""
+    for root, dirs, files in walk_plain(output_dir):
+        dirs[:] = sorted(d for d in dirs if d not in _SNAPSHOT_SKIP_DIRS)
+        for fname in sorted(files):
+            rel = os.path.relpath(os.path.join(root, fname), output_dir).replace("\\", "/")
+            if rel == suffix or rel.endswith("/" + suffix):
+                return rel
+    return None
+
+
+def api_client_section(output_dir: str, max_chars: int = API_CLIENT_SECTION_CHARS):
+    """The generated typed client, for the prompt: where it is, the rule to call the
+    backend through it, and its functions per class, read from the ``api_contract.json``
+    it was rendered from.
+
+    Returns ``(text, covered)``, ``covered`` being the ``(method, path)`` routes the listed
+    functions call; None without a client or a readable contract. Classes past
+    ``max_chars`` are counted, not listed, and their routes are not covered.
+    """
+    from besser.generators.react.api_client import client_functions, type_names
+
+    client = _find_file(output_dir, _API_CLIENT_FILE)
+    contract_path = _find_file(output_dir, "api_contract.json") if client else None
+    if contract_path is None:
+        return None
+    try:
+        with open(os.path.join(output_dir, contract_path), encoding="utf-8") as handle:
+            contract = json.load(handle)
+        functions = client_functions(contract)
+        names = type_names(contract)
+        paths = {entity["name"]: entity["path"] for entity in contract["entities"]}
+        system = [route for route in contract["routes"] if route["group"] == "system"]
+    except (OSError, ValueError, KeyError, TypeError):
+        logger.debug("api_contract.json not readable for the client section", exc_info=True)
+        return None
+    by_api: dict[str, dict[str, dict]] = {}
+    for call, route in functions.items():
+        api, function = call.split(".", 1)
+        by_api.setdefault(api, {"entity": route["entity"], "functions": {}})["functions"][function] = route
+    lines, covered, uses_crud = [], set(), False
+    for api in sorted(by_api):
+        entity, calls = by_api[api]["entity"], by_api[api]["functions"]
+        line, routes, crud = _client_line(api, entity, paths.get(entity, ""), names.get(entity, {}), calls)
+        if sum(len(item) + 1 for item in lines) + len(line) + 1 > max_chars:
+            lines.append(f"... and {len(by_api) - len(lines)} more classes, each a `<class>Api` "
+                         "object of the same shape (read client.ts).")
+            break
+        lines.append(line)
+        covered |= routes
+        uses_crud |= crud
+    if system:
+        # The client's apiSystem object calls the contract's system routes.
+        lines.append("- apiSystem: " + "; ".join(f"{r['op']}() {r['method']} {r['path']}" for r in system))
+        covered |= {(route["method"], route["path"]) for route in system}
+    folder = client.rsplit("/", 1)[0]
+    text = (
+        f"`{client}` is the frontend's typed API client, with the record and body types in "
+        f"`{folder}/types.ts`, both rendered from `{contract_path}`. Frontend code calls the backend "
+        "only through it (from `src/pages/`: `import { <class>Api, ApiError } from \"../api/generated/client\"`). "
+        "Each function returns the plain record, list or count (the response wrappers below never reach "
+        "the caller) and throws an ApiError with `status`, `message` and `fields`. Call a route you add "
+        "yourself with `apiRequest(method, path, { query, body })` from the same file; a fetch or axios "
+        "call to a route the client covers is reported. Never edit these generated files: regenerating "
+        "rewrites them.\n\n" + "\n".join(lines)
+    )
+    return (text + ("\n" + _CRUD_LEGEND if uses_crud else "")), covered
+
+
+def _client_line(api: str, entity: str, path: str, names: dict, calls: dict) -> tuple[str, set, bool]:
+    """One class's client functions: CRUD shorthand when every CRUD function sits at its usual route."""
+    crud = {function: route for function, route in calls.items() if function in _CRUD_FUNCTIONS}
+    key = next((route["path_params"] for route in crud.values() if route["path_params"]), [])
+    params = ", ".join(param["name"] for param in key)
+    id_path = "/".join("{" + param["name"] + "}" for param in key)
+    usual = bool(path) and set(crud) >= set(_CRUD_FUNCTIONS) - {"listDetailed"} and all(
+        (route["method"], route["path"]) == (method, path + suffix.replace("{id}", id_path))
+        for function, route in crud.items() for _, method, suffix in [_CRUD_FUNCTIONS[function]])
+    parts = []
+    if usual:
+        parts.append(f"CRUD({params}) at {path}")
+    else:
+        parts.extend(" ".join((_ID_WORD.sub(params or "id", _CRUD_FUNCTIONS[function][0]), route["method"],
+                               route["path"])) for function, route in crud.items())
+    # The other functions by owner (``relations.tags``, ``methods``), then by route path.
+    grouped: dict[str, dict[str, list[str]]] = {}
+    for function, route in calls.items():
+        if function in crud:
+            continue
+        owner, name = function.rsplit(".", 1)
+        args = [param["name"] for param in route["path_params"]]
+        if route["group"] == "method" and route.get("parameters"):
+            args.append("{" + ", ".join(f"{p['name']}?" for p in route["parameters"]) + "}")
+        grouped.setdefault(owner, {}).setdefault(route["path"], []).append(
+            f"{name}({', '.join(args)}) {route['method']}")
+    for owner, by_path in grouped.items():
+        parts.append(f"{owner}: " + " | ".join(f"{', '.join(fns)} {p}" for p, fns in by_path.items()))
+    body = names.get("create")
+    line = f"- {api} ({names.get('record', entity)}{f', body {body}' if body else ''}): " + "; ".join(parts)
+    return line, {(route["method"], route["path"]) for route in calls.values()}, usual
 
 
 # Generators whose FastAPI routers come from besser/generators/backend/templates/router.py.j2.
@@ -1248,10 +1392,22 @@ _SYMBOL_PATTERNS = {
     ".js": re.compile(
         r"^export\s+(?:default\s+)?(?:async\s+)?(?:function|const|class|let)\s+(\w+)", re.M
     ),
+    ".ts": re.compile(
+        r"^export\s+(?:default\s+)?(?:declare\s+)?(?:async\s+)?"
+        r"(?:function|const\s+enum|const|class|let|interface|type|enum)\s+(\w+)", re.M
+    ),
 }
-for _ext in (".jsx", ".ts", ".tsx", ".mjs"):
-    _SYMBOL_PATTERNS[_ext] = _SYMBOL_PATTERNS[".js"]
+_SYMBOL_PATTERNS[".jsx"] = _SYMBOL_PATTERNS[".mjs"] = _SYMBOL_PATTERNS[".js"]
+_SYMBOL_PATTERNS[".tsx"] = _SYMBOL_PATTERNS[".ts"]
 _SYMBOL_CAP = 10
+# Listed after the functions, constants and classes, so the cap drops types first.
+_TYPE_ONLY_KEYWORDS = ("interface", "type")
+# A component's configuration surface: the fields of its ``...Props`` / ``...Options``
+# interfaces, so a generated component is configured, not read whole or patched.
+_PROPS_INTERFACE_RE = re.compile(
+    r"^(?:export\s+)?interface\s+(\w*(?:Props|Options))\b[^{\n]*\{\n(.*?)^\}", re.M | re.S)
+_PROPS_FIELD_RE = re.compile(r"^([ \t]+)(\w+)(\?)?\s*:", re.M)
+_PROPS_CARD_CHARS = 400
 
 # Inventory hygiene: an alphabetical path cap otherwise fills with .besser_*
 # records, __pycache__/*.pyc and .db files and drops real source. Junk is
@@ -1273,13 +1429,29 @@ def _symbol_map(path: str) -> str:
             text = fh.read()
     except OSError:
         return ""
-    found = [
-        f"{m.group(1)}@{text.count(chr(10), 0, m.start()) + 1}"
-        for m in pattern.finditer(text)
-    ]
+    matches = sorted(pattern.finditer(text), key=lambda m: m.group(0).split()[-2] in _TYPE_ONLY_KEYWORDS)
+    found = [f"{m.group(1)}@{text.count(chr(10), 0, m.start()) + 1}" for m in matches]
     if len(found) > _SYMBOL_CAP:
-        return ", ".join(found[:_SYMBOL_CAP]) + f" (+{len(found) - _SYMBOL_CAP} more)"
-    return ", ".join(found)
+        symbols = ", ".join(found[:_SYMBOL_CAP]) + f" (+{len(found) - _SYMBOL_CAP} more)"
+    else:
+        symbols = ", ".join(found)
+    cards = "; ".join(_props_cards(text)) if path.lower().endswith((".ts", ".tsx")) else ""
+    if len(cards) > _PROPS_CARD_CHARS:
+        cards = cards[:_PROPS_CARD_CHARS].rsplit(",", 1)[0] + ", ...}"
+    return " | ".join(part for part in (symbols, cards) if part)
+
+
+def _props_cards(text: str) -> list[str]:
+    """``Name{field, optional?}`` for each props or options interface: its top-level fields only."""
+    cards = []
+    for match in _PROPS_INTERFACE_RE.finditer(text):
+        fields = _PROPS_FIELD_RE.findall(match.group(2))
+        if not fields:
+            continue
+        indent = min(len(spaces) for spaces, _, _ in fields)
+        names = [name + optional for spaces, name, optional in fields if len(spaces) == indent]
+        cards.append(f"{match.group(1)}{{{', '.join(names)}}}")
+    return cards
 
 
 def build_inventory(output_dir: str, domain_model, generator_name: str) -> str:
@@ -1347,6 +1519,9 @@ def build_inventory(output_dir: str, domain_model, generator_name: str) -> str:
     if generator_name == "generate_web_app":
         lines.append("\nBackend: FastAPI with SQLAlchemy ORM + Pydantic schemas")
         lines.append("Frontend: React + TypeScript + Vite + Tailwind CSS")
+        lines.append("Generated components (src/components/): configure them through the props and options "
+                     "listed above (a TableBlock's `options` are TableComponent's TableOptions); edit their "
+                     "source only to fix a defect in it.")
         lines.append("Docker: docker-compose.yml + Dockerfiles")
         # List frontend pages
         pages = []

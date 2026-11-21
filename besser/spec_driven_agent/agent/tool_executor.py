@@ -85,6 +85,7 @@ from besser.spec_driven_agent.pipeline.constants import (
     _APPLICATION_OUTPUT_DIRS,
     REGENERABLE_GENERATORS,
     WORKSPACE_SKIP_DIRS,
+    is_regenerated,
 )
 from besser.spec_driven_agent.run_report import RECIPE_FILENAME
 from besser.spec_driven_agent.state.agent_trace import TRACE_DIRNAME, record_generated_files
@@ -103,7 +104,8 @@ _INPUT_SCHEMAS = {
     tool["name"]: tool["input_schema"] for tool in get_all_tools_including_generators()
 }
 
-_REGENERABLE_OUTPUT_DIRS = frozenset(_APPLICATION_OUTPUT_DIRS[name] for name in REGENERABLE_GENERATORS)
+# The folder of each regenerable generator, to its generator.
+_REGENERABLE_OUTPUT_DIRS = {_APPLICATION_OUTPUT_DIRS[name]: name for name in REGENERABLE_GENERATORS}
 
 
 # OpenCode edit.ts serializes the complete read/validate/write transaction by
@@ -2129,8 +2131,9 @@ class ToolExecutor:
         out_dir = os.path.basename(os.path.normpath(directory))
         record_generated_files(self.workspace, written, out_dir, get_besser_version())
         if out_dir in _REGENERABLE_OUTPUT_DIRS:
-            # The base a later model change is merged against (#659).
-            store_written_files(self.workspace, out_dir, written, get_besser_version())
+            # The base a later model change is merged against (#659): the part a regeneration writes.
+            regenerated = [path for path in written if is_regenerated(_REGENERABLE_OUTPUT_DIRS[out_dir], path)]
+            store_written_files(self.workspace, out_dir, regenerated, get_besser_version())
         started = self._generation_started.pop(os.path.normpath(directory), time.time())
         if self.on_generated is not None and tool:
             try:

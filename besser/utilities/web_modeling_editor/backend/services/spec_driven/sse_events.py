@@ -220,6 +220,7 @@ class VerificationCounts(BaseModel):
     notVerified: int = 0
     shippedUnenforced: int = 0
     failed: int = 0
+    advisory: int = 0
 
 
 class VerificationReport(BaseModel):
@@ -235,8 +236,12 @@ class VerificationReport(BaseModel):
     (a rule missing in the code, a cited implementation that does not do it),
     ``failed`` is "we ran it and it failed" (a test workflow the agent wrote;
     the test or the app may be wrong, so it is not a rule shipped unenforced).
+    ``advisory`` is "seen, not blocking": a finding a check observed that
+    blocks nothing and is not a verdict (a screen that reported an error, a
+    call to a route no backend serves, a lint finding), one item per finding.
     A finding counted as a blocker is never in ``notVerified``. ``counts``
-    holds the true totals; the lists are capped. ``failed`` is additive.
+    holds the true totals; the lists are capped. ``failed`` and ``advisory``
+    are additive.
     """
 
     verified: list[VerificationItem] = Field(default_factory=list)
@@ -244,6 +249,7 @@ class VerificationReport(BaseModel):
     notVerified: list[VerificationItem] = Field(default_factory=list)
     shippedUnenforced: list[VerificationItem] = Field(default_factory=list)
     failed: list[VerificationItem] = Field(default_factory=list)
+    advisory: list[VerificationItem] = Field(default_factory=list)
     counts: VerificationCounts = Field(default_factory=VerificationCounts)
 
 
@@ -312,9 +318,14 @@ class DoneEvent(BaseSseEvent):
     unverifiedReason: Optional[str] = None
     # The classes of checks (``requirements``, ``runtime``, ``build``) this server has
     # switched off: the requirements check, the startup check, the build check or shell
-    # tools. A property of the server, the same on every run there, so it never sets
-    # ``unverified``; the editor may say it once. Additive.
+    # tools, and ``runtime`` for a server the run built that no check can start. No edit
+    # can change either, so it never sets ``unverified``; the editor may say it once. Additive.
     checksOff: list[str] = Field(default_factory=list)
+    # How the run ended, the run record's ``outcome``: ``completed``,
+    # ``completed_with_blockers``, ``completed_unverified``, ``cancelled``,
+    # ``budget_stop`` or ``failed``. The run's stored status and its telemetry
+    # derive from it. Additive.
+    outcome: Optional[str] = None
     # What the run verified, could not verify, and shipped unenforced. This is
     # the field to render: blockerCount is one number over all three states.
     # Additive — existing clients that ignore it are unaffected.

@@ -20,6 +20,8 @@ _SCALARS = {
     "bool": "boolean", "boolean": "boolean", "any": "unknown",
 }
 _PATH_PARAM_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
+# The client's templates, under the React templates folder; each renders to its path without ``.j2``.
+API_CLIENT_TEMPLATES = ("src/api/generated/types.ts.j2", "src/api/generated/client.ts.j2")
 
 
 def ts_type(type_name: str) -> str:

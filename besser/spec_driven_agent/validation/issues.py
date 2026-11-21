@@ -146,6 +146,7 @@ FINDING_FAMILIES = (
     ("mapper config:", ("runtime",)),
     ("create contract:", ("runtime", "dependent")),
     ("action call:", ("runtime", "dependent")),
+    ("read contract:", ("runtime", "dependent")),
     ("api scenario:", ("runtime",)),
     ("requirement", ("judge",)),
     ("task ", ("judge",)),
@@ -278,6 +279,10 @@ def required_check_unverified(check: str, reason: str) -> str:
 RUNTIME_CHECK_UNVERIFIED = "validation unverified: runtime check"
 _DID_NOT_RUN_NOTE_RE = _re.compile(
     r"^validation: (?P<check>.+?) did not run \((?P<reason>.*)\) - its checks were SKIPPED", _re.S)
+
+
+# The reason of a ``runtime`` class no check can cover: the run built a server none starts.
+RUNTIME_NOT_CHECKABLE = "no check can start this kind of backend"
 
 
 def runtime_check_unverified(check: str, reason: str) -> str:
@@ -455,8 +460,9 @@ def _classify_issue(message: str) -> ValidationIssue:
     #
     # ``action call:`` is the action-endpoint twin of ``create contract:`` -
     # constructibility.py observed a 500 from a handler it invoked. It must be
-    # a blocker, or the blocker-only fix loop never consumes it.
-    if lower.startswith(("create contract:", "action call:")):
+    # a blocker, or the blocker-only fix loop never consumes it. ``read contract:`` is
+    # a 5xx reading back a record the probe created.
+    if lower.startswith(("create contract:", "action call:", "read contract:")):
         return ValidationIssue("blocker", text)
 
     # A collector's "+N more ... truncated" note is a count, not a defect; it

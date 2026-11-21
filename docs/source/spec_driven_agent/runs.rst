@@ -135,7 +135,12 @@ increasing sequence number and stored before any subscriber sees it. That makes
 runs survive a dropped connection:
 
 - ``GET /besser_api/spec-driven/runs/{run_id}`` returns the run's lifecycle
-  metadata (never the request or the API key).
+  metadata (never the request or the API key). A run that ended in ``done`` is
+  ``succeeded`` when its run record's ``outcome`` is ``completed``, the outcome
+  itself when it is ``completed_with_blockers`` or ``completed_unverified``,
+  ``partial`` when the ``done`` event sets ``incomplete``, and ``cancelled`` or ``abandoned`` when a
+  cancel or the server's stop ended it. An event stored before the ``done`` event
+  carried ``outcome`` reads ``succeeded`` or ``partial`` as before.
 - ``GET /besser_api/spec-driven/runs/{run_id}/events?after=N`` replays every
   frame after sequence ``N`` and then follows the live producer. Native
   ``EventSource`` clients can use the ``Last-Event-ID`` header instead; the
@@ -572,7 +577,12 @@ keys, always in this order:
   started), ``records`` (no record could be created through the API) or
   ``build`` (the frontend was never built). ``configured_off`` is true when the
   server has that check switched off; such an entry is a property of the server
-  and changes neither the outcome nor the ``stop_message``. A finished run with
+  and changes neither the outcome nor the ``stop_message``. It is also true for
+  ``runtime`` with the reason ``no check can start this kind of backend`` (a
+  server no check starts, see :ref:`spec-driven-not-verified`): the outcome stays
+  as it is, and a run with nothing else to say gets the ``stop_message`` ``The app
+  was generated, but its runtime could not be checked: no check can start this
+  kind of backend.`` A finished run with
   another entry and no blocker ends ``completed_unverified``, and its
   ``stop_message`` names them: ``The app was generated, but it was not checked
   against your request (too little time was left).``
@@ -602,7 +612,8 @@ lines_ai_this_run=... archive_written=...``: the token counts under the recipe's
 ``usage`` names, the line counts as in ``lines``, and ``-`` for a value the run
 does not have (``not_verified`` and ``checks_off`` list classes, comma-separated).
 ``outcome`` is ``completed``, ``completed_unverified``, ``completed_with_blockers``, ``cancelled``,
-``budget_stop`` or ``failed``. Neither line carries the request or the key.
+``budget_stop`` or ``failed``. The ``done`` event carries the same ``outcome``; the run's stored
+status and its telemetry ``run_summary`` derive from it. Neither line carries the request or the key.
 They are written by the ``besser.spec_driven.runs`` logger, which the backend
 gives a handler of its own at startup: its other ``INFO`` records have none.
 

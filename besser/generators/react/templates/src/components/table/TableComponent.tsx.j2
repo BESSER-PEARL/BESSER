@@ -2,8 +2,10 @@ import React, { CSSProperties, useEffect, useMemo, useRef, useState } from "reac
 import axios from "axios";
 import { API_BASE_URL } from "../../api/generated/client";
 import { createPortal } from "react-dom";
+import { useInRouterContext, useNavigate } from "react-router-dom";
 import { useTableContext } from "../../contexts/TableContext";
 import { notifyDataChanged, useDataVersion } from "../runtime/dataVersion";
+import { applyFilter, parseFilterExpression } from "../runtime/bindingData";
 import { coerceLookupTarget, fetchLookupOptions, lookupOptionLabel, lookupOptionValue } from "../runtime/lookup";
 import { humanize } from "../runtime/humanize";
 import { ColumnFilter } from "./ColumnFilter";
@@ -54,6 +56,14 @@ interface TableOptions {
   columns?: Array<{ field: string; label?: string; type?: string; column_type?: string; path?: string } | string>;
   formColumns?: Array<{ field: string; label?: string; type?: string; column_type?: string; path?: string; lookup_field?: string; lookupField?: string } | string>;
   form_columns?: Array<{ field: string; label?: string; type?: string; column_type?: string; path?: string; lookup_field?: string; lookupField?: string } | string>;
+  // Route a row click opens; each {field} is replaced by the row's value (e.g. "/orders/{id}").
+  rowLink?: string;
+  // Column filter values the table opens with, keyed by field, as its column filters write them.
+  initialFilters?: Record<string, string>;
+  // Shown when there are no rows, instead of "No data available for <entity>."
+  emptyText?: string;
+  // Extra buttons on every row.
+  rowActions?: Array<{ label: string; onClick: (row: any) => void }>;
 }
 
 interface Props {
@@ -69,6 +79,7 @@ interface Props {
 // Stable fallbacks: a fresh `[]` per render would invalidate the columns ->
 // formColumns memo chain on every render and re-trigger the modal effects.
 const EMPTY_COLUMNS: any[] = [];
+const EMPTY_FILTERS: Record<string, string> = {};
 
 const formatCellValue = (value: any): string => {
   if (value === null || value === undefined) {
@@ -90,6 +101,10 @@ const formatCellValue = (value: any): string => {
 const getNestedValue = (obj: any, path: string): any => {
   return path.split('.').reduce((current, key) => current?.[key], obj);
 };
+
+// A row link with each {field} replaced by the row's URL-encoded value.
+const resolveRowLink = (template: string, row: any): string =>
+  template.replace(/\{([\w.]+)\}/g, (_, field: string) => encodeURIComponent(String(getNestedValue(row, field) ?? "")));
 
 // Selection follows the record, never its position after sorting/filtering.
 // JSON preserves composite-key boundaries (unlike joining key parts with '/').
@@ -118,7 +133,14 @@ export const TableComponent: React.FC<Props> = ({
   const selectedRow = selectedRows[id];
   const rowKeyFields: string[] | undefined = dataBinding?.row_key_fields ?? dataBinding?.rowKeyFields;
   const selectedRowKey = getRowKey(selectedRow, rowKeyFields);
-  const [columnFilters, setColumnFilters] = useState<Record<string, string>>({});
+  const [columnFilters, setColumnFilters] = useState<Record<string, string>>(() => ({ ...(options?.initialFilters ?? {}) }));
+  // Outside a router (a component test) a row link has nothing to open; that never changes while mounted.
+  const navigate = useInRouterContext() ? useNavigate() : undefined; // eslint-disable-line react-hooks/rules-of-hooks
+  // The GUI model's filter on the bound data, applied as charts and metric cards apply it.
+  const bindingFilter = useMemo(
+    () => parseFilterExpression(dataBinding?.filter_expression || dataBinding?.filter),
+    [dataBinding?.filter_expression, dataBinding?.filter]
+  );
   const [sortConfig, setSortConfig] = useState<{ field: string; direction: 'asc' | 'desc' } | null>(null);
 
   // Fetch table data from backend
@@ -149,8 +171,8 @@ export const TableComponent: React.FC<Props> = ({
       )
     );
 
-    // Add detailed=true query param if there are lookup columns
-    const urlParams = (hasLookupColumns || hasLookupFormColumns) ? '?detailed=true' : '';
+    // Add detailed=true query param if there are lookup columns (or a filter on a related field)
+    const urlParams = (hasLookupColumns || hasLookupFormColumns || bindingFilter?.hasNestedFields) ? '?detailed=true' : '';
     const url = endpoint.startsWith("/") 
       ? backendBase + endpoint + urlParams
       : endpoint + urlParams;
@@ -196,6 +218,10 @@ export const TableComponent: React.FC<Props> = ({
     formColumns: (options as any)?.formColumns ?? (options as any)?.form_columns ?? EMPTY_COLUMNS,
     form_columns: (options as any)?.formColumns ?? (options as any)?.form_columns ?? EMPTY_COLUMNS,
     actionButtons: (options as any)?.actionButtons ?? (options as any)?.["action-buttons"] ?? false,
+    rowLink: options?.rowLink ?? "",
+    initialFilters: options?.initialFilters ?? EMPTY_FILTERS,
+    emptyText: options?.emptyText ?? "",
+    rowActions: options?.rowActions ?? EMPTY_COLUMNS,
   };
 
   const normalizeOptionColumns = (rawColumns: any[]): TableColumn[] => {
@@ -248,7 +274,7 @@ export const TableComponent: React.FC<Props> = ({
     if (!Array.isArray(tableData)) {
       return [];
     }
-    return tableData
+    return applyFilter(tableData, bindingFilter)
       .filter((row) => row !== null && row !== undefined)
       .map((row) => {
         if (row && typeof row === "object" && !Array.isArray(row)) {
@@ -256,7 +282,7 @@ export const TableComponent: React.FC<Props> = ({
         }
         return { value: row };
       });
-  }, [tableData]);
+  }, [tableData, bindingFilter]);
 
   // Refresh the action context with the current row, or clear a deleted row.
   // Unkeyed display-only rows use object identity; never guess another record.
@@ -1632,8 +1658,7 @@ export const TableComponent: React.FC<Props> = ({
             backgroundColor: "#f8fafc",
           }}
         >
-          No data available for{" "}
-          {dataBinding?.entity ? `${dataBinding.entity}` : "this table"}.
+          {resolvedOptions.emptyText || `No data available for ${dataBinding?.entity || "this table"}.`}
         </div>
       ) : (
         <div className="table-scroll">
@@ -1666,6 +1691,7 @@ export const TableComponent: React.FC<Props> = ({
                       </div>
                     </th>
                   ))}
+                  {resolvedOptions.rowActions.length > 0 && <th style={{ padding: "10px 4px" }}></th>}
                   {resolvedOptions.actionButtons && (
                     <th style={{ textAlign: "center", padding: "10px 4px", fontWeight: 600, width: "40px", minWidth: "40px", maxWidth: "40px", overflow: "hidden" }}></th>
                   )}
@@ -1681,9 +1707,13 @@ export const TableComponent: React.FC<Props> = ({
                 <tr
                   key={`${id}-row-${rowKey ?? rowIndex}`}
                   aria-selected={isSelected}
-                  onClick={() => {
+                  onClick={(event) => {
                     setSelectedRow(id, row);
                     console.log(`[TableComponent] Row selected in table ${id}:`, row);
+                    // A button in the row (edit, delete, a row action) does its own thing.
+                    if (resolvedOptions.rowLink && navigate && !(event.target as HTMLElement).closest("button")) {
+                      navigate(resolveRowLink(resolvedOptions.rowLink, row));
+                    }
                   }}
                   style={{
                     backgroundColor: isSelected
@@ -1760,6 +1790,22 @@ export const TableComponent: React.FC<Props> = ({
                       </td>
                     );
                   })}
+                  {resolvedOptions.rowActions.length > 0 && (
+                    <td style={{ padding: "6px 8px", whiteSpace: "nowrap" }}>
+                      {resolvedOptions.rowActions.map((action: { label: string; onClick: (row: any) => void }) => (
+                        <button
+                          key={action.label}
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            action.onClick(row);
+                          }}
+                        >
+                          {action.label}
+                        </button>
+                      ))}
+                    </td>
+                  )}
                   {resolvedOptions.actionButtons && (
                     <td style={{ textAlign: "center", padding: "10px 2px", width: "40px", minWidth: "40px", maxWidth: "40px", overflow: "hidden" }}>
                       <div style={{ display: "flex", flexDirection: "row", justifyContent: "center", alignItems: "center", gap: "2px", width: "100%" }}>

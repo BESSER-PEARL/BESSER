@@ -82,6 +82,25 @@ def test_wide_windows_read_one_after_another_are_a_crawl_too(tmp_path):
     assert "single read" not in windows[2]["hint"]
 
 
+def test_paging_a_file_too_large_for_one_read_is_not_called_out(tmp_path):
+    """Reads without a limit that follow each truncated result's next offset are the right way
+    through a file larger than one read; the last, untruncated page must not be nagged."""
+    (tmp_path / "big.ts").write_text("".join(
+        f"export const value_{i:05d} = compute({i}, 'abcdefghij');\n" for i in range(3_000)),
+        encoding="utf-8")
+    executor = ToolExecutor(workspace=str(tmp_path))
+    pages, offset = [], 0
+    while True:
+        page = executor.execute_typed("read_file", {"path": "big.ts", "offset": offset}).payload
+        pages.append(page)
+        if not page.get("truncated"):
+            break
+        offset = page["end_line"]
+
+    assert len(pages) >= 3
+    assert all("This is read" not in page.get("hint", "") for page in pages)
+
+
 def test_a_full_read_no_longer_advertises_pagination(executor):
     """The whole file fits; telling it to paginate is what caused the crawl."""
     result = read(executor)

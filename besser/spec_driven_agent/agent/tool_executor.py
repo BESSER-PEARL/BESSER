@@ -2742,7 +2742,9 @@ class ToolExecutor:
         window = end - start
         last = self._last_read_spans.get(rel)
         self._last_read_spans[rel] = (start, end)
-        continues = last is not None and last[0] < start <= last[1] < end
+        # Paging without a limit through a file larger than one read is not a crawl.
+        continues = (args.get("limit") is not None and last is not None
+                     and last[0] < start <= last[1] < end)
         if (self._read_counts[rel] >= 3 and not truncated
                 and 0 < window and (window < 40 or continues) and total_lines > 2 * window):
             result["hint"] = (

@@ -1248,7 +1248,7 @@ def build_app_digest_details(output_dir: str, *, focus_paths: list[str] | None =
             if 4 <= key[1] <= 5 and total + len(chunk) + 2 <= ui_budget:
                 reserved.add(rel)
                 total += len(chunk) + 2
-    parts: list[str] = []
+    kept: list[tuple[str, str]] = []
     omitted = unreadable + omitted_by_focus + styles_left_out
     truncated_paths = []
     over_budget = []
@@ -1260,10 +1260,15 @@ def build_app_digest_details(output_dir: str, *, focus_paths: list[str] | None =
                 over_budget.append(rel)
                 continue
             total += len(chunk) + 2
-        parts.append(chunk)
+        kept.append((rel, chunk))
         shown.append(rel)
         if truncated or rel in regions:
             truncated_paths.append(rel)
+    # The written shares above pick what fits. Shown cited files first, then by
+    # kind and path, which no edit changes, so a repeated judge call can reuse
+    # the cached prompt up to the first file that changed.
+    parts = [chunk for _, chunk in sorted(
+        kept, key=lambda item: (item[0] not in focused, *_digest_priority(item[0])))]
     footer = (
         "\n\n## Digest coverage (not application source)\n"
         f"Files shown: {len(parts)}; truncated excerpts: {len(truncated_paths)}; "
@@ -1416,8 +1421,10 @@ def judge_coverage(requirements: list[dict], digest: str, llm_client, *,
     by_id = {r["id"]: r for r in requirements}
     verdicts: dict[int, dict] = {}
     if application_requirements:
-        judge_prompt = (authority + repair_context + f"## Requirements\n\n{listing}"
-                        f"\n\n## Generated code\n\n{digest}")
+        # Most stable first, so a repeated call can reuse the cached prefix:
+        # the request, the code, then the feedback and the requirements.
+        judge_prompt = (authority + f"## Generated code\n\n{digest}\n\n"
+                        + repair_context + f"## Requirements\n\n{listing}")
         # The first attempt uses the planning model first; a
         # retry forces the primary model straight away (see _call_with_tool)
         # instead of repeating the exact call that just failed or came back

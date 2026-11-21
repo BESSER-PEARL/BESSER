@@ -38,7 +38,7 @@ from besser.BUML.metamodel.structural import DomainModel
 from besser.utilities.provenance import get_besser_version
 # The canonical set, shared with get_tools_for() so the advertised list and the
 # dispatch gate can never disagree about which tools are shell tools.
-from besser.spec_driven_agent.agent.history_eviction import REJECTED_DRAFT_PLACEHOLDER
+from besser.spec_driven_agent.agent.history_eviction import EVICTED_EDIT_BODY, REJECTED_DRAFT_PLACEHOLDER
 from besser.spec_driven_agent.agent.runbook import backend_files, files_the_app_wrote
 from besser.spec_driven_agent.agent.tools import _SHELL_TOOLS as _SHELL_TOOL_NAMES
 from besser.spec_driven_agent.agent.tools import dumps_for_model
@@ -977,6 +977,8 @@ class ToolExecutor:
         # line displayed (possibly over several windows), inlined or written in
         # full. A partial read or a one-line modify is not enough.
         self._fully_seen: set[str] = set()
+        # Files seen whole whose last whole copy eviction removed from the conversation.
+        self._evicted_views: set[str] = set()
         self._read_coverage: dict[str, tuple[str, set[int]]] = {}
         # Finding replacement text in a file is not proof that an edit happened.
         # Receipts bind the exact request to the entire successful post-write
@@ -989,6 +991,8 @@ class ToolExecutor:
         self._read_epoch = uuid4().hex[:12]
         # Reads per path, to catch a model crawling one file in tiny windows.
         self._read_counts: dict[str, int] = {}
+        # path -> (start, end) of its last read, 0-based end-exclusive: a crawl continues it.
+        self._last_read_spans: dict[str, tuple[int, int]] = {}
         self._read_views: dict[str, tuple[str, str, int, int]] = {}
         # Consecutive refused edits per path: the edit-recovery ladder's rung.
         self._edit_recovery: dict[str, int] = {}
@@ -1064,6 +1068,14 @@ class ToolExecutor:
         self._shown_reads.clear()
         self._stubbed_reads.clear()
         self._reported_findings.clear()
+
+    def forget_full_views(self, paths) -> None:
+        """The conversation no longer shows these files whole: write_file needs a read first."""
+        for path in map(self._rel_key, paths):
+            if path in self._fully_seen:
+                self._evicted_views.add(path)
+            self._fully_seen.discard(path)
+            self._read_coverage.pop(path, None)
 
     def close(self) -> None:
         """End the run's shell session; every process it holds is killed."""
@@ -1911,12 +1923,13 @@ class ToolExecutor:
                             "BESSER (trace, checkpoint, attribution, logs). It can be read but "
                             "not written, edited or deleted. Change the project's own files instead."
                         )})
-                    placeholder = next((key for key in _EDIT_BODY_KEYS if REJECTED_DRAFT_PLACEHOLDER
-                                        in str(arguments.get(key) or "")), None)
+                    placeholder = next((key for key in _EDIT_BODY_KEYS if any(
+                        marker in str(arguments.get(key) or "")
+                        for marker in (REJECTED_DRAFT_PLACEHOLDER, EVICTED_EDIT_BODY))), None)
                     if placeholder:
                         return ToolExecutionResult("error", {"error": (
-                            f"{tool_name} refused: {placeholder} holds the placeholder the "
-                            "conversation shows in place of a refused draft, not code. Nothing "
+                            f"{tool_name} refused: {placeholder} holds a placeholder the "
+                            "conversation shows in place of an omitted body, not code. Nothing "
                             "was written. Read the current source and send the real text."
                         ), "rejection_kind": "placeholder"})
                     if tool_name != "read_file":
@@ -2728,19 +2741,25 @@ class ToolExecutor:
             # model to crawl a file in tiny windows.
             result["total_lines"] = total_lines
 
-        # Crawling a file that fits in one read in 10-line windows can burn a
-        # third of the turn budget. Prose in the tool description does not
-        # stop it, so say it where the behaviour happens.
+        # Crawling a file in narrow windows, or in wide ones each continuing the
+        # last, can burn a third of the turn budget. Prose in the tool
+        # description does not stop it, so say it where the behaviour happens.
         rel = args["path"].replace("\\", "/").strip()
         self._read_counts[rel] = self._read_counts.get(rel, 0) + 1
         window = end - start
+        last = self._last_read_spans.get(rel)
+        self._last_read_spans[rel] = (start, end)
+        # Paging without a limit through a file larger than one read is not a crawl.
+        continues = (args.get("limit") is not None and last is not None
+                     and last[0] < start <= last[1] < end)
         if (self._read_counts[rel] >= 3 and not truncated
-                and 0 < window < 40 and total_lines > 2 * window):
+                and 0 < window and (window < 40 or continues) and total_lines > 2 * window):
             result["hint"] = (
                 f"This is read {self._read_counts[rel]} of {rel}, covering {window} "
                 f"of {total_lines} lines. Read the whole function or class you intend "
-                "to change in one call - a file this size fits in a single read. "
-                "Each narrow window costs a turn and still omits the enclosing block."
+                f"to change in one call: read_file without limit returns up to "
+                f"{MAX_FILE_READ:,} characters from offset. Each window costs a turn "
+                "and still omits the enclosing block."
             )
 
         return result
@@ -3021,6 +3040,12 @@ class ToolExecutor:
                 "file with modify_file instead."
             )}
         if os.path.isfile(path) and rel_path.strip() not in self._fully_seen:
+            if rel_path.strip() in self._evicted_views:
+                return {"error": (
+                    f"{args['path']} exists and the conversation no longer shows all of it: "
+                    "its earlier copies were omitted. Read it again with read_file before "
+                    "rewriting it, or edit it with modify_file."
+                )}
             return {"error": (
                 f"{args['path']} exists and you have read only part of it this run; "
                 "a full rewrite would drop the lines you have not seen. Read the "

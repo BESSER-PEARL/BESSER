@@ -274,7 +274,7 @@ class ModifyRunMixin:
                 self._trace.write(
                     EVENT_VALIDATION_ISSUE, phase="seed_forward", message=issue,
                 )
-        self._trace.write(EVENT_PHASE_ENTER, phase="phase2_modify")
+        self._trace.write(EVENT_PHASE_ENTER, phase="phase2_modify", compact_threshold=self._compact_threshold())
         self._run_phase2(instructions, extra_issues=self._modify_scoped_issues(phase1_issues))
         self._trace.write(
             EVENT_PHASE_EXIT, phase="phase2_modify", turns=self.total_turns,

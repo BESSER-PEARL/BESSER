@@ -209,8 +209,10 @@ class TestUnknownModelsAreUntouched:
     @pytest.mark.parametrize("model", ["gpt-4o", "mistral-large-latest"])
     def test_request_carries_no_sampling_keys(self, model):
         kwargs = _captured_kwargs(OpenAIProvider(api_key="k", model=model))
-        for key in ("temperature", "top_p", "extra_body", "top_k", "min_p"):
+        for key in ("temperature", "top_p", "top_k", "min_p"):
             assert key not in kwargs
+        # OpenAI's own API gets the run's prompt cache key and nothing else there.
+        assert set(kwargs.get("extra_body", {})) <= {"prompt_cache_key"}
 
     def test_gpt_5_6_gets_no_temperature(self):
         # OpenAI reasoning models reject temperature/top_p, and this model is
@@ -218,7 +220,7 @@ class TestUnknownModelsAreUntouched:
         kwargs = _captured_kwargs(OpenAIProvider(api_key="k", model="gpt-5.6-terra"))
         assert "temperature" not in kwargs
         assert "top_p" not in kwargs
-        assert "extra_body" not in kwargs
+        assert set(kwargs.get("extra_body", {})) <= {"prompt_cache_key"}
 
 
 # ======================================================================

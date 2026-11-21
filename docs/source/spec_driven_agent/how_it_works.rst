@@ -304,8 +304,13 @@ reading a trace and wondering why a run did what it did.
        with a known small context window the threshold is lowered to that
        window minus a reserve for the reply (the run's output-token ceiling,
        at least 16,000 tokens), so a small model compacts instead of
-       overflowing; a model with a known large window gets 80% of that
-       difference, capped at ``BESSER_LLM_MAX_COMPACT_THRESHOLD``.
+       overflowing; a hosted model with a known large window gets 80% of
+       that difference, capped at ``BESSER_LLM_MAX_COMPACT_THRESHOLD``. A
+       provider catalog's window only ever lowers the threshold. When
+       history eviction is turned on (``BESSER_LLM_HISTORY_EVICTION``, off
+       by default, see :doc:`configuration`), stale file bodies are stubbed
+       in batches before any of this, which keeps most runs below the
+       threshold.
    * - Truncation recovery
      - When a response is cut off at the output-token limit, the partial turn
        is discarded rather than executed — nothing lands half-written on disk —
@@ -378,7 +383,9 @@ reading a trace and wondering why a run did what it did.
        ``tool_call``, ``cost_update``, ``llm_call``, ``compaction``, ``eviction``,
        ``checkpoint``, ``error``, ``target``, ``snapshot``, ``rollback``, ``regeneration``,
        ``validation_issue``, ``requirement_cited``, ``run_end``). ``run_start`` holds the start of
-       the user's own request, not the modeling agent's notes. Every Phase 2
+       the user's own request, not the modeling agent's notes. The Phase 2
+       ``phase_enter`` holds the ``compact_threshold`` the run's model
+       resolved to. Every Phase 2
        turn, the closing reply included, and every Phase 3 fix turn
        (``phase: "phase3_fix"``) writes a ``turn_start`` and a ``cost_update``
        with the cumulative token counters. Each paid call outside those loops
@@ -393,7 +400,9 @@ reading a trace and wondering why a run did what it did.
        id). Each also names ``model`` (and ``planning_model``, which gap analysis
        and the judge try first). A ``compaction`` record (the history's
        estimated ``tokens_before`` and ``tokens_after``) or an ``eviction``
-       record (how many stale file bodies were ``stubbed``) names the ``turn``
+       record (how many stale file bodies were ``stubbed``, the ``reason``:
+       ``superseded`` for a batch, ``threshold`` at the compaction
+       threshold, and the ``tokens_before`` and ``tokens_after``) names the ``turn``
        whose request carried the rewritten history, so the cache miss that
        turn pays is expected; compactions are also counted in the checkpoint
        and the recipe (``compactions``). A ``tool_call`` record holds its

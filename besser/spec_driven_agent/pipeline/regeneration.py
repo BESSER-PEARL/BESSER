@@ -43,7 +43,9 @@ from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
 from besser.spec_driven_agent.pipeline.constants import (
     _APPLICATION_OUTPUT_DIRS,
     REGENERABLE_GENERATORS,
+    REGENERATED_PATHS,
     WORKSPACE_SKIP_DIRS,
+    is_regenerated,
 )
 from besser.spec_driven_agent.state.agent_trace import (
     KIND_GENERATOR,
@@ -150,6 +152,10 @@ class Regeneration:
                 "BESSER merged the model change into these edited generated files and kept the edits: "
                 + "; ".join(filter(None, [_paths(self.merged), ("moved " + ", ".join(moved)) if moved else ""]))
                 + ". Do not apply the model change to them again; check that the edits still fit it.")
+        if self.generator in REGENERATED_PATHS:
+            lines.append(
+                f"Only {_paths(list(REGENERATED_PATHS[self.generator]))} follow the model by regeneration; the "
+                "generator's other files (its screens) do not: apply the model change to them where it shows.")
         if self.upgraded_from:
             lines.append(
                 f"BESSER was upgraded since these files were generated (from {self.upgraded_from}): the "
@@ -180,6 +186,7 @@ class Regeneration:
 def regenerate(
     workspace: str, generator: str, domain_model: DomainModel, previous_files: set[str] | None,
     renamed_classes: tuple[tuple[str, str], ...] = (), previous_domain_model: DomainModel | None = None,
+    app_name: str | None = None,
 ) -> tuple[Regeneration | None, str]:
     """Bring ``generator``'s files in ``workspace`` up to ``domain_model``.
 
@@ -189,6 +196,9 @@ def regenerate(
     change's ``(old, new)`` class renames, whose files move with their edits.
     ``previous_domain_model`` is the model the stored output was generated from:
     it checks the stored files, and rebuilds the merge base after a BESSER upgrade.
+    ``app_name`` is the app's name, as Phase 1 gave it to the generator.
+    Only the generator's paths ``is_regenerated`` names are written (the web app's
+    backend and typed client); its other files are left alone.
     Returns the regeneration, or None and the reason it did not happen.
     """
     if generator not in REGENERABLE_GENERATORS:
@@ -207,7 +217,7 @@ def regenerate(
         stored = None
         warnings.append("edited files are not merged: pygit2 is not installed (pip install besser[agents])")
     if stored is not None and previous_domain_model is not None and stored.besser_version == get_besser_version():
-        expected, error = _generate(generator, previous_domain_model, out_dir)
+        expected, error = _generate(generator, previous_domain_model, out_dir, app_name)
         if expected is None:
             warnings.append(f"the stored generator output was not checked: generating its model failed ({error})")
         elif _without(expected, stored.pending) != _without(stored.files, stored.pending):
@@ -228,14 +238,14 @@ def regenerate(
                           "so edited files cannot be told apart")
         if previous_files is None:
             logger.warning("No seed recipe: a generated file deleted since the last run may come back")
-    new_files, error = _generate(generator, domain_model, out_dir)
+    new_files, error = _generate(generator, domain_model, out_dir, app_name)
     if new_files is None:
         return None, error
     upgraded_from, rebuilt = None, None
     if stored is not None:
         if stored.besser_version != get_besser_version():
             upgraded_from = stored.besser_version or "an unknown version"
-            rebuilt, warning = _rebuild_base(generator, previous_domain_model, out_dir)
+            rebuilt, warning = _rebuild_base(generator, previous_domain_model, out_dir, app_name)
             warnings += [warning] if warning else []
         regenerator: _Apply = _Merger(workspace, out_dir, stored.files, rebuilt, renamed_classes)
     else:
@@ -252,13 +262,13 @@ def regenerate(
 
 
 def _rebuild_base(
-    generator: str, previous_domain_model: DomainModel | None, out_dir: str
+    generator: str, previous_domain_model: DomainModel | None, out_dir: str, app_name: str | None
 ) -> tuple[dict[str, bytes] | None, str]:
     """The new generator's output for the model the stored output came from."""
     if previous_domain_model is None:
         return None, ("BESSER was upgraded and the stored output has no model to rebuild the merge base "
                       "with: edited files are merged against the older generator's output")
-    rebuilt, error = _generate(generator, previous_domain_model, out_dir)
+    rebuilt, error = _generate(generator, previous_domain_model, out_dir, app_name)
     if rebuilt is None:
         return None, f"BESSER was upgraded and rebuilding the merge base failed ({error})"
     return rebuilt, ""
@@ -450,7 +460,7 @@ class _Regenerator(_Apply):
     def _apply(self, new_files: dict[str, bytes]) -> None:
         old_generated = {rel for rel, (_, owners) in self.state.files.items()
                          if is_plain_relpath(rel) and rel.startswith(self.out_dir + "/")
-                         and self.owner.intersection(owners)}
+                         and is_regenerated(self.result.generator, rel) and self.owner.intersection(owners)}
         for rel in sorted(set(new_files) | old_generated):
             self._file(rel, new_files.get(rel))
 
@@ -549,22 +559,35 @@ def _file_update(rel: str, current: list[str], generated: list[bool] | None, new
     return update
 
 
-def _generate(generator: str, domain_model: DomainModel, out_dir: str) -> tuple[dict[str, bytes] | None, str]:
+def _generate(generator: str, domain_model: DomainModel, out_dir: str,
+              app_name: str | None = None) -> tuple[dict[str, bytes] | None, str]:
     """Run the generator into a scratch folder, exactly as Phase 1 does: each text file's
-    bytes by workspace path. Bytes, because the generator mixes CRLF and LF files on Windows."""
+    bytes by workspace path. Bytes, because the generator mixes CRLF and LF files on Windows.
+    A generator regenerated in part writes only that part, which needs the domain model alone."""
     work = tempfile.mkdtemp(prefix="besser_llm_regen_")
     try:
-        reply = json.loads(ToolExecutor(work, domain_model=domain_model).execute(generator, {}))
-        if reply.get("error"):
-            return None, f"the generator failed: {reply['error']}"[:MAX_REASON_CHARS]
+        if generator == "generate_web_app":
+            from besser.generators.web_app import WebAppGenerator
+
+            try:
+                WebAppGenerator(domain_model, None, output_dir=os.path.join(work, out_dir),
+                                app_name=app_name).generate_model_output()
+            except Exception as exc:
+                return None, f"the generator failed: {type(exc).__name__}: {exc}"[:MAX_REASON_CHARS]
+        else:
+            reply = json.loads(ToolExecutor(work, domain_model=domain_model, app_name=app_name)
+                               .execute(generator, {}))
+            if reply.get("error"):
+                return None, f"the generator failed: {reply['error']}"[:MAX_REASON_CHARS]
         files: dict[str, bytes] = {}
         for root, dirs, names in walk_plain(os.path.join(work, out_dir)):
             dirs[:] = [d for d in dirs if d not in WORKSPACE_SKIP_DIRS]
             for name in names:
                 with open(os.path.join(root, name), "rb") as handle:
                     content = handle.read()
-                if is_text(content):
-                    files[os.path.relpath(os.path.join(root, name), work).replace(os.sep, "/")] = content
+                rel = os.path.relpath(os.path.join(root, name), work).replace(os.sep, "/")
+                if is_text(content) and is_regenerated(generator, rel):
+                    files[rel] = content
         return files, ""
     finally:
         shutil.rmtree(work, ignore_errors=True)

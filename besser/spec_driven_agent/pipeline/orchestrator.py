@@ -5388,6 +5388,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 response_model=(self.domain_model if self._generator_used in ROUTER_TEMPLATE_GENERATORS
                                 else None),
                 mutation_coverage=mutation_coverage_applies(self.domain_model, known_requirements),
+                use_client=True,
             )
         except Exception:
             logger.debug("Endpoint manifest build failed", exc_info=True)

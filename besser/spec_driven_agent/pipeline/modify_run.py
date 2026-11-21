@@ -384,7 +384,7 @@ class ModifyRunMixin:
         try:
             regeneration, reason = regenerate(
                 self.output_dir, generator, self.domain_model, self._seed_output_files,
-                change.class_renames if change else (), self._previous_domain_model)
+                change.class_renames if change else (), self._previous_domain_model, self.executor.app_name)
         except Exception as exc:
             # The run goes on as before: the agent applies the whole model change.
             logger.warning("Regenerating generated files failed", exc_info=True)

@@ -89,6 +89,20 @@ def test_the_library_template_gets_a_client_and_a_contract(tmp_path):
     assert "export const bookApi = {" in _read(generated / "client.ts")
 
 
+def test_the_client_alone_is_the_one_the_whole_frontend_ships(tmp_path):
+    """A frontend without a GUI model gets the same client files, byte for byte."""
+    model = _task_model()
+    generated = _generate(tmp_path / "full", model) / "api" / "generated"
+
+    written = ReactGenerator(model, None, output_dir=str(tmp_path / "alone")).generate_api_client()
+
+    assert written == ["src/api/generated/types.ts", "src/api/generated/client.ts"]
+    alone = tmp_path / "alone" / "src" / "api" / "generated"
+    assert sorted(p.name for p in alone.iterdir()) == ["client.ts", "types.ts"]
+    for name in ("client.ts", "types.ts"):
+        assert (alone / name).read_bytes() == (generated / name).read_bytes()
+
+
 def test_the_base_url_is_defined_once(tmp_path):
     class_json = json.loads(LIBRARY_CLASS.read_text(encoding="utf-8"))
     domain = process_class_diagram(class_json)

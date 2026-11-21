@@ -303,9 +303,18 @@ _APPLICATION_OUTPUT_DIRS = {
 }
 _APPLICATION_PRIMARY_TOOLS = frozenset(_APPLICATION_OUTPUT_DIRS)
 # The generators a modify run regenerates and merges after a model change (#659):
-# on 44 FastAPI runs, regenerating kept every app working. The web app's React
-# output has no determinism test yet, so it is not regenerated.
-REGENERABLE_GENERATORS = frozenset({"generate_fastapi_backend"})
+# on 44 FastAPI runs, regenerating kept every app working.
+REGENERABLE_GENERATORS = frozenset({"generate_fastapi_backend", "generate_web_app"})
+# A generator regenerated only in part: the workspace paths it regenerates, those
+# derived from the domain model alone. The web app's pages and components need
+# the GUI model, which a model change does not bring.
+REGENERATED_PATHS = {"generate_web_app": ("web_app/backend/", "web_app/frontend/src/api/generated/")}
+
+
+def is_regenerated(generator: str, rel_path: str) -> bool:
+    """Whether a regeneration of ``generator`` writes this workspace path (``/``-separated)."""
+    prefixes = REGENERATED_PATHS.get(generator)
+    return prefixes is None or rel_path.startswith(prefixes)
 
 # Sub-generator tools that a chosen PRIMARY generator already bundles (e.g. a
 # FastAPI backend already contains SQLAlchemy models, Pydantic schemas and REST

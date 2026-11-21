@@ -88,7 +88,12 @@ that was already broken is never refused, so it can be repaired.
   the generated client's ``apiRequest(<METHOD>, <path>)`` calls, that match no
   generated backend route, and calls of a typed client function
   (``bookApi.create``) the generated client does not have. The typed functions
-  are resolved to their routes through the app's ``api_contract.json``.
+  are resolved to their routes through the app's ``api_contract.json``. In an
+  app that has the generated client, a literal ``fetch`` or Axios call to a
+  route the client covers is reported too, naming the client function to call
+  instead; a route the client does not cover (one the agent added) is not.
+  Such calls are reported once per file and client function, after the calls
+  to missing routes and under their own cap, so they never hide one. Warning.
 - API call shapes (``api call:``, blocker) — a frontend call with a literal or
   template URL that resolves to exactly one route, checked against that
   route's handler, which is read without importing the app. The calls read are
@@ -1152,7 +1157,9 @@ later message: one call, and verdicts without trace ids.
 The judge reads a digest of the app of at most 200,000 characters: the schema
 files first, then the backend code ranked by the share of its lines the agent
 wrote (a module the generator never wrote first, untouched generator output
-last), with 30% reserved for pages and components. When the whole app does not
+last), with 30% reserved for pages and components. The shares are read against
+the stored generator output, which a FastAPI backend and a web app's backend
+and typed client have; without one, routers come first. When the whole app does not
 fit, a generator file the agent edited in under half of its lines is shown as
 its edits with three lines of context; the unchanged generator lines left out,
 and the places where generator lines were removed, are marked. A file over 1,500

@@ -14,7 +14,7 @@ from besser.BUML.metamodel.structural import DomainModel
 from besser.generators import GeneratorInterface
 from besser.utilities.generation_trace import traced_environment
 
-from .api_client import api_client_context, register_api_client_filters
+from .api_client import API_CLIENT_TEMPLATES, api_client_context, register_api_client_filters
 from .page_builder import PageBuilderMixin
 from .serialization import GuiSerializationMixin
 
@@ -112,6 +112,19 @@ class ReactGenerator(GuiSerializationMixin, PageBuilderMixin, GeneratorInterface
                     _copy_template_file(abs_template_path, dest_path)
 
         self._generate_pages()
+
+    def generate_api_client(self) -> list:
+        """Write only the typed API client (``src/api/generated/``), exactly as ``generate`` does.
+
+        It needs the domain model alone, so a frontend without a GUI model gets it too.
+        Returns the paths written, relative to the output directory.
+        """
+        context = api_client_context(self.model)
+        written = []
+        for template in API_CLIENT_TEMPLATES:
+            self._write_traced(template[:-3], self.env.get_template(template).render(**context))
+            written.append(template[:-3])
+        return written
 
     def _should_generate_file(self, rel_path: str, used_component_types: set) -> bool:
         """Determine if a file should be generated based on component usage."""

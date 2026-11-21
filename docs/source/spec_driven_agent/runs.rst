@@ -291,6 +291,14 @@ returns ``base_available`` (``false`` when the run would rebuild). The editor av
 the rebuild for a project linked to GitHub: it starts the run from the repository
 instead (see :ref:`web-editor-github-coming-back`).
 
+The server admits two runs on the same base, and the editor makes the one that
+finishes last the base of the next edit. So the editor starts at most one run per
+project across the browser's tabs: a tab holds the project's Web Lock from the
+start of a run (or the adoption of one after a reload) until the run ends, and
+the browser drops it when the tab closes or crashes. A second tab asking for a
+run meanwhile is told the project is running in another tab. The lock is
+per browser profile: another browser or device is not covered.
+
 Validation of a modify run is proportional to its request: it keeps the previous
 run's requirement verdicts, judges only the requirements of the messages since
 that run and those whose files changed, and reports a requirement the previous run

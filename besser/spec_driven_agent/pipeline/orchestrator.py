@@ -3415,51 +3415,51 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             logger.warning("Frontend form validation failed", exc_info=True)
             return [_check_did_not_run("the frontend form check", f"it crashed: {type(exc).__name__}")]
 
-    def _static_frontend_issues(self) -> list[str]:
-        """Phase 3's frontend source checks that need no build or node: shown by validate_app too.
-
-        The acceptance matrix is left out with a GUI model: those screens are the
-        user's scope, and the matrix would ask for pages they did not model.
-        """
-        if not self._has_frontend_files():
-            return []
-        from besser.spec_driven_agent.validation.frontend_resolution import collect_frontend_resolution_issues
-
-        return [*self._collect_frontend_contract_issues(), *collect_frontend_resolution_issues(self.output_dir),
-                *self._frontend_form_issues(),
-                *(self._acceptance_matrix_issues() if self.gui_model is None else [])]
-
     def _validate_app(self) -> dict:
-        """Model-facing, revision-bound diagnostics with no additional LLM cost."""
+        """The final gate's deterministic checks (:meth:`_verify_workspace`), for the agent.
+
+        The requirements judgment is not run again: its last verdicts are listed.
+        """
+        from besser.spec_driven_agent.validation.ui_probe import NOT_RUN_PREFIX
+
         # Phase 3's last requirement judgment (no new call): a blocker the run holds is
         # never answered with "verified". Empty until the judge has run.
         ledger = [issue for issue in _requirements_ledger.ledger_issues(self._requirement_verdicts)
                   if _classify_issue(issue).severity == "blocker" or is_not_confirmed(issue)]
-        revision = self._workspace_revision()
-        key = (revision, tuple(ledger))
-        if self._app_validation_cache and self._app_validation_cache[0] == key:
+
+        # An install changes findings without changing the revision.
+        def cache_key() -> tuple:
+            return self._workspace_revision(), tuple(ledger), self._install_state()
+
+        if self._app_validation_cache and self._app_validation_cache[0] == cache_key():
             return self._app_validation_cache[1]
-        raw = self._collect_execution_issues()
-        # A static frontend warning (e.g. an entity with no page) is reported, not refused: say so.
-        raw += [issue if _classify_issue(issue).severity == "blocker" else f"{_ADVISORY_PREFIX}{issue}"
-                for issue in dict.fromkeys(self._static_frontend_issues()) if issue not in raw]
+        checked = self._verify_workspace()
         if ledger and self._requirement_cache_key(self._requirements_to_judge()) != self._requirement_verdicts_key:
             # Judged on other source than the judge would read now: the edit may have settled
             # it, and finishing judges it again. An edit the judge does not read changes nothing.
             ledger = [f"{_ADVISORY_PREFIX}judged before your latest edits; it is re-judged when you finish: {issue}"
                       for issue in ledger]
-        raw += ledger
-        issues = sorted((_classify_issue(s) for s in raw), key=self._repair_priority)
+
+        def skipped(issue: ValidationIssue) -> bool:
+            return is_not_confirmed(issue) or issue.message.startswith(NOT_RUN_PREFIX)
+
+        # A warning is reported, not refused: say so.
+        shown = [issue if issue.severity == "blocker" or skipped(issue)
+                 else ValidationIssue(issue.severity, f"{_ADVISORY_PREFIX}{issue.message}")
+                 for issue in checked]
+        issues = sorted([*shown, *map(_classify_issue, ledger)],
+                        key=lambda issue: (issue.severity != "blocker", self._repair_priority(issue)))
         blockers = [issue for issue in issues if issue.severity == "blocker"]
-        # A check that reached no conclusion is a warning, not a pass.
-        unverified = any(is_not_confirmed(issue) for issue in issues)
+        # A check that reached no conclusion or did not run is a warning, not a pass.
+        unverified = any(skipped(issue) for issue in issues)
         not_confirmed_step = (
             "Findings marked unverified are not confirmed, not defects: do not edit working code for them. "
-            "A check that did not run cannot be settled by a source edit. For create unverified (guessed fixtures), "
-            "each listed endpoint needs a test_api scenario that creates the record with valid unique fixtures "
-            "and then, in that same scenario, GETs it by id under the same path; a scenario holds at most "
-            "20 requests, so split the endpoints across several scenarios; do not remove "
-            "business validation to satisfy guessed samples. ")
+            "A check that did not run cannot be settled by a source edit. "
+            + ("For create unverified (guessed fixtures), "
+               "each listed endpoint needs a test_api scenario that creates the record with valid unique fixtures "
+               "and then, in that same scenario, GETs it by id under the same path; a scenario holds at most "
+               "20 requests, so split the endpoints across several scenarios; do not remove "
+               "business validation to satisfy guessed samples. " if self._test_api_offered else ""))
         result = {
             "verified": not blockers and not unverified,
             "blocker_count": len(blockers),
@@ -3467,14 +3467,16 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             # report alone ran to 2,500 chars.
             "issues": [clip_finding(issue.message) for issue in issues[:self._VALIDATE_APP_MAX_ISSUES]],
             "remaining_issue_count": max(0, len(issues) - self._VALIDATE_APP_MAX_ISSUES),
-            "scope": "Python declarations, schema/router contracts, backend startup and create probes where supported; not complete business acceptance",
+            "scope": ("the deterministic checks that decide the run, as at the end; type check, frontend "
+                      "build and screen check only where they can run, else listed as not run; not the "
+                      "requirements judgment, whose last verdicts are listed; not complete business acceptance"),
             "next_step": ("Repair concrete failures and call validate_app again. "
                           + (not_confirmed_step if unverified else "")).rstrip() if blockers else
                          (not_confirmed_step + "Verify the remaining user requirements and business workflows "
                           "before completion.") if unverified else
                          "These checks pass. Verify the remaining user requirements and business workflows before completion.",
         }
-        self._app_validation_cache = (key, result)
+        self._app_validation_cache = (cache_key(), result)
         return result
 
     def _test_api(self, args: dict) -> dict:
@@ -3664,9 +3666,26 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         Phase 3 fix loop only acts on ``blocker`` items when
         ``auto_fix_issues`` is enabled.
         """
-        # The checks run in fresh sandboxes, but they read and build this
-        # workspace: nothing the model left running may write to it meanwhile.
-        self.executor.stop_shell_processes()
+        # Names its steps on the run card (``_report_round_step``).
+        self._phase3_sweep_running = True
+        try:
+            return self._verify_workspace(sweep=True)
+        finally:
+            self._phase3_sweep_running = False
+
+    def _verify_workspace(self, sweep: bool = False) -> list[ValidationIssue]:
+        """Every deterministic check that decides the run, most urgent first.
+
+        ``validate_app`` and end_turn run it as it is; the Phase 3 sweep
+        (``sweep=True``, every Phase 3 check and re-check) adds the requirements
+        judgment, the checklist's findings and the authorization check, and
+        first stops the agent's processes. Outside the sweep tsc does not run on a project whose
+        dependencies are not installed; that is listed as not run.
+        """
+        if sweep:
+            # The checks run in fresh sandboxes, but they read and build this
+            # workspace: nothing the model left running may write to it meanwhile.
+            self.executor.stop_shell_processes()
         # Repair the build configuration BEFORE looking for defects in it.
         # The class-only path never asks the model for a Vite config: across
         # 192 recorded class-only runs, 192 had none and 96 also had a JSX
@@ -3767,8 +3786,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                     if fname == "requirements.txt":
                         req_path = os.path.join(root, fname)
                         rel = os.path.relpath(req_path, self.output_dir).replace("\\", "/")
+                        # Its verdict holds while the file is unchanged.
                         raw_issues.extend(self._revision_cached(
-                            f"pip [{rel}]", (), lambda rel=rel: self._pip_dry_run_issues(rel)))
+                            f"pip [{rel}]", (), lambda rel=rel: self._pip_dry_run_issues(rel),
+                            source=self._files_revision(lambda path, rel=rel: path == rel)))
 
         # Static checks catch per-project compile errors that would
         # otherwise only surface at deploy time. ruff is near-instant
@@ -3804,40 +3825,41 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # page present, create wired. REPORT-ONLY (warnings + recipe
         # field): a GUI-scoped run may legitimately omit entities, so
         # these are visibility, never blockers. It measures web routes and
-        # pages, so it says nothing about a native or CLI target.
-        raw_issues.extend(self._acceptance_matrix_issues())
+        # pages, so it says nothing about a native or CLI target. Outside the
+        # sweep it waits for a frontend, and a GUI model's screens are the user's
+        # scope: the agent is not asked for pages they did not model.
+        if sweep or (self.gui_model is None and self._has_frontend_files()):
+            raw_issues.extend(self._acceptance_matrix_issues())
 
-        # validate_app reaches the probe too (Phase 2, a fix attempt); only this sweep names it.
-        self._phase3_sweep_running = True
-        try:
-            execution_issues = self._collect_execution_issues()
-        finally:
-            self._phase3_sweep_running = False
-        # An enabled ledger that extracted nothing verified nothing. Saying so
-        # is the difference between "the user asked for nothing" and "we never
-        # looked".
-        if (self.enable_requirements_ledger and self._requirements is None
-                and self._requirement_extraction_attempts):
-            raw_issues.append(_check_did_not_run(
-                "the requirements ledger",
-                f"{self._requirement_extraction_attempts} extraction attempt(s) on "
-                f"{getattr(self.client, 'model', 'this model')} returned nothing",
-            ))
-        # Only an observed failure defers the judge; an unverified create or
-        # action (e.g. a guessed POST refused by login) says nothing about the app.
-        if not self.enable_requirements_ledger or not _hard_blockers(
-                [i for i in map(_classify_issue, execution_issues) if i.severity == "blocker"]):
-            raw_issues.extend(self._collect_requirement_issues())
-        else:
-            raw_issues.append(f"{JUDGMENT_DEFERRED} until startup/data-entry blockers are fixed")
-        raw_issues.extend(self._collect_task_issues())
+        execution_issues = self._collect_execution_issues()
+        if sweep:
+            # An enabled ledger that extracted nothing verified nothing. Saying so
+            # is the difference between "the user asked for nothing" and "we never
+            # looked".
+            if (self.enable_requirements_ledger and self._requirements is None
+                    and self._requirement_extraction_attempts):
+                raw_issues.append(_check_did_not_run(
+                    "the requirements ledger",
+                    f"{self._requirement_extraction_attempts} extraction attempt(s) on "
+                    f"{getattr(self.client, 'model', 'this model')} returned nothing",
+                ))
+            # Only an observed failure defers the judge; an unverified create or
+            # action (e.g. a guessed POST refused by login) says nothing about the app.
+            if not self.enable_requirements_ledger or not _hard_blockers(
+                    [i for i in map(_classify_issue, execution_issues) if i.severity == "blocker"]):
+                raw_issues.extend(self._collect_requirement_issues())
+            else:
+                raw_issues.append(f"{JUDGMENT_DEFERRED} until startup/data-entry blockers are fixed")
+            # Open checklist items are Phase 2's own end-turn gate, not findings yet.
+            raw_issues.extend(self._collect_task_issues())
         raw_issues.extend(self._collect_ruff_issues())
         raw_issues.extend(execution_issues)
-        raw_issues.extend(self._authorization_issues())
+        if sweep:
+            raw_issues.extend(self._authorization_issues())
         # The TS collector reports a relevant disabled check as unknown; it
         # never enables tooling. Already-authorized dependency setup is an
         # actionable verification prerequisite, not a request for source edits.
-        raw_issues.extend(self._collect_tsc_issues())
+        raw_issues.extend(self._collect_tsc_issues() if sweep else self._collect_tsc_issues(installed_only=True))
         raw_issues.extend(self._format_notes)
         raw_issues.extend(self._agent_left_out_issues())
         raw_issues.extend(_collect_uncompiled_source_issues(
@@ -3872,12 +3894,12 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         build_verdicts = self._frontend_build_verdicts
         remaining = self.max_runtime_seconds - (
             time.monotonic() - self._start_time if self._start_time is not None else 0)
-        if (self.enable_toolchain_validation and self.allow_shell_tools
+        if (sweep and self.enable_toolchain_validation and self.allow_shell_tools
                 and any(rel.rpartition("/")[2] == "package.json" for rel in self._workspace_file_list())):
             self._report_round_step("building the frontend")
         raw_issues.extend(collect_frontend_build_issues(
             self.output_dir, enabled=self.enable_toolchain_validation,
-            allow_shell=self.allow_shell_tools, source_revision=self._workspace_revision,
+            allow_shell=self.allow_shell_tools, source_revision=self._frontend_revision,
             build_verdicts=build_verdicts, can_run=self._checks_allowed,
             timeout=remaining,
         ))
@@ -4984,6 +5006,20 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         ``_REVISION_HASH_CAP`` bytes plus its size, so a large asset cannot
         stall the check.
         """
+        return self._files_revision()
+
+    def _frontend_revision(self) -> str:
+        """The revision of what a type check or frontend build reads: the folders
+        holding a ``package.json`` or ``tsconfig.json``; the workspace revision
+        when there is none, or one is the workspace root."""
+        folders = {rel.rpartition("/")[0] for rel in self._workspace_file_list()
+                   if rel.rpartition("/")[2] in ("package.json", "tsconfig.json")}
+        if not folders or "" in folders:
+            return self._workspace_revision()
+        return self._files_revision(lambda rel: any(rel.startswith(folder + "/") for folder in folders))
+
+    def _files_revision(self, keep: Callable[[str], bool] | None = None) -> str:
+        """:meth:`_workspace_revision` of the files ``keep`` accepts, all when None."""
         fingerprint = hashlib.sha256()
         workspace = os.path.realpath(self.output_dir)
         rels = sorted(self._workspace_file_list())
@@ -4992,6 +5028,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             folder, _, name = rel.rpartition("/")
             names_by_dir.setdefault(folder, set()).add(name)
         for rel in rels:
+            if keep is not None and not keep(rel):
+                continue
             if (rel.lower().endswith(_REVISION_IGNORED_SUFFIXES)
                     or _REVISION_IGNORED_DIRS.intersection(rel.split("/")[:-1])
                     or self._is_project_tool_output(rel, names_by_dir)):
@@ -5048,18 +5086,21 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         "Android module: the build server has no Android SDK",
     )
 
-    def _revision_cached(self, check: str, inputs: tuple, collect: Callable[[], list[str]]) -> list[str]:
+    def _revision_cached(self, check: str, inputs: tuple, collect: Callable[[], list[str]],
+                         source: str | None = None) -> list[str]:
         """``collect()``'s findings, reused for the same tree and ``inputs``.
 
         Phase 3 re-validates after no-edit rounds and after a rollback
         restore; tsc, cargo, kotlinc and the pip dry-run cost up to 30-180 s
         each for an answer that cannot have changed. A failure is a verdict
         and is reused too; a result holding a check that did not run is not.
-        Keyed by revision, not just the latest one, so a restored tree hits.
-        In memory only, per run, like ``_runtime_probe_issues``.
+        Keyed by revision, not just the latest one, so a restored tree hits;
+        ``source`` is the revision of the files the check reads, when it reads
+        fewer than the whole tree. In memory only, per run, like
+        ``_runtime_probe_issues``.
         """
         results = self._check_results
-        key = (check, self._workspace_revision(), inputs)
+        key = (check, source or self._workspace_revision(), inputs)
         if key in results:
             return list(results[key])
         issues = collect()
@@ -5084,9 +5125,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         )
 
         revision = self._workspace_revision()
-        # A build verdict is keyed (folder, revision, install markers, script); None is a pass.
+        # A build verdict is keyed (folder, frontend revision, install markers, script); None is a pass.
+        frontend = self._frontend_revision()
         built = tuple(sorted({key[0] for key, verdict in self._frontend_build_verdicts.items()
-                              if key[1] == revision and verdict is None}))
+                              if key[1] == frontend and verdict is None}))
         if not built:
             return []
         key = ("screens", revision, built)
@@ -5132,9 +5174,13 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         issue = dependency_check_issue(rel, result.stderr) if result.returncode != 0 else None
         return [issue] if issue else []
 
-    def _collect_tsc_issues(self) -> list[str]:
-        """Delegate to the toolchain module, once per tree, install state and
-        compiler choice (host ``tsc``/``npm``, a project-local ``tsc``)."""
+    def _collect_tsc_issues(self, installed_only: bool = False) -> list[str]:
+        """Delegate to the toolchain module, once per frontend revision, install
+        state and compiler choice (host ``tsc``/``npm``, a project-local ``tsc``).
+
+        ``installed_only``: a project whose dependencies are not installed is not
+        compiled, only listed.
+        """
         local_tsc = os.path.join("node_modules", ".bin", "tsc.cmd" if os.name == "nt" else "tsc")
         installs = tuple(
             (folder, install_markers(os.path.join(self.output_dir, folder)),
@@ -5142,16 +5188,20 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             for folder in sorted({rel.rpartition("/")[0] for rel in self._workspace_file_list()
                                   if rel.rpartition("/")[2] == "tsconfig.json"}))
         tools = tuple(shutil.which(name) for name in ("tsc", "tsc.cmd", "npm", "npm.cmd"))
+        # The first install marker is node_modules itself.
+        skip_uninstalled = installed_only and any(markers[0] is None for _, markers, _ in installs)
 
         def type_check() -> list[str]:
-            if installs:
+            if installs and self._phase3_sweep_running:
                 self._report_round_step("type-checking the TypeScript code")
             return _collect_tsc_issues(
                 self.output_dir, self.allow_shell_tools,
                 self.enable_toolchain_validation, _RECIPE_EXCLUDED_DIRS,
+                without_dependencies=not skip_uninstalled,
             )
         return self._revision_cached(
-            "tsc", (self.allow_shell_tools, self.enable_toolchain_validation, tools, installs), type_check)
+            "tsc", (self.allow_shell_tools, self.enable_toolchain_validation, tools, installs, skip_uninstalled),
+            type_check, source=self._frontend_revision() if installs else None)
 
     @classmethod
     def _collapse_repeated_names(cls, err_lines: list[str]) -> list[str]:
@@ -5865,8 +5915,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         revision = self._workspace_revision()
         passed = [record["report"] for record in self._api_scenarios.values()
                   if record["revision"] == revision and record["report"].get("status") == "passed"]
-        # A build verdict is keyed (folder, revision, install markers, script); None is a pass.
-        builds = [verdict for key, verdict in self._frontend_build_verdicts.items() if key[1] == revision]
+        # A build verdict is keyed (folder, frontend revision, install markers, script); None is a pass.
+        frontend = self._frontend_revision()
+        builds = [verdict for key, verdict in self._frontend_build_verdicts.items() if key[1] == frontend]
         return {
             "frontend_build": ("passed" if any(verdict is None for verdict in builds) else "failed" if builds
                                else "not_run" if self._has_frontend_files() else "none"),

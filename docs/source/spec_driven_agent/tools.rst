@@ -187,14 +187,24 @@ request. Task outcomes are retained in the recipe.
 Application checks during editing
 ---------------------------------
 
-``validate_app`` reports source contracts, startup and create-request failures
-after a coherent edit. It lists at most 40 findings, most urgent first, and
-counts the rest (``remaining_issue_count``); a finding longer than 1,200
+``validate_app`` runs the deterministic checks that decide the run, the same
+function Phase 3 runs after every fix attempt and at the end: source and
+schema/router contracts, startup and create requests, retained ``test_api``
+workflows, frontend, data and model checks, ruff, the dependency check, and the
+type check, frontend build and screen check. Phase 3 alone adds the requirements
+judgment (``validate_app`` lists its last verdicts), the checklist's findings
+(open items are the end-turn gate's) and the authorization check. It lists at most 40 findings, blockers
+first, and counts the rest (``remaining_issue_count``); a finding longer than 1,200
 characters is cut as in the Phase 3 fix prompt, keeping its head and tail. Validation runs after writes in the same tool batch.
-Once the app has frontend files, it also reports the static frontend checks
-(contract, import resolution, create forms) and, without a GUI model, the
-acceptance-matrix findings; a warning among them is marked
-``advisory, not a blocker``. When the run has a checklist, a passing result
+A warning is marked ``advisory, not a blocker``. The acceptance-matrix findings
+wait for frontend files and are left out with a GUI model. tsc and the frontend
+build reuse their last verdict while no file in the folders holding a
+``package.json`` or ``tsconfig.json`` changes and the installed dependencies are
+the same, and the dependency check while its ``requirements.txt`` is unchanged.
+tsc does not run on a project whose dependencies are not installed, and the
+screen check needs a browser; a check that did not run is listed as not run,
+never as a blocker, and ``verified`` is true only when none is listed and no
+blocker remains. When the run has a checklist, a passing result
 also lists its open items (``open_items``: id and a short label, empty when
 none is open), the ids ``task_list`` needs to close them. Ending a turn runs
 the same checks, so the tool's description asks for a call after a code change

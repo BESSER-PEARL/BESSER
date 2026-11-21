@@ -332,8 +332,10 @@ VALIDATION_TOOLS: list[dict[str, Any]] = [
     {
         "name": "validate_app",
         "description": (
-            "Run the harness's application checks now: Python declarations, schema/router "
-            "contracts, and (when enabled) isolated backend startup and create requests. "
+            "Run the checks that decide the run, as its end does, except the requirements "
+            "judgment (its last verdicts are listed). tsc, the frontend build and the screen "
+            "check run only with dependencies installed and a browser present; a check that "
+            "did not run is listed, and withholds verified. "
             "No arbitrary shell commands or package installation. Call after a coherent "
             "code change, not again without one: ending your turn runs it too. Fix the "
             "returned blockers, then rerun. "

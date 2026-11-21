@@ -250,8 +250,11 @@ execute generated build scripts under that explicit permission, inside a fresh
 bubblewrap sandbox with no network. Source is checked before and after execution. Results,
 failures included, are reused only for unchanged source and dependency-install
 markers during the same run; source changes during a build invalidate its
-result. The same holds for ``tsc`` (also keyed by the compiler it would use),
-``cargo check``, ``kotlinc`` and the ``pip install --dry-run`` check: Phase 3
+result. For the build and ``tsc`` the source is the folders holding a
+``package.json`` or ``tsconfig.json`` (the whole tree when one is the root), for
+the ``pip install --dry-run`` check its ``requirements.txt``, so a backend edit
+reuses the frontend's verdicts. The same holds for ``tsc`` (also keyed by the
+compiler it would use), ``cargo check``, ``kotlinc`` and the dependency check: Phase 3
 re-validates after rounds that edit nothing and after a rollback, and those
 passes do not run the same check on the same tree again. A check that did not
 finish (a timeout, no sandbox, an unreachable package index, unfetched crates)
@@ -259,7 +262,8 @@ gave no verdict and runs again on the next pass. With shell tools
 disabled, a separate external build can verify the output, but raw generation
 continues to state that frontend build verification is pending.
 
-Once a frontend's build has passed on the current tree, Phase 3 opens its
+Once a frontend's build has passed on the current tree, Phase 3, and the
+agent's ``validate_app`` when a browser is present, opens its
 screens in a headless browser (``validation/ui_probe.py``). Inside the same
 no-network sandbox it first creates records through the app's own API with the
 create probe described above, into a scratch SQLite database, then boots the

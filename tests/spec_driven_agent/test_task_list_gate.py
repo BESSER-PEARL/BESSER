@@ -317,9 +317,9 @@ def test_webapp_ask_without_frontend_seeds_deterministic_task(tmp_path, monkeypa
 
     orch._run_phase2("Build a library management web app", extra_issues=[])
 
-    # Deterministic VERIFIED task seeded -> extended nudge cap (2+2)
-    # because a verified task cannot be cheat-marked done.
-    assert orch._end_turn_task_nudges == 4
+    # The missing frontend is also the final gate's blocker, which ending the turn
+    # shows the model with the open item; ending it again on the same tree hands off.
+    assert orch._phase2_stop_reason == "validation_required" and client.chat_calls == 2
     tasks = orch.executor._tasks
     assert any("React frontend" in t["text"] for t in tasks)
     # And the cheat-proofing itself: done is refused while no frontend.

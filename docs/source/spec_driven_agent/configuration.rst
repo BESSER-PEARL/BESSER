@@ -244,7 +244,11 @@ Feature flags
   exactly ``1``, so ``0`` or any other value disables it) -- Add a
   rolling prompt-cache breakpoint on the growing conversation, so the prior
   prefix is served from cache instead of re-billed each turn. Anthropic path
-  only — the OpenAI-compatible path caches by prefix automatically.
+  only. On the OpenAI-compatible path the provider caches a repeated prefix
+  on its own, best effort: a gateway may route a turn to a server without
+  it. Requests to OpenAI's own API also carry a ``prompt_cache_key`` unique
+  to the run, which keeps its turns on the same cache; other endpoints get
+  none, since a strict gateway may refuse an unknown field.
 
 Context and token budgets
 -------------------------

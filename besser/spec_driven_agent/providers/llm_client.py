@@ -1583,6 +1583,8 @@ class OpenAIProvider(LLMProvider):
         self._on_fallback = False
         self.fallback_reason: str | None = None
         self._warned_no_usage = False
+        # One client per run: OpenAI keeps requests with one key on one prompt cache.
+        self._prompt_cache_key = uuid.uuid4().hex
 
     # True on a vendor that only serves paid API models (Mistral, Nebius).
     _PAID_VENDOR = False
@@ -1610,6 +1612,13 @@ class OpenAIProvider(LLMProvider):
             input_tokens=len(str(api_messages)) // _CHARS_PER_TOKEN,
             output_tokens=(len(text) + len(arguments)) // _CHARS_PER_TOKEN,
         ), model=model)
+
+    def _add_cache_key(self, kwargs: dict[str, Any]) -> None:
+        """The run's prompt cache key, for OpenAI's own API only: a strict
+        OpenAI-compatible gateway may refuse an unknown field."""
+        if self._PAID_VENDOR or (self._base_url and not _is_official_openai_base_url(self._base_url)):
+            return
+        kwargs["extra_body"] = {**kwargs.get("extra_body", {}), "prompt_cache_key": self._prompt_cache_key}
 
     def _is_billed_route(self, base_url: str | None) -> bool:
         """Paid vendor API rather than a gateway / self-hosted endpoint."""
@@ -1736,6 +1745,7 @@ class OpenAIProvider(LLMProvider):
                 # the model actually being called, which on a planning turn
                 # is the cheap override, not self._model.
                 kwargs.update(sampling_kwargs(effective_model))
+                self._add_cache_key(kwargs)
                 if openai_tools:
                     kwargs["tools"] = openai_tools
                     if force_tool:
@@ -1856,6 +1866,7 @@ class OpenAIProvider(LLMProvider):
                 }
                 # Per-model sampling; empty for models not in the registry.
                 kwargs.update(sampling_kwargs(self._model))
+                self._add_cache_key(kwargs)
                 if openai_tools:
                     kwargs["tools"] = openai_tools
                     # gpt-5.6 reasoning models can't combine tools + reasoning

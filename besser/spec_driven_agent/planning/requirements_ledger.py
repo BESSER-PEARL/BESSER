@@ -890,7 +890,8 @@ def stated_requirements_ledger(stated: list[dict], instructions: str, *,
     """The ledger built from the requirements the editor sent, or None when they
     do not cover the request and it must be extracted instead.
 
-    ``stated`` items are ``{"id", "text", "kind"}``: the modeling assistant
+    ``stated`` items are ``{"id", "text", "kind"}`` and an optional ``met_by``
+    (kept when it is one of :data:`MET_BY`): the modeling assistant
     extracted them from the user's request, and ``id`` is their artifact id in
     the project trace. Each ledger item keeps it as ``ref``, so a verdict names
     the requirement the trace links to model elements. Only the
@@ -910,7 +911,8 @@ def stated_requirements_ledger(stated: list[dict], instructions: str, *,
         )
         return None
     judged = [item for item in stated if item["kind"] in JUDGED_KINDS]
-    requirements = [{"id": rid, "text": item["text"], "kind": item["kind"], "ref": item["id"]}
+    requirements = [{"id": rid, "text": item["text"], "kind": item["kind"], "ref": item["id"],
+                     **({MET_BY_FIELD: item[MET_BY_FIELD]} if item.get(MET_BY_FIELD) in MET_BY else {})}
                     for rid, item in enumerate(judged, start=1)]
     # The assistant's extraction stops at the same cap as ours: a full list may
     # have left the specification's tail out.

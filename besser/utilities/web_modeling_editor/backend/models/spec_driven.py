@@ -55,6 +55,8 @@ class RequirementInput(BaseModel):
     id: str = Field(..., min_length=1, max_length=_MAX_REQUIREMENT_ID_CHARS)
     text: str = Field(..., min_length=1, max_length=MAX_REQUIREMENT_CHARS)
     kind: RequirementKind
+    # What code meets it, as the requirements ledger's extraction labels it; left out, "check".
+    met_by: Optional[Literal["declaration", "type", "check"]] = None
 
 
 # GitHub login / repository name charset.

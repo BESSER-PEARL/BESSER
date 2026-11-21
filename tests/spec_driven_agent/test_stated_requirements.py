@@ -70,6 +70,13 @@ def test_the_ledger_judges_the_behavioural_requirements_and_keeps_their_trace_id
     ]
 
 
+def test_a_met_by_from_the_editor_is_kept_and_an_unknown_one_is_left_out():
+    stated = [dict(STATED[1], met_by="type"), dict(STATED[2], met_by="sometimes")]
+    first, second = ledger.stated_requirements_ledger(stated, SPEC)
+    assert first[ledger.MET_BY_FIELD] == "type"
+    assert ledger.MET_BY_FIELD not in second
+
+
 def test_only_structure_and_stack_is_an_empty_ledger_not_a_failed_one():
     assert ledger.stated_requirements_ledger([STATED[0], STATED[3]], SPEC) == []
 

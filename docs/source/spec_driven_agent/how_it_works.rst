@@ -56,8 +56,10 @@ The three phases
    the same keywords, plus a short list of stacks no generator builds.
 
    The target is recorded in the trace, the checkpoint and
-   ``.besser_recipe.json``, so a resume or a later modify run of the same app
-   keeps it. Every modify run makes the same call once, on the primary model
+   ``.besser_recipe.json``, and the routed stack in the checkpoint and the
+   recipe (``routed_stack``), so a resume or a later modify run of the same app
+   keeps them (its frontend framework and idiom block); a modify run that
+   changes the target takes the new answer's stack. Every modify run makes the same call once, on the primary model
    rather than the cheap planning one (its answer can rebuild the whole app),
    with the recorded target, the model's class names, and the request as
    context with the user's newest message as the change, and it answers three

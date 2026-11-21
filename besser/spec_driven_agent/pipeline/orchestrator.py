@@ -6191,6 +6191,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             "llm_model": self.client.model,
             "generator_used": self._generator_used,
             "target": self.target.to_dict() if self.target else None,
+            "routed_stack": self._unsupported_stack if self._routed else None,
             "turns": self.total_turns,
             "tool_calls_count": len(self.tool_calls_log),
             "compactions": self._compaction_count,

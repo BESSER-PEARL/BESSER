@@ -501,6 +501,8 @@ class ModifyRunMixin:
             return
         self._seed_generator_used = recipe.get("generator_used")
         self._seed_target = self.target = Target.from_payload(recipe.get("target"))
+        if isinstance(recipe.get("routed_stack"), str):
+            self._routed, self._unsupported_stack = True, recipe["routed_stack"]
         converted = (recipe.get("model") or {}).get("converted_rules")
         if isinstance(converted, list):
             self._seed_converted_rules = set(converted)
@@ -574,7 +576,8 @@ class ModifyRunMixin:
             self._record_target(routing.target)
         elif routing.changes_target:
             self._previous_target = seed
-            self._record_target(routing.target)
+            # The new target's stack replaces the seed's.
+            self._record_routing(routing)
 
     def _modify_routing_prompt(self, seed: Target | None) -> str:
         instructions = self._instructions

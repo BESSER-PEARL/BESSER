@@ -193,19 +193,24 @@ schema/router contracts, startup and create requests, retained ``test_api``
 workflows, frontend, data and model checks, ruff, the dependency check, and the
 type check, frontend build and screen check. Phase 3 alone adds the requirements
 judgment (``validate_app`` lists its last verdicts), the checklist's findings
-(open items are the end-turn gate's) and the authorization check. It lists at most 40 findings, blockers
+(open items are the end-turn gate's) and the authorization check, and first
+applies the deterministic repairs (build configuration, Dockerfile lockfile
+fixes, dependency pins): ``validate_app`` writes nothing to the workspace and
+reports on the tree as the agent left it, except that a Dockerfile lockfile
+fix the sweep would make is not reported. It lists at most 40 findings, blockers
 first, and counts the rest (``remaining_issue_count``); a finding longer than 1,200
 characters is cut as in the Phase 3 fix prompt, keeping its head and tail. Validation runs after writes in the same tool batch.
 A warning is marked ``advisory, not a blocker``. The acceptance-matrix findings
 wait for frontend files and are left out with a GUI model. tsc and the frontend
-build reuse their last verdict while no file in the folders holding a
-``package.json`` or ``tsconfig.json`` changes and the installed dependencies are
-the same, and the dependency check while its ``requirements.txt`` is unchanged.
-tsc does not run on a project whose dependencies are not installed, and the
-screen check needs a browser; a check that did not run is listed as not run,
-never as a blocker, and ``verified`` is true only when none is listed and no
-blocker remains. When the run has a checklist, a passing result
-also lists its open items (``open_items``: id and a short label, empty when
+build reuse their last verdict while no file they can read changes (any file but
+Python sources and the rest of a Python project's folder) and the installed
+dependencies are the same, and the dependency check while its
+``requirements.txt`` is unchanged. Where the agent can install a project's
+dependencies, tsc waits for the install and asks for it; otherwise it runs the
+same partial check as Phase 3. The screen check needs a browser. A check that
+did not run is listed as not run, never as a blocker, and ``verified`` is true
+only when none is listed and no blocker remains. When the run has a checklist,
+a passing result also lists its open items (``open_items``: id and a short label, empty when
 none is open), the ids ``task_list`` needs to close them. Ending a turn runs
 the same checks, so the tool's description asks for a call after a code change
 only, not a second one before finishing.

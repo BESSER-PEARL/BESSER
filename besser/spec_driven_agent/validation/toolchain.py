@@ -396,8 +396,8 @@ def _collect_tsc_issues(
     runs ``tsc --noEmit`` against each project root. A disabled or missing
     compiler is unverified, not a source defect for automatic repair.
     Sandboxed: a project-local tsc is package-authored code.
-    ``without_dependencies=False`` lists a project with no ``node_modules``
-    instead of running a partial check on it.
+    ``without_dependencies=False`` only asks for the install of a project
+    whose dependencies the agent can install, without a partial check on it.
     """
     import shutil as _shutil
     import subprocess
@@ -458,9 +458,7 @@ def _collect_tsc_issues(
         )
         if setup_allowed:
             issues.append(required_dependency_setup(f"tsc [{rel}]", rel))
-        if not deps_installed and not without_dependencies:
-            if not setup_allowed:
-                issues.append(required_check_unverified(f"tsc [{rel}]", "dependencies are not installed"))
+        if setup_allowed and not without_dependencies:
             continue
         if not tsc_bin:
             if not setup_allowed:

@@ -3676,11 +3676,13 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     def _verify_workspace(self, sweep: bool = False) -> list[ValidationIssue]:
         """Every deterministic check that decides the run, most urgent first.
 
-        ``validate_app`` and end_turn run it as it is; the Phase 3 sweep
-        (``sweep=True``, every Phase 3 check and re-check) adds the requirements
-        judgment, the checklist's findings and the authorization check, and
-        first stops the agent's processes. Outside the sweep tsc does not run on a project whose
-        dependencies are not installed; that is listed as not run.
+        ``validate_app`` and end_turn run it as it is, and it writes nothing to
+        the workspace. The Phase 3 sweep (``sweep=True``, every Phase 3 check
+        and re-check) first stops the agent's processes and applies the
+        deterministic repairs, and adds the requirements judgment, the
+        checklist's findings and the authorization check. Outside the sweep tsc
+        does not run on a project whose dependencies the agent can install
+        until it installs them.
         """
         if sweep:
             # The checks run in fresh sandboxes, but they read and build this
@@ -3695,9 +3697,13 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # nor pays to repair a defect we can settle for free - and, unlike
         # the packaging-time hook, it puts back a config a Phase 3 edit
         # deleted. Idempotent; it never overwrites what a project already has.
-        self._repair_build_configuration()
+        # Only the sweep repairs: mid-Phase 2 a written config would shadow the one
+        # the model has yet to write.
+        if sweep:
+            self._repair_build_configuration()
         build_contexts = compose_build_contexts(self.output_dir)
-        self._restore_scaffold_requirements(build_contexts)
+        if sweep:
+            self._restore_scaffold_requirements(build_contexts)
         raw_issues: list[str] = [
             required_check_unverified(
                 "model assembly",
@@ -3735,9 +3741,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                                 # Later repairs must start from this content, or
                                 # they write ``npm ci`` back.
                                 content = content.replace("npm ci", "npm install")
-                                with open_plain_write(fpath, "w", root=self.output_dir, encoding="utf-8") as f:
-                                    f.write(content)
-                                logger.info("Auto-fixed: %s: npm ci -> npm install (no lock file)", rel)
+                                if sweep:
+                                    with open_plain_write(fpath, "w", root=self.output_dir, encoding="utf-8") as f:
+                                        f.write(content)
+                                    logger.info("Auto-fixed: %s: npm ci -> npm install (no lock file)", rel)
                         # COPY of a package-lock.json that does not exist is a
                         # HARD build failure ("failed to compute cache key"), and
                         # the LLM cannot write a lockfile - npm resolves it from
@@ -3747,14 +3754,14 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                             self.output_dir
                         ):
                             stripped = _strip_missing_lockfile_copy(content)
-                            if stripped != content:
-                                content = stripped
+                            if stripped != content and sweep:
                                 with open_plain_write(fpath, "w", root=self.output_dir, encoding="utf-8") as f:
-                                    f.write(content)
+                                    f.write(stripped)
                                 logger.info(
                                     "Auto-fixed: %s: dropped COPY of a "
                                     "package-lock.json that does not exist", rel,
                                 )
+                            content = stripped
 
                         # COPY sources resolve against the build context.
                         raw_issues.extend(dockerfile_copy_issues(
@@ -3764,7 +3771,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 
         # Known runtime-incompatible pairs (dependency_pins.py). pip resolves
         # them without complaint, so the dry-run below cannot catch them.
-        for root, files in walk_app_tree(self.output_dir):
+        for root, files in walk_app_tree(self.output_dir) if sweep else ():
             for fname in files:
                 if fname == "requirements.txt":
                     fpath = os.path.join(root, fname)
@@ -5009,14 +5016,24 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         return self._files_revision()
 
     def _frontend_revision(self) -> str:
-        """The revision of what a type check or frontend build reads: the folders
-        holding a ``package.json`` or ``tsconfig.json``; the workspace revision
-        when there is none, or one is the workspace root."""
-        folders = {rel.rpartition("/")[0] for rel in self._workspace_file_list()
-                   if rel.rpartition("/")[2] in ("package.json", "tsconfig.json")}
-        if not folders or "" in folders:
+        """The revision of what a type check or frontend build can read: every file
+        but Python sources and the rest of a Python project's folder (one holding a
+        ``requirements.txt`` or ``pyproject.toml``, outside a frontend's). The
+        workspace revision when no folder holds a ``package.json`` or ``tsconfig.json``."""
+        files = self._workspace_file_list()
+
+        def folders(*names: str) -> set[str]:
+            return {rel.rpartition("/")[0] for rel in files if rel.rpartition("/")[2] in names}
+
+        def under(rel: str, folder: str) -> bool:
+            return not folder or rel.startswith(folder + "/")
+
+        frontends = folders("package.json", "tsconfig.json")
+        if not frontends:
             return self._workspace_revision()
-        return self._files_revision(lambda rel: any(rel.startswith(folder + "/") for folder in folders))
+        backends = folders("requirements.txt", "pyproject.toml") - frontends - {""}
+        return self._files_revision(lambda rel: not rel.endswith(".py") and (
+            any(under(rel, folder) for folder in frontends) or not any(under(rel, folder) for folder in backends)))
 
     def _files_revision(self, keep: Callable[[str], bool] | None = None) -> str:
         """:meth:`_workspace_revision` of the files ``keep`` accepts, all when None."""
@@ -5178,8 +5195,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         """Delegate to the toolchain module, once per frontend revision, install
         state and compiler choice (host ``tsc``/``npm``, a project-local ``tsc``).
 
-        ``installed_only``: a project whose dependencies are not installed is not
-        compiled, only listed.
+        ``installed_only``: a project whose dependencies the agent can install
+        is not compiled until they are; the install is asked for.
         """
         local_tsc = os.path.join("node_modules", ".bin", "tsc.cmd" if os.name == "nt" else "tsc")
         installs = tuple(

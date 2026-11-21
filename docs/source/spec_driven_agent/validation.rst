@@ -31,7 +31,8 @@ that was already broken is never refused, so it can be repaired.
   Docker does: the compose ``build.context`` when a compose file names the
   Dockerfile, else the Dockerfile's own folder. ``COPY --from=<stage>`` copies
   from a build stage and is not checked. This check only reports; it never
-  writes a file. A separate repair step before validation restores a
+  writes a file. A separate repair step before Phase 3 validation (not
+  ``validate_app``, which writes nothing) restores a
   ``requirements.txt`` that a Phase 2 edit deleted from a FastAPI scaffold.
   Several other common mistakes are repaired outright without spending
   an LLM turn (``npm ci`` with no lockfile anywhere in the project becomes
@@ -250,10 +251,10 @@ execute generated build scripts under that explicit permission, inside a fresh
 bubblewrap sandbox with no network. Source is checked before and after execution. Results,
 failures included, are reused only for unchanged source and dependency-install
 markers during the same run; source changes during a build invalidate its
-result. For the build and ``tsc`` the source is the folders holding a
-``package.json`` or ``tsconfig.json`` (the whole tree when one is the root), for
-the ``pip install --dry-run`` check its ``requirements.txt``, so a backend edit
-reuses the frontend's verdicts. The same holds for ``tsc`` (also keyed by the
+result. For the build and ``tsc`` the source is every file but Python sources and
+the rest of a folder holding a ``requirements.txt`` or ``pyproject.toml`` (unless
+it is also a frontend's), for the ``pip install --dry-run`` check its
+``requirements.txt``, so a backend edit reuses the frontend's verdicts. The same holds for ``tsc`` (also keyed by the
 compiler it would use), ``cargo check``, ``kotlinc`` and the dependency check: Phase 3
 re-validates after rounds that edit nothing and after a rollback, and those
 passes do not run the same check on the same tree again. A check that did not

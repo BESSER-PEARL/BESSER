@@ -332,10 +332,9 @@ VALIDATION_TOOLS: list[dict[str, Any]] = [
     {
         "name": "validate_app",
         "description": (
-            "Run the checks that decide the run, as its end does, except the requirements "
-            "judgment (its last verdicts are listed). tsc, the frontend build and the screen "
-            "check run only with dependencies installed and a browser present; a check that "
-            "did not run is listed, and withholds verified. "
+            "Run the checks that decide the run, except the requirements judgment. tsc and "
+            "the build need installed dependencies, the screen check a browser; a check that "
+            "did not run is listed. "
             "No arbitrary shell commands or package installation. Call after a coherent "
             "code change, not again without one: ending your turn runs it too. Fix the "
             "returned blockers, then rerun. "

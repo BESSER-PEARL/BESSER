@@ -16,7 +16,8 @@ would immediately fail.
      - ``list_files``, ``read_file``, ``write_file``, ``modify_file``, ``replace_file_lines``,
        ``search_in_files``, ``delete_file``
    * - Validation / bookkeeping
-     - ``validate_app``, ``test_api``, ``task_list``
+     - ``validate_app``, ``test_api`` (while the workspace holds a generated
+       FastAPI backend), ``task_list``
    * - Generators
      - The 19 generator tools listed below.
    * - Shell
@@ -200,7 +201,10 @@ the same checks, so the tool's description asks for a call after a code change
 only, not a second one before finishing.
 
 ``test_api`` executes up to 20 declarative requests against a disposable copy of
-one generated FastAPI backend and a fresh SQLite database. Requests share state
+one generated FastAPI backend and a fresh SQLite database. It is offered, and the
+prompts name it, only while the workspace holds such a backend (``main_api.py``
+next to ``sql_alchemy.py``), decided when Phase 2 and Phase 3 start, so the tool
+list does not change within a phase. Requests share state
 within a scenario; later requests may reference response JSON using
 ``{{0.room.id}}``. When the path is missing from a response that wraps the record
 under exactly one key (``{"todolist": {"id": 1}, "items_ids": []}``), ``{{0.id}}``

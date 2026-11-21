@@ -509,6 +509,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             has_nn_model=self.nn_model is not None,
             allow_shell=allow_shell_tools,
         )
+        # Kept out of the list while no backend it can drive exists (``_offer_test_api``).
+        self._test_api_tool = next((t for t in self.tools if t["name"] == "test_api"), None)
+        self._test_api_offered = self._test_api_tool is not None
         # Phase 3 auto-fix policy. False = report-only (industry default
         # for static analysers — fix on request, never blindly).
         self.auto_fix_issues = auto_fix_issues
@@ -1976,6 +1979,24 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         logger.info("Phase 2: locked %s, the application they write already exists",
                     ", ".join(sorted(locked)))
 
+    def _offer_test_api(self) -> None:
+        """Offer test_api, and the prompt text naming it, only while the workspace holds a
+        FastAPI backend it can drive. Called when a phase starts: the tool list opens the
+        cached prompt prefix."""
+        if self._test_api_tool is None:
+            return
+        try:
+            self._test_api_offered = bool(self._probeable_backends())
+        except Exception:
+            logger.warning("Backend discovery failed; test_api stays offered", exc_info=True)
+            self._test_api_offered = True
+        tools = [t for t in self.tools if (t.get("name") if isinstance(t, dict) else None) != "test_api"]
+        if self._test_api_offered:
+            names = [t.get("name") if isinstance(t, dict) else None for t in tools]
+            tools.insert(names.index("validate_app") if "validate_app" in names else len(tools),
+                         self._test_api_tool)
+        self.tools = tools
+
     def _ensure_gitignore(self) -> None:
         """Write a .gitignore into the output root if the run didn't author one."""
         try:
@@ -2013,6 +2034,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # dirs next to the assembled backend/.
         self._drop_redundant_generator_tools()
         self._lock_application_generators()
+        self._offer_test_api()
 
         # Ship a .gitignore so a pushed/cloned repo doesn't carry caches, a
         # runtime DB, node_modules, or a leaked .env. Deterministic — no LLM.
@@ -2152,10 +2174,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             "your turn runs it by itself: call it after code changes, never just before you finish. "
             "Fix import/DDL errors first, then schema-router contracts and business "
             "behavior. Schema edits require updating all consumers and forms. "
-            "Use test_api to exercise complete workflows with persisted values and negative "
-            "cases from the original specification, not just health endpoints. Read routes "
-            "and request schemas first. "
-            "Never announce the app is functional before verification."
+            + ("Use test_api to exercise complete workflows with persisted values and negative "
+               "cases from the original specification, not just health endpoints. Read routes "
+               "and request schemas first. " if self._test_api_offered else "")
+            + "Never announce the app is functional before verification."
         )
 
         _cost_warning_fired = False
@@ -2366,8 +2388,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                         "<system-reminder>You have made "
                         f"{no_source_progress} tool calls without changing source. New results are useful, "
                         "but inspection is bounded. "
-                        "Use the code already inspected to implement one coherent missing behavior, "
-                        "or use test_api to verify behavior already present. "
+                        "Use the code already inspected to implement one coherent missing behavior"
+                        + (", or use test_api to verify behavior already present. "
+                           if self._test_api_offered else ". ") +
                         "Do not make cosmetic edits to reset progress or repeat unchanged reads or commands. "
                         "If a prerequisite prevents progress, record the concrete blocker. "
                         "The next stage will retain unresolved work, not treat inspection as completion."

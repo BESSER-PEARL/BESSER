@@ -346,6 +346,7 @@ class Phase3RepairMixin:
         """
         if self.phase3_started_at is None:
             self.phase3_started_at = time.monotonic()
+        self._offer_test_api()
         # Announced before the first check, which can take minutes (npm, tsc), so
         # that time is counted as validation, not as the phase before it.
         self._emit_progress(self.total_turns, "__validating__", "")
@@ -1305,8 +1306,8 @@ class Phase3RepairMixin:
         prompt_parts.append("")
         prompt_parts.append(
             "Resolve authorized dependency setup by installing with run_command, then "
-            "validate_app; resolve missing evidence using current exact citations "
-            "or test_api. Do not manufacture source changes to "
+            "validate_app; resolve missing evidence using current exact citations"
+            + (" or test_api" if self._test_api_offered else "") + ". Do not manufacture source changes to "
             "satisfy bookkeeping; make an edit only if behavior is actually missing. "
             "The harness will recheck evidence when this attempt ends."
             if verification_only else
@@ -1508,9 +1509,10 @@ class Phase3RepairMixin:
         parts = [
             "You are fixing validation errors in generated code. "
             "Fix each issue concisely. Call validate_app to recheck startup and "
-            "data entry after a coherent repair. When shell tools are unavailable, "
-            "validate_app and test_api are the supported verification tools. Use test_api "
-            "for specification-based workflow assertions and invalid inputs.", "",
+            "data entry after a coherent repair."
+            + (" When shell tools are unavailable, validate_app and test_api are the supported "
+               "verification tools. Use test_api for specification-based workflow assertions "
+               "and invalid inputs." if self._test_api_offered else ""), "",
         ]
         if self._instructions:
             parts.extend([

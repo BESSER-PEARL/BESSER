@@ -428,16 +428,23 @@ class ModifyRunMixin:
         unless this run kept one under its id. One that fails now is a regression to confirm,
         never a blocker: the change may have meant it. Those that pass, and those no check
         could run, are kept for the next run (``_carried_seed_workflows``): none runs when the
-        delivered tree's backend does not start, which is reported on its own."""
+        delivered tree's backend does not start, which is reported on its own. One whose
+        backend folder the delivered tree no longer has is dropped."""
         if not self._seed_workflows:
             return
         from besser.spec_driven_agent.validation.api_probe import DID_NOT_RUN_BOOTS, probe_api_scenario
 
         own = {record.get("scenario_id") for record in self._api_scenarios.values()}
         runnable = (self.enable_import_smoke_check and self._checks_allowed()
-                    and ("runtime", "") not in hidden_families(self._validation_issues))
+                    and ("runtime", "") not in hidden_families(
+                        [issue.message.removeprefix(OPEN_SINCE_PREVIOUS) for issue in self._validation_issues]))
         for workflow in self._seed_workflows:
             if workflow["scenario_id"] in own or workflow["status"] != "passed":
+                continue
+            backend = workflow["scenario"].get("backend")
+            if backend is not None and not os.path.isdir(os.path.join(self.output_dir, backend)):
+                logger.info("Modify run: API workflow %r dropped: its backend %s is no longer in the app",
+                            workflow["scenario_id"], backend)
                 continue
             if not runnable:
                 self._carried_seed_workflows.append(workflow)
@@ -461,7 +468,7 @@ class ModifyRunMixin:
 
     def _api_workflows_to_keep(self) -> list[dict]:
         """This run's retained workflows, then the previous version's it carried."""
-        own = workflow_entries(self._api_scenarios.values())
+        own = workflow_entries(self._api_scenarios.values(), self._workspace_revision())
         ids = {entry["scenario_id"] for entry in own}
         return own + [workflow for workflow in self._carried_seed_workflows if workflow["scenario_id"] not in ids]
 

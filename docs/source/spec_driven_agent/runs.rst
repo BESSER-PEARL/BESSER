@@ -677,7 +677,8 @@ Over it, these cuts apply in order until it fits:
    status.
 
 The workflow definitions are not lost to these cuts: every run also writes its
-retained workflows, whole and with their last status, to
+retained workflows, whole and with their last status (only when that run was on
+the delivered tree; otherwise without one, so it is not replayed), to
 ``.besser_api_workflows.json`` (at most ten, and at most 128 KiB: a workflow that
 does not fit is left out whole, with a warning). It travels with the app like the
 recipe, and a modify run reads it back (a file over the bound, or one holding an
@@ -687,9 +688,11 @@ kept one under the same id. One that fails now is ``regression to confirm: api
 scenario <id> passed on the previous version and fails now: ...``: not confirmed,
 never a blocker and never repaired, since the requested change may have meant it.
 None is run when the delivered tree's backend does not start (that is reported on
-its own). Those that pass, or that no check could run (the backend did not boot,
-or the probe found nothing to start), are written again for the next run; one
-that failed is not.
+its own, also when the previous version already had that failure). One whose
+backend folder the delivered tree no longer has is dropped, with a log line.
+Those that pass, or that no check could run (the backend did not boot, or the
+probe found nothing to start), are written again for the next run; one that
+failed is not.
 
 ``tool_calls_count`` and every other total stay true, and nothing a later reader
 uses is cut: the model, ``output_files``, ``generator_used``, ``target``,

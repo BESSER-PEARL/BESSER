@@ -9,6 +9,7 @@ and fails on the delivered tree is a regression to confirm, never a blocker.
 from __future__ import annotations
 
 import json
+import logging
 
 import pytest
 
@@ -17,7 +18,7 @@ from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator, Vali
 from besser.spec_driven_agent.state import api_workflows
 from besser.spec_driven_agent.state.api_workflows import WORKFLOWS_FILENAME, load_workflows, save_workflows
 from besser.spec_driven_agent.validation import api_probe
-from besser.spec_driven_agent.validation.issues import is_completion_issue, is_not_confirmed
+from besser.spec_driven_agent.validation.issues import OPEN_SINCE_PREVIOUS, is_completion_issue, is_not_confirmed
 
 
 class _Usage:
@@ -50,15 +51,15 @@ def _requests(title="Dune"):
             {"method": "GET", "path": "/book/{{0.id}}/", "expected_fields": {"title": title}}]
 
 
-def _workflow(scenario_id, status="passed", title="Dune"):
-    return {"scenario_id": scenario_id, "scenario": {"requests": _requests(title), "backend": None},
+def _workflow(scenario_id, status="passed", title="Dune", backend=None):
+    return {"scenario_id": scenario_id, "scenario": {"requests": _requests(title), "backend": backend},
             "status": status}
 
 
-def _record(scenario_id, title="Dune"):
+def _record(scenario_id, title="Dune", revision="r1"):
     """A ``test_api`` record as the run retains it."""
     return {"scenario_id": scenario_id, "scenario": {"requests": _requests(title), "backend": None},
-            "revision": "r1", "report": {"status": "passed", "boot": "ok", "responses": [
+            "revision": revision, "report": {"status": "passed", "boot": "ok", "responses": [
                 {"method": "POST", "path": "/book/", "status": 201, "json": {"id": 1, "title": title}}]}}
 
 
@@ -90,7 +91,7 @@ def test_a_planted_or_oversized_workflows_file_is_not_read(tmp_path, content):
 def test_a_recipe_over_its_budget_still_leaves_the_workflow_bodies(tmp_path):
     """Before: the size cuts left {'method': 'POST', 'path': '/book/'} and nothing to replay."""
     orch = _orch(tmp_path)
-    orch._api_scenarios = {"named:add-book": _record("add-book")}
+    orch._api_scenarios = {"named:add-book": _record("add-book", revision=orch._workspace_revision())}
     # Kept by the first cut (a path), so the recipe is still over its budget at the second.
     orch.tool_calls_log = [{"tool": "read_file", "input": {"path": f"{'d/' * 150}f{i}.py"}, "success": True}
                            for i in range(600)]
@@ -153,12 +154,18 @@ def test_a_workflow_that_passes_or_could_not_run_is_kept_for_the_next_run(tmp_pa
     assert orch._api_workflows_to_keep() == [_workflow("add-book")]
 
 
-def test_a_workflow_is_not_replayed_on_a_tree_whose_backend_does_not_start(tmp_path, monkeypatch):
-    """Before: each replay booted again and repeated the startup failure as its own regression."""
+_STARTUP = "application startup: backend: ImportError: cannot import name 'Book'"
+
+
+@pytest.mark.parametrize("startup", [ValidationIssue("blocker", _STARTUP),
+                                     ValidationIssue("warning", OPEN_SINCE_PREVIOUS + _STARTUP)],
+                         ids=["new", "open-since-previous"])
+def test_a_workflow_is_not_replayed_on_a_tree_whose_backend_does_not_start(tmp_path, monkeypatch, startup):
+    """Before: each replay booted again and repeated the startup failure as its own regression;
+    and a startup failure the previous version already had, once labelled, did not stop it."""
     orch = _orch(tmp_path)
     orch._modify_mode = True
     orch._seed_workflows = [_workflow("add-book")]
-    startup = ValidationIssue("blocker", "application startup: backend: ImportError: cannot import name 'Book'")
     orch._validation_issues = [startup]
     calls = _replayed(monkeypatch, {"status": "error", "boot": "failed", "error": "ImportError", "responses": []})
 
@@ -166,6 +173,38 @@ def test_a_workflow_is_not_replayed_on_a_tree_whose_backend_does_not_start(tmp_p
 
     assert calls == [] and orch._validation_issues == [startup]
     assert orch._api_workflows_to_keep() == [_workflow("add-book")]
+
+
+@pytest.mark.parametrize("present", [True, False], ids=["backend-present", "backend-removed"])
+def test_a_workflow_whose_backend_folder_is_gone_is_dropped(tmp_path, monkeypatch, caplog, present):
+    """Before: the probe found no such service, so the workflow counted as not run and was carried forever."""
+    if present:
+        (tmp_path / "services" / "api").mkdir(parents=True)
+    orch = _orch(tmp_path)
+    orch._modify_mode = True
+    orch._seed_workflows = [_workflow("add-book", backend="services/api")]
+    calls = _replayed(monkeypatch, {"status": "passed", "boot": "ok", "responses": []})
+
+    with caplog.at_level(logging.INFO):
+        orch._modify_end_checks()
+
+    assert orch._validation_issues == []
+    if present:
+        assert len(calls) == 1 and orch._api_workflows_to_keep() == [_workflow("add-book", backend="services/api")]
+    else:
+        assert calls == [] and orch._api_workflows_to_keep() == []
+        assert "add-book" in caplog.text and "services/api" in caplog.text
+
+
+def test_a_pass_on_an_earlier_tree_is_saved_without_the_passed_claim(tmp_path):
+    """Before: the last report's status was saved whatever tree it ran on, and the next run replayed it."""
+    orch = _orch(tmp_path)
+    current = orch._workspace_revision()
+    orch._api_scenarios = {"named:add-book": _record("add-book", revision=current),
+                           "named:old": _record("old", revision="an-earlier-tree")}
+
+    assert [(w["scenario_id"], w["status"]) for w in orch._api_workflows_to_keep()] == [
+        ("add-book", "passed"), ("old", None)]
 
 
 def test_a_workflow_this_run_kept_under_the_same_id_is_not_replayed(tmp_path, monkeypatch):

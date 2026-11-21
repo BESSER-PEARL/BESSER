@@ -22,11 +22,13 @@ MAX_WORKFLOWS_BYTES = 128 * 1024
 MAX_WORKFLOWS = 10
 
 
-def workflow_entries(records) -> list[dict]:
-    """``{"scenario_id", "scenario", "status"}`` for retained ``test_api`` records."""
+def workflow_entries(records, revision: str) -> list[dict]:
+    """``{"scenario_id", "scenario", "status"}`` for retained ``test_api`` records; the status
+    only of a record whose last run was on ``revision`` (the delivered tree), else None."""
+    records = list(records)
     return [{"scenario_id": saved["scenario_id"], "scenario": saved["scenario"],
-             "status": saved["report"].get("status")}
-            for saved in api_scenario_snapshot(records, include_reports=True)]
+             "status": (record.get("report") or {}).get("status") if record.get("revision") == revision else None}
+            for record, saved in zip(records, api_scenario_snapshot(records))]
 
 
 def save_workflows(output_dir: str, entries: list[dict]) -> None:

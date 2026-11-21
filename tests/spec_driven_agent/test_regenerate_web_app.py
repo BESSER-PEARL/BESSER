@@ -15,6 +15,7 @@ from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 from besser.spec_driven_agent.pipeline.regeneration import regenerate
 from besser.spec_driven_agent.planning.model_change import ModelChange
+from besser.spec_driven_agent.planning.requirements_ledger import _digest_priority, _source_files, _written_shares
 from besser.spec_driven_agent.providers.llm_client import UsageTracker
 from besser.spec_driven_agent.state.generator_output import GENERATOR_OUTPUT_FILENAME, load_generator_output
 from besser.spec_driven_agent.validation.endpoint_coherence import collect_endpoint_coherence_issues
@@ -137,6 +138,20 @@ def test_without_a_stored_output_the_gui_files_are_neither_replaced_nor_deleted(
     after = _files(workspace, "web_app/frontend/src/")
     assert {rel for rel in before if rel not in after} == set()
     assert all(after[rel] == content for rel, content in before.items() if "/api/generated/" not in rel)
+
+
+def test_the_judge_digest_ranks_edited_backend_code_before_untouched_output(app):
+    """With the stored output, a web app's backend is ranked by the agent's share, as a FastAPI app's is."""
+    workspace, _ = app
+    main = workspace / "web_app" / "backend" / "main_api.py"
+    main.write_text(main.read_text(encoding="utf-8") + "# checked by hand\n", encoding="utf-8")
+    files = _source_files(str(workspace))
+
+    shares = _written_shares(str(workspace), files)
+    ranked = sorted(files, key=lambda rel: _digest_priority(rel, shares))
+
+    assert shares["web_app/backend/routers/guest.py"] == 0 and shares["web_app/backend/main_api.py"] > 0
+    assert ranked.index("web_app/backend/main_api.py") < ranked.index("web_app/backend/routers/guest.py")
 
 
 class _Client:

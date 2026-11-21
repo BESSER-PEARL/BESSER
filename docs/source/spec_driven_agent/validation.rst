@@ -1132,7 +1132,9 @@ later message: one call, and verdicts without trace ids.
 The judge reads a digest of the app of at most 200,000 characters: the schema
 files first, then the backend code ranked by the share of its lines the agent
 wrote (a module the generator never wrote first, untouched generator output
-last), with 30% reserved for pages and components. When the whole app does not
+last), with 30% reserved for pages and components. The shares are read against
+the stored generator output, which a FastAPI backend and a web app's backend
+and typed client have; without one, routers come first. When the whole app does not
 fit, a generator file the agent edited in under half of its lines is shown as
 its edits with three lines of context; the unchanged generator lines left out,
 and the places where generator lines were removed, are marked. A file over 1,500

@@ -271,3 +271,23 @@ def test_without_shell_validate_app_shows_the_partial_type_check_the_gate_blocks
     assert any("TS2307" in issue for issue in result["issues"]) and result["blocker_count"] >= 1
     assert any("TS2307" in issue.message and issue.severity == "blocker"
                for issue in orch._collect_validation_issues())
+
+
+@pytest.mark.parametrize("manifest", [
+    {"scripts": "vite", "dependencies": {"react": "1", "vite": "1"}},
+    {"scripts": ["build"], "dependencies": {"react": "1", "vite": "1"}},
+    {"scripts": "vite", "dependencies": {"react": "1"}},
+])
+def test_a_package_json_whose_scripts_is_not_an_object_does_not_crash_the_checks(tmp_path, monkeypatch, manifest):
+    web = tmp_path / "web"
+    web.mkdir()
+    (web / "package.json").write_text(json.dumps(manifest), encoding="utf-8")
+    monkeypatch.setattr(sandbox_mod, "run_confined",
+                        lambda cmd, **kwargs: subprocess.CompletedProcess(cmd, 0, stdout="", stderr=""))
+    orch = LLMOrchestrator(llm_client=_Client(), domain_model=DomainModel(name="Shop", types={Class(name="Order")}),
+                           output_dir=str(tmp_path), enable_tracing=False, enable_checkpointing=False,
+                           enable_toolchain_validation=False, enable_import_smoke_check=False,
+                           enable_requirements_ledger=False)
+
+    assert isinstance(orch._validate_app()["issues"], list)
+    orch._collect_validation_issues()

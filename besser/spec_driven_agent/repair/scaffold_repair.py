@@ -536,6 +536,8 @@ def _find_vite_react_frontends(output_dir: str) -> list:
             continue
         declared = _declared(manifest)
         scripts = manifest.get("scripts") or {}
+        if not isinstance(scripts, dict):  # npm rejects it; the build check reports it
+            continue
         uses_vite = "vite" in declared or any(
             "vite" in value for value in scripts.values() if isinstance(value, str))
         if "react" in declared and uses_vite:

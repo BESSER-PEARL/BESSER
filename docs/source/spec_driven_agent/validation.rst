@@ -343,9 +343,12 @@ a ``GET`` of its item route (``/<name>/{id}/``) and of the collection route Open
 declares on the create path. A 5xx (or an exception the app raised) on either is
 a ``read contract:`` blocker, an observed failure like a crashed create, with the
 handler that served the read as its fix site. Any other refusal of the item read
-leaves the create ``create unverified:``: an item route may serve its owner only.
-A collection route that refuses without a server error (a required query
-parameter, a 404) is no finding.
+leaves the create ``create unverified:`` (an item route may serve its owner only,
+or look records up by another field than the id), unless the collection read
+answered 2xx with the record's id in it. A read refused 401 or 403 before the
+probe logged in is retried after logging in through the app's register/login
+routes, as a refused create is. A collection route that refuses without a server
+error (a required query parameter, a 404) is no finding.
 The probe drives only entity creates: a ``POST`` whose body is ``<Name>Create``
 where ``<Name>`` is a mapped ORM class the model does not mark abstract. A
 ``*Create`` body whose handler writes no table (a signup or login form) persists
@@ -730,7 +733,7 @@ severity a finding was built or stored with:
 - ``create unverified:`` and ``action unverified:`` — the probe's own guessed
   request was refused (a 4xx, a login it could not pass, a record it could not set
   up), or the record it created could not be read back by id without a server
-  error (a 401, 403 or 404), and no ``test_api`` scenario settled it; ``runtime unverified:`` is the same
+  error (a 401, 403 or 404) and its list did not show it, and no ``test_api`` scenario settled it; ``runtime unverified:`` is the same
   finding once no scenario did;
 - ``validation unverified:`` — a required check did not run (a runtime check
   without a sandbox, a judge that returned no verdicts, a build that timed out),

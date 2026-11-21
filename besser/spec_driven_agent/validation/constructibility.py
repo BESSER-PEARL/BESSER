@@ -1062,28 +1062,58 @@ def _read_routes(spec: dict, creates: dict) -> dict:
     return found
 
 
-async def _read_back(app, client, spec: dict, entity: str, create_path: str, item_route: str | None,
-                     record_id) -> list[dict]:
-    """GET the record the probe just created through its item route, and the collection
-    route OpenAPI declares on its create path. Returned: the item read when it did not
-    answer 2xx, the collection read when it answered 5xx, each 5xx with its fix site."""
-    routes = [(item_route, True)] if item_route and item_route.count("{") == 1 else []
+async def _read_back(app, client, spec: dict, schemas: dict, auth: dict, entity: str, create_path: str,
+                     item_route: str | None, record_id) -> list[dict]:
+    """GET the record the probe just created through the collection route OpenAPI declares
+    on its create path and through its item route. Returned: a read that answered 5xx, with
+    its fix site, and the item read when it did not answer 2xx and the collection did not
+    list the record either. A read refused 401/403 before the probe logged in is retried
+    after logging in, as a refused create is."""
+    routes = []
     if "{" not in create_path and "get" in (spec.get("paths", {}).get(create_path) or {}):
         routes.append((create_path, False))
-    unexpected = []
+    if item_route and item_route.count("{") == 1:
+        routes.append((item_route, True))
+    unexpected, listed = [], False
     for route, item in routes:
-        try:
-            response = await client.get(re.sub(r"\{[^/{}]+\}", str(record_id), route, count=1))
-            status, text = response.status_code, response.text or ""
-        except Exception as exc:  # the app raised: a server would answer 500
-            status, text = "EXC", f"{type(exc).__name__}: {exc}"
+        url = re.sub(r"\{[^/{}]+\}", str(record_id), route, count=1)
+
+        async def get(url=url):
+            try:
+                response = await client.get(url)
+                return response, response.status_code, response.text or ""
+            except Exception as exc:  # the app raised: a server would answer 500
+                return None, "EXC", f"{type(exc).__name__}: {exc}"
+
+        response, status, text = await get()
+        if status in (401, 403) and not auth:
+            auth.update(refused=f"GET {route}", anonymous_status=status)
+            record, retried = await _log_in(client, spec, schemas, get)
+            auth.update(record)
+            if retried is not None:
+                response, status, text = retried
         crashed = not isinstance(status, int) or status >= 500
-        if crashed or (item and not 200 <= status < 300):
+        answered = not crashed and 200 <= status < 300
+        if not item and answered:
+            listed = _lists_record(response, record_id)
+        if crashed or (item and not answered and not listed):
             read = {"route": route, "status": status, "body": text[:_BODY_CHARS]}
             if crashed:
                 read["site"] = _handler_site(app, route, entity, method="GET")
             unexpected.append(read)
     return unexpected
+
+
+def _lists_record(response, record_id) -> bool:
+    """Whether a collection answer (a list, or an object holding one) has the record ``record_id``."""
+    try:
+        body = response.json()
+    except ValueError:
+        return False
+    rows = (body if isinstance(body, list) else
+            [row for value in body.values() if isinstance(value, list) for row in value] if isinstance(body, dict)
+            else [])
+    return any(str(_extract_id(row)) == str(record_id) for row in rows)
 
 
 def _count_routes(spec: dict, creates: dict) -> dict:
@@ -1998,7 +2028,7 @@ def _probe_cwd() -> dict:
             read_routes = _read_routes(spec, creates)
             for entity, entry in entities.items():
                 if entry["verdict"] == "created" and ids.get(entity) is not None:
-                    reads = await _read_back(app, client, spec, entity, entry["path"],
+                    reads = await _read_back(app, client, spec, schemas, auth, entity, entry["path"],
                                              read_routes.get(entity), ids[entity])
                     if reads:
                         entry["reads"] = reads

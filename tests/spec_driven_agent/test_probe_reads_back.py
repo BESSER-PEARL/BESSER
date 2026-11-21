@@ -5,8 +5,10 @@ completed: the probe counted a 2xx create as the whole result and never read
 the record back, so nothing blocked on reads that every screen depends on.
 After each create the probe now GETs the record's item route and the
 collection route OpenAPI declares. A 5xx there is an observed failure; any
-other answer to the item read leaves the create unverified, because an
-owner-scoped read or a list that needs a query parameter can refuse correctly.
+other answer to the item read leaves the create unverified unless the list
+showed the record, because an owner-scoped read, an item route keyed by
+another field or a list that needs a query parameter can refuse correctly.
+A read refused for want of a login is retried after logging in.
 """
 from __future__ import annotations
 
@@ -80,8 +82,10 @@ def test_a_healthy_scaffold_reads_back_without_a_finding(tmp_path):
 
 
 def test_an_item_read_that_refuses_leaves_the_create_unverified(tmp_path):
+    """Neither read shows the record: the item route refuses and the list leaves it out."""
     workspace = _scaffold(tmp_path)
     _break(tmp_path, "get_order", 'raise HTTPException(status_code=404, detail="not yours")')
+    _break(tmp_path, "get_all_order", "return []")
 
     [issue] = collect_constructibility_report(workspace)["issues"]
 
@@ -120,3 +124,73 @@ def test_a_read_failure_of_an_entity_first_created_by_the_attempt_is_newly_visib
     assert finding(issue)
     created_before = [{"boot": "ok", "entities": {"Order": {"path": "/order/", "verdict": "created"}}}]
     assert not Phase3RepairMixin._newly_reachable(created_before, after)[0](issue)
+
+
+def _rewrite(tmp_path, old: str, new: str) -> None:
+    router = tmp_path / "app" / "backend" / "routers" / "order.py"
+    text = router.read_text(encoding="utf-8")
+    assert old in text
+    router.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+
+def test_a_record_the_list_shows_is_read_back_when_its_item_route_takes_another_key(tmp_path):
+    """``GET /order/{reference}/`` cannot be read by the id; the collection already lists the record."""
+    workspace = _scaffold(tmp_path)
+    _rewrite(tmp_path, '@router.get("/order/{order_id}/", response_model=None, tags=["Order"])\n'
+                       "async def get_order(order_id: int, database: Session = Depends(get_db)) -> Order:\n"
+                       "    db_order = database.query(Order).filter(Order.id == order_id).first()",
+             '@router.get("/order/{reference}/", response_model=None, tags=["Order"])\n'
+             "async def get_order(reference: str, database: Session = Depends(get_db)) -> Order:\n"
+             "    db_order = database.query(Order).filter(Order.reference == reference).first()")
+
+    assert collect_constructibility_report(workspace)["issues"] == []
+
+
+_READ_WALL = '''
+import secrets
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import BaseModel
+
+_tokens: set = set()
+bearer = HTTPBearer(auto_error=False)
+router = APIRouter(prefix="/auth")
+
+
+class Credentials(BaseModel):
+    username: str
+    password: str
+
+
+def get_current_user(credentials: HTTPAuthorizationCredentials | None = Depends(bearer)):
+    if credentials is None or credentials.credentials not in _tokens:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return credentials.credentials
+
+
+@router.post("/login")
+def login(data: Credentials):
+    token = secrets.token_urlsafe(16)
+    _tokens.add(token)
+    return {"access_token": token, "token_type": "bearer"}
+'''
+
+
+def test_a_read_that_needs_a_login_is_retried_after_logging_in(tmp_path):
+    """The create is public and the reads are not: the probe logs in on the refused read, as on a refused create."""
+    workspace = _scaffold(tmp_path)
+    backend = tmp_path / "app" / "backend"
+    (backend / "auth.py").write_text(_READ_WALL, encoding="utf-8")
+    for head in ("def get_all_order(detailed: bool = False, ", "async def get_order(order_id: int, "):
+        _rewrite(tmp_path, head, head + "_user: str = Depends(get_current_user), ")
+    _rewrite(tmp_path, "\n@router.get(", "\nfrom auth import get_current_user\n\n@router.get(")
+    main = backend / "main_api.py"
+    main.write_text(main.read_text(encoding="utf-8") + "\nimport auth as _auth\napp.include_router(_auth.router)\n",
+                    encoding="utf-8")
+
+    report = collect_constructibility_report(workspace)
+
+    assert report["issues"] == [], report["issues"]
+    [backend_report] = report["backends"]
+    assert backend_report["auth"]["refused"] == "GET /order/"
+    assert backend_report["auth"]["source"] == "its register/login routes"

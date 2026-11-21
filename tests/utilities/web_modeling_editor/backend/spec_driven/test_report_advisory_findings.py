@@ -75,6 +75,21 @@ def test_blockers_and_counts_notes_stay_out_of_the_list():
     assert report.counts.advisory == 0 and report.advisory == []
 
 
+def test_a_finding_stored_as_a_blocker_is_not_listed_as_seen_not_blocking():
+    # A fix run stores the finding that matches the reported failure as a blocker; its
+    # prefix alone would classify it as a warning.
+    message = ("reported-failure: GET /order/ answered 500 (matches the reported failure: "
+               "listing orders fails)")
+    assert _classify_issue(message).severity == "warning"
+    recipe = _recipe()
+    recipe["validation_issues"] = [{"severity": "blocker", "message": message}]
+
+    report = build_verification_report(recipe)
+
+    assert report.counts.advisory == 0 and report.advisory == []
+    assert "seen, not blocking" not in "\n".join(run_summary_markdown(recipe, report))
+
+
 def test_an_unconfirmed_requirement_is_listed_once_as_not_confirmed():
     recipe = _recipe("requirement unverified: R1 — An order records its quantity — the cited evidence was "
                      "not located in the delivered source", REQUIREMENTS_NOT_EXTRACTED)

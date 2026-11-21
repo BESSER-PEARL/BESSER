@@ -804,8 +804,9 @@ def build_verification_report(recipe: dict, run_id: Optional[str] = None) -> Ver
             # Every other finding the counts call not confirmed (the runtime gate's "no runtime
             # evidence"); requirements are listed from their verdicts above and below.
             not_verified.append(_item("check", "", user_sentence(message)))
-        elif not is_not_confirmed(message) and _classify_issue(message).severity == "warning":
-            # A plain warning: what a check could not look at is not verified; what it saw is advisory.
+        elif not is_not_confirmed(message) and (issue.get("severity") or _classify_issue(message).severity) == "warning":
+            # A plain warning (the stored severity, as blockerCount counts it): what a check could
+            # not look at is not verified; what it saw is advisory.
             (not_verified if not_checked(message) else advisory).append(
                 _item("check", "", user_sentence(message)))
 

@@ -148,14 +148,23 @@ def test_validate_app_reports_and_leaves_the_workspace_as_it_was(tmp_path):
     assert "npm ci" not in (web / "Dockerfile").read_text(encoding="utf-8")
 
 
-def test_an_edit_the_frontend_compiles_from_outside_its_folder_reruns_tsc_at_the_gate(tmp_path, compiler):
+@pytest.mark.parametrize("frontend", ["web", "app/web"])
+def test_an_edit_the_frontend_compiles_from_outside_its_folder_reruns_tsc_at_the_gate(
+        tmp_path, compiler, monkeypatch, frontend):
     orch = _orch(tmp_path)
-    (tmp_path / "web" / "tsconfig.json").write_text('{"include": ["src", "../shared"]}', encoding="utf-8")
-    (tmp_path / "shared").mkdir()
-    (tmp_path / "shared" / "totals.ts").write_text("export const total: number = 1;\n", encoding="utf-8")
+    monkeypatch.setattr(orch, "_pip_dry_run_issues", lambda rel: [])
+    folder = tmp_path / frontend
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "tsconfig.json").write_text('{"include": ["src", "../shared"]}', encoding="utf-8")
+    if frontend == "app/web":
+        # The frontend sits inside a Python project's folder.
+        (tmp_path / "app" / "requirements.txt").write_text("fastapi\n", encoding="utf-8")
+    shared = folder.parent / "shared"
+    shared.mkdir()
+    (shared / "totals.ts").write_text("export const total: number = 1;\n", encoding="utf-8")
     orch._collect_validation_issues()
 
-    (tmp_path / "shared" / "totals.ts").write_text("export const total: number = 'x';\n", encoding="utf-8")
+    (shared / "totals.ts").write_text("export const total: number = 'x';\n", encoding="utf-8")
     orch._collect_validation_issues()
 
     assert len(compiler) == 2, "the gate reused a type check made before the edit"

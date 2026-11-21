@@ -5020,8 +5020,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     def _frontend_revision(self) -> str:
         """The revision of what a type check or frontend build can read: every file
         but Python sources and the rest of a Python project's folder (one holding a
-        ``requirements.txt`` or ``pyproject.toml``, outside a frontend's). The
-        workspace revision when no folder holds a ``package.json`` or ``tsconfig.json``."""
+        ``requirements.txt`` or ``pyproject.toml`` and neither a frontend nor holding
+        one). The workspace revision when no folder holds a ``package.json`` or ``tsconfig.json``."""
         files = self._workspace_file_list()
 
         def folders(*names: str) -> set[str]:
@@ -5033,7 +5033,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         frontends = folders("package.json", "tsconfig.json")
         if not frontends:
             return self._workspace_revision()
-        backends = folders("requirements.txt", "pyproject.toml") - frontends - {""}
+        backends = {folder for folder in folders("requirements.txt", "pyproject.toml") - frontends - {""}
+                    if not any(under(frontend, folder) for frontend in frontends)}
         return self._files_revision(lambda rel: not rel.endswith(".py") and (
             any(under(rel, folder) for folder in frontends) or not any(under(rel, folder) for folder in backends)))
 

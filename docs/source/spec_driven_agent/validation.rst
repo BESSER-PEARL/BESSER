@@ -253,7 +253,7 @@ failures included, are reused only for unchanged source and dependency-install
 markers during the same run; source changes during a build invalidate its
 result. For the build and ``tsc`` the source is every file but Python sources and
 the rest of a folder holding a ``requirements.txt`` or ``pyproject.toml`` (unless
-it is also a frontend's), for the ``pip install --dry-run`` check its
+it is a frontend's or holds one), for the ``pip install --dry-run`` check its
 ``requirements.txt``, so a backend edit reuses the frontend's verdicts. The same holds for ``tsc`` (also keyed by the
 compiler it would use), ``cargo check``, ``kotlinc`` and the dependency check: Phase 3
 re-validates after rounds that edit nothing and after a rollback, and those

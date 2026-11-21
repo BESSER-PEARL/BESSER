@@ -78,6 +78,27 @@ def test_unfixed_phase3_blocker_marks_run_incomplete(monkeypatch):
         _cleanup()
 
 
+def test_a_modify_runs_regression_is_named_first(monkeypatch):
+    """A hard blocker the previous version did not have leads the incomplete reason."""
+    startup = "application startup: backend: ModuleNotFoundError: No module named 'routers.order'"
+
+    class Regressed(_BlockerOrchestrator):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self._validation_issues.append(ValidationIssue("blocker", startup))
+            self._seed_regressions = [startup]
+
+    monkeypatch.setattr(runner_module, "LLMOrchestrator", Regressed)
+    monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _FakeClient())
+    try:
+        done = _done_event(SmartGenerationRunner(_build_request(), runtime=current_runtime()))
+        assert done["incomplete"] is True
+        assert "New since the previous version, a regression to confirm:" in done["incompleteReason"]
+        assert "First:" not in done["incompleteReason"]
+    finally:
+        _cleanup()
+
+
 @pytest.mark.parametrize("required_check", [False, True])
 def test_no_blockers_stays_complete(monkeypatch, required_check):
     from besser.spec_driven_agent.validation.issues import _check_did_not_run, required_check_unverified

@@ -269,7 +269,8 @@ The base's workspace is kept for ``BESSER_LLM_DOWNLOAD_TTL_SECONDS`` (3 hours by
 default) and its ZIP download for ``BESSER_LLM_ARCHIVE_TTL_SECONDS`` (24 hours).
 Once the workspace is gone, the run is seeded from the download instead: it holds
 the same source tree and the run files a later run reads (``.besser_recipe.json``,
-``.besser_attribution.json``, ``.besser_generator_output.json``), and it is
+``.besser_attribution.json``, ``.besser_generator_output.json``,
+``.besser_api_workflows.json``), and it is
 unpacked with the checks of an uploaded archive (no path outside the workspace, no
 links, size and file-count limits; of a file's mode only its execute bits are
 kept, so ``mvnw`` or a ``*.sh`` script stays executable). The GitHub source record
@@ -290,6 +291,14 @@ returns ``base_available`` (``false`` when the run would rebuild). The editor av
 the rebuild for a project linked to GitHub: it starts the run from the repository
 instead (see :ref:`web-editor-github-coming-back`).
 
+The server admits two runs on the same base, and the editor makes the one that
+finishes last the base of the next edit. So the editor starts at most one run per
+project across the browser's tabs: a tab holds the project's Web Lock from the
+start of a run (or the adoption of one after a reload) until the run ends, and
+the browser drops it when the tab closes or crashes. A second tab asking for a
+run meanwhile is told the project is running in another tab. The lock is
+per browser profile: another browser or device is not covered.
+
 Validation of a modify run is proportional to its request: it keeps the previous
 run's requirement verdicts, judges only the requirements of the messages since
 that run and those whose files changed, and reports a requirement the previous run
@@ -297,6 +306,31 @@ had left open as still open rather than as a blocker of this run, unless the new
 messages ask to finish it (see
 :ref:`requirements of a modify run <spec-driven-modify-requirements>`). The build, type-check, boot and runtime
 gates apply as in any run.
+
+The other findings are compared with the previous version the same way. The
+seed recipe's ``validation_issues`` are the previous version's findings
+(``_seed_baseline``, kept in the checkpoint), and so are the checks
+``validate_app`` runs on the tree Phase 2 starts from, unless the run already
+changed the model or the files (a model change, model sync or regeneration): a
+defect that change introduced is this run's. The seed's blockers still open
+Phase 2's issues, as ``Unresolved from the previous run:``, once: one that
+``validate_app`` reports again is listed only by ``validate_app``. In Phase 3 a
+defect the previous version already had is reported as ``open since the previous
+version: <finding>``: not confirmed, so the run is not verified, but not a
+blocker of this run and not repaired. A later modify run forwards it again.
+Findings are matched by what they test, as Phase 3 attempts compare them (a
+runtime finding by its kind, backend and route and the error seen there, any
+other with its line numbers masked), never by text alone: a new error on the
+same route is this run's. A fix run keeps the severity of a finding that matches
+its reported failure or that stops other checks from running (``application
+startup:``, ``mapper config:``, ``missing module:``, ``tsc [``, a syntax error),
+and labels nothing when the reported failure names no entity. A blocker of the kinds that say the app no longer starts,
+creates a record or builds (``application startup:``, ``mapper config:``,
+``missing module:``, ``create contract:``, ``read contract:``, ``action call:``,
+``tsc [``, ``frontend build [``) that the previous version did not have, where
+that check could run on it, is a regression to confirm: it stays a blocker, the
+recipe lists it under ``seed_regressions``, and the incomplete reason names it
+first ("New since the previous version, a regression to confirm: ...").
 
 Every run records the class diagram it was given in the run's
 ``.besser_recipe.json`` as ``model.user_model``: classes (abstract, parents,
@@ -641,6 +675,25 @@ Over it, these cuts apply in order until it fits:
    each file, so the files the run changed are all still listed.
 4. Each API workflow keeps its id, each request's method and path, and its
    status.
+
+The workflow definitions are not lost to these cuts: every run also writes its
+retained workflows, whole and with their last status (only when that run was on
+the delivered tree; otherwise without one, so it is not replayed), to
+``.besser_api_workflows.json`` (at most ten, and at most 128 KiB: a workflow that
+does not fit is left out whole, with a warning). It travels with the app like the
+recipe, and a modify run reads it back (a file over the bound, or one holding an
+invalid definition, is ignored). After Phase 3 a modify run runs each workflow
+that passed on the previous version once on the delivered tree, unless the run
+kept one under the same id. One that fails now is ``regression to confirm: api
+scenario <id> passed on the previous version and fails now: ...``: not confirmed,
+never a blocker and never repaired, since the requested change may have meant it.
+None is run when the delivered tree's backend does not start (that is reported on
+its own, also when the previous version already had that failure). One whose
+backend folder the delivered tree no longer has is dropped, with a log line.
+Those that pass, or that no check could run (the backend did not boot, or the
+probe found nothing to start), are written again for the next run; one that
+failed is not. One saved without a status (its last pass was on an earlier tree
+of its run) is not replayed and is written again as it is.
 
 ``tool_calls_count`` and every other total stay true, and nothing a later reader
 uses is cut: the model, ``output_files``, ``generator_used``, ``target``,

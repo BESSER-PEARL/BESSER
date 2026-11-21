@@ -79,6 +79,7 @@ from besser.spec_driven_agent.agent.tools import get_available_generator_names
 from besser.spec_driven_agent.run_recap import NO_RULES_STATED
 from besser.spec_driven_agent.run_report import RECIPE_FILENAME
 from besser.spec_driven_agent.state import agent_trace
+from besser.spec_driven_agent.state.api_workflows import WORKFLOWS_FILENAME
 from besser.spec_driven_agent.state.generator_output import GENERATOR_OUTPUT_FILENAME, attach_model, stored_model
 from besser.spec_driven_agent.state.trace_model import (
     TRACE_MODEL_FILENAME,
@@ -188,9 +189,11 @@ _DOWNLOAD_DIR_RE = re.compile(
 # prefix keeps it out of every push and download.
 GITHUB_SOURCE_FILENAME = ".besser_github_source.json"
 # BESSER's own files a later run reads back, so they ride in the ZIP and the
-# GitHub push: the recipe (generator, history), the line attribution, and the
-# generator's stored output (the base a model change is merged against).
-CARRIED_RUN_FILES = (RECIPE_FILENAME, agent_trace.ATTRIBUTION_FILENAME, GENERATOR_OUTPUT_FILENAME)
+# GitHub push: the recipe (generator, history), the line attribution, the
+# generator's stored output (the base a model change is merged against), and
+# the API workflows a later modify run replays.
+CARRIED_RUN_FILES = (RECIPE_FILENAME, agent_trace.ATTRIBUTION_FILENAME, GENERATOR_OUTPUT_FILENAME,
+                     WORKFLOWS_FILENAME)
 _MAX_DOWNLOAD_MANIFEST_BYTES = 16 * 1024
 
 # Error codes a run that goes on to deliver output is shown as warnings.
@@ -2522,11 +2525,14 @@ class SmartGenerationRunner:
                     ))
                 else:
                     # Phase 2 finished cleanly, but Phase 3 left unfixed blockers.
+                    # A modify run names first a hard blocker its previous version did not have.
+                    _regressions = getattr(orchestrator, "_seed_regressions", None) or []
                     incomplete_reason_msg = (
                         f"The app was generated, but {len(_unfixed_blockers)} unresolved "
                         "implementation or verification issue(s) remain. "
-                        "The generated app is not verified complete. First: "
-                        + user_sentence(_unfixed_blockers[0])
+                        "The generated app is not verified complete. "
+                        + (f"New since the previous version, a regression to confirm: {user_sentence(_regressions[0])}"
+                           if _regressions else f"First: {user_sentence(_unfixed_blockers[0])}")
                     )
                     yield self._sse(ErrorEvent(
                         code="INCOMPLETE",

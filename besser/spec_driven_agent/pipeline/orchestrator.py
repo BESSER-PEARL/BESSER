@@ -217,6 +217,7 @@ from besser.spec_driven_agent.validation.python_source import (
     _ROUTER_READ_RE as _ROUTER_READ_RE,
 )
 from besser.spec_driven_agent.state.agent_trace import harness_writes, record_generated_files
+from besser.spec_driven_agent.state.api_workflows import save_workflows as save_api_workflows
 from besser.spec_driven_agent.state.recipe_size import bounded_recipe
 from besser.spec_driven_agent.state.tracing import (
     EVENT_CHECKPOINT,
@@ -772,6 +773,14 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # defect the seed run shipped survives forever because later
         # runs never look at it again.
         self._seed_unresolved_issues: list[str] = []
+        # A modify run's previous version (modify_run.py): the seed recipe's findings, the
+        # Phase 2 start's validate_app result with them, and the hard blockers new since.
+        self._seed_recorded_issues: list[str] = []
+        self._seed_baseline: list[str] | None = None
+        self._seed_regressions: list[str] = []
+        # The previous version's API workflows, and those of them this run keeps for the next.
+        self._seed_workflows: list[dict] = []
+        self._carried_seed_workflows: list[dict] = []
         # Model-sync during modify (class-diagram only). When a
         # ``modify()`` instruction implies new domain entities (e.g. "add
         # authentication" → a ``User`` class), ``_derive_and_apply_model_deltas``
@@ -822,6 +831,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._fix_target = None  # ReportedTarget | None
         self._fix_target_resolved: bool | None = None
         self._fix_target_message: str | None = None
+        # The check that exercised the target on the delivered tree, when resolved is True.
+        self._fix_target_evidence: str | None = None
 
     _LOOP_THRESHOLD = 4
     # Tighter, per-file threshold for the modify_file streak guard.
@@ -1168,7 +1179,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             EVENT_PHASE_EXIT, phase="phase3",
             exit_reason=self._phase3_exit_reason,
         )
-        self._evaluate_fix_target_gate()
+        self._modify_end_checks()
 
         elapsed = time.monotonic() - self._start_time
         self._save_recipe(instructions, elapsed)
@@ -2018,6 +2029,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._ensure_gitignore()
 
         scoped_issues = list(extra_issues) if extra_issues else []
+        if self._modify_mode:
+            scoped_issues = self._modify_opening_issues(scoped_issues)
         # "Issues to fix" takes blockers only; warnings stay in validate_app, marked advisory.
         scoped_issues.extend(issue for issue in self._validate_app()["issues"]
                              if _classify_issue(issue).severity == "blocker")
@@ -6253,6 +6266,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             recipe["model_change"] = model_change.to_dict()
         if self._modify_mode and self._regenerated_files:
             recipe["regenerated_files"] = list(self._regenerated_files)
+        if self._modify_mode and self._seed_regressions:
+            recipe["seed_regressions"] = list(self._seed_regressions)
         # Fix/modify success-gate outcome. Present ONLY on a fix run so the
         # from-scratch recipe stays byte-identical; records the reported
         # target and whether it was confirmed fixed, so a later "what did
@@ -6265,7 +6280,12 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 "entities": list(self._fix_target.entities),
                 "target_resolved": self._fix_target_resolved,
                 "target_message": self._fix_target_message,
+                "target_evidence": self._fix_target_evidence,
             }
+        try:
+            save_api_workflows(self.output_dir, self._api_workflows_to_keep())
+        except ValueError:
+            logger.warning("API workflows not kept for later runs", exc_info=True)
         recipe_path = os.path.join(self.output_dir, ".besser_recipe.json")
         try:
             self.saved_recipe, text = bounded_recipe(recipe, full_record=(

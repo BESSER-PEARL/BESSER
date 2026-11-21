@@ -140,6 +140,10 @@ conversation, returns a short ``unchanged`` stub naming the still-valid
 ``read_id`` and line range instead of the text. Repeating the call right after
 a stub returns the text. Compaction, history eviction, a resume and each
 Phase 3 fix round (a fresh conversation) reset this, so the next read is full.
+From the third read of one file, a read of a window under 40 lines, or of a
+window that continues the previous read of that file, carries a ``hint``: one
+``read_file`` without ``limit`` returns up to 60,000 characters from
+``offset``.
 
 Every tool result reaches the model as JSON with non-ASCII text kept literal
 (``é``, not ``\u00e9``). ``list_files`` returns one ``<path> <size>`` line per

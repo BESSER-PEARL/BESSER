@@ -987,6 +987,8 @@ class ToolExecutor:
         self._read_epoch = uuid4().hex[:12]
         # Reads per path, to catch a model crawling one file in tiny windows.
         self._read_counts: dict[str, int] = {}
+        # path -> (start, end) of its last read, 0-based end-exclusive: a crawl continues it.
+        self._last_read_spans: dict[str, tuple[int, int]] = {}
         self._read_views: dict[str, tuple[str, str, int, int]] = {}
         # Consecutive refused edits per path: the edit-recovery ladder's rung.
         self._edit_recovery: dict[str, int] = {}
@@ -2726,19 +2728,23 @@ class ToolExecutor:
             # model to crawl a file in tiny windows.
             result["total_lines"] = total_lines
 
-        # Crawling a file that fits in one read in 10-line windows can burn a
-        # third of the turn budget. Prose in the tool description does not
-        # stop it, so say it where the behaviour happens.
+        # Crawling a file in narrow windows, or in wide ones each continuing the
+        # last, can burn a third of the turn budget. Prose in the tool
+        # description does not stop it, so say it where the behaviour happens.
         rel = args["path"].replace("\\", "/").strip()
         self._read_counts[rel] = self._read_counts.get(rel, 0) + 1
         window = end - start
+        last = self._last_read_spans.get(rel)
+        self._last_read_spans[rel] = (start, end)
+        continues = last is not None and last[0] < start <= last[1] < end
         if (self._read_counts[rel] >= 3 and not truncated
-                and 0 < window < 40 and total_lines > 2 * window):
+                and 0 < window and (window < 40 or continues) and total_lines > 2 * window):
             result["hint"] = (
                 f"This is read {self._read_counts[rel]} of {rel}, covering {window} "
                 f"of {total_lines} lines. Read the whole function or class you intend "
-                "to change in one call - a file this size fits in a single read. "
-                "Each narrow window costs a turn and still omits the enclosing block."
+                f"to change in one call: read_file without limit returns up to "
+                f"{MAX_FILE_READ:,} characters from offset. Each window costs a turn "
+                "and still omits the enclosing block."
             )
 
         return result

@@ -41,7 +41,7 @@ def test_the_third_narrow_read_of_one_file_is_called_out(executor):
 
     assert "read 3 of router.py" in third["hint"]
     assert "10 of 599 lines" in third["hint"]  # includes the EOF anchor line
-    assert "single read" in third["hint"]
+    assert "without limit" in third["hint"]
 
 
 def test_the_first_two_narrow_reads_are_not_nagged(executor):
@@ -49,12 +49,29 @@ def test_the_first_two_narrow_reads_are_not_nagged(executor):
     assert "hint" not in read(executor, offset=179, limit=10)
 
 
-def test_repeated_wide_reads_are_fine(executor):
+def test_wide_reads_of_separate_blocks_are_fine(executor):
     """A model reading real blocks is doing the right thing."""
-    for offset in (0, 100, 200):
+    for offset in (0, 300, 100):
         result = read(executor, offset=offset, limit=120)
 
     assert "hint" not in result
+
+
+def test_wide_windows_read_one_after_another_are_a_crawl_too(tmp_path):
+    """A recorded run read a 1,876-line component in seven turns of 120-200-line windows, each
+    starting where the last one ended; one read without a limit returns about the same text.
+    The hint must not say the file fits in one read: at about 75,000 characters it does not."""
+    lines = [f"  const cell{i} = row[{i}] ?? fallback;" for i in range(1_876)]
+    (tmp_path / "table.tsx").write_text("\n".join(lines), encoding="utf-8")
+    executor = ToolExecutor(workspace=str(tmp_path))
+    windows = [executor.execute_typed("read_file", {"path": "table.tsx", "offset": offset,
+                                                    "limit": limit}).payload
+               for offset, limit in ((100, 150), (240, 200), (440, 120))]
+
+    assert "hint" not in windows[0] and "hint" not in windows[1]
+    assert "read 3 of table.tsx" in windows[2]["hint"]
+    assert "without limit" in windows[2]["hint"] and "60,000 characters" in windows[2]["hint"]
+    assert "single read" not in windows[2]["hint"]
 
 
 def test_a_full_read_no_longer_advertises_pagination(executor):

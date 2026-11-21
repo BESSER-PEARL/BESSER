@@ -158,7 +158,8 @@ Request body
        in the project trace, ``kind`` a ``RequirementKind`` value (see
        :doc:`../buml_language/model_types/traceability`). An item may add
        ``met_by`` (``declaration``, ``type`` or ``check``: what code meets it,
-       as the run's own extraction labels it; left out, ``check``). At most 128, ids
+       as the run's own extraction labels it; left out, the requirement is read
+       by the words of its text, see :doc:`validation`). At most 128, ids
        unique, text up to 1,000 characters. When given, the requirements ledger
        judges these instead of extracting its own (see :doc:`validation`).
        Left out, the run extracts them.

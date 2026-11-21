@@ -45,7 +45,10 @@ def test_only_validation_rule_and_uniqueness_demand_enforcement():
     assert not ledger._demands_enforcement({"kind": "action"})
     assert not ledger._demands_enforcement({"kind": "ui"})
     assert ledger._demands_enforcement({"kind": "uniqueness", "met_by": "declaration"})
-    assert ledger._demands_enforcement({"kind": "rule"})
+    assert ledger._demands_enforcement({"kind": "rule", "met_by": "check"})
+    # Without the label, as before it existed: only when the text states a constraint.
+    assert ledger._demands_enforcement({"kind": "rule", "text": "The price must not be negative"})
+    assert not ledger._demands_enforcement({"kind": "rule", "text": "A person has a first name"})
     assert ledger._demands_enforcement({"kind": "rule", "met_by": "type"})
     assert not ledger._demands_enforcement({"kind": "validation", "met_by": "declaration"})
 

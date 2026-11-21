@@ -103,20 +103,46 @@ _ENFORCEMENT_TOKENS = (
 )
 # Set by the extraction: what code meets the item. "declaration": a field, the state a
 # new record starts in; "type": a field's type or enumeration restricting its values;
-# "check": a check or refusal at run time. An item without it (sent by the editor,
-# recorded by an older run) reads as "check", the strictest.
+# "check": a check or refusal at run time.
 MET_BY_FIELD = "met_by"
 MET_BY = ("declaration", "type", "check")
 
+# An item without the label (recorded by an older run, or stated by the editor) is read
+# as it was before the label existed, by these English words, so its verdict does not
+# change: on 223 stored apps, reading it as "check" turned 25 confirmed requirements
+# into unconfirmed ones. No labelled item is read this way.
+_UNLABELLED_CONSTRAINT_WORDS = re.compile(
+    r"\b(?:unique(?:ly|ness)?|must\s+not|may\s+not|may\s+never|cannot|can\s+not|never|at\s+least|at\s+most"
+    r"|no\s+more\s+than|exceed(?:s|ed|ing)?|only\s+(?:if|when|after)|(?:in)?valid(?:ly|ity|at\w+)?"
+    r"|format(?:s|ted|ting)?|shap(?:e|es|ed|ing)|(?:mis)?match(?:es|ed|ing)?|overlap(?:s|ped|ping)?|before|after"
+    r"|greater|less(?:er)?|between|positive(?:ly)?|non-negative|refus(?:e|es|ed|ing|al)|reject(?:s|ed|ing|ion)?)\b",
+    re.IGNORECASE,
+)
+_UNLABELLED_INITIAL_STATE_WORDS = ("start", "begin", "initial", "default")
 
-def _met_by(item: dict) -> str:
+
+def _met_by(item: dict) -> str | None:
+    """The item's label; None for an item without one."""
     value = item.get(MET_BY_FIELD)
-    return value if value in MET_BY else "check"
+    return value if value in MET_BY else None
 
 
 def _demands_enforcement(item: dict) -> bool:
     kind = item.get("kind", "")
-    return kind == "uniqueness" or (kind in ("validation", "rule") and _met_by(item) != "declaration")
+    if kind == "uniqueness" or kind not in ("validation", "rule"):
+        return kind == "uniqueness"
+    label = _met_by(item)
+    if label is None:
+        return bool(_UNLABELLED_CONSTRAINT_WORDS.search(item.get("text", "")))
+    return label != "declaration"
+
+
+def _met_by_a_declaration(item: dict) -> bool:
+    """Whether a field's default can meet the item (the state a new record starts in)."""
+    label = _met_by(item)
+    if label is None:
+        return any(word in item.get("text", "").lower() for word in _UNLABELLED_INITIAL_STATE_WORDS)
+    return label == "declaration"
 
 
 _READ_NUMBER_PREFIX_RE = re.compile(r"^\s*\d+\s*\|\s?")
@@ -1757,7 +1783,8 @@ def _span_failure(item: dict, source: _Source, first_line: int, lineno: int, quo
         return "the cited line is punctuation alone (`{`, `/>`); it identifies no code"
     statement = None
     if source.path.endswith(".py"):
-        statement, reason = _python_citation(source.tree, lineno, item.get("kind", ""), _met_by(item))
+        statement, reason = _python_citation(
+            source.tree, lineno, item.get("kind", ""), "declaration" if _met_by_a_declaration(item) else "check")
         if reason:
             return reason
         invalid = next((d for d in source.diagnostics if (
@@ -1775,8 +1802,9 @@ def _span_failure(item: dict, source: _Source, first_line: int, lineno: int, quo
                      and any(isinstance(node, ast.IfExp) for node in ast.walk(statement)))
             and not source.lines[first_line - 1].lstrip().startswith(("if ", "if(", "if\t", "else if "))
             and not any(tok in quote.lower() for tok in _ENFORCEMENT_TOKENS)
-            and not (kind != "uniqueness" and _met_by(item) == "type"
-                     and _only_lists_cited_enumeration(text, statement, source.tree))):
+            and not (kind != "uniqueness" and _met_by(item) in ("type", None)
+                     and _only_lists_cited_enumeration(text, statement, source.tree,
+                                                       unlabelled=_met_by(item) is None))):
         return "the cited line declares data; it does not demonstrate enforcement"
     return ""
 
@@ -1827,7 +1855,8 @@ def _field_named(text: str, field: str) -> bool:
     return bool(words) and all(re.search(rf"\b{re.escape(word)}(?:e?s)?\b", text, re.I) for word in words)
 
 
-def _only_lists_cited_enumeration(text: str, statement: ast.stmt | None, tree: ast.AST | None) -> bool:
+def _only_lists_cited_enumeration(text: str, statement: ast.stmt | None, tree: ast.AST | None,
+                                  unlabelled: bool = False) -> bool:
     """The requirement's values are those of the enumeration cited.
 
     The cited Python statement defines, belongs to or types a field with one
@@ -1859,7 +1888,13 @@ def _only_lists_cited_enumeration(text: str, statement: ast.stmt | None, tree: a
     if len(members) < 2 or None in members or not all(member.search(text) for member in members):
         return False
     spans = sorted(match.span() for member in members for match in member.finditer(text))
-    return _lists_only_members(text, spans)
+    if not _lists_only_members(text, spans):
+        return False
+    if unlabelled:  # as before the label: no constraint stated beside the listed values
+        for member in members:
+            text = member.sub(" ", text)
+        return not _UNLABELLED_CONSTRAINT_WORDS.search(text)
+    return True
 
 
 _UNMATCHED_NOTE_CHARS = 80

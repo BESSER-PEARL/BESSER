@@ -5,7 +5,12 @@ transition, and whether a 'rule' or 'validation' needs an enforcing line, were
 decided by English words in that text: "A new order starts as PENDING" passed and
 its French, Spanish and Italian wordings did not; "must be positive" needed an
 enforcing line and its translations did not. The extraction now states what meets
-the item (``met_by``), and an item without it gets the strictest reading.
+the item (``met_by``), and a labelled item is judged the same in every language.
+
+An item without the label (an older run's recipe, a requirement the editor states)
+is read as before the label existed. Reading it as a check instead turned 25
+confirmed requirements of 223 stored apps into unconfirmed ones (measure/results,
+pre-j-028cb57ff against post-j-7d3368770).
 """
 
 import pytest
@@ -65,18 +70,17 @@ def test_a_column_default_meets_an_initial_state_in_any_language(tmp_path, text)
     assert verdict["status"] == "implemented", verdict["note"]
 
 
-@pytest.mark.parametrize("fields", [{"met_by": "check"}, {}])
 @pytest.mark.parametrize("text", INITIAL_STATE)
-def test_a_column_default_does_not_meet_a_guarded_or_unlabelled_transition(tmp_path, text, fields):
-    verdict = _verdict(tmp_path, "transition", text, _DEFAULT_LINE, **fields)
+def test_a_column_default_does_not_meet_a_guarded_transition(tmp_path, text):
+    verdict = _verdict(tmp_path, "transition", text, _DEFAULT_LINE, met_by="check")
     assert verdict["status"] == "unverified"
     assert "does not perform" in verdict["note"]
 
 
-@pytest.mark.parametrize("fields", [{"met_by": "check"}, {"met_by": "type"}, {}])
+@pytest.mark.parametrize("fields", [{"met_by": "check"}, {"met_by": "type"}])
 @pytest.mark.parametrize("kind", ["rule", "validation"])
 @pytest.mark.parametrize("text", CONSTRAINT)
-def test_a_checked_or_unlabelled_rule_needs_an_enforcing_line_in_any_language(tmp_path, text, kind, fields):
+def test_a_checked_rule_needs_an_enforcing_line_in_any_language(tmp_path, text, kind, fields):
     verdict = _verdict(tmp_path, kind, text, _DECLARATION_LINE, **fields)
     assert verdict["status"] == "unverified"
     assert "declares data" in verdict["note"]
@@ -93,7 +97,19 @@ def test_an_enumeration_meets_only_an_item_a_type_meets(tmp_path):
     assert _verdict(tmp_path, "rule", text, "tone: Tone", met_by="type")["status"] == "implemented"
     # The same values in an item that needs a check ("may never change once set").
     assert _verdict(tmp_path, "rule", text, "tone: Tone", met_by="check")["status"] == "unverified"
-    assert _verdict(tmp_path, "rule", text, "tone: Tone")["status"] == "unverified"
+
+
+def test_an_item_without_the_label_is_read_as_before_the_label_existed(tmp_path):
+    """The verdicts an older recipe's items had: decided by the English words of the text."""
+    # A default meets a transition that names the start; a constraint word asks for a check.
+    assert _verdict(tmp_path, "transition", INITIAL_STATE[0], _DEFAULT_LINE)["status"] == "implemented"
+    assert _verdict(tmp_path, "transition", "An order is PENDING when it is created",
+                    _DEFAULT_LINE)["status"] == "unverified"
+    assert _verdict(tmp_path, "rule", CONSTRAINT[0], _DECLARATION_LINE)["status"] == "unverified"
+    # No constraint word: a declaration was enough, and so was an enumeration listing the values.
+    assert _verdict(tmp_path, "rule", "An order has a price", _DECLARATION_LINE)["status"] == "implemented"
+    assert _verdict(tmp_path, "rule", "The tone of an order is positive or negative",
+                    "tone: Tone")["status"] == "implemented"
 
 
 def test_uniqueness_always_needs_an_enforcing_line(tmp_path):

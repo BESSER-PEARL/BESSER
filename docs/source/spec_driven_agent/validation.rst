@@ -650,7 +650,11 @@ Findings are classified into three severities:
        it, and a column default meets a transition only when a declaration
        does. The editor may send the field with its requirements. A
        requirement without it (from an editor that does not send it, or
-       recorded by an earlier run) reads as needing a check. A Python enumeration, cited
+       recorded by an earlier run) is read as before the field existed, so
+       its verdict does not change: it needs an enforcing line only when its
+       text states a constraint in English words ("must not", "at least",
+       "positive"), and a column default meets its transition only when the
+       text names the start. A Python enumeration, cited
        itself or as the type of a field, enforces a requirement a type meets
        when a field of the same file that the requirement names is of that
        enumeration and its values are exactly the ones the requirement

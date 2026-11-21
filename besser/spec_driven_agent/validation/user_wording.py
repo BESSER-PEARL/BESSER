@@ -15,7 +15,13 @@ import json
 import re
 from dataclasses import dataclass
 
-from besser.spec_driven_agent.validation.issues import JUDGMENT_DEFERRED, _TRUNCATION_NOTE_RE, _classify_issue
+from besser.spec_driven_agent.validation.issues import (
+    JUDGMENT_DEFERRED,
+    OPEN_SINCE_PREVIOUS,
+    REGRESSION_TO_CONFIRM,
+    _TRUNCATION_NOTE_RE,
+    _classify_issue,
+)
 
 # The app's own refusal and a requirement's text are quoted; longer is cut.
 _MAX_QUOTED = 100
@@ -76,6 +82,7 @@ _ACTION = re.compile(r"POST \S+ - (?P<action>\w+) (?:on (?P<entity>\w+)|answered
 _ACTION_CALLING = re.compile(r"failure calling (?P<action>\w+) on a (?P<entity>\w+)")
 _ACTION_ENTITY = re.compile(r"the (?P<entity>\w+) created one request earlier")
 _SCENARIO = re.compile(r"^api scenario: (?P<id>.+?) failed:")
+_SEED_WORKFLOW = re.compile(re.escape(REGRESSION_TO_CONFIRM) + r"api scenario (?P<id>.+?) passed on the previous version")
 _TASK = re.compile(r"(?:remains unresolved|was not confirmed|is not done|was closed by the agent, not checked): "
                    r"(?P<text>.*?)\.(?: |$)", re.S)
 # What an unconfirmed item's message says about it, said for the user.
@@ -269,6 +276,12 @@ def user_finding(message: str) -> Finding:
     text = " ".join(str(message or "").split())
     if text.startswith("runtime unverified: "):
         text = text[len("runtime unverified: "):]
+    # A modify run's labels (modify_run.py): the finding itself, said as old or as to confirm.
+    if text.startswith(OPEN_SINCE_PREVIOUS):
+        return Finding(f"Open since the previous version: {user_sentence(text[len(OPEN_SINCE_PREVIOUS):])}")
+    if replayed := _SEED_WORKFLOW.match(text):
+        return Finding(f"The test workflow '{replayed.group('id')}' passed on the previous version and fails now: "
+                       "check whether the requested change meant that.")
     lower = text.lower()
     if lower.startswith(("create unverified:", "create contract:")):
         return _create(text)

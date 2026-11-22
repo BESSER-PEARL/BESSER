@@ -146,6 +146,24 @@ def _sample_object_document():
     }
 
 
+def test_profile_rules_are_scoped_per_user_and_include_shared_boxes():
+    def box(identifier, class_name, rules):
+        return {'id': identifier, 'name': identifier, 'type': 'UserModelName', 'className': class_name,
+                'attributes': [], 'personalization': rules}
+
+    model = {'elements': {
+        'alice': box('alice', 'User', {'presentation': {'language': 'english'}}),
+        'bob': box('bob', 'User', {'presentation': {'language': 'french'}}),
+        'shared': box('shared', 'Culture', {'gui': {'modality': {'readAloud': True}}}),
+    }, 'relationships': {
+        'a': {'source': {'element': 'alice'}, 'target': {'element': 'shared'}},
+        'b': {'source': {'element': 'bob'}, 'target': {'element': 'shared'}},
+    }}
+    result = user_profile_utils.extract_profile_personalization_rules({'model': model})
+    assert {entry['elementId'] for entry in result['alice']} == {'alice', 'shared'}
+    assert {entry['elementId'] for entry in result['bob']} == {'bob', 'shared'}
+
+
 def test_build_user_model_hierarchy_folds_objects_into_tree():
     result = build_user_model_hierarchy(_sample_object_document())
     assert result is not None

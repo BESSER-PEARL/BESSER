@@ -22,3 +22,5 @@ Development already contains a separate opt-in research telemetry API. It is not
 - The backend's embedded frontend submodule follows development's pointer. The separate frontend feature branch contains the matching personalization UI and must be reviewed and merged separately.
 
 - Fixed multi-profile JSON downloads by rewinding the generated ZIP before streaming it; added HTTP regression tests for single- and multi-profile downloads.
+
+- User-profile JSON exports include `personalizationRules`: each entry preserves the source (`profile`, `box`, or `attribute`), the original element ID, class, optional attribute text, and the authored agent and GUI rules. Rules are associated with each User separately, including in multi-profile ZIP exports.

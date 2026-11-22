@@ -93,6 +93,7 @@ from besser.utilities.web_modeling_editor.backend.services.utils.user_profile_ut
     generate_user_profile_document as _generate_user_profile_document,
     normalize_user_model_output as _normalize_user_model_output,
     extract_user_profile_names as _extract_user_profile_names,
+    extract_profile_personalization_rules as _extract_profile_personalization_rules,
     reinject_hidden_containers as _reinject_hidden_containers,
     safe_path as _safe_path,
     user_criteria_comparators as _user_criteria_comparators,
@@ -508,7 +509,8 @@ async def _handle_user_diagram_generation(
     # The output is rewritten after the generator ran, so what the generator recorded no longer
     # holds: the download keeps file-level links only.
     written = _normalize_user_model_output(
-        object_model, temp_dir, _user_criteria_comparators(json_data), _extract_user_profile_names(json_data)
+        object_model, temp_dir, _user_criteria_comparators(json_data), _extract_user_profile_names(json_data),
+        _extract_profile_personalization_rules(json_data),
     )
     if len(written) > 1:
         output = GeneratedOutput(zip_directory(temp_dir), "user_object_models.zip", is_zip=True)

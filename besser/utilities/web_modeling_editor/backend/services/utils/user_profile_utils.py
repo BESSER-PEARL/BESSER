@@ -396,11 +396,76 @@ def build_user_model_hierarchy(document: Dict[str, Any]) -> Optional[Dict[str, A
     return hierarchies[0] if hierarchies else None
 
 
+def extract_profile_personalization_rules(diagram_payload: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
+    """Collect each User's rules without crossing into another User's profile."""
+    model = diagram_payload.get('model', {}) if isinstance(diagram_payload, dict) else {}
+    if not isinstance(model, dict):
+        return {}
+    if not model.get('elements') and isinstance(model.get('model'), dict):
+        model = model['model']
+    elements = model.get('elements') or {}
+    relationships = model.get('relationships') or {}
+    if not isinstance(elements, dict) or not isinstance(relationships, dict):
+        return {}
+    boxes = {key: value for key, value in elements.items()
+             if isinstance(value, dict) and value.get('type') == 'UserModelName'}
+    adjacency: Dict[str, Set[str]] = defaultdict(set)
+    for relation in relationships.values():
+        if not isinstance(relation, dict):
+            continue
+        source_end = relation.get('source')
+        target_end = relation.get('target')
+        if not isinstance(source_end, dict) or not isinstance(target_end, dict):
+            continue
+        source = source_end.get('element')
+        target = target_end.get('element')
+        if source in boxes and target in boxes:
+            adjacency[source].add(target)
+            adjacency[target].add(source)
+
+    result: Dict[str, List[Dict[str, Any]]] = {}
+    for root_id, root in boxes.items():
+        if root.get('className') != 'User' or not root.get('name'):
+            continue
+        # The editor captures these before merging singleton boxes, so no
+        # original box-level rules are lost during B-UML conversion.
+        captured = root.get('profilePersonalizationRules')
+        if isinstance(captured, list):
+            result[root['name']] = deepcopy(captured)
+            continue
+        visited = {root_id}
+        queue = [root_id]
+        rules: List[Dict[str, Any]] = []
+        while queue:
+            box_id = queue.pop(0)
+            box = boxes[box_id]
+            class_name = box.get('className') or ''
+            if isinstance(box.get('personalization'), dict) and box['personalization']:
+                rules.append({'source': 'profile' if box_id == root_id else 'box',
+                              'elementId': box.get('id', box_id), 'className': class_name,
+                              'rules': deepcopy(box['personalization'])})
+            for attr_id in box.get('attributes') or []:
+                attribute = elements.get(attr_id)
+                if (isinstance(attribute, dict) and attribute.get('type') == 'UserModelAttribute'
+                        and isinstance(attribute.get('personalization'), dict) and attribute['personalization']):
+                    rules.append({'source': 'attribute', 'elementId': attribute.get('id', attr_id),
+                                  'className': class_name, 'attribute': attribute.get('name') or '',
+                                  'rules': deepcopy(attribute['personalization'])})
+            for neighbor in sorted(adjacency[box_id]):
+                if neighbor not in visited and boxes[neighbor].get('className') != 'User':
+                    visited.add(neighbor)
+                    queue.append(neighbor)
+        if rules:
+            result[root['name']] = rules
+    return result
+
+
 def normalize_user_model_output(
     object_model,
     temp_dir: str,
     comparators: Optional[Dict[str, Dict[str, str]]] = None,
     profile_names: Optional[Dict[str, str]] = None,
+    personalization_rules: Optional[Dict[str, List[Dict[str, Any]]]] = None,
 ) -> List[str]:
     """Rewrite the generated JSON so the flat ``objects`` list is folded into a
     hierarchical ``model`` tree rooted on each ``User`` instance.
@@ -442,6 +507,12 @@ def normalize_user_model_output(
     hierarchies = build_user_model_hierarchies(document)
     if not hierarchies:
         return []
+
+    for hierarchy in hierarchies:
+        root_id = (hierarchy.get('model') or {}).get('id')
+        rules = (personalization_rules or {}).get(root_id)
+        if rules:
+            hierarchy['personalizationRules'] = deepcopy(rules)
 
     # Single profile: keep the original filename and rewrite in place so stored
     # single-User diagrams and existing callers see no behavioral change.
@@ -536,7 +607,8 @@ def generate_user_profile_document(user_profile_model: Dict[str, Any]) -> Dict[s
             generator_instance.generate()
 
             normalize_user_model_output(
-                object_model, temp_dir, user_criteria_comparators(prepared_payload)
+                object_model, temp_dir, user_criteria_comparators(prepared_payload),
+                personalization_rules=extract_profile_personalization_rules(prepared_payload),
             )
 
             file_name = sanitize_object_model_filename(getattr(object_model, "name", None))

@@ -487,6 +487,9 @@ async def get_json_model_from_kg(
             raise ConversionError(
                 "The LLM's answer could not be turned into a class diagram. Please try again."
             ) from exc
+        except RuntimeError as exc:
+            logger.exception("Knowledge graph conversion failed")
+            raise HTTPException(status_code=500, detail="Internal server error") from exc
     diagram_json = class_buml_to_json(domain_model)
 
     return {

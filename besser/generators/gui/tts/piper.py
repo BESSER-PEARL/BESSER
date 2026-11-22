@@ -18,7 +18,8 @@ class PiperText2Speech(Text2Speech):
 
     def text2speech(self, text, language=None):
         codes = {"english": "en", "french": "fr", "german": "de", "spanish": "es", "portuguese": "pt", "luxembourgish": "lb", "italian": "it"}
-        normalize = lambda value: codes.get(value.lower(), value.lower()) if value else None
+        def normalize(value):
+            return codes.get(value.lower(), value.lower()) if value else None
         if language and (not self.language or normalize(language) != normalize(self.language)):
             raise ValueError("Requested language does not match BESSER_GUI_TTS_LANGUAGE for the deployed Piper voice")
         response = requests.post(self.url, json={"text": text}, timeout=120)

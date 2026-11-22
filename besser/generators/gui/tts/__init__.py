@@ -1,6 +1,6 @@
 """Server-controlled provider selection; no model, URL or credentials from the browser."""
 import os
-from .base import SpeechAudio, Text2Speech
+from .base import SpeechAudio as SpeechAudio, Text2Speech
 
 
 def log_text2speech_environment(logger) -> None:

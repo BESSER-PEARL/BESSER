@@ -1,0 +1,1235 @@
+"""The run is verified against what the user asked for, not only against the model.
+
+A recorded run (hotel, Qwen3-30B): with the verbatim spec in hand the
+gap analyser planned the guest-capacity rule twice (tasks 7 and 13) and the app
+still shipped without it; the unique room number and the extra charges were
+never planned at all. Every static gate reported success. An opencode build of
+the same spec with the same model had all three, because it read the spec and
+implemented what it read. The ledger does the same in two bounded calls: extract
+the atomic requirements once, judge each against the generated code on every
+Phase 3 pass, re-check every citation, and feed the misses to the fix loop.
+"""
+
+import json
+import os
+
+import pytest
+
+from besser.BUML.metamodel.structural import (
+    Class, DomainModel, PrimitiveDataType, Property,
+)
+from besser.spec_driven_agent.planning import requirements_ledger as ledger
+from besser.spec_driven_agent.providers.llm_client import UsageTracker
+from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator, _classify_issue
+from besser.spec_driven_agent.state.generator_output import (
+    GENERATOR_OUTPUT_FILENAME, GeneratorOutputError, load_generator_output, store_generator_output)
+
+FIXTURE = os.path.join(os.path.dirname(__file__), "fixtures", "run_0c537a4e")
+
+SPEC = (
+    "Every room is identified by its room number. The total number of guests "
+    "listed on a booking may never be greater than the combined capacity of "
+    "all the rooms it covers. The total price is worked out from the agreed "
+    "prices of the rooms involved, the length of the stay and any extra "
+    "charges recorded against those rooms."
+)
+INSTRUCTIONS = (
+    "Generate a web app for a hotel booking system.\n\n"
+    "## The user's original request, verbatim\n\n"
+    "This is the authority. Where the summary above is shorter or differs, "
+    "this text wins.\n\n" + SPEC
+)
+
+
+class _ToolClient:
+    """Answers each forced tool call with the next canned payload."""
+
+    model = "tool-model"
+
+    def __init__(self, payloads):
+        self.usage = UsageTracker("tool-model")
+        self._client = object()          # a real provider, to the ledger
+        self.payloads = list(payloads)
+        self.calls = []
+
+    def chat(self, system, messages, tools, force_tool=None, model_override=None):
+        self.calls.append((force_tool, messages[-1]["content"]))
+        block = type("B", (), {"type": "tool_use", "name": force_tool,
+                               "input": self.payloads.pop(0)})()
+        return {"stop_reason": "tool_use", "content": [block]}
+
+
+class _MockClient:
+    """No ``_client``: the test double the harness must never call out from."""
+
+    model = "mock-model"
+    usage = UsageTracker("mock-model")
+
+    def chat(self, system, messages, tools):
+        raise AssertionError("a mock client must never be asked to plan")
+
+
+# ------------------------------------------------------------- the spec text
+
+
+def test_the_verbatim_request_is_what_gets_extracted():
+    text = ledger.original_request(INSTRUCTIONS)
+    assert text == SPEC
+    assert "This is the authority" not in text
+
+
+def test_without_the_marker_the_whole_instructions_are_the_request():
+    assert ledger.original_request("  build a todo app  ") == "build a todo app"
+
+
+def test_the_latest_user_message_is_the_last_follow_up():
+    later = (
+        f"\n\n{ledger.LATER_REQUEST_MARKER}\n\n"
+        "This later request takes precedence where it changes earlier requirements.\n\n"
+    )
+    instructions = INSTRUCTIONS + later + "add a due date" + later + "  POST /loan/ returns 500  "
+    assert ledger.latest_user_message(instructions) == "POST /loan/ returns 500"
+    assert ledger.latest_user_message(INSTRUCTIONS) == SPEC
+    assert ledger.latest_user_message("  build a todo app  ") == "build a todo app"
+
+
+# -------------------------------------------------------------- extraction
+
+
+def test_requirements_are_numbered_in_order():
+    client = _ToolClient([{"requirements": [
+        {"text": "Room numbers are unique", "kind": "uniqueness"},
+        {"text": "Guests never exceed the rooms' combined capacity", "kind": "rule"},
+        {"text": ""},
+    ]}])
+    reqs = ledger.extract_requirements(INSTRUCTIONS, client)
+    assert [r["id"] for r in reqs] == [1, 2]
+    assert reqs[0]["kind"] == "uniqueness"
+    assert client.calls[0][0] == "submit_requirements"
+    assert SPEC in client.calls[0][1]
+    assert "This is the authority" not in client.calls[0][1]
+    # Long accepted specifications retain their last clause in extraction too.
+    from besser.spec_driven_agent.planning.specification import MAX_SPECIFICATION_CHARS
+    client = _ToolClient([{"requirements": [{"text": "Never charge twice", "kind": "rule"}]}])
+    long_spec = "x" * (MAX_SPECIFICATION_CHARS - len(SPEC)) + SPEC
+    assert ledger.extract_requirements(long_spec, client)
+    assert client.calls[0][1].endswith(long_spec)
+    with pytest.raises(ValueError, match="not truncated"):
+        ledger.extract_requirements(long_spec + "!", client)
+    assert len(client.calls) == 1, "oversize requests must not make a provider call"
+
+
+def test_a_vague_request_may_extract_nothing():
+    """Run d3a33f95: "I want a todo app" came back as 8 invented requirements
+    (empty-title refusal, complete/activate endpoints, visual distinction).
+    A prompt test can only show the rule is stated; the harness half is that
+    an empty answer is a successful extraction, not a failed one."""
+    prompt = ledger._EXTRACT_SYSTEM_PROMPT
+    assert "List only behaviour the request itself states" in prompt
+    assert "'I want a todo app' states no testable requirement: return []" in prompt
+    assert prompt.index("List only behaviour") < prompt.index("Where stated, include:")
+
+    client = _ToolClient([{"requirements": []}])
+    assert ledger.extract_requirements("I want a todo app", client) == []
+
+
+def test_a_mock_client_is_never_called():
+    assert ledger.extract_requirements(INSTRUCTIONS, _MockClient()) is None
+
+
+def test_extraction_keeps_the_billing_tail_and_saturation_cannot_look_complete(tmp_path):
+    requirements = [{"text": f"Rule {i}", "kind": "rule"} for i in range(40)]
+    requirements.append({"text": "Settling a bill confirms its booking", "kind": "transition"})
+    client = _ToolClient([{"requirements": requirements}])
+    extracted = ledger.extract_requirements(INSTRUCTIONS, client)
+    assert len(extracted) == 41
+    assert extracted[-1]["text"] == requirements[-1]["text"]
+
+    # A noncompliant provider returning over maxItems must not lose any item.
+    for count in (ledger.MAX_REQUIREMENTS, ledger.MAX_REQUIREMENTS + 1):
+        response = [{"text": f"Rule {i}", "kind": "rule"} for i in range(count)]
+        extracted = ledger.extract_requirements(INSTRUCTIONS, _ToolClient([{"requirements": response}]))
+        assert len(extracted) == count + 1
+        assert extracted[-2]["text"] == response[-1]["text"]
+        gate = extracted[-1]
+        assert gate["kind"] == "verification"
+        client = _ToolClient([{"verdicts": [
+            {"id": gate["id"], "status": "implemented", "evidence": "app.py: return True"},
+        ]}])
+        judged = ledger.judge_coverage(extracted, "", client)
+        assert judged[-1]["status"] == "unverified"
+        assert gate["text"] not in client.calls[0][1], "code judgment cannot repair incomplete extraction"
+        checked = ledger.verify_evidence([dict(gate, status="implemented", evidence="app.py: return True")], str(tmp_path))
+        assert checked[0]["status"] == "unverified"
+        assert _classify_issue(ledger.ledger_issues(checked)[0]).severity == "blocker"
+        assert ledger.judge_coverage([gate], "", _ToolClient([]))[0]["status"] == "unverified"
+    assert ledger.extract_requirements(INSTRUCTIONS, _ToolClient([{"requirements": {"text": "bad shape"}}])) is None
+
+
+# ------------------------------------------------------------------ digest
+
+
+def test_the_digest_reads_schemas_then_routers_and_skips_the_stdlib(tmp_path, monkeypatch):
+    """Validators and unique columns first, then every router: the hotel
+    scaffold's eight routers alone are ~55k chars, so the old 60k budget
+    dropped pydantic_classes.py, the one file that holds the validators."""
+    digest = ledger.build_app_digest(FIXTURE)
+    schemas_at = digest.index("### web_app/backend/pydantic_classes.py")
+    orm_at = digest.index("### web_app/backend/sql_alchemy.py")
+    routers_at = digest.index("### web_app/backend/routers/booking.py")
+    assert schemas_at < routers_at and orm_at < routers_at
+    assert "### web_app/backend/routers/room.py" in digest
+    assert "### web_app/backend/bal_stdlib.py" not in digest
+    assert "\n\n\n" not in digest, "blank lines are dropped"
+    assert len(digest) <= ledger._DIGEST_MAX_TOTAL_CHARS
+    _write(tmp_path, "backend/routers/booking.py", "x = 1\n" * 200 + "def tail_rule(): return True\n")
+    _write(tmp_path, "backend/models.py", "y = 2\n" * 200)
+    monkeypatch.setattr(ledger, "_DIGEST_MAX_FILE_CHARS", 100)
+    ordinary = ledger.build_app_digest(str(tmp_path))
+    assert "DIGEST TRUNCATED: backend/routers/booking.py" in ordinary
+    assert "def tail_rule" not in ordinary
+    focused = ledger.build_app_digest(str(tmp_path), focus_paths=["routers/booking.py"])
+    assert focused.startswith("### backend/routers/booking.py")
+    assert "def tail_rule(): return True" in focused
+    assert len(focused) <= ledger._DIGEST_MAX_TOTAL_CHARS
+    monkeypatch.setattr(ledger, "_DIGEST_MAX_TOTAL_CHARS", 200)
+    bounded = ledger.build_app_digest(str(tmp_path))
+    assert len(bounded) <= 200
+    assert "omitted/unreadable files: 2" in bounded
+
+
+_MAP_CLICK = "lyr.on('click', () => onSelect(feature.properties.name));"
+
+
+def _dashboard_app(root, components=1, component_chars=900):
+    """A 13-entity backend whose CRUD routers alone exceed the budget, plus a React dashboard."""
+    _write(root, "backend/pydantic_classes.py", "class PlantCreate(BaseModel):\n    name: str\n" * 20)
+    _write(root, "backend/sql_alchemy.py", "class Plant(Base):\n    name = Column(String)\n" * 20)
+    for i in range(13):
+        _write(root, f"backend/routers/entity{i:02}.py", f"@router.get('/entity{i}/')\ndef read_{i}(): return []\n" * 60)
+    for i in range(40):  # helper modules: Python ranks ahead of the frontend and fills any gap
+        _write(root, f"backend/services/helper{i:02}.py", f"def helper_{i}(): return {i}\n" * 8)
+    _write(root, "frontend/src/pages/Dashboard.jsx", "<MapView geojson={geojson} onSelect={setRegion} />\n" * 10)
+    _write(root, "frontend/src/components/MapView.jsx", f"const layer = L.geoJSON(geojson);\n{_MAP_CLICK}\n" * 5)
+    for i in range(components):
+        _write(root, f"frontend/src/components/Panel{i:02}.jsx", "x" * component_chars + "\n")
+
+
+def test_a_ui_requirement_is_judged_with_the_frontend_in_view(tmp_path, monkeypatch):
+    """Sonnet 5.5, 13-class wastewater dashboard: the generated routers filled the
+    budget, every frontend component was omitted and all UI requirements ended unverified."""
+    monkeypatch.setattr(ledger, "_DIGEST_MAX_TOTAL_CHARS", 20_000)
+    _dashboard_app(tmp_path)
+    digest = ledger.build_app_digest(str(tmp_path))
+    assert "### frontend/src/components/MapView.jsx" in digest
+    assert _MAP_CLICK in digest
+    assert "### frontend/src/pages/Dashboard.jsx" in digest
+    assert digest.index("### backend/pydantic_classes.py") < digest.index("### backend/routers/entity00.py")
+    assert len(digest) <= 20_000
+
+
+def test_the_frontend_share_of_the_digest_is_capped(tmp_path, monkeypatch):
+    """A large frontend gets its share; the schemas and routers keep the rest of the budget."""
+    monkeypatch.setattr(ledger, "_DIGEST_MAX_TOTAL_CHARS", 20_000)
+    _dashboard_app(tmp_path, components=40)
+    digest = ledger.build_app_digest(str(tmp_path))
+    shown = digest.split("\n\n## Digest coverage")[0].split("### ")
+    backend = sum(len(chunk) for chunk in shown if chunk.startswith("backend/"))
+    router = next(len(chunk) for chunk in shown if chunk.startswith("backend/routers/entity00.py"))
+    assert "### frontend/src/components/MapView.jsx" in digest
+    assert "### backend/sql_alchemy.py" in digest and "### backend/pydantic_classes.py" in digest
+    # 18_000 = the source budget once the footer's 10% is set aside
+    assert backend + router > (1 - ledger._DIGEST_UI_SHARE) * 18_000
+    assert "omitted/unreadable files: 0" not in digest and len(digest) <= 20_000
+
+
+def test_the_judge_cache_key_follows_an_edit_to_a_judged_frontend_file(tmp_path):
+    _dashboard_app(tmp_path)
+    before = ledger.judged_source_fingerprint(str(tmp_path))
+    _write(tmp_path, "README.md", "# Wastewater dashboard\n")
+    _write(tmp_path, "frontend/package.json", '{"name": "dashboard"}\n')
+    assert ledger.judged_source_fingerprint(str(tmp_path)) == before
+    _write(tmp_path, "frontend/src/components/MapView.jsx", "const layer = L.geoJSON(geojson);\n")
+    assert ledger.judged_source_fingerprint(str(tmp_path)) != before
+
+
+_DETECT = "    unwanted = [m for m in messages if m.isUnwanted]\n"
+
+
+def _generated_backend(root, *, stored_routers=10):
+    """Generated CRUD routers over the budget, one router and one engine module the model wrote."""
+    _write(root, "backend/pydantic_classes.py", "class MessageCreate(BaseModel):\n    body: str\n" * 10)
+    _write(root, "backend/sql_alchemy.py", "class Message(Base):\n    body = Column(String)\n" * 10)
+    generated = {}
+    for i in range(10):
+        rel = f"backend/routers/entity{i:02}.py"
+        generated[rel] = f"@router.get('/entity{i}/')\ndef read_{i}(): return []\n".encode() * 50
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_bytes(generated[rel])
+    generated["backend/routers/riskassessment.py"] = b"@router.get('/riskassessment/')\ndef read(): return []\n"
+    _write(root, "backend/routers/riskassessment.py",
+           "@router.post('/riskassessment/{account_id}/assess/')\ndef assess(account_id): return score(account_id)\n" * 20)
+    _write(root, "backend/risk_engine.py", f"def detect_signals(messages):\n{_DETECT}    return unwanted\n" * 20)
+    stored = dict(list(generated.items())[:stored_routers]) | {
+        "backend/routers/riskassessment.py": generated["backend/routers/riskassessment.py"]}
+    store_generator_output(str(root), "backend", stored, "8.0.0")
+
+
+def test_hand_written_backend_code_is_judged_before_untouched_generated_routers(tmp_path, monkeypatch):
+    """Sonnet 5.5, risk-awareness app: the generated CRUD routers filled the digest and
+    risk_engine.py, the only module implementing five requirements, was omitted."""
+    monkeypatch.setattr(ledger, "_DIGEST_MAX_TOTAL_CHARS", 20_000)
+    _generated_backend(tmp_path)
+    digest = ledger.build_app_digest(str(tmp_path))
+    assert "### backend/risk_engine.py" in digest and _DETECT.strip() in digest
+    assert "/assess/" in digest
+    assert "Truncated files:" not in digest
+    omitted = digest.split("Omitted files: ", 1)[1].split("\n", 1)[0].split(", ")
+    assert omitted and all(rel.startswith("backend/routers/entity") for rel in omitted)
+    assert digest.index("### backend/sql_alchemy.py") < digest.index("### backend/risk_engine.py")
+    assert len(digest) <= 20_000 and digest == ledger.build_app_digest(str(tmp_path))
+
+
+def test_the_judge_cache_key_follows_which_files_are_untouched_generator_output(tmp_path, monkeypatch):
+    monkeypatch.setattr(ledger, "_DIGEST_MAX_TOTAL_CHARS", 20_000)
+    _generated_backend(tmp_path)
+    before = ledger.judged_source_fingerprint(str(tmp_path)), ledger.build_app_digest(str(tmp_path))
+    _generated_backend(tmp_path, stored_routers=5)  # same source, a different store
+    after = ledger.judged_source_fingerprint(str(tmp_path)), ledger.build_app_digest(str(tmp_path))
+    assert after[1] != before[1] and after[0] != before[0]
+
+
+def test_a_store_with_a_lone_surrogate_is_read_as_no_store(tmp_path):
+    """Review probe: a stored file "\\udc80" (the store can come from an imported
+    repository) raised UnicodeEncodeError and aborted the whole validation."""
+    _generated_backend(tmp_path)
+    store = tmp_path / GENERATOR_OUTPUT_FILENAME
+    data = json.loads(store.read_text(encoding="utf-8"))
+    data["files"]["backend/routers/entity00.py"] = "\udc80"
+    store.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(GeneratorOutputError):
+        load_generator_output(str(tmp_path), "backend")
+    assert ledger._written_shares(str(tmp_path), ledger._source_files(str(tmp_path))) == {}
+    assert ledger.judged_source_fingerprint(str(tmp_path)) and "### backend/risk_engine.py" in ledger.build_app_digest(
+        str(tmp_path))
+
+
+def _vendored_frontend(root):
+    """A React app that ships minified third-party bundles beside its own source."""
+    _write(root, "frontend/package.json", '{"name": "dashboard"}\n')
+    _write(root, "frontend/src/api.js", "".join(  # larger than what the bundles leave of the frontend share
+        f"export const fetchEntity{i} = () => fetch('/api/entity{i}');\n" for i in range(250)))
+    for i in range(40):
+        _write(root, f"frontend/public/vendor/lib{i:02}.min.js", "!function(t){" + "var a=1;" * 750 + "}(this);")
+    _write(root, "frontend/src/lib/chart.min.js", "var c=1;" * 100)
+    _write(root, "frontend/vendor/leaflet.js", "var l=1;\n")
+
+
+def test_vendored_minified_code_does_not_crowd_the_app_out_of_the_digest(tmp_path):
+    """Review probe: three public/vendor/*.min.js bundles took the frontend share
+    and the app's own src/api.js was left out of the judge's digest."""
+    _vendored_frontend(tmp_path)
+    digest = ledger.build_app_digest(str(tmp_path))
+    assert "### frontend/src/api.js" in digest
+    assert set(ledger._source_files(str(tmp_path))) == {"frontend/src/api.js"}
+
+
+def test_the_judge_cache_key_ignores_vendored_code(tmp_path):
+    _vendored_frontend(tmp_path)
+    before = ledger.judged_source_fingerprint(str(tmp_path))
+    _write(tmp_path, "frontend/public/vendor/lib00.min.js", "var b=2;")
+    _write(tmp_path, "frontend/src/lib/chart.min.js", "var d=2;")
+    assert ledger.judged_source_fingerprint(str(tmp_path)) == before
+    _write(tmp_path, "frontend/src/api.js", "export const fetchPlants = () => fetch('/api/plants');\n")
+    assert ledger.judged_source_fingerprint(str(tmp_path)) != before
+
+
+def test_an_express_apps_own_public_code_is_judged(tmp_path):
+    """Review probe: an app serving public/ with express.static lost public/app.js
+    from the digest, and its citation turned 'unverified'."""
+    _write(tmp_path, "package.json", '{"name": "todo", "dependencies": {"express": "^4.19.2"}}\n')
+    _write(tmp_path, "server.js", "const app = require('express')();\napp.use(require('express').static('public'));\n")
+    line = "document.getElementById('add').addEventListener('click', async () => {"
+    _write(tmp_path, "public/app.js", f"{line}\n  await fetch('/api/todos', {{ method: 'POST' }});\n}});\n")
+    _write(tmp_path, "public/vendor/x.min.js", "!function(t){var a=1;}(this);")
+    assert set(ledger._source_files(str(tmp_path))) == {"public/app.js", "server.js"}
+    assert "### public/app.js" in ledger.build_app_digest(str(tmp_path))
+    verdict = ledger.verify_evidence([{"id": 1, "kind": "ui", "text": "The user adds a todo",
+                                       "status": "implemented", "evidence": f"public/app.js: {line}"}],
+                                     str(tmp_path))[0]
+    assert verdict["status"] == "implemented"
+    before = ledger.judged_source_fingerprint(str(tmp_path))
+    _write(tmp_path, "public/vendor/x.min.js", "!function(t){var b=2;}(this);")
+    assert ledger.judged_source_fingerprint(str(tmp_path)) == before
+    _write(tmp_path, "public/app.js", "console.log('changed');\n")
+    assert ledger.judged_source_fingerprint(str(tmp_path)) != before
+
+
+# ---------------------------------------------------------- evidence check
+
+
+def _verdict(status, evidence="", kind="rule",
+             text="A booking must not be saved without an employee"):
+    return {"id": 1, "text": text, "kind": kind,
+            "status": status, "evidence": evidence, "note": ""}
+
+
+# A real enforcing line from the fixture router, and a real declaration.
+_ENFORCING_LINE = 'raise HTTPException(status_code=400, detail="Employee ID is required")'
+_DECLARING_LINE = 'Employee.handledBy: Mapped_[List_["Booking"]] = relationship("Booking", back_populates="employee", foreign_keys=[Booking.employee_id])'
+
+
+def test_a_quoted_enforcing_line_that_exists_stays_implemented():
+    out = ledger.verify_evidence(
+        [_verdict("implemented", f"web_app/backend/routers/booking.py: {_ENFORCING_LINE}")],
+        FIXTURE,
+    )
+    assert out[0]["status"] == "implemented"
+
+
+def test_a_path_suffix_and_whitespace_differences_are_accepted():
+    spaced = 'routers/booking.py:   raise  HTTPException(status_code=400,   detail="Employee ID is required")'
+    out = ledger.verify_evidence([_verdict("implemented", spaced)], FIXTURE)
+    assert out[0]["status"] == "implemented"
+
+
+def test_a_rule_backed_only_by_a_declaration_is_unverified():
+    """The live judge marked 'guests never exceed the rooms' capacity'
+    implemented by citing ``Booking.reservedRooms``. A relationship existing
+    enforces nothing. That citation cannot prove either implementation or
+    absence of an implementation elsewhere."""
+    out = ledger.verify_evidence(
+        [_verdict("implemented", f"web_app/backend/sql_alchemy.py: {_DECLARING_LINE}", kind="rule")],
+        FIXTURE,
+    )
+    assert out[0]["status"] == "unverified"
+    assert "declares data" in out[0]["note"]
+
+
+def test_an_action_cannot_be_proven_by_a_relationship_declaration():
+    out = ledger.verify_evidence(
+        [_verdict("implemented", f"web_app/backend/sql_alchemy.py: {_DECLARING_LINE}", kind="action")],
+        FIXTURE,
+    )
+    assert out[0]["status"] == "unverified"
+
+
+def test_a_data_statement_labelled_rule_keeps_its_column():
+    """The extractor pads the ledger with 'a person must have a first name'
+    and may call it a rule; the column is that requirement, not a gap."""
+    out = ledger.verify_evidence(
+        [_verdict("implemented", f"web_app/backend/sql_alchemy.py: {_DECLARING_LINE}",
+                  kind="rule", text="Each booking must have an employee handling it")],
+        FIXTURE,
+    )
+    assert out[0]["status"] == "implemented"
+
+
+def test_an_at_least_rule_needs_more_than_a_relationship():
+    out = ledger.verify_evidence(
+        [_verdict("implemented", f"web_app/backend/sql_alchemy.py: {_DECLARING_LINE}",
+                  kind="rule", text="A booking must cover at least one room")],
+        FIXTURE,
+    )
+    assert out[0]["status"] == "unverified"
+
+
+def test_a_must_have_field_labelled_validation_keeps_its_column():
+    """The extractor labels 'each person must have a first name' a validation;
+    with no constraint in the text, the column is the implementation."""
+    out = ledger.verify_evidence(
+        [_verdict("implemented", f"web_app/backend/sql_alchemy.py: {_DECLARING_LINE}",
+                  kind="validation", text="Each booking must have an employee")],
+        FIXTURE,
+    )
+    assert out[0]["status"] == "implemented"
+
+
+def test_escape_sequences_quote_style_and_later_lines_are_normalised():
+    """Observed live: quotes arrived with literal backslash-n sequences,
+    single quotes where the file has double quotes, and abridged continuation
+    lines; ten real citations were reported unverified."""
+    quoted = (
+        "web_app/backend/sql_alchemy.py: "
+        + _DECLARING_LINE.replace('"', "'")
+        + "\\n    # abridged continuation that is not in the file"
+    )
+    out = ledger.verify_evidence([
+        _verdict("implemented", quoted, kind="rule", text="Each booking has an employee"),
+    ], FIXTURE)
+    assert out[0]["status"] == "implemented"
+
+
+def test_a_verbatim_line_needs_a_real_citation_path():
+    """Observed live: the judge wrote the literal word 'path' as the file
+    for all 40 citations. Searching all files then accepted the run's own
+    recipe as evidence. A bad citation must be corrected, not rescued."""
+    out = ledger.verify_evidence(
+        [_verdict("implemented", f"path: {_ENFORCING_LINE}")], FIXTURE,
+    )
+    assert out[0]["status"] == "unverified"
+
+
+@pytest.mark.parametrize("evidence", [
+    "web_app/backend/routers/nowhere.py: raise HTTPException(status_code=418, detail='no such line')",
+    "web_app/backend/routers/booking.py: raise HTTPException(status_code=418, detail='no such line')",
+    "web_app/backend/routers/booking.py",
+    "",
+])
+def test_a_quote_that_is_not_in_the_file_is_unverified(evidence):
+    out = ledger.verify_evidence([_verdict("implemented", evidence)], FIXTURE)
+    assert out[0]["status"] == "unverified"
+
+
+def test_missing_and_partial_are_not_touched_by_the_check():
+    out = ledger.verify_evidence(
+        [_verdict("missing"), _verdict("partial")], FIXTURE,
+    )
+    assert [v["status"] for v in out] == ["missing", "partial"]
+
+
+def test_evidence_stays_inside_unambiguous_application_source(tmp_path):
+    _write(tmp_path, "backend/app.py", "def pay():\n    return True\n")
+    _write(tmp_path, "other/app.py", "def pay():\n    return True\n")
+    artifacts = (".besser_recipe.json", "logs/app.py", "reports/app.py", "tests/app.py",
+                 "frontend/src/App.test.tsx", "frontend/src/pages/Booking.spec.js", "backend/test_api.py")
+    for artifact in artifacts:
+        _write(tmp_path, artifact, "def pay():\n    return True\n")
+    _write(tmp_path, "web_app/frontend/src/components/PaymentButton.tsx",
+           "export const PaymentButton = () => <button>Pay</button>;\n")
+    # A reports/logs application module is not the workspace's artifact folder.
+    # Windows-authored Python with a UTF-8 BOM remains valid source evidence.
+    _write(tmp_path, "backend/reports/service.py", "\ufeffdef report():\n    return True\n")
+    _write(tmp_path, "backend/logs/events.py", "def record_event():\n    return True\n")
+    citations = ["missing.py", "app.py", "../backend/app.py", "/backend/app.py", *artifacts]
+    verdicts = [_verdict("implemented", f"{p}: return True", kind="action") for p in citations]
+    assert {v["status"] for v in ledger.verify_evidence(verdicts, str(tmp_path))} == {"unverified"}
+    digest = ledger.build_app_digest(str(tmp_path))
+    assert "components/PaymentButton.tsx" in digest
+    assert not any(f"### {p}" in digest for p in citations)
+    app_modules = ["backend/reports/service.py", "backend/logs/events.py"]
+    assert all(f"### {p}" in digest for p in app_modules)
+    assert [v["status"] for v in ledger.verify_evidence([
+        _verdict("implemented", f"{p}: return True", kind="action") for p in app_modules
+    ], str(tmp_path))] == ["implemented", "implemented"]
+    # An incidental identifier substring is not a copied executable line.
+    assert ledger.verify_evidence([
+        _verdict("implemented", "backend/app.py: pay", kind="action"),
+    ], str(tmp_path))[0]["status"] == "unverified"
+
+
+def test_scaffolds_and_prose_do_not_prove_behaviour_but_real_code_can(tmp_path):
+    _write(tmp_path, "app.py", '''from fastapi import HTTPException
+class Status:
+    AWAITING_PAYMENT = "AWAITING_PAYMENT"
+class Booking:
+    totalPrice: float
+    physicalStatus: Status
+    status = mapped_column(default="AWAITING_PAYMENT")
+    amount = mapped_column(Computed("price * nights"))
+def scaffold():
+    """if too_many_guests: raise ValueError"""
+    # if too_many_guests: raise ValueError
+    booking = load_booking()
+    try:
+        raise HTTPException(status_code=501, detail="not implemented")
+    except HTTPException:
+        raise
+def pay():
+    if unsupported:
+        raise HTTPException(status_code=501, detail="unsupported payment method")
+    booking.paid = True
+    return True
+def validate():
+    if guest_count > capacity:
+        raise ValueError("Too many guests")
+def calculate():
+    return sum(room.price for room in rooms)
+def create_link():
+    return Link(
+        **link_attrs(link, ('agreedPrice', 'extraCharges'))
+    )
+def whole_nights():
+    return (
+        hours
+        // 24
+    )
+
+class BookingCreate:
+    @model_validator(mode="after")
+    def validate_dates(self):
+        if self.arrivalDate > self.departureDate:
+            raise ValueError("Invalid dates")
+        return self
+
+    @model_validator(mode="after")
+    def validate_capacity(self):
+        """Capacity is enforced elsewhere."""
+        return self
+
+    @field_validator("phone")
+    def validate_phone(cls, value):
+        return value
+
+    @field_validator("email")
+    def validate_email(cls, value):
+        return validate_email_format(value)
+''')
+    invalid = [
+        ("action", "def scaffold():"),
+        ("action", 'raise HTTPException(status_code=501, detail="not implemented")'),
+        ("transition", 'AWAITING_PAYMENT = "AWAITING_PAYMENT"'),
+        ("computed", "totalPrice: float"),
+        ("rule", '# if too_many_guests: raise ValueError'),
+        ("rule", '"""if too_many_guests: raise ValueError"""'),
+        ("rule", 'def validate_capacity(self):'),
+        ("rule", '@model_validator(mode="after")\n    def validate_capacity(self):'),
+        ("rule", '@model_validator(mode="after")'),
+        ("validation", 'def validate_phone(cls, value):'),
+    ]
+    valid = [("action", "def pay():"), ("transition", "booking.paid = True"),
+             ("action", "**link_attrs(link, ('agreedPrice', 'extraCharges'))"),
+             ("computed", "// 24"),
+             ("rule", "if guest_count > capacity:"),
+             ("computed", "return sum(room.price for room in rooms)"),
+             ("rule", '@model_validator(mode="after")\n    def validate_dates(self):'),
+             ("validation", 'def validate_email(cls, value):')]
+    verdicts = [_verdict("implemented", f"app.py: {line}", kind=kind)
+                for kind, line in invalid + valid]
+    statuses = [v["status"] for v in ledger.verify_evidence(verdicts, str(tmp_path))]
+    assert statuses == ["unverified"] * len(invalid) + ["implemented"] * len(valid)
+    declarative = [
+        _verdict("implemented", 'app.py: status = mapped_column(default="AWAITING_PAYMENT")',
+                 kind="transition", text="A booking starts awaiting payment"),
+        _verdict("implemented", 'app.py: amount = mapped_column(Computed("price * nights"))',
+                 kind="computed", text="The amount is computed from the price and nights"),
+    ]
+    assert [v["status"] for v in ledger.verify_evidence(declarative, str(tmp_path))] == [
+        "implemented", "implemented",
+    ]
+    _write(tmp_path, "app.js", '''/* implementation example:
+    payEverything();
+ * still only a comment
+ */
+class Items {
+    *values() { yield 1; }
+}
+let remaining = 2;
+--remaining;
+// ignored();
+''')
+    js_quotes = ["payEverything();", "* still only a comment", "// ignored();",
+                 "*values() { yield 1; }", "--remaining;"]
+    assert [v["status"] for v in ledger.verify_evidence([
+        _verdict("implemented", f"app.js: {quote}", kind="action") for quote in js_quotes
+    ], str(tmp_path))] == ["unverified"] * 3 + ["implemented"] * 2
+
+
+def test_invalid_declarations_do_not_prove_rules_but_valid_constraints_still_do(tmp_path):
+    _write(tmp_path, "database.py", 'DATABASE_URL = "sqlite:///hotel.db"\n')
+    _write(tmp_path, "models.py", '''from enum import Enum
+class Status(Enum):
+    AWAITING_PAYMENT = "AWAITING_PAYMENT"
+class Booking:
+    __tablename__ = "booking"
+    id = mapped_column(Integer, primary_key=True)
+    arrival = mapped_column(Date)
+    departure = mapped_column(Date)
+    status = mapped_column(default=Status.awaiting_payment)
+    multiline_status = mapped_column(
+        default=Status.not_a_member,
+    )
+    __table_args__ = (CheckConstraint("arrival <= departure", name="shadowed_date_rule"),)
+    __table_args__ = ()
+    @field_validator("email")
+    def validate_contact(cls, value):
+        raise ValueError("shadowed email validator")
+    @field_validator("phone")
+    def validate_contact(cls, value):
+        return validate_phone_format(value)
+class InvalidRoom:
+    __tablename__ = "invalid_room"
+    capacity = mapped_column(Integer)
+    __table_args__ = (
+        CheckConstraint("agreedPrice > 0", name="wrong_table"),
+        CheckConstraint("capacity >= (SELECT COUNT(*) FROM guests)", name="subquery"),
+    )
+class Room:
+    __tablename__ = "room"
+    capacity = mapped_column(Integer)
+    status = mapped_column(default=Status.AWAITING_PAYMENT)
+    __table_args__ = (CheckConstraint("capacity > 0", name="positive_capacity"),)
+''')
+    invalid = [
+        ("transition", "status = mapped_column(default=Status.awaiting_payment)"),
+        ("transition", "multiline_status = mapped_column("),
+        ("rule", '__table_args__ = (CheckConstraint("arrival <= departure", name="shadowed_date_rule"),)'),
+        ("validation", 'raise ValueError("shadowed email validator")'),
+        ("rule", 'CheckConstraint("agreedPrice > 0", name="wrong_table"),'),
+        ("rule", 'CheckConstraint("capacity >= (SELECT COUNT(*) FROM guests)", name="subquery"),'),
+    ]
+    valid = [
+        ("transition", "status = mapped_column(default=Status.AWAITING_PAYMENT)"),
+        ("rule", '__table_args__ = (CheckConstraint("capacity > 0", name="positive_capacity"),)'),
+    ]
+    verdicts = [_verdict("implemented", f"models.py: {line}", kind=kind,
+                         text="A record starts awaiting payment" if kind == "transition" else "The value must be valid")
+                for kind, line in invalid + valid]
+    checked = ledger.verify_evidence(verdicts, str(tmp_path))
+    assert [v["status"] for v in checked] == ["unverified"] * len(invalid) + ["implemented"] * len(valid)
+    assert all("invalid" in v["note"] for v in checked[:len(invalid)])
+
+
+# ------------------------------------------------------------------- judge
+
+
+def test_a_requirement_the_judge_skipped_is_unverified_not_missing():
+    reqs = [{"id": 1, "text": "a", "kind": ""}, {"id": 2, "text": "b", "kind": ""}]
+    client = _ToolClient([{"verdicts": [
+        {"id": 1, "status": "implemented", "evidence": "x.py",
+         "inspection_paths": ["frontend/Table.tsx", 123]},
+    ]}])
+    verdicts = ledger.judge_coverage(
+        reqs, "### x.py\ncode", client, original_spec=INSTRUCTIONS,
+        previous_verdicts=[{"id": 1, "evidence": "x.py:@router.post('/')",
+                            "note": "decorator does not implement the action"},
+                           {"id": 999, "note": "unrelated-requirement-secret"}],
+    )
+    assert [v["status"] for v in verdicts] == ["implemented", "unverified"]
+    assert client.calls[0][0] == "submit_verdicts"
+    assert "R2. b" in client.calls[0][1]
+    assert SPEC in client.calls[0][1]
+    assert "This is the authority" not in client.calls[0][1]
+    assert "decorator does not implement the action" in client.calls[0][1]
+    assert "x.py:@router.post('/')" in client.calls[0][1]
+    assert "unrelated-requirement-secret" not in client.calls[0][1]
+    assert verdicts[0]["inspection_paths"] == ["frontend/Table.tsx"]
+    assert "unverified" in ledger._SUBMIT_VERDICTS_TOOL["input_schema"]["properties"]["verdicts"]["items"]["properties"]["status"]["enum"]
+
+
+# --------------------------------------------------------- issues + severity
+
+
+def test_unresolved_requirements_block_completion_without_inventing_missing_code():
+    issues = ledger.ledger_issues([
+        {"id": 1, "text": "Room numbers are unique", "status": "missing", "note": "no unique constraint"},
+        {"id": 2, "text": "Bills can be paid", "status": "partial", "note": "no refusal when paid"},
+        {"id": 3, "text": "Bookings can be cancelled", "status": "unverified", "evidence": "x.py:cancel"},
+        {"id": 4, "text": "Bookings are created", "status": "implemented", "evidence": "y.py"},
+    ])
+    assert len(issues) == 3
+    assert issues[0].startswith("requirement: R1 — Room numbers are unique is not implemented")
+    assert _classify_issue(issues[0]).severity == "blocker"
+    assert _classify_issue(issues[1]).severity == "blocker"
+    assert _classify_issue(issues[2]).severity == "blocker"
+    assert issues[1].startswith("requirement partial:")
+    assert issues[2].startswith("requirement unverified:")
+    assert "implement the behaviour only if it is really absent" in issues[2]
+
+
+# ---------------------------------------------------------------- the run
+
+
+@pytest.fixture
+def simple_model():
+    room = Class(name="Room")
+    room.attributes = {
+        Property(name="id", type=PrimitiveDataType("int"), is_id=True),
+        Property(name="roomNumber", type=PrimitiveDataType("str")),
+    }
+    return DomainModel(name="Hotel", types={room})
+
+
+def _write(root, rel, text):
+    path = root / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
+def test_phase3_feeds_missing_requirements_to_the_fix_loop(simple_model, tmp_path, monkeypatch):
+    _write(tmp_path, "backend/routers/room.py", "def create_room():\n    return True\n")
+    monkeypatch.setattr(ledger, "extract_requirements", lambda instr, client, **_: [
+        {"id": 1, "text": "Rooms can be created", "kind": "action"},
+        {"id": 2, "text": "Room numbers are unique", "kind": "uniqueness"},
+    ])
+    monkeypatch.setattr(ledger, "judge_coverage", lambda reqs, digest, client, **kwargs: [
+        {"id": 1, "text": "Rooms can be created", "status": "implemented",
+         "evidence": "backend/routers/room.py:return True", "note": ""},
+        {"id": 2, "text": "Room numbers are unique", "status": "missing",
+         "evidence": "", "note": "no unique constraint anywhere"},
+    ])
+    orch = LLMOrchestrator(
+        llm_client=_MockClient(), domain_model=simple_model, output_dir=str(tmp_path),
+    )
+    orch._instructions = INSTRUCTIONS
+    issues = orch._collect_validation_issues()
+    blockers = [i.message for i in issues if i.severity == "blocker"]
+    assert any(m.startswith("requirement: R2 — Room numbers are unique") for m in blockers), blockers
+    assert [v["status"] for v in orch._requirement_verdicts] == ["implemented", "missing"]
+
+
+@pytest.mark.parametrize("frontend", [False, True])
+def test_ui_requirements_on_a_backend_only_output_are_out_of_scope(
+        frontend, simple_model, tmp_path, monkeypatch):
+    """Run d3a33f95 (generate_fastapi_backend, no GUI model): the judge left
+    two UI requirements unverified because "only backend source was
+    provided", and they became blockers the fix loop had no frontend to
+    resolve. On a headless request with no frontend they are a warning; with
+    a frontend they still block."""
+    _write(tmp_path, "backend/routers/task.py", "def create_task():\n    return True\n")
+    if frontend:
+        _write(tmp_path, "frontend/src/App.jsx", "export default () => null;\n")
+    ui = "The task list displays every task with its completion state"
+    monkeypatch.setattr(ledger, "extract_requirements", lambda instr, client, **_: [
+        {"id": 1, "text": ui, "kind": "ui"},
+    ])
+    monkeypatch.setattr(ledger, "judge_coverage", lambda reqs, digest, client, **kwargs: [
+        {"id": 1, "text": ui, "kind": "ui", "status": "unverified", "evidence": "",
+         "note": "only backend source was provided"},
+    ])
+    orch = LLMOrchestrator(
+        llm_client=_MockClient(), domain_model=simple_model, output_dir=str(tmp_path),
+    )
+    orch._instructions = "build a REST API for todos"
+    issues = [i for i in orch._collect_validation_issues() if "R1" in i.message]
+
+    assert len(issues) == 1
+    if frontend:
+        assert issues[0].severity == "blocker"
+        assert issues[0].message.startswith("requirement unverified: R1")
+    else:
+        assert issues[0].severity == "warning"
+        assert issues[0].message.startswith("requirement out of scope: R1")
+        assert orch._requirement_verdicts[0]["status"] == "out_of_scope"
+
+
+def test_the_ledger_can_be_switched_off(simple_model, tmp_path, monkeypatch):
+    from besser.spec_driven_agent.validation.issues import is_completion_issue
+
+    monkeypatch.setattr(ledger, "extract_requirements",
+                        lambda *_: (_ for _ in ()).throw(AssertionError("must not run")))
+    orch = LLMOrchestrator(
+        llm_client=_MockClient(), domain_model=simple_model, output_dir=str(tmp_path),
+        enable_requirements_ledger=False,
+    )
+    orch._instructions = INSTRUCTIONS
+    issues = orch._collect_validation_issues()
+    assert not [i for i in issues if i.message.startswith("requirement")]
+    findings = [i for i in issues if i.message.startswith("validation unverified: original-specification coverage")]
+    assert len(findings) == 1 and findings[0].severity == "warning" and is_completion_issue(findings[0])
+    orch.auto_fix_issues = True
+    monkeypatch.setattr(orch, "_collect_validation_issues", lambda: findings)
+    monkeypatch.setattr(orch.client, "chat", lambda *a, **kw: pytest.fail("disabled checking must not request code repairs"))
+    orch._run_phase3_validation()
+    assert orch._validation_issues == findings
+    orch._instructions = ""
+    assert orch._collect_requirement_issues() == []
+
+
+CREATE_UNVERIFIED = ("runtime unverified: create unverified: backend: POST /dataset/ - status 401; "
+                     "a guessed request being refused does not prove this endpoint is broken.")
+
+
+@pytest.mark.parametrize("execution_issues, judged", [
+    ([CREATE_UNVERIFIED], True),
+    (["runtime unverified: action unverified: backend: POST /plant/1/close - state not constructible"], True),
+    ([CREATE_UNVERIFIED, "application startup: backend: ImportError: no module named x"], False),
+    (["create contract: backend: POST /dataset/ - status 500"], False),
+])
+def test_only_an_observed_failure_defers_the_requirements_judge(
+        simple_model, tmp_path, monkeypatch, execution_issues, judged):
+    """Sonnet 5.5, login-protected 13-class app: every guessed POST got 401, so
+    the judge was deferred on 7 of 8 runs and no requirement was ever judged."""
+    orch = LLMOrchestrator(llm_client=_MockClient(), domain_model=simple_model, output_dir=str(tmp_path))
+    monkeypatch.setattr(orch, "_collect_execution_issues", lambda: list(execution_issues))
+    calls = []
+    monkeypatch.setattr(orch, "_collect_requirement_issues", lambda: calls.append(1) or [])
+
+    messages = [i.message for i in orch._collect_validation_issues()]
+
+    assert bool(calls) is judged
+    assert any("judgment deferred" in m for m in messages) is not judged
+
+
+def _run_phase3_with(orch, passes, monkeypatch):
+    """Drive the Phase 3 loop with scripted validation passes and record
+    whether the pre-Phase-3 snapshot was restored."""
+    calls = {"n": 0, "restored": False}
+
+    def scripted():
+        idx = min(calls["n"], len(passes) - 1)
+        calls["n"] += 1
+        return list(passes[idx])
+
+    monkeypatch.setattr(orch, "_collect_validation_issues", scripted)
+    monkeypatch.setattr(orch, "_invoke_phase3_fix_loop", lambda blockers, is_first_attempt: None)
+    monkeypatch.setattr(orch, "_restore_snapshot", lambda: calls.__setitem__("restored", True) or True)
+    orch._run_phase3_validation()
+    return calls["restored"]
+
+
+def _req(n):
+    from besser.spec_driven_agent.pipeline.orchestrator import ValidationIssue
+    return ValidationIssue("blocker", f"requirement: R{n} — rule {n} is not implemented")
+
+
+def test_a_flapping_requirement_verdict_never_rolls_back_a_fix(simple_model, tmp_path, monkeypatch):
+    """Two judge calls on the same 19h35 app returned 12 and 22 missing
+    requirements. A verdict that appears between passes is judge variance,
+    not a regression the fix caused; rolling back would discard real work."""
+    orch = LLMOrchestrator(llm_client=_MockClient(), domain_model=simple_model,
+                           output_dir=str(tmp_path), auto_fix_issues=True)
+    restored = _run_phase3_with(orch, [[_req(1)], [_req(1), _req(2)]], monkeypatch)
+    assert restored is False
+
+
+def test_a_new_hard_blocker_is_reported_without_count_based_rollback(simple_model, tmp_path, monkeypatch):
+    from besser.spec_driven_agent.pipeline.orchestrator import ValidationIssue
+    syntax = ValidationIssue("blocker", "Syntax error in backend/main_api.py line 3: invalid syntax")
+    orch = LLMOrchestrator(llm_client=_MockClient(), domain_model=simple_model,
+                           output_dir=str(tmp_path), auto_fix_issues=True)
+    restored = _run_phase3_with(orch, [[_req(1)], [_req(1), syntax]], monkeypatch)
+    assert restored is False
+    assert orch._validation_issues == [_req(1), syntax]
+
+
+# ------------------------------------------- the ledger reaches Phase 2 too
+
+
+_LEDGER = [
+    {"id": 1, "text": "Room numbers are unique", "kind": "uniqueness"},
+    {"id": 2, "text": "Guests never exceed the rooms' combined capacity", "kind": "rule"},
+]
+
+
+def test_requirements_render_one_numbered_line_each():
+    assert ledger.render_requirements(_LEDGER) == (
+        "R1. Room numbers are unique\n"
+        "R2. Guests never exceed the rooms' combined capacity"
+    )
+    assert ledger.render_requirements(None) == ""
+
+
+def test_the_planner_is_handed_the_ledger_under_the_request(simple_model, tmp_path, monkeypatch):
+    """The gap analyser reads the spec too, but on the 19h35 model it still
+    skipped the unique room number and the extra charges. Numbered
+    requirements are a list to diff against, not prose to skim."""
+    seen = {}
+
+    def fake_planner(**kwargs):
+        seen["instructions"] = kwargs["instructions"]
+        return []
+
+    monkeypatch.setattr(ledger, "extract_requirements", lambda instr, client, **_: list(_LEDGER))
+    monkeypatch.setattr("besser.spec_driven_agent.pipeline.orchestrator.analyze_gaps_via_llm", fake_planner)
+    orch = LLMOrchestrator(llm_client=_MockClient(), domain_model=simple_model,
+                           output_dir=str(tmp_path))
+    orch._generator_used = "generate_web_app"
+    planner_text = orch._planner_instructions(INSTRUCTIONS)
+    assert planner_text.startswith(INSTRUCTIONS), "the verbatim request stays first"
+    assert "R1. Room numbers are unique" in planner_text
+    assert orch._requirements == _LEDGER
+
+
+def test_the_phase2_prompt_names_the_requirements_it_will_be_judged_on(simple_model, tmp_path):
+    orch = LLMOrchestrator(llm_client=_MockClient(), domain_model=simple_model,
+                           output_dir=str(tmp_path))
+    orch._requirements = list(_LEDGER)
+    prompt = orch._build_system_prompt(instructions=INSTRUCTIONS)
+    assert "R2. Guests never exceed the rooms' combined capacity" in prompt
+    assert "verified" in prompt.split("R1. Room numbers are unique")[0][-600:].lower()
+
+
+def test_without_a_ledger_the_prompt_is_unchanged(simple_model, tmp_path):
+    orch = LLMOrchestrator(llm_client=_MockClient(), domain_model=simple_model,
+                           output_dir=str(tmp_path))
+    prompt = orch._build_system_prompt(instructions=INSTRUCTIONS)
+    assert "Requirements the user stated" not in prompt
+
+
+def test_the_verdicts_are_written_to_the_recipe(simple_model, tmp_path):
+    orch = LLMOrchestrator(
+        llm_client=_MockClient(), domain_model=simple_model, output_dir=str(tmp_path),
+    )
+    orch._requirement_verdicts = [{"id": 1, "text": "x", "status": "missing",
+                                   "evidence": "", "note": ""}]
+    orch._save_recipe("build it", elapsed=1.0)
+    import json
+    recipe = json.load(open(tmp_path / ".besser_recipe.json", encoding="utf-8"))
+    assert recipe["requirements"][0]["status"] == "missing"
+
+
+class TestTheDigestIsNotPythonOnly:
+    """The judge must be handed code on every stack the agent targets.
+
+    _SOURCE_SUFFIXES feeds BOTH the digest the judge reads and the citation
+    checker. It listed only Python/JS/TS/SQL, so a Rust, Kotlin, Go or .NET run
+    got "Files shown: 0" while the judge prompt still said to decide from the
+    CODE ONLY. Every requirement came back missing or unverified, and
+    validation/issues.py classifies both as BLOCKERS -- so those runs failed
+    every requirement and spent the whole fix budget chasing citations against
+    files the checker could not open.
+
+    These are not hypothetical stacks: stack_metadata.py ships idiom blocks for
+    Spring Boot and Rust and a generic block for .NET, Go, PHP and Ruby.
+    """
+
+    STACKS = {
+        "rust":   ("src/main.rs", "async fn create_room() -> Json<Room> { todo!() }\n"),
+        "kotlin": ("src/main/kotlin/App.kt", '@PostMapping("/room") fun create(): Room = TODO()\n'),
+        "java":   ("src/main/java/App.java", "@PostMapping void create() {}\n"),
+        "go":     ("main.go", "func createRoom(w http.ResponseWriter) {}\n"),
+        "csharp": ("Controllers/RoomController.cs", "[HttpPost] public Room Create() => null;\n"),
+        "php":    ("src/RoomController.php", "<?php function createRoom() {} \n"),
+        "ruby":   ("app/controllers/rooms_controller.rb", "def create; end\n"),
+        "vue":    ("src/RoomForm.vue", "<script setup>const save = () => {}</script>\n"),
+    }
+
+    @pytest.mark.parametrize("stack", sorted(STACKS))
+    def test_the_judge_is_given_source_on_every_targeted_stack(self, tmp_path, stack):
+        """The regression: each of these produced 'Files shown: 0'."""
+        rel, body = self.STACKS[stack]
+        target = tmp_path / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(body * 15, encoding="utf-8")
+
+        digest = ledger.build_app_digest(str(tmp_path))
+
+        assert "Files shown: 0;" not in digest, f"{stack}: the judge got no code"
+        assert rel.rsplit("/", 1)[-1] in digest
+
+    def test_python_is_unchanged(self, tmp_path):
+        """Widening must not disturb the stack that already worked."""
+        (tmp_path / "backend").mkdir()
+        (tmp_path / "backend" / "main_api.py").write_text(
+            "from fastapi import FastAPI\napp = FastAPI()\n" * 15, encoding="utf-8")
+
+        digest = ledger.build_app_digest(str(tmp_path))
+
+        assert "main_api.py" in digest
+        assert "Files shown: 0;" not in digest
+
+    def test_non_source_is_still_excluded(self, tmp_path):
+        """The set is source the judge reasons about, not every file present.
+
+        Lockfiles, data and build output would crowd the budget out."""
+        for rel in ("package-lock.json", "data.csv", "notes.md", "logo.png",
+                    "requirements.txt", "Cargo.lock"):
+            (tmp_path / rel).write_text("x" * 500, encoding="utf-8")
+
+        digest = ledger.build_app_digest(str(tmp_path))
+
+        assert "Files shown: 0;" in digest, digest
+
+    def test_the_budget_still_bounds_a_wide_tree(self, tmp_path):
+        """Cost guard: more eligible extensions must not mean a bigger digest."""
+        for i in range(60):
+            (tmp_path / f"m{i}.rs").write_text("fn f() {}\n" * 4000, encoding="utf-8")
+
+        digest = ledger.build_app_digest(str(tmp_path))
+
+        assert len(digest) <= ledger._DIGEST_MAX_TOTAL_CHARS, len(digest)
+        assert "truncated" in digest or "omitted" in digest
+
+
+# ------------------------------------------------------ stringified arrays
+
+# Sonnet 5: 16 of 30 fresh forced calls sent the array as
+# a JSON string wrapping the whole input again; Haiku 4.5 did it 0 of 10.
+_STRINGIFIED_REQUIREMENTS = (
+    '{"requirements":[\n'
+    '{"kind":"uniqueness","text":"Each person (employee or guest) has a unique identifying number."},\n'
+    '{"kind":"validation","text":"An email address must have a mailbox name, an at sign, a domain and a suffix."}\n'
+    ']}'
+)
+
+
+@pytest.mark.parametrize("answer", [
+    _STRINGIFIED_REQUIREMENTS,
+    json.dumps(json.loads(_STRINGIFIED_REQUIREMENTS)["requirements"]),
+])
+def test_requirements_sent_as_a_json_string_are_still_extracted(answer):
+    extracted = ledger.extract_requirements(INSTRUCTIONS, _ToolClient([{"requirements": answer}]))
+    assert [r["kind"] for r in extracted] == ["uniqueness", "validation"]
+    assert extracted[0]["text"].startswith("Each person")
+
+
+@pytest.mark.parametrize("answer", ["not json", '{"other": []}', '"a string"', '{"requirements": {"text": "x"}}'])
+def test_a_string_that_is_not_the_list_still_fails_extraction(answer):
+    assert ledger.extract_requirements(INSTRUCTIONS, _ToolClient([{"requirements": answer}])) is None
+
+
+def test_verdicts_sent_as_a_json_string_are_still_judged():
+    reqs = [{"id": 1, "text": "a", "kind": ""}, {"id": 2, "text": "b", "kind": ""}]
+    answer = json.dumps({"verdicts": [
+        {"id": 1, "status": "implemented", "evidence": "x.py: return a"},
+        {"id": 2, "status": "missing", "evidence": ""},
+    ]})
+    verdicts = ledger.judge_coverage(reqs, "### x.py\nreturn a", _ToolClient([{"verdicts": answer}]))
+    assert [v["status"] for v in verdicts] == ["implemented", "missing"]
+
+
+# Live (Sonnet 5.5, 47 runs): the dominant false blocker was a correct verdict whose
+# free-text evidence mixed prose into, or stitched lines in, the quote.
+_CITATIONS = [{"path": "x.py", "line": "return a"}, {"path": "y.jsx", "line": "<Plot data={d} />"}]
+
+
+def test_the_judge_cites_lines_as_path_and_line_objects():
+    evidence = ledger._SUBMIT_VERDICTS_TOOL["input_schema"]["properties"]["verdicts"]["items"]["properties"]["evidence"]
+    assert evidence["type"] == "array" and evidence["items"]["required"] == ["path", "line"]
+    reqs = [{"id": 1, "text": "a", "kind": ""}, {"id": 2, "text": "b", "kind": ""}]
+    client = _ToolClient([{"verdicts": [
+        {"id": 1, "status": "implemented", "evidence": _CITATIONS, "note": "renders the plot"},
+        # Sonnet 5 sends some arrays as JSON strings; a citation as "path: line" is read too.
+        {"id": 2, "status": "implemented", "evidence": json.dumps(_CITATIONS[:1] + ["y.jsx: <Plot data={d} />"])},
+    ]}])
+    verdicts = ledger.judge_coverage(reqs, "### x.py\nreturn a", client)
+    assert verdicts[0]["evidence"] == _CITATIONS and verdicts[0]["note"] == "renders the plot"
+    assert verdicts[1]["evidence"] == _CITATIONS
+
+
+class _TextClient:
+    """A provider without forced tools: it answers in prose holding JSON."""
+
+    model = "text-model"
+
+    def __init__(self, text):
+        self.usage = UsageTracker("text-model")
+        self._client = object()
+        self.text = text
+
+    def chat(self, system, messages, tools):
+        return {"stop_reason": "end_turn", "content": [type("B", (), {"type": "text", "text": self.text})()]}
+
+
+def test_a_text_reply_with_string_evidence_keeps_the_string_form():
+    reply = 'Verdicts: {"verdicts": [{"id": 1, "status": "implemented", "evidence": "x.py: return a"}]}'
+    verdicts = ledger.judge_coverage([{"id": 1, "text": "a", "kind": ""}], "### x.py\nreturn a", _TextClient(reply))
+    assert verdicts[0]["evidence"] == "x.py: return a"
+
+
+def test_old_and_new_evidence_render_the_same_way_in_issues_and_judge_feedback():
+    old = {"id": 1, "text": "a", "kind": "rule", "status": "unverified", "note": "n",
+           "evidence": "x.py: return a and y.jsx: <Plot data={d} />"}
+    new = dict(old, id=2, text="b", evidence=_CITATIONS)
+    issues = ledger.ledger_issues([old, new])
+    assert all("'x.py: return a and y.jsx: <Plot data={d} />'" in issue for issue in issues), issues
+    assert ledger.cited_paths(new["evidence"]) == ["x.py", "y.jsx"]
+    assert ledger.cited_paths(old["evidence"]) == ["x.py"]
+
+    client = _ToolClient([{"verdicts": [{"id": 2, "status": "missing"}]}])
+    ledger.judge_coverage([{"id": 2, "text": "b", "kind": "rule"}], "", client, previous_verdicts=[new])
+    assert '"rejected_evidence": "x.py: return a and y.jsx: <Plot data={d} />"' in client.calls[0][1]
+
+
+def test_judge_digest_lists_or_includes_init_py(tmp_path):
+    """The digest skipped every ``__init__.py`` and ``database.py`` without
+    saying so, so a Flask app factory in ``__init__.py`` was invisible to the
+    judge (review 2026-10-30, H7, ``probe_digest_skip.py``)."""
+    package = tmp_path / "inventory"
+    package.mkdir()
+    (package / "__init__.py").write_text(
+        "from flask import Flask\napp = Flask(__name__)\n@app.post('/items')\n"
+        "def create_item():\n    return LOW_STOCK_ALERT\n", encoding="utf-8")
+    (package / "database.py").write_text(
+        "ENGINE_URL = 'postgresql://inventory@db/inventory'\n", encoding="utf-8")
+    (package / "views.py").write_text("def list_items():\n    return []\n", encoding="utf-8")
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "__init__.py").write_text("# package marker\n", encoding="utf-8")
+    (tmp_path / "bal_stdlib.py").write_text("def bal_len(x):\n    return len(x)\n", encoding="utf-8")
+
+    digest = ledger.build_app_digest(str(tmp_path))
+    source, coverage = digest.split("## Digest coverage")
+
+    assert "### inventory/__init__.py" in source and "LOW_STOCK_ALERT" in source
+    assert "### inventory/database.py" in source
+    assert "pkg/__init__.py" not in digest  # empty after comments: nothing to judge
+    assert "bal_stdlib.py" not in source and "Omitted files: bal_stdlib.py" in coverage
+
+
+# ------------------------------------------------ LLM output that bends the schema
+
+
+@pytest.mark.parametrize("rid", ["R1", "r1", "#1", "1.", "R1.", " R1 ", "1", 1, 1.0])
+def test_a_verdict_id_in_the_listings_own_form_is_accepted(rid):
+    """The judge reads requirements listed as ``R1. text`` and may echo ``R1``.
+    Discarding those verdicts made the whole reply count as no verdict: the
+    full digest went again to the primary model, then total failure."""
+    client = _ToolClient([{"verdicts": [{"id": rid, "status": "missing", "note": "n"}]}])
+
+    verdicts = ledger.judge_coverage([{"id": 1, "text": "a", "kind": "rule"}], "### x.py\nx = 1", client)
+
+    assert verdicts[0]["status"] == "missing" and verdicts[0]["note"] == "n"
+    assert len(client.calls) == 1
+
+
+@pytest.mark.parametrize("rid", ["R1a", "one", "1.5", 1.5, True, "R", "", None, [1]])
+def test_a_verdict_id_that_names_no_requirement_is_still_rejected(rid, monkeypatch):
+    monkeypatch.setattr(ledger, "_JUDGE_RETRY_BACKOFF_SECONDS", 0)
+    payload = {"verdicts": [{"id": rid, "status": "implemented"}]}
+    client = _ToolClient([payload, payload])
+
+    assert ledger.judge_coverage([{"id": 1, "text": "a", "kind": "rule"}], "", client) is None
+
+
+def test_an_extracted_item_without_text_is_not_a_requirement():
+    """``str(None)`` turned a null item into the requirement "None", judged
+    and reported as the blocker "R1 — None is not implemented"."""
+    client = _ToolClient([{"requirements": [
+        {"text": None, "kind": "rule"}, None, {"text": 7}, {"kind": "rule"},
+        {"text": "Titles are unique", "kind": "uniqueness"}, "Books have at most 2000 pages",
+    ]}])
+
+    extracted = ledger.extract_requirements(INSTRUCTIONS, client)
+
+    assert extracted == [
+        {"id": 1, "text": "Titles are unique", "kind": "uniqueness"},
+        {"id": 2, "text": "Books have at most 2000 pages", "kind": ""},
+    ]
+
+
+@pytest.mark.parametrize("kind", [None, "verification", ledger.ENTITY_CRUD_KIND, "something else"])
+def test_an_extracted_kind_outside_the_schema_is_dropped(kind):
+    """No client enforces the schema's enum. 'verification' is the harness's
+    own extraction-incomplete gate, which no code can discharge: a user
+    requirement labelled so would be a blocker forever. ``None`` read "None"."""
+    client = _ToolClient([{"requirements": [{"text": "Titles are unique", "kind": kind}]}])
+
+    assert ledger.extract_requirements(INSTRUCTIONS, client)[0]["kind"] == ""
+
+
+_ROLE_MODELS = """from pydantic import BaseModel
+
+
+class User(BaseModel):
+    nickname: str = ""
+    email: str
+    # TODO: reject a duplicate email on registration
+"""
+_ROLE_ROUTER = """def delete_user(db, user_id):
+    raise HTTPException(status_code=501, detail="Not implemented")
+"""
+
+
+@pytest.mark.parametrize("kind, text, evidence", [
+    ("uniqueness", "A user's email must be unique", "app/models.py: nickname: str; email: str"),
+    ("uniqueness", "A user's email must be unique",
+     "app/models.py: nickname: str; # TODO: reject a duplicate email on registration"),
+    ("uniqueness", "A user's email must be unique",
+     [{"path": "app/models.py", "line": "nickname: str; email: str"}]),
+    ("action", "An admin can delete a user",
+     [{"path": "app/router.py",
+       "line": 'raise HTTPException(; raise HTTPException(status_code=501, detail="Not implemented")'}]),
+])
+def test_a_fragment_cited_first_does_not_skip_the_role_check(tmp_path, kind, text, evidence):
+    """A part matched only inside a line came first, the loop stopped there, and a
+    declaration, a comment or a 501 stub behind it passed as the implementation."""
+    from besser.spec_driven_agent.planning.requirements_ledger import verify_evidence
+
+    (tmp_path / "app").mkdir()
+    (tmp_path / "app" / "models.py").write_text(_ROLE_MODELS, encoding="utf-8")
+    (tmp_path / "app" / "router.py").write_text(_ROLE_ROUTER, encoding="utf-8")
+    [verdict] = verify_evidence([{"id": 1, "kind": kind, "text": text, "status": "implemented",
+                                  "evidence": evidence}], str(tmp_path))
+    assert verdict["status"] == "unverified"
+

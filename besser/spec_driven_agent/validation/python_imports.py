@@ -1,0 +1,577 @@
+"""Whether the generated Python can actually resolve its own imports.
+
+Two checks that need no model and no LLM: an import of a local module that
+does not exist (``missing module:``), and an ORM module that fails to
+import or to configure its mappers when actually run (``mapper config:``).
+The second is the only check here that executes anything, in a sandboxed
+subprocess with no network and an allowlisted environment.
+
+The allowlist tables decide which import roots count as satisfied: the stdlib
+half is taken from the interpreter rather than hand-maintained, and the
+external half is what the generators are known to emit.
+
+Every function here takes a path and touches no run state.
+"""
+
+from __future__ import annotations
+
+import ast as _ast
+import os
+import re as _re
+import sys
+import tomllib
+
+from packaging.requirements import InvalidRequirement, Requirement
+from packaging.utils import canonicalize_name
+
+from besser.spec_driven_agent.state.checkpoint import _SNAPSHOT_DIR
+from besser.spec_driven_agent.execution.process import _safe_subprocess_env
+from besser.spec_driven_agent.validation.issues import _check_did_not_run
+from besser.spec_driven_agent.validation.python_source import _python_files
+from besser.spec_driven_agent.parsed_source import parse_source
+from besser.utilities.workspace_fs import open_plain, walk_plain
+
+
+# The stdlib half of the allowlist, taken from the interpreter rather than
+# hand-maintained, so no stdlib module is reported as "this app cannot
+# start".
+_STDLIB_ROOTS = frozenset(getattr(sys, "stdlib_module_names", ())) | {
+    "typing_extensions",  # not stdlib, but ubiquitous and always installed
+}
+
+# Third-party roots a generated Python app legitimately imports. This is a
+# fallback: the authoritative source is the app's own manifest (see
+# ``_declared_dependency_roots``). Kept because a generator can emit an
+# import before the manifest entry, and a missing manifest should not turn
+# every framework import into a blocker. Covers every generator family,
+# not only FastAPI.
+_EXTERNAL_IMPORT_ROOTS = frozenset({
+    # FastAPI / Starlette
+    "fastapi", "pydantic", "pydantic_settings", "pydantic_core", "sqlalchemy",
+    "starlette", "uvicorn", "alembic", "sqlmodel", "databases", "anyio",
+    "sniffio", "greenlet", "mako",
+    # Django
+    "django", "rest_framework", "corsheaders", "django_filters", "drf_yasg",
+    "drf_spectacular", "django_extensions", "storages", "environ",
+    # Flask
+    "flask", "flask_sqlalchemy", "flask_cors", "flask_migrate",
+    "flask_login", "flask_jwt_extended", "flask_restful", "werkzeug",
+    "jinja2", "markupsafe", "itsdangerous", "click", "marshmallow",
+    # Drivers / infra
+    "psycopg", "psycopg2", "pymysql", "mysql", "aiosqlite", "asyncpg",
+    "pymongo", "motor", "redis", "celery", "boto3", "botocore", "gunicorn",
+    # HTTP / auth / serialisation
+    "httpx", "requests", "aiohttp", "websockets", "urllib3", "certifi",
+    "idna", "charset_normalizer", "jose", "jwt", "passlib", "bcrypt",
+    "argon2", "cryptography", "nacl", "dotenv", "multipart",
+    "email_validator", "yaml", "toml", "orjson", "ujson", "jsonschema",
+    "dateutil", "pytz", "attr", "attrs",
+    # Common utility packages
+    "loguru", "structlog", "rich", "typer", "tenacity", "cachetools",
+    "slugify", "phonenumbers", "validators", "shortuuid", "ulid", "qrcode",
+    "PIL", "openpyxl", "reportlab", "markdown", "bleach", "babel",
+    "numpy", "pandas", "openai", "anthropic", "stripe", "sentry_sdk",
+    "prometheus_client", "apscheduler",
+    # Test tooling
+    "pytest", "pytest_asyncio", "faker", "factory", "freezegun", "responses",
+    "httpretty", "hypothesis",
+})
+
+# Distribution name → import root, for the cases where they differ. The
+# default rule (lowercase, '-' → '_') handles everything not listed.
+_DIST_TO_IMPORT_ROOT = {
+    "djangorestframework": "rest_framework",
+    "django-cors-headers": "corsheaders",
+    "django-environ": "environ",
+    "python-jose": "jose",
+    "pyjwt": "jwt",
+    "python-dotenv": "dotenv",
+    "python-multipart": "multipart",
+    "python-slugify": "slugify",
+    "psycopg2-binary": "psycopg2",
+    "pillow": "PIL",
+    "pyyaml": "yaml",
+    "beautifulsoup4": "bs4",
+    "opencv-python": "cv2",
+    "scikit-learn": "sklearn",
+    "python-dateutil": "dateutil",
+    "sentry-sdk": "sentry_sdk",
+    "mysqlclient": "MySQLdb",
+    "python-docx": "docx",
+    "attrs": "attr",
+    "djangorestframework-simplejwt": "rest_framework_simplejwt",
+    "django-filter": "django_filters",
+    "pycryptodome": "Crypto",
+    "pycryptodomex": "Cryptodome",
+    "pyopenssl": "OpenSSL",
+    "pymupdf": "fitz",
+    "protobuf": "google",
+    "grpcio": "grpc",
+    "websocket-client": "websocket",
+    "factory-boy": "factory",
+    "scikit-image": "skimage",
+    "opencv-python-headless": "cv2",
+    "mysql-connector-python": "mysql",
+    "pyserial": "serial",
+}
+
+# Distribution-name prefixes the import name usually drops
+# (``python-socketio`` -> ``socketio``, ``django-allauth`` -> ``allauth``).
+_DIST_NAME_PREFIXES = ("python_", "py_", "django_")
+
+# A quoted requirement-looking token, for manifests read as text: setup.py,
+# setup.cfg, and a TOML file that does not parse.
+_LOOSE_REQUIREMENT_RE = _re.compile(r"[\"']([A-Za-z0-9._-]{2,})[><=!~\s\"']")
+
+
+def _requirement_name(line: str) -> str | None:
+    """The distribution a requirement line names (PEP 508), or None."""
+    line = line.split(" #", 1)[0].strip()
+    if not line or line.startswith(("#", "-")):
+        return None
+    try:
+        return Requirement(line).name
+    except InvalidRequirement:
+        # A malformed specifier (``fastapi=0.1``) still names the package.
+        match = _re.match(r"[A-Za-z0-9._-]+", line)
+        return match.group(0) if match else None
+
+
+def _table(data, key: str) -> dict:
+    value = data.get(key) if isinstance(data, dict) else None
+    return value if isinstance(value, dict) else {}
+
+
+def _toml_dependency_names(data: dict) -> list[str]:
+    """Distribution names a parsed pyproject.toml or Pipfile declares in the
+    tables this reader knows; tool tables it does not know are left to the
+    loose scan."""
+    project = _table(data, "project")
+    requirement_lists = [project.get("dependencies")]
+    requirement_lists += list(_table(project, "optional-dependencies").values())
+    requirement_lists += list(_table(data, "dependency-groups").values())
+    names = [project["name"]] if isinstance(project.get("name"), str) else []
+    for requirements in requirement_lists:
+        if isinstance(requirements, list):
+            names += [n for r in requirements if isinstance(r, str) and (n := _requirement_name(r))]
+    poetry = _table(_table(data, "tool"), "poetry")
+    tables = [_table(poetry, "dependencies"), _table(poetry, "dev-dependencies"),
+              _table(data, "packages"), _table(data, "dev-packages")]
+    tables += [_table(group, "dependencies") for group in _table(poetry, "group").values()]
+    for table in tables:
+        names += [name for name in table if name.lower() != "python"]
+    return names
+
+
+def _manifest_dependency_names(name: str, text: str) -> list[str]:
+    """Distribution names one manifest declares; ``name`` is its lowercased file name."""
+    if name.startswith("requirements") and name.endswith(".txt"):
+        return [n for line in text.splitlines() if (n := _requirement_name(line))]
+    # Deliberately loose: a false extra allowlist entry costs nothing; a
+    # missed one costs a spurious blocker. The TOML tables add what it cannot
+    # see, such as Poetry's unquoted keys.
+    names = _LOOSE_REQUIREMENT_RE.findall(text)
+    if name in ("pyproject.toml", "pipfile"):
+        try:
+            names += _toml_dependency_names(tomllib.loads(text))
+        except tomllib.TOMLDecodeError:
+            pass
+    return names
+
+
+def _declared_dependency_roots(output_dir: str) -> set[str]:
+    """Import roots the app's own manifest declares.
+
+    Reading the manifest is what makes this check work for all 20
+    generators instead of only the stack whose packages someone
+    remembered to hardcode. A dependency the app declares is a
+    dependency the app has.
+    """
+    roots: set[str] = set()
+    manifests = ("pyproject.toml", "pipfile", "setup.py", "setup.cfg")
+    for root, dirs, files in walk_plain(output_dir):
+        dirs[:] = [
+            d for d in dirs
+            if d not in ("node_modules", _SNAPSHOT_DIR, "__pycache__", ".git")
+        ]
+        for name in files:
+            low = name.lower()
+            if not (low in manifests or (low.startswith("requirements") and low.endswith(".txt"))):
+                continue
+            try:
+                with open(os.path.join(root, name), "r", encoding="utf-8", errors="replace") as fh:
+                    text = fh.read()
+            except OSError:
+                continue
+            for dist in _manifest_dependency_names(low, text):
+                dist = canonicalize_name(dist)
+                roots.add(_DIST_TO_IMPORT_ROOT.get(dist, dist.replace("-", "_")))
+    return roots
+
+
+
+
+def _is_declared(root: str, declared: set[str], whole_name: bool = False) -> bool:
+    """Whether import ``root`` plausibly belongs to a declared distribution.
+
+    Case-insensitive (``PyPDF2`` declares ``pypdf2``). A distribution whose
+    import name is not in ``_DIST_TO_IMPORT_ROOT`` is matched by its name, or
+    the name without a ``_DIST_NAME_PREFIXES`` prefix, starting with the root
+    at a word boundary: ``strawberry-graphql`` provides ``strawberry``, but
+    ``sqlalchemy`` never provides an app's own ``sql_alchemy``. ``whole_name``
+    drops the word-boundary prefix match.
+    """
+    root = root.lower()
+    for name in declared:
+        name = name.lower()
+        for candidate in {name, *(name.removeprefix(p) for p in _DIST_NAME_PREFIXES)}:
+            if candidate == root or not whole_name and candidate.startswith(root + "_"):
+                return True
+    return False
+
+
+_IMPORT_FAILURES = frozenset({"ImportError", "ModuleNotFoundError"})
+# Catch an import failure along with everything else: around a module the app
+# does not ship, more often a hidden defect than an optional import.
+_BROAD_FAILURES = frozenset({"Exception", "BaseException"})
+_OPTIONAL, _BROAD = "optional", "broad"
+
+
+def _exception_names(nodes: list[_ast.expr]) -> set[str]:
+    return {node.id if isinstance(node, _ast.Name) else node.attr
+            for node in nodes if isinstance(node, (_ast.Name, _ast.Attribute))}
+
+
+def _failure_kind(names: set[str]) -> str | None:
+    """``_OPTIONAL`` for an import-failure handler, ``_BROAD`` for a catch-all, else None."""
+    if names & _IMPORT_FAILURES:
+        return _OPTIONAL
+    return _BROAD if names & _BROAD_FAILURES else None
+
+
+def _handler_kind(handler: _ast.ExceptHandler) -> str | None:
+    """How ``handler`` absorbs an import failure; one that ends by raising
+    again (``raise``, ``raise RuntimeError(...) from exc``) lets the app die."""
+    if handler.body and isinstance(handler.body[-1], _ast.Raise):
+        return None
+    if handler.type is None:
+        return _BROAD
+    types = handler.type.elts if isinstance(handler.type, _ast.Tuple) else [handler.type]
+    return _failure_kind(_exception_names(types))
+
+
+def _is_type_checking(test: _ast.expr) -> bool:
+    return ((isinstance(test, _ast.Name) and test.id == "TYPE_CHECKING")
+            or (isinstance(test, _ast.Attribute) and test.attr == "TYPE_CHECKING"))
+
+
+def _is_version_check(test: _ast.expr) -> bool:
+    """``sys.version_info ...``: one branch never runs on the app's Python."""
+    return any(isinstance(n, _ast.Attribute) and n.attr == "version_info"
+               for n in _ast.walk(test))
+
+
+def _suppress_kind(node: _ast.With) -> str | None:
+    """How ``with suppress(ImportError):`` / ``with contextlib.suppress(...)`` absorbs an import failure."""
+    kinds = {_failure_kind(_exception_names(call.args))
+             for call in (item.context_expr for item in node.items)
+             if isinstance(call, _ast.Call) and isinstance(call.func, (_ast.Name, _ast.Attribute))
+             and (call.func.id if isinstance(call.func, _ast.Name) else call.func.attr) == "suppress"}
+    return _OPTIONAL if _OPTIONAL in kinds else _BROAD if _BROAD in kinds else None
+
+
+def _required_import_roots(node: _ast.AST, broad: bool = False) -> list[tuple[str, bool]]:
+    """``(root, broad)`` for the absolute imports the app needs in order to start.
+
+    Skipped, because the app starts without them: imports inside a ``try``
+    that handles the import failure (and the fallback in its handler) or a
+    ``with suppress(ImportError)``, ``if TYPE_CHECKING:`` imports, which never
+    run, and both branches of a ``sys.version_info`` check (a backport).
+    ``broad`` marks an import under a handler that catches every exception.
+    """
+    if isinstance(node, _ast.ImportFrom):
+        return [(node.module.split(".")[0], broad)] if node.module and not node.level else []
+    if isinstance(node, _ast.Import):
+        return [(alias.name.split(".")[0], broad) for alias in node.names]
+    guarded: list[_ast.AST] = []
+    if isinstance(node, (_ast.Try, _ast.TryStar)):
+        kinds = {_handler_kind(h) for h in node.handlers}
+        if _OPTIONAL in kinds or _BROAD in kinds:
+            children = [*node.orelse, *node.finalbody]
+            guarded = [] if _OPTIONAL in kinds else node.body
+        else:
+            children = list(_ast.iter_child_nodes(node))
+    elif isinstance(node, _ast.If) and _is_type_checking(node.test):
+        children = node.orelse
+    elif isinstance(node, _ast.If) and _is_version_check(node.test):
+        children = []
+    elif isinstance(node, _ast.With) and (kind := _suppress_kind(node)):
+        children, guarded = [], [] if kind == _OPTIONAL else node.body
+    else:
+        children = list(_ast.iter_child_nodes(node))
+    return ([root for child in children for root in _required_import_roots(child, broad)]
+            + [root for child in guarded for root in _required_import_roots(child, True)])
+
+
+def _unresolvable_local_imports(output_dir: str) -> list[str]:
+    """Local imports that name a module the app does not ship where it is used.
+
+    Ruff cannot find these: ``from sql_alchemy import *`` makes it report
+    "unable to detect undefined names", which EXCUSES every name instead of
+    flagging it, so a missing MODULE is invisible to F821 (e.g. an app
+    importing ``sql_alchemy`` with no such file present).
+
+    Resolution rules, each learned from a false positive against a working app:
+
+    * A service runs with its OWN folder as cwd (``uvicorn main_api:app`` from
+      ``backend/``), so that folder is importable from everything beneath it,
+      not only from the file's own directory.
+    * Any directory holding ``.py`` files is importable - Python 3 implicit
+      namespace packages need no ``__init__.py``.
+    * The module existing in SOME OTHER directory does not count: a copy under
+      ``pydantic/`` is not reachable from ``backend/``.
+    """
+    py_files = _python_files(output_dir)
+
+    provided: dict[str, set[str]] = {}
+    for path in py_files:
+        provided.setdefault(os.path.dirname(path), set()).add(
+            os.path.splitext(os.path.basename(path))[0]
+        )
+    package_dirs = set(provided)
+
+    # A directory holding .py files is an importable package FROM ITS
+    # PARENT, not only as a sibling of the importing file: e.g.
+    # `from core.config import settings` in backend/routers/x.py resolves
+    # to backend/core/ when backend/ is the service's cwd.
+    # Every ancestor too: ``services/`` holding only ``billing/`` is still an
+    # importable namespace package.
+    for directory in package_dirs:
+        while os.path.normpath(directory) != os.path.normpath(output_dir):
+            parent = os.path.dirname(directory)
+            if not parent or parent == directory:
+                break
+            provided.setdefault(parent, set()).add(os.path.basename(directory))
+            directory = parent
+
+    declared = _declared_dependency_roots(output_dir)
+    # A module or package the app itself ships somewhere is local: a declared
+    # ``auth-lib`` does not provide the app's own ``auth``.
+    shipped = {name for names in provided.values() for name in names}
+
+    problems: list[str] = []
+    for path in py_files:
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                tree = parse_source(handle.read())
+        except (OSError, SyntaxError, ValueError):
+            continue  # syntax errors are reported by their own check
+
+        # Everything importable from this file: its own folder plus every
+        # ancestor folder up to the app root (the service's cwd).
+        reachable: set[str] = set()
+        probe = os.path.dirname(path)
+        while True:
+            reachable |= provided.get(probe, set())
+            if os.path.normpath(probe) == os.path.normpath(output_dir):
+                break
+            parent = os.path.dirname(probe)
+            if not parent or parent == probe:
+                break
+            probe = parent
+
+        # A root is only broadly guarded when every import of it is.
+        roots: dict[str, bool] = {}
+        for root_name, broad in _required_import_roots(tree):
+            roots[root_name] = roots.get(root_name, True) and broad
+
+        rel = os.path.relpath(path, output_dir).replace("\\", "/")
+        for root_name, broad in sorted(roots.items()):
+            if (root_name in _EXTERNAL_IMPORT_ROOTS
+                    or root_name in _STDLIB_ROOTS
+                    or root_name in reachable
+                    or _is_declared(root_name, declared, whole_name=root_name in shipped)):
+                continue
+            if any(os.path.basename(d) == root_name and os.path.dirname(d) ==
+                   os.path.dirname(path) for d in package_dirs):
+                continue
+            if broad:
+                problems.append(
+                    f"possibly missing module: {rel} imports '{root_name}', which the app "
+                    f"does not provide where it is used, under a handler that catches every "
+                    f"exception - if it is the app's own module, the import always fails and "
+                    f"the handler hides it"
+                )
+                continue
+            problems.append(
+                f"missing module: {rel} imports '{root_name}', which the app "
+                f"does not provide where it is used - this app cannot start"
+            )
+    return problems
+
+
+
+def _is_main_guard(test: _ast.expr) -> bool:
+    """``if __name__ == "__main__":`` in either operand order."""
+    if not (isinstance(test, _ast.Compare) and len(test.ops) == 1 and isinstance(test.ops[0], _ast.Eq)):
+        return False
+    operands = [test.left, test.comparators[0]]
+    return (any(isinstance(o, _ast.Name) and o.id == "__name__" for o in operands)
+            and any(isinstance(o, _ast.Constant) and o.value == "__main__" for o in operands))
+
+
+def _import_time_statements(body: list[_ast.stmt]):
+    """Statements that run when the module is imported: the module body and the
+    blocks nested in it, except function and class bodies and the main guard."""
+    for stmt in body:
+        if isinstance(stmt, (_ast.FunctionDef, _ast.AsyncFunctionDef, _ast.ClassDef)):
+            continue
+        if isinstance(stmt, _ast.If) and _is_main_guard(stmt.test):
+            yield from _import_time_statements(stmt.orelse)
+            continue
+        yield stmt
+        for field in ("body", "orelse", "finalbody"):
+            yield from _import_time_statements(getattr(stmt, field, None) or [])
+        for handler in getattr(stmt, "handlers", None) or []:
+            yield from _import_time_statements(handler.body)
+
+
+def _import_time_server_starts(output_dir: str) -> list[str]:
+    """``application startup:`` blockers for a backend entry module that starts
+    its server while being imported.
+
+    ``uvicorn.run(app)`` outside ``if __name__ == "__main__":`` never returns,
+    so ``uvicorn main_api:app`` and the boot probe both hang on the import. The
+    probe can only report that as a timeout, which is an unknown and is not
+    repaired; this names the line, which an edit does fix. Only ``main_api.py``
+    is read: it is the module a server imports, while a ``run.py`` launcher is
+    executed and may start the server at its top level.
+    """
+    issues: list[str] = []
+    for path in _python_files(output_dir):
+        if os.path.basename(path) != "main_api.py":
+            continue
+        rel = os.path.relpath(path, output_dir).replace("\\", "/")
+        try:
+            with open_plain(path, "r", root=output_dir, encoding="utf-8-sig") as fh:
+                tree = parse_source(fh.read(), rel)
+        except (OSError, UnicodeError, SyntaxError, ValueError):
+            continue  # unreadable or unparseable files are other checks' findings
+        for stmt in _import_time_statements(tree.body):
+            call = stmt.value if isinstance(stmt, _ast.Expr) else None
+            func = getattr(call, "func", None)
+            if (isinstance(call, _ast.Call) and isinstance(func, _ast.Attribute) and func.attr == "run"
+                    and isinstance(func.value, _ast.Name) and func.value.id == "uvicorn"):
+                issues.append(
+                    f"application startup: {rel} line {stmt.lineno}: uvicorn.run() runs when the module is "
+                    "imported, so the import never returns and the app cannot be served or checked - "
+                    "move it under `if __name__ == \"__main__\":`"
+                )
+    return issues
+
+
+# The generated ORM module is imported and its mappers configured in a
+# subprocess. SQLAlchemy resolves the strings in relationship() lazily, on the
+# first query, so ast.parse and ruff both pass a module where every database
+# request returns 500 (e.g. ``relationship("Guest",
+# secondary="booking_guest", ...)`` naming a table that does not exist).
+# Import-time NameErrors surface here as well - the class ruff
+# excuses under a star import. ~0.5s per module, no database, server or
+# network: the template keeps create_all under __main__.
+_IMPORT_SMOKE_TIMEOUT_SECONDS = 30
+_TRACEBACK_FRAME_RE = _re.compile(r'^\s*File "(.+?)", line (\d+)', _re.M)
+_QUOTED_NAME_RE = _re.compile(r"'([^']+)'")
+
+
+def _import_smoke_issues(output_dir: str) -> list[str]:
+    """``mapper config:`` blockers for ORM modules that fail to import or
+    configure; ``_check_did_not_run`` notes when the check itself could not."""
+    import subprocess
+
+    from besser.spec_driven_agent.execution.sandbox import SandboxUnavailable, run_confined
+
+    issues: list[str] = []
+    for path in _python_files(output_dir):
+        if os.path.basename(path) != "sql_alchemy.py":
+            continue
+        folder = os.path.dirname(path)
+        rel = os.path.relpath(path, output_dir).replace("\\", "/")
+        modules = ["sql_alchemy"]
+        if os.path.isfile(os.path.join(folder, "pydantic_classes.py")):
+            modules.append("pydantic_classes")
+        code = (
+            f"import {', '.join(modules)}\n"
+            "from sqlalchemy.orm import configure_mappers\n"
+            "configure_mappers()\n"
+        )
+        try:
+            result = run_confined(
+                [sys.executable, "-c", code], workspace=output_dir, cwd=folder,
+                timeout=_IMPORT_SMOKE_TIMEOUT_SECONDS, env=_safe_subprocess_env(),
+            )
+        except SandboxUnavailable as exc:
+            issues.append(_check_did_not_run(
+                "the import smoke check", str(exc),
+            ))
+            continue
+        except subprocess.TimeoutExpired:
+            issues.append(_check_did_not_run(
+                "the import smoke check",
+                f"timed out after {_IMPORT_SMOKE_TIMEOUT_SECONDS}s on {rel}",
+            ))
+            continue
+        except OSError as exc:
+            issues.append(_check_did_not_run(
+                "the import smoke check", f"could not be launched: {exc}",
+            ))
+            continue
+        if result.returncode == 0:
+            continue
+        stderr = result.stderr or ""
+        lines = [ln.strip() for ln in stderr.splitlines() if ln.strip()]
+        error = (lines[-1] if lines else "exited non-zero with no error output")[:400]
+        if error.startswith("ModuleNotFoundError:"):
+            # The harness interpreter is not the app's venv: a third-party
+            # module missing HERE says nothing about the app. A missing local
+            # module is _unresolvable_local_imports' finding.
+            issues.append(_check_did_not_run(
+                "the import smoke check", f"{rel}: {error}",
+            ))
+            continue
+        where = _import_smoke_location(output_dir, folder, rel, stderr, error)
+        issues.append(f"mapper config: {where}: {error}")
+    return issues
+
+
+def _import_smoke_location(output_dir, folder, rel, stderr, error) -> str:
+    """``<file> line N`` when it can be found, else ``<file>``.
+
+    An import-time error's traceback ends in the app's own file. A mapper
+    configuration error's ends inside sqlalchemy, so the quoted name from the
+    message (``'booking_guest'``) is looked up in the module instead.
+    """
+    real_folder = os.path.normcase(os.path.realpath(folder))
+    located = None
+    for m in _TRACEBACK_FRAME_RE.finditer(stderr):
+        frame = os.path.realpath(os.path.join(folder, m.group(1)))
+        inside = os.path.normcase(frame).startswith(real_folder + os.sep)
+        if inside and os.path.isfile(frame):
+            located = (frame, int(m.group(2)))
+    if located is not None:
+        frame, line_no = located
+        frame_rel = os.path.relpath(
+            frame, os.path.realpath(output_dir)
+        ).replace("\\", "/")
+        return f"{frame_rel} line {line_no}"
+    try:
+        with open_plain(os.path.join(folder, "sql_alchemy.py"), "r", root=output_dir,
+                        encoding="utf-8", errors="ignore") as fh:
+            module_lines = fh.read().splitlines()
+    except OSError:
+        return rel
+    for name in _QUOTED_NAME_RE.findall(error):
+        token = _re.compile(rf"\b{_re.escape(name)}\b")
+        for idx, text in enumerate(module_lines, 1):
+            if token.search(text):
+                return f"{rel} line {idx}"
+    return rel

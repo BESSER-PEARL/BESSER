@@ -1,0 +1,26 @@
+Version 8.7.4
+=============
+
+Patch release: **a repository an older editor saved loads again**. No
+metamodel or generator changes.
+
+Highlights
+----------
+
+* **Linking a repository the old GitHub sidebar saved shows and loads its
+  model.** That sidebar committed the project as ``<dir>/<project>.json`` with
+  no ``buml/diagrams.json``. Today's GitHub menu looked only for
+  ``buml/diagrams.json`` (and ``besser-project.json``), so linking such a
+  repository loaded nothing and its history was empty. One lookup now serves
+  every GitHub endpoint: ``buml/diagrams.json``, then ``besser-project.json``,
+  then a ``.json`` file holding a BESSER project. The next save writes
+  ``buml/diagrams.json`` and removes the older file.
+* **A repository with several models lets you pick one.** When it holds more
+  than one BESSER model file, the link dialog lists them; loading, linking,
+  history and restore then use the file you picked.
+  ``GET /besser_api/github/repo-summary`` returns ``model_path`` and
+  ``model_paths``, and the load, history and import endpoints take an
+  optional ``model_path``.
+* **A** ``besser-project.json`` **repository loads from the link dialog too.**
+  The summary found its model, but "Load the repository model" and the
+  history did not.

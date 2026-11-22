@@ -6,6 +6,13 @@ application from your structural (class diagram) and GUI models. This generator 
 the process of building modern web apps by producing all the backend, frontend, and deployment
 files you need—no manual coding required.
 
+.. seealso::
+   The output is a fixed, model-faithful scaffold. To go beyond it — a feature
+   the templates don't cover, or a different stack entirely — the
+   :doc:`Spec-Driven Agent <../spec_driven_agent/index>` runs this generator
+   first and then lets an LLM customise its output to a natural-language
+   request.
+
 Overview
 --------
 
@@ -75,10 +82,47 @@ WebSocket services.
   fallback for single-agent back-compat.
 * **Local docker-compose** — one service block per agent with port offsets
   (``8765``, ``8766``, ...) and a build-time ``VITE_AGENT_URLS`` argument injected into the
-  frontend image.
+  frontend image. Each agent's Dockerfile rewrites the websocket and Streamlit ``host`` in
+  its ``config.yaml`` to ``0.0.0.0`` so the published ports reach it; the ``config.yaml`` in
+  the output keeps ``localhost`` for running the agent outside Docker.
+* **Database access** — every agent is connected to the web app's database, so a
+  ``DBReply`` action with the *default* database (``db_selection_type='default'``) queries
+  the data the backend serves. ``db1`` in the agent's ``config.yaml`` — the database such an
+  action uses — is the backend's SQLite file, and ``docker-compose.yml`` mounts the backend's
+  ``sqlite_data`` volume into each agent container:
+
+  .. code-block:: yaml
+
+     # agents/<slug>/config.yaml
+     db:
+       sql:
+         - db1:
+             dialect: "sqlite"
+             file: "/app/webapp_data/<ModelName>.db"
+
+     # docker-compose.yml
+     backend:
+       environment:
+         - DATABASE_URL=sqlite:///./data/<ModelName>.db   # /app/data/<ModelName>.db
+       volumes:
+         - sqlite_data:/app/data
+     <slug>_agent:
+       volumes:
+         - <slug>_agent_data:/app/data
+         - sqlite_data:/app/webapp_data
+
+  The volume is mounted read-write, since a ``DBReply`` may run ``insert``, ``update`` or
+  ``delete`` operations. The tables are created by the backend at start-up; the agent opens
+  the file on its first query. A ``config.yaml`` authored in the editor gets the same ``db1``
+  when its ``db1`` is missing or still holds ``YOUR-...`` placeholders; a ``db1`` you
+  configured yourself is kept. Pass ``link_agent_database=False`` to keep the placeholders
+  and the agents' volumes as they were (the Render deployment below does this). Standalone
+  agent generation (:doc:`baf`) is not affected.
 * **Render deployment** — the GitHub-deployment pipeline emits one ``type: web`` block per
   agent in ``render.yaml`` and a ``frontend/.env.production`` with the same ``VITE_AGENT_URLS``
-  JSON map pointing at each service's ``*.onrender.com`` URL.
+  JSON map pointing at each service's ``*.onrender.com`` URL. The backend and the agents run
+  as separate services without a shared disk there, so the agents' ``db1`` keeps its
+  placeholders.
 
 On the Python API side:
 
@@ -100,6 +144,10 @@ On the Python API side:
 The legacy scalar parameters ``agent_model=`` and ``agent_config=`` are still accepted as
 deprecated back-compat shims but map to a one-element list under the hood.
 
+``app_name=`` is the application's name as its users see it: the browser tab title and the
+README headings. The web editor passes the project's name; without it the README is titled
+after the domain model and the browser tab reads ``BESSER App``.
+
 
 How It Works
 ------------
@@ -115,6 +163,7 @@ How It Works
    - ``/backend`` (FastAPI + SQLAlchemy)
    - ``/frontend`` (React)
    - ``docker-compose.yml``, ``backend/Dockerfile``, ``frontend/Dockerfile``
+   - ``README.md``: how to run the app with Docker Compose or without it
 
 4. **Deploy**: Use Docker Compose to build and run your app locally or in the cloud.
 
@@ -126,7 +175,10 @@ Generated Output Structure
 
    my_app/
    ├── backend/
-   │   ├── main_api.py          # REST API endpoints
+   │   ├── main_api.py          # FastAPI app entry point (wires in the routers)
+   │   ├── routers/             # One router module per class (all endpoints)
+   │   ├── database.py          # Shared engine/session setup (DATABASE_URL)
+   │   ├── bal_stdlib.py        # B-UML Action Language helpers
    │   ├── pydantic_classes.py  # Data validation models
    │   ├── sql_alchemy.py       # Database ORM models
    │   ├── Dockerfile           # Backend container
@@ -143,14 +195,15 @@ Generated Output Structure
    │   ├── alpha/
    │   │   ├── Alpha.py
    │   │   ├── config.yaml
-   │   │   ├── Dockerfile
-   │   │   └── requirements.txt
+   │   │   ├── readme.txt
+   │   │   └── Dockerfile
    │   └── beta/
    │       ├── Beta.py
    │       ├── config.yaml
-   │       ├── Dockerfile
-   │       └── requirements.txt
+   │       ├── readme.txt
+   │       └── Dockerfile
    ├── docker-compose.yml       # Container orchestration
+   └── README.md                # How to run the app
 
 
 Features
@@ -191,6 +244,12 @@ Operate at the class level, performing operations on the entire collection.
 **Supported Parameter Types:**
 
 ``str``, ``int``, ``float``, ``bool``, ``date``, ``datetime``, ``time``
+
+**Methods implemented by a neural network**: in the web editor, set a method's type to
+*Neural Network* and pick one of the project's NN diagrams. The generated backend gets the
+PyTorch network under ``backend/neural_networks/`` and a class-level endpoint that runs it;
+drop the trained weights in ``backend/neural_networks/weights/`` (see
+:ref:`the backend documentation <backend-nn-methods>`).
 
 See :doc:`backend` for complete method endpoint documentation.
 
@@ -318,8 +377,23 @@ Customization
 - **Database**: Switch from SQLite to PostgreSQL by editing the connection string
 - **Frontend**: Customize components, styles, and logic in the React code
 - **Backend**: Add new endpoints, business logic, or authentication
+- **Dashboards on large tables**: Add an endpoint that returns the figures already
+  aggregated (``/stats/revenue?year=2025``) and set it as the ``endpoint`` of the
+  chart's or metric card's ``DataBinding`` in the GUI model (the *Endpoint* field in
+  the editor): the chart then reads it instead of downloading every record of the
+  class. See ``DataBinding`` in :doc:`../buml_language/model_types/gui`.
 - **Constraints**: Add OCL constraints to enforce business rules
 
 .. note::
    The Full Web App Generator saves time by automating repetitive tasks. 
    You can always customize and extend the generated code.
+
+Trace Links
+-----------
+
+The generator runs the React, backend and agent generators into its own output directory and merges their traces
+under the folder each one wrote to: after ``generate()``, ``generator.traced_files`` holds the React generator's
+traces under ``frontend/`` (``frontend/src/pages/<Page>.tsx``, ``frontend/src/App.tsx``), the backend's under
+``backend/`` and each agent's under ``agents/<name>/``, so every path is the one of the delivered project. See
+:doc:`react`, :doc:`backend` and :doc:`traceable_generator`. The ``docker-compose.yml`` and the Dockerfiles are
+file-level only.

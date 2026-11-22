@@ -11,8 +11,11 @@ import logging
 import os
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
+
+from besser.utilities.web_modeling_editor.backend.settings import BackendSettings, get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -54,8 +57,9 @@ class SessionStore:
             default_path = os.path.join(
                 tempfile.gettempdir(), "besser_sessions.enc"
             )
+            configured = BackendSettings().session_store_path
             self._store_path = Path(
-                store_path or os.environ.get("SESSION_STORE_PATH", default_path)
+                store_path or (default_path if configured is None else configured)
             )
             self._key = self._get_or_create_key()
             self._fernet = Fernet(self._key)
@@ -170,3 +174,21 @@ class SessionStore:
             if expired:
                 self._save(data)
                 logger.debug("Cleaned up %d expired sessions", len(expired))
+
+
+@dataclass
+class GitHubSessions:
+    """The GitHub sign-in stores of one app, built in the backend's lifespan."""
+
+    #: Pending OAuth ``state`` values (CSRF), 10 minutes.
+    oauth_states: SessionStore
+    #: Signed-in sessions: access token, username, avatar; 24 hours.
+    user_tokens: SessionStore
+
+    @classmethod
+    def create(cls, settings: Optional[BackendSettings] = None) -> "GitHubSessions":
+        settings = settings or get_settings()
+        return cls(
+            oauth_states=SessionStore(store_path=settings.oauth_sessions_path, ttl=600),
+            user_tokens=SessionStore(store_path=settings.user_tokens_path, ttl=86400),
+        )

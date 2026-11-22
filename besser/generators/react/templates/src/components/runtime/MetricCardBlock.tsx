@@ -1,27 +1,23 @@
 import React, { CSSProperties, useEffect, useState } from "react";
 import axios from "axios";
 import { MetricCardComponent } from "../charts/MetricCardComponent";
+import { aggregate, normalizeAggregation } from "./aggregate";
+import { applyFilter, backendUrl, extractRows, parseFilterExpression } from "./bindingData";
+import { useDataVersion } from "./dataVersion";
 
 export interface MetricCardBlockProps {
   id: string;
   metric?: Record<string, any>;
   dataBinding?: Record<string, any>;
   styles?: CSSProperties;
+  className?: string;
 }
 
-const getLastValue = (data: any[], dataField?: string): number => {
-  if (!data || data.length === 0) return 0;
-  const lastItem = data[data.length - 1];
-  if (dataField && lastItem[dataField] !== undefined) {
-    return Number(lastItem[dataField]) || 0;
-  }
-  const commonFields = ["value", "count", "amount", "total", "sum"];
-  for (const field of commonFields) {
-    if (lastItem[field] !== undefined) {
-      return Number(lastItem[field]) || 0;
-    }
-  }
-  return 0;
+// The card's value over all records: its aggregation over the bound field,
+// else the field's sum, else the number of records.
+const metricValue = (data: any[], dataField?: string, aggregation?: string): number => {
+  const resolved = normalizeAggregation(aggregation) ?? (dataField ? "sum" : "count");
+  return aggregate(data || [], resolved, dataField);
 };
 
 export const MetricCardBlock: React.FC<MetricCardBlockProps> = ({
@@ -29,40 +25,35 @@ export const MetricCardBlock: React.FC<MetricCardBlockProps> = ({
   metric,
   dataBinding,
   styles,
+  className,
 }) => {
   const [value, setValue] = useState<number>(metric?.value ?? 0);
-  const [loading, setLoading] = useState(false);
+  const dataVersion = useDataVersion();
 
   useEffect(() => {
     const endpoint = dataBinding?.endpoint;
     if (!endpoint) return;
-    setLoading(true);
-    const backendBase = import.meta.env.VITE_API_URL || "http://localhost:8000";
-    const url = endpoint.startsWith("/") ? backendBase + endpoint : endpoint;
+    // The filter applies to the rows the endpoint returns, as on a chart.
+    const parsedFilter = parseFilterExpression(dataBinding?.filter_expression || dataBinding?.filter);
 
     axios
-      .get(url)
+      .get(backendUrl(endpoint))
       .then((res) => {
-        let data: any[] = [];
-        if (Array.isArray(res.data)) {
-          data = res.data;
-        } else if (res.data && typeof res.data === "object") {
-          const commonArrayKeys = ["data", "results", "items", "records", "list"];
-          let foundKey = commonArrayKeys.find((key) => Array.isArray((res.data as any)[key]));
-          if (!foundKey) {
-            foundKey = Object.keys(res.data).find((key) => Array.isArray((res.data as any)[key]));
-          }
-          if (foundKey) {
-            data = (res.data as any)[foundKey];
-          }
-        }
-        setValue(getLastValue(data, dataBinding?.data_field));
+        const data = applyFilter(extractRows(res.data), parsedFilter);
+        setValue(metricValue(data, dataBinding?.data_field, dataBinding?.aggregation));
       })
       .catch(() => {
         setValue(metric?.value ?? 0);
-      })
-      .finally(() => setLoading(false));
-  }, [dataBinding?.endpoint, dataBinding?.data_field, metric?.value]);
+      });
+  }, [
+    dataBinding?.endpoint,
+    dataBinding?.filter,
+    dataBinding?.filter_expression,
+    dataBinding?.data_field,
+    dataBinding?.aggregation,
+    metric?.value,
+    dataVersion,
+  ]);
 
   return (
     <MetricCardComponent
@@ -74,10 +65,11 @@ export const MetricCardBlock: React.FC<MetricCardBlockProps> = ({
       show-trend={metric?.showTrend}
       positive-color={metric?.positiveColor}
       negative-color={metric?.negativeColor}
-      value={loading ? metric?.value ?? 0 : value}
+      value={value}
       trend={metric?.trend ?? 0}
       data_binding={dataBinding}
       styles={styles}
+      className={className}
     />
   );
 };

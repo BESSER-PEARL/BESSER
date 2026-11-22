@@ -1,0 +1,317 @@
+"""``missing module:`` must not fire on a stack that isn't FastAPI.
+
+Observed live: a 2-class Django app whose ``requirements.txt``
+declares ``Django>=5.0`` was reported with 10 blocker-level "this app
+cannot start" issues, because ``django`` was simply absent from a
+hardcoded allowlist that only ever listed the FastAPI ecosystem. The same
+hole affects all 20 generators — the allowlist also had no ``flask``, and
+no ``argparse``/``sqlite3``/``glob`` from the stdlib.
+
+``missing module:`` is classified as a blocker, so every one of these
+drives the Phase-3 fix loop against imports that were already correct.
+
+The fix has three parts, one test each below: stdlib comes from the
+interpreter, framework families are listed, and — the part that
+generalises — the app's own manifest is read.
+"""
+
+from __future__ import annotations
+
+import textwrap
+
+import pytest
+
+from besser.spec_driven_agent.pipeline.orchestrator import (
+    _declared_dependency_roots,
+    _unresolvable_local_imports,
+)
+
+
+def _write(tmp_path, rel: str, body: str) -> None:
+    path = tmp_path / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(textwrap.dedent(body).lstrip(), encoding="utf-8")
+
+
+def test_django_app_reports_no_missing_modules(tmp_path):
+    _write(tmp_path, "requirements.txt", """
+        Django>=5.0
+        djangorestframework==3.15.1
+        django-cors-headers
+        psycopg2-binary
+    """)
+    _write(tmp_path, "hotel/settings.py", """
+        from django.conf import settings
+        from corsheaders.defaults import default_headers
+        import os
+    """)
+    _write(tmp_path, "hotel/models.py", """
+        from django.db import models
+        from rest_framework import serializers
+    """)
+    assert _unresolvable_local_imports(str(tmp_path)) == []
+
+
+def test_flask_app_reports_no_missing_modules(tmp_path):
+    _write(tmp_path, "requirements.txt", "Flask\nFlask-SQLAlchemy\npython-dotenv\n")
+    _write(tmp_path, "app.py", """
+        from flask import Flask
+        from flask_sqlalchemy import SQLAlchemy
+        from dotenv import load_dotenv
+    """)
+    assert _unresolvable_local_imports(str(tmp_path)) == []
+
+
+def test_stdlib_modules_the_old_allowlist_omitted(tmp_path):
+    """Each of these was a blocker before the stdlib set came from sys."""
+    _write(tmp_path, "main.py", """
+        import argparse
+        import sqlite3
+        import glob
+        import zipfile
+        import pickle
+        import calendar
+        import mimetypes
+        import ipaddress
+    """)
+    assert _unresolvable_local_imports(str(tmp_path)) == []
+
+
+def test_manifest_covers_a_package_nobody_hardcoded(tmp_path):
+    """The generalising case: an import root in no hand-written list, but
+    declared by the app, is the app's dependency."""
+    _write(tmp_path, "requirements.txt", "some-exotic-lib==1.2.3\n")
+    _write(tmp_path, "main.py", "import some_exotic_lib\n")
+    assert _unresolvable_local_imports(str(tmp_path)) == []
+
+
+def test_pyproject_dependencies_are_read(tmp_path):
+    _write(tmp_path, "pyproject.toml", """
+        [project]
+        name = "demo"
+        dependencies = ["litestar>=2.0", "msgspec"]
+    """)
+    _write(tmp_path, "main.py", "import litestar\nimport msgspec\n")
+    assert _unresolvable_local_imports(str(tmp_path)) == []
+
+
+def test_subpackage_reachable_from_service_cwd(tmp_path):
+    """`import core` where core/ sits beside the service's entry point.
+
+    The old sibling-only rule required the package to be a sibling of the
+    *importing file*, so a router one level down could not see it."""
+    _write(tmp_path, "backend/main.py", "from core.config import settings\n")
+    _write(tmp_path, "backend/core/config.py", "settings = {}\n")
+    _write(tmp_path, "backend/routers/booking.py", "from core.config import settings\n")
+    assert _unresolvable_local_imports(str(tmp_path)) == []
+
+
+# ----------------------------------------------------------------------
+# The check must still catch what it exists to catch
+# ----------------------------------------------------------------------
+
+
+def test_genuinely_missing_local_module_is_still_reported(tmp_path):
+    """The live defect this validator was written for."""
+    _write(tmp_path, "requirements.txt", "fastapi\n")
+    _write(tmp_path, "main_api.py", "from sql_alchemy import *\nfrom fastapi import FastAPI\n")
+    problems = _unresolvable_local_imports(str(tmp_path))
+    assert len(problems) == 1
+    assert "sql_alchemy" in problems[0]
+
+
+def test_undeclared_third_party_is_still_reported(tmp_path):
+    """A package the app neither ships nor declares stays a blocker."""
+    _write(tmp_path, "requirements.txt", "fastapi\n")
+    _write(tmp_path, "main.py", "import nonexistent_vendor_sdk\n")
+    problems = _unresolvable_local_imports(str(tmp_path))
+    assert len(problems) == 1
+    assert "nonexistent_vendor_sdk" in problems[0]
+
+
+def test_module_in_an_unreachable_sibling_directory_is_still_reported(tmp_path):
+    """A copy under pydantic/ is not reachable from backend/."""
+    _write(tmp_path, "backend/main.py", "import helpers\n")
+    _write(tmp_path, "pydantic_out/helpers.py", "x = 1\n")
+    problems = _unresolvable_local_imports(str(tmp_path))
+    assert len(problems) == 1
+    assert "helpers" in problems[0]
+
+
+# ----------------------------------------------------------------------
+# Manifest parsing
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "dist,expected",
+    [
+        ("djangorestframework", "rest_framework"),
+        ("django-cors-headers", "corsheaders"),
+        ("python-jose", "jose"),
+        ("PyJWT", "jwt"),
+        ("python-dotenv", "dotenv"),
+        ("Pillow", "PIL"),
+        ("psycopg2-binary", "psycopg2"),
+        ("some-new-thing", "some_new_thing"),
+    ],
+)
+def test_distribution_name_maps_to_import_root(tmp_path, dist, expected):
+    _write(tmp_path, "requirements.txt", f"{dist}==1.0\n")
+    assert expected in _declared_dependency_roots(str(tmp_path))
+
+
+def test_requirements_comments_and_flags_are_skipped(tmp_path):
+    _write(tmp_path, "requirements.txt", """
+        # a comment
+        --index-url https://example.invalid/simple
+        -r other.txt
+        fastapi==0.141.0  # inline comment
+    """)
+    roots = _declared_dependency_roots(str(tmp_path))
+    assert "fastapi" in roots
+    assert not any(r.startswith("#") or r.startswith("-") for r in roots)
+
+
+# Review 2026-10-30 (R5, ``manifest_roots.py``): the manifest reader missed
+# Poetry tables, Pipfile and spellings such as ``psycopg2_binary``. The
+# spellings were masked by _EXTERNAL_IMPORT_ROOTS; a package outside that list
+# declared in Poetry or a Pipfile became a false "cannot start" blocker (below).
+@pytest.mark.parametrize("manifest,body", [
+    ("pyproject.toml", '[tool.poetry.dependencies]\npython="^3.11"\nbeautifulsoup4="^4.12"\n'),
+    ("Pipfile", '[packages]\nbeautifulsoup4 = "*"\n'),
+])
+def test_a_poetry_or_pipfile_dependency_is_not_a_missing_module(tmp_path, manifest, body):
+    _write(tmp_path, manifest, body)
+    _write(tmp_path, "app/main.py", "import bs4\n")
+    assert _unresolvable_local_imports(str(tmp_path)) == []
+
+
+def test_an_undeclared_package_is_still_a_missing_module(tmp_path):
+    _write(tmp_path, "pyproject.toml", '[tool.poetry.dependencies]\npython="^3.11"\n')
+    _write(tmp_path, "app/main.py", "import bs4\n")
+    assert len(_unresolvable_local_imports(str(tmp_path))) == 1
+
+
+@pytest.mark.parametrize("manifest,body,expected", [
+    ("requirements.txt", "psycopg2_binary==2.9.9\n", "psycopg2"),
+    ("requirements.txt", "Python.Dotenv>=1\n", "dotenv"),
+    ("requirements.txt", "beautifulsoup4 ; python_version>'3.8'\n", "bs4"),
+    ("requirements.txt", "fastapi=0.1\n", "fastapi"),
+    ("pyproject.toml", '[project]\nname="app"\ndependencies=["beautifulsoup4>=4"]\n', "bs4"),
+    ("pyproject.toml", '[tool.poetry.dependencies]\npython="^3.11"\nbeautifulsoup4="^4.12"\n', "bs4"),
+    ("pyproject.toml", '[tool.poetry.dependencies]\nscikit-learn="^1.5"\n', "sklearn"),
+    ("pyproject.toml", '[tool.poetry.group.dev.dependencies]\npytest-asyncio="*"\n', "pytest_asyncio"),
+    ("pyproject.toml", '[dependency-groups]\ntest=["Faker>=30"]\n', "faker"),
+    ("Pipfile", '[packages]\nbeautifulsoup4 = "*"\n', "bs4"),
+    ("Pipfile", '[dev-packages]\npython-jose = "*"\n', "jose"),
+])
+def test_every_manifest_format_declares_its_packages(tmp_path, manifest, body, expected):
+    (tmp_path / manifest).write_text(body, encoding="utf-8")
+    roots = _declared_dependency_roots(str(tmp_path))
+    assert expected in roots
+    assert "python" not in roots
+
+
+def test_unparseable_pyproject_falls_back_to_a_loose_scan(tmp_path):
+    (tmp_path / "pyproject.toml").write_text('dependencies = ["fastapi>=0.1"\n', encoding="utf-8")
+    assert "fastapi" in _declared_dependency_roots(str(tmp_path))
+
+
+# Review of #705: the TOML reader alone dropped what the loose scan read, and
+# crashed on a ``project`` that is not a table.
+@pytest.mark.parametrize("pyproject,rel,source", [
+    ('[project]\nname = "svc"\n[tool.uv]\ndev-dependencies = ["respx"]\n', "tests/test_api.py", "import respx\n"),
+    ('[project]\nname = "svc"\n[tool.pdm.dev-dependencies]\ntest = ["respx"]\n', "tests/test_api.py", "import respx\n"),
+    ('[project]\nname = "svc"\n[tool.hatch.envs.default]\ndependencies = ["respx"]\n',
+     "tests/test_api.py", "import respx\n"),
+    ('[project]\nname = "inventory-api"\ndependencies = []\n', "tests/test_main.py", "import inventory_api\n"),
+    ('project = "svc"\n', "app/main.py", "x = 1\n"),
+])
+def test_other_pyproject_layouts_stay_clean(tmp_path, pyproject, rel, source):
+    _write(tmp_path, "pyproject.toml", pyproject)
+    _write(tmp_path, rel, source)
+    assert _unresolvable_local_imports(str(tmp_path)) == []
+
+
+# ----------------------------------------------------------------------
+# Imports that cannot stop the app from starting
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("source", [
+    "try:\n    import uvloop\nexcept ImportError:\n    uvloop = None\n",
+    "try:\n    import tomllib\nexcept ModuleNotFoundError:\n    import tomli as tomllib\n",
+    "try:\n    import orjson_ext\nexcept (ImportError, AttributeError):\n    orjson_ext = None\n",
+    "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    from mypy_boto3_s3 import S3Client\n",
+    "import typing\nif typing.TYPE_CHECKING:\n    from mypy_boto3_s3 import S3Client\n",
+])
+def test_a_guarded_import_is_not_a_missing_module(tmp_path, source):
+    """The app runs without these: the import is optional or type-only."""
+    _write(tmp_path, "requirements.txt", "fastapi\n")
+    _write(tmp_path, "backend/main.py", source)
+    assert _unresolvable_local_imports(str(tmp_path)) == []
+
+
+def test_an_import_under_another_handler_is_still_reported(tmp_path):
+    """Only a handler that catches the import failure makes it optional."""
+    _write(tmp_path, "requirements.txt", "fastapi\n")
+    _write(tmp_path, "backend/main.py", (
+        "try:\n    import nonexistent_vendor_sdk\nexcept ValueError:\n    pass\n"
+        "if TYPE_CHECKING:\n    pass\nelse:\n    import sql_alchemy\n"
+    ))
+    problems = _unresolvable_local_imports(str(tmp_path))
+    assert len(problems) == 2, problems
+
+
+@pytest.mark.parametrize("handler", [
+    "except ImportError:\n    raise\n",
+    "except ImportError as exc:\n    raise RuntimeError('config is missing') from exc\n",
+    "except Exception:\n    logging.exception('startup failed')\n    raise\n",
+])
+def test_an_import_whose_handler_re_raises_is_still_reported(tmp_path, handler):
+    """A handler that raises again does not make the import optional: the app still dies."""
+    _write(tmp_path, "requirements.txt", "fastapi\n")
+    _write(tmp_path, "backend/main.py", "import logging\ntry:\n    from config import settings\n" + handler)
+    problems = _unresolvable_local_imports(str(tmp_path))
+    assert len(problems) == 1 and "'config'" in problems[0], problems
+
+
+@pytest.mark.parametrize("dist,module", [
+    ("djangorestframework-simplejwt", "rest_framework_simplejwt.tokens"),
+    ("python-socketio", "socketio"),
+    ("strawberry-graphql", "strawberry"),
+    ("PyPDF2", "PyPDF2"),
+    ("pycryptodome", "Crypto.Cipher"),
+    ("google-cloud-storage", "google.cloud.storage"),
+])
+def test_a_declared_package_imported_under_another_name_is_not_missing(tmp_path, dist, module):
+    _write(tmp_path, "requirements.txt", f"fastapi\n{dist}==1.0\n")
+    _write(tmp_path, "backend/main.py", f"import {module}\n")
+    assert _unresolvable_local_imports(str(tmp_path)) == []
+
+
+def test_a_declared_package_does_not_hide_a_missing_local_module(tmp_path):
+    """``sql_alchemy`` is the app's own module, not the ``sqlalchemy`` package."""
+    _write(tmp_path, "requirements.txt", "sqlalchemy\nfastapi\nstrawberry-graphql\n")
+    _write(tmp_path, "backend/main.py", "from sql_alchemy import *\nimport strawberry_utils\n")
+    problems = _unresolvable_local_imports(str(tmp_path))
+    assert len(problems) == 2, problems
+
+
+@pytest.mark.parametrize("source", [
+    "import sys\nif sys.version_info >= (3, 11):\n    import tomllib\nelse:\n    import tomli as tomllib\n",
+    "import contextlib\nwith contextlib.suppress(ImportError):\n    import uvloop\n",
+])
+def test_a_version_or_suppress_guarded_import_is_not_a_missing_module(tmp_path, source):
+    """A backport behind a version check, or an import whose failure is suppressed."""
+    _write(tmp_path, "requirements.txt", "fastapi\n")
+    _write(tmp_path, "backend/main.py", source)
+    assert _unresolvable_local_imports(str(tmp_path)) == []
+
+
+def test_a_namespace_package_nested_without_top_level_files_resolves(tmp_path):
+    """``services/`` holds only ``billing/``: still importable as a namespace package."""
+    _write(tmp_path, "backend/services/billing/invoice.py", "x = 1\n")
+    _write(tmp_path, "backend/main.py", "from services.billing.invoice import x\n")
+    assert _unresolvable_local_imports(str(tmp_path)) == []

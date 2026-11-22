@@ -1,0 +1,402 @@
+"""HTTP-level tests for /besser_api/spec-driven/generate and /download-smart."""
+
+import asyncio
+import io
+import json
+import os
+import pathlib
+import time
+import zipfile
+from typing import Iterable
+
+import httpx
+import pytest
+from httpx._transports.asgi import ASGITransport
+
+from besser.utilities.web_modeling_editor.backend.backend import app
+from besser.utilities.web_modeling_editor.backend.services.spec_driven import runner as runner_module
+from tests.utilities.web_modeling_editor.backend._runtime import current_runtime
+from tests.utilities.web_modeling_editor.backend.spec_driven.test_model_assembly import (
+    CLASS_DIAGRAM_MODEL,
+)
+from tests.utilities.web_modeling_editor.backend.spec_driven.test_runner import (
+    _FakeOrchestrator,
+    _FakeClient,
+    _FailingOrchestrator,
+    _clear_registry,
+)
+
+
+BASE_URL = "http://testserver"
+
+
+@pytest.fixture(autouse=True)
+def reset_registry():
+    asyncio.run(_clear_registry())
+    yield
+    asyncio.run(_clear_registry())
+
+
+@pytest.fixture
+def stub_backend(monkeypatch):
+    monkeypatch.setattr(runner_module, "LLMOrchestrator", _FakeOrchestrator)
+
+    def _fake_client(**kwargs):
+        key = kwargs.get("api_key", "")
+        if key.startswith("bad"):
+            raise ValueError("No Anthropic API key found. Set ANTHROPIC_API_KEY.")
+        return _FakeClient()
+
+    monkeypatch.setattr(runner_module, "create_llm_client", _fake_client)
+
+
+def _build_project_body(**overrides) -> dict:
+    body = {
+        "project": {
+            "id": "test-project",
+            "type": "BesserProject",
+            "name": "TestProject",
+            "createdAt": "2026-04-15T00:00:00Z",
+            "diagrams": {
+                "ClassDiagram": [
+                    {
+                        "id": "cd1",
+                        "title": "Library",
+                        "model": CLASS_DIAGRAM_MODEL,
+                    }
+                ]
+            },
+            "currentDiagramIndices": {"ClassDiagram": 0},
+        },
+        "instructions": "Build a simple backend for the library",
+        "api_key": "sk-ant-happy-path-NEVER-LEAK",
+        "provider": "anthropic",
+        "llm_model": "claude-sonnet-4-5",
+        "max_cost_usd": 1.0,
+        "max_runtime_seconds": 60,
+    }
+    body.update(overrides)
+    return body
+
+
+async def _post_sse(body: dict) -> tuple[int, list[dict]]:
+    """POST to /spec-driven/generate and parse the SSE event stream."""
+    transport = ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url=BASE_URL) as ac:
+        async with ac.stream(
+            "POST",
+            "/besser_api/spec-driven/generate",
+            json=body,
+        ) as response:
+            status = response.status_code
+            raw = b""
+            async for chunk in response.aiter_bytes():
+                raw += chunk
+    return status, _parse_sse_stream(raw)
+
+
+def _parse_sse_stream(raw: bytes) -> list[dict]:
+    events: list[dict] = []
+    text = raw.decode("utf-8")
+    # SSE frames are separated by blank lines
+    for frame in text.split("\n\n"):
+        if not frame.strip():
+            continue
+        data_lines = [
+            line[len("data: "):]
+            for line in frame.splitlines()
+            if line.startswith("data: ")
+        ]
+        if not data_lines:
+            continue
+        payload = "\n".join(data_lines)
+        events.append(json.loads(payload))
+    return events
+
+
+class TestSmartGenerateEndpoint:
+    def test_happy_path_event_ordering(self, stub_backend):
+        status, events = asyncio.run(_post_sse(_build_project_body()))
+        assert status == 200
+        event_names = [e["event"] for e in events]
+        assert event_names[0] == "start"
+        assert event_names[-1] == "done"
+        assert "phase" in event_names
+        assert "text" in event_names
+        assert [e["sequence"] for e in events] == list(range(1, len(events) + 1))
+
+    def test_completed_run_can_be_replayed_after_a_sequence(self, stub_backend):
+        status, events = asyncio.run(_post_sse(_build_project_body()))
+        assert status == 200
+        run_id = events[0]["runId"]
+        cursor = events[0]["sequence"]
+
+        async def _get_replay() -> tuple[dict, list[dict]]:
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(
+                transport=transport, base_url=BASE_URL,
+            ) as client:
+                status_response = await client.get(
+                    f"/besser_api/spec-driven/runs/{run_id}"
+                )
+                replay_response = await client.get(
+                    f"/besser_api/spec-driven/runs/{run_id}/events",
+                    params={"after": cursor},
+                )
+                return status_response.json(), _parse_sse_stream(replay_response.content)
+
+        record, replayed = asyncio.run(_get_replay())
+        assert record["status"] == "succeeded"
+        assert record["lastSequence"] == events[-1]["sequence"]
+        assert [event["sequence"] for event in replayed] == [
+            event["sequence"] for event in events[1:]
+        ]
+        assert replayed[-1]["event"] == "done"
+
+    def test_replay_uses_last_event_id_and_rejects_unsafe_cursors(self, stub_backend):
+        status, events = asyncio.run(_post_sse(_build_project_body()))
+        assert status == 200
+        run_id = events[0]["runId"]
+        cursor = events[0]["sequence"]
+
+        async def _get_replays() -> tuple[httpx.Response, httpx.Response]:
+            transport = ASGITransport(app=app)
+            async with httpx.AsyncClient(
+                transport=transport, base_url=BASE_URL,
+            ) as client:
+                replay = await client.get(
+                    f"/besser_api/spec-driven/runs/{run_id}/events",
+                    headers={"Last-Event-ID": str(cursor)},
+                )
+                invalid = await client.get(
+                    f"/besser_api/spec-driven/runs/{run_id}/events",
+                    params={"after": str(1 << 63)},
+                )
+                return replay, invalid
+
+        replay, invalid = asyncio.run(_get_replays())
+        assert replay.status_code == 200
+        replayed = _parse_sse_stream(replay.content)
+        assert [event["sequence"] for event in replayed] == [
+            event["sequence"] for event in events[1:]
+        ]
+        assert invalid.status_code == 422
+
+    def test_api_key_never_in_response_bytes(self, stub_backend):
+        body = _build_project_body(api_key="sk-ant-happy-path-NEVER-LEAK-abcdef123")
+        transport = ASGITransport(app=app)
+
+        async def _run():
+            async with httpx.AsyncClient(transport=transport, base_url=BASE_URL) as ac:
+                async with ac.stream(
+                    "POST",
+                    "/besser_api/spec-driven/generate",
+                    json=body,
+                ) as response:
+                    data = b""
+                    async for chunk in response.aiter_bytes():
+                        data += chunk
+                    return data
+
+        raw = asyncio.run(_run())
+        assert b"sk-ant-happy-path-NEVER-LEAK" not in raw
+
+    def test_invalid_key_yields_error_event(self, stub_backend):
+        body = _build_project_body(api_key="bad-key-value")
+        status, events = asyncio.run(_post_sse(body))
+        assert status == 200  # SSE is always 200; errors flow as events
+        errors = [e for e in events if e["event"] == "error"]
+        assert len(errors) >= 1
+        assert errors[-1]["code"] == "INVALID_KEY"
+
+    def test_upstream_failure_yields_error_event(self, monkeypatch):
+        monkeypatch.setattr(runner_module, "LLMOrchestrator", _FailingOrchestrator)
+        monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _FakeClient())
+        status, events = asyncio.run(_post_sse(_build_project_body()))
+        assert status == 200
+        errors = [e for e in events if e["event"] == "error"]
+        assert any(e["code"] == "UPSTREAM_LLM" for e in errors)
+        assert not any(e["event"] == "done" for e in events)
+
+    def test_missing_class_diagram_yields_bad_request_event(self, stub_backend):
+        body = _build_project_body()
+        body["project"]["diagrams"] = {}
+        body["project"]["currentDiagramIndices"] = {}
+        status, events = asyncio.run(_post_sse(body))
+        assert status == 200
+        errors = [e for e in events if e["event"] == "error"]
+        assert any(e["code"] == "BAD_REQUEST" for e in errors)
+
+
+class TestDownloadEndpoint:
+    def test_download_is_repeatable_within_ttl(self, stub_backend):
+        """A transient network failure on the first fetch must not lose
+        the artifact — the entry stays downloadable until the TTL sweep
+        removes it (cleanup is owned by the sweep, not the endpoint)."""
+        status, events = asyncio.run(_post_sse(_build_project_body()))
+        assert status == 200
+        done = [e for e in events if e["event"] == "done"][0]
+        run_id = done["downloadUrl"].rsplit("/", 1)[-1]
+        # Newer backends also carry the run id explicitly on the event.
+        assert done.get("runId") == run_id
+
+        transport = ASGITransport(app=app)
+
+        async def _get(path: str) -> httpx.Response:
+            async with httpx.AsyncClient(transport=transport, base_url=BASE_URL) as ac:
+                return await ac.get(path)
+
+        # First GET succeeds
+        r1 = asyncio.run(_get(f"/besser_api/spec-driven/download/{run_id}"))
+        assert r1.status_code == 200
+        assert r1.content.startswith(b"# fake generated content")
+
+        # Second GET succeeds too (re-downloadable within TTL)
+        r2 = asyncio.run(_get(f"/besser_api/spec-driven/download/{run_id}"))
+        assert r2.status_code == 200
+        assert r2.content == r1.content
+
+    def test_download_never_serves_a_file_the_run_can_redirect(self, tmp_path, monkeypatch):
+        """The run's shell writes an artifact and a manifest naming it, the user
+        downloads once, then the shell replaces the artifact with a link to a
+        worker file: no response may carry that file."""
+        from besser.utilities.web_modeling_editor.backend.settings import get_settings
+
+        monkeypatch.setattr(get_settings(), "llm_run_workspace_root", str(tmp_path))
+        secret = tmp_path / "environ"
+        secret.write_text("BESSER_FREE_LLM_TOKEN=server-paid-token\n", encoding="utf-8")
+        run_id = "ab" * 16
+        workspace = tmp_path / f"besser_llm_{run_id}_pg2wfopn"
+        workspace.mkdir()
+        (workspace / "out.bin").write_text("hi\n", encoding="utf-8")
+        (workspace / ".besser_download.json").write_text(json.dumps({
+            "version": 1, "runId": run_id, "relativePath": "out.bin", "fileName": "out.bin",
+            "isZip": False, "createdAt": time.time()}), encoding="utf-8")
+        transport = ASGITransport(app=app)
+
+        async def _get() -> httpx.Response:
+            async with httpx.AsyncClient(transport=transport, base_url=BASE_URL) as ac:
+                return await ac.get(f"/besser_api/spec-driven/download/{run_id}")
+
+        first = asyncio.run(_get())
+        (workspace / "out.bin").unlink()
+        (workspace / "out.bin").symlink_to(secret)
+        second = asyncio.run(_get())
+
+        for response in (first, second):
+            assert b"server-paid-token" not in response.content
+        assert second.status_code == 404
+
+    def test_download_refuses_a_link_at_the_registered_file(self, tmp_path):
+        """Defence in depth: even a registered path is opened without following a link."""
+        secret = tmp_path / "environ"
+        secret.write_text("BESSER_FREE_LLM_TOKEN=server-paid-token\n", encoding="utf-8")
+        run_id = "cd" * 16
+        workspace = tmp_path / f"besser_llm_{run_id}_x"
+        workspace.mkdir()
+        download_dir = pathlib.Path(f"{workspace}.download")
+        download_dir.mkdir()
+        (download_dir / "artifact").symlink_to(secret)
+        current_runtime().registry._entries[run_id] = runner_module.SmartRunEntry(
+            file_path=str(download_dir / "artifact"), file_name="out.bin", is_zip=False,
+            temp_dir=str(workspace), created_at=time.time())
+        transport = ASGITransport(app=app)
+
+        async def _get() -> httpx.Response:
+            async with httpx.AsyncClient(transport=transport, base_url=BASE_URL) as ac:
+                return await ac.get(f"/besser_api/spec-driven/download/{run_id}")
+
+        response = asyncio.run(_get())
+        assert response.status_code == 404
+        assert b"server-paid-token" not in response.content
+
+    def test_unknown_run_id_returns_404(self, stub_backend):
+        transport = ASGITransport(app=app)
+
+        async def _get() -> httpx.Response:
+            async with httpx.AsyncClient(transport=transport, base_url=BASE_URL) as ac:
+                return await ac.get(
+                    "/besser_api/spec-driven/download/" + "0" * 32
+                )
+
+        r = asyncio.run(_get())
+        assert r.status_code == 404
+
+    def test_malformed_run_id_returns_422(self, stub_backend):
+        """Path regex must reject non-hex IDs."""
+        transport = ASGITransport(app=app)
+
+        async def _get() -> httpx.Response:
+            async with httpx.AsyncClient(transport=transport, base_url=BASE_URL) as ac:
+                return await ac.get("/besser_api/spec-driven/download/not-a-hex-id")
+
+        r = asyncio.run(_get())
+        assert r.status_code == 422
+
+
+class TestApiInfo:
+    def test_root_endpoints_advertise_smart_generate(self):
+        transport = ASGITransport(app=app)
+
+        async def _get() -> httpx.Response:
+            async with httpx.AsyncClient(transport=transport, base_url=BASE_URL) as ac:
+                return await ac.get("/besser_api/")
+
+        r = asyncio.run(_get())
+        assert r.status_code == 200
+        endpoints = r.json()["endpoints"]
+        assert "smart_generate" in endpoints
+        assert "download_smart" in endpoints
+
+
+def test_a_run_frees_its_slot_before_it_frees_its_disk():
+    """Removing a run's installed dependencies takes seconds; the slot must not wait for it."""
+    from besser.utilities.web_modeling_editor.backend.routers.spec_driven_router import _stream_with_slot_release
+    from besser.utilities.web_modeling_editor.backend.services.spec_driven.runtime import SpecDrivenRuntime
+
+    async def frames():
+        yield b"event: done\ndata: {}\n\n"
+
+    async def exercise():
+        runtime = SpecDrivenRuntime.create()
+        assert runtime.slots.try_acquire()
+        held_at_release: list[int] = []
+
+        async def release_disk():
+            held_at_release.append(runtime.slots._held)
+
+        async for _ in _stream_with_slot_release(frames(), runtime, after_release=release_disk):
+            pass
+        await asyncio.gather(*runtime.background)
+        runtime.close()
+        return held_at_release
+
+    assert asyncio.run(exercise()) == [0]
+
+
+class _StoppedOrchestrator(_FakeOrchestrator):
+    """Honours a cancel request after writing files: the run ends with output."""
+
+    def run(self, instructions: str) -> str:
+        out = super().run(instructions)
+        self._phase2_exited_cleanly, self._phase2_stop_reason = False, "cancelled"
+        return out
+
+
+@pytest.mark.parametrize("orchestrator, cancelled", [(_FakeOrchestrator, False), (_StoppedOrchestrator, True)])
+def test_done_says_whether_a_cancel_ended_the_run_also_on_replay(monkeypatch, orchestrator, cancelled):
+    """A stopped run with output ends in ``done``; the client cannot tell it from another early end."""
+    monkeypatch.setattr(runner_module, "LLMOrchestrator", orchestrator)
+    monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _FakeClient())
+    status, events = asyncio.run(_post_sse(_build_project_body()))
+    assert status == 200 and events[-1]["event"] == "done"
+    assert events[-1]["cancelled"] is cancelled
+
+    run_id, cursor = events[0]["runId"], events[0]["sequence"]
+
+    async def replay():
+        async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url=BASE_URL) as client:
+            response = await client.get(f"/besser_api/spec-driven/runs/{run_id}/events", params={"after": cursor})
+            return _parse_sse_stream(response.content)
+
+    assert asyncio.run(replay())[-1]["cancelled"] is cancelled

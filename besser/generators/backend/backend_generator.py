@@ -1,12 +1,19 @@
-import os
 import configparser
-import docker
+import functools
+import logging
+import os
 from besser.BUML.metamodel.structural import DomainModel
 from besser.generators import GeneratorInterface
+from besser.generators.generator_interface import require_valid_identifiers
 from besser.generators.rest_api import RESTAPIGenerator
 from besser.generators.sql_alchemy import SQLAlchemyGenerator
 from besser.generators.pydantic_classes import PydanticGenerator
+from besser.generators.backend.api_generator import generate_modular_api
 from besser.generators.backend.docker_files import generate_docker_files
+from besser.generators.backend.nn_methods import NN_PACKAGE, TORCH_REQUIREMENT, generate_nn_methods
+
+logger = logging.getLogger(__name__)
+
 
 class BackendGenerator(GeneratorInterface):
     """
@@ -22,9 +29,24 @@ class BackendGenerator(GeneratorInterface):
         output_dir (str, optional): The output directory where the generated code will be saved. Defaults to None.
         docker_image (bool, optional): Flag to indicate if Docker image generation is required. Defaults to False.
         docker_config_path (str, optional): The path to the docker configuration file to auto upload the image. Defaults to None.
+        port (int, optional): Port embedded in the generated ``uvicorn.run`` call. Takes precedence over the
+                                docker configuration's ``docker_port``. Defaults to None (docker config, else 8000).
+        api_title (str, optional): Title of the generated FastAPI app (OpenAPI docs and ``/``). Defaults to
+                                ``"<model name> API"``.
+        api_description (str, optional): Description shown in the generated API docs. Defaults to a generic
+                                description of the generated API.
+        api_version (str, optional): Version of the generated API. Defaults to ``"1.0.0"``.
+
+    Attributes:
+        traced_files (dict[str, FileTrace]): After ``generate()``, what each traced file was rendered from,
+            by path relative to the output folder: ``sql_alchemy.py``, ``pydantic_classes.py``,
+            ``main_api.py`` and the routers (see ``besser.utilities.generation_trace``).
     """
 
-    def __init__(self, model: DomainModel, http_methods: list = None, nested_creations: bool = False, output_dir: str = None, docker_image: bool = False, docker_config_path: str = None):
+    regenerable = True
+
+    def __init__(self, model: DomainModel, http_methods: list = None, nested_creations: bool = False, output_dir: str = None, docker_image: bool = False, docker_config_path: str = None, port: int = None,
+                 api_title: str = None, api_description: str = None, api_version: str = None):
         super().__init__(model, output_dir)
         allowed_methods = ["GET", "POST", "PUT", "DELETE"]
         if not http_methods:
@@ -35,7 +57,12 @@ class BackendGenerator(GeneratorInterface):
         self.nested_creations = nested_creations
         self.docker_image = docker_image
         self.docker_config_path = docker_config_path
+        self.port = port
+        self.api_title = api_title
+        self.api_description = api_description
+        self.api_version = api_version
         self.config = self.load_config()
+        self.has_nn_methods = False
 
     def load_config(self):
         """
@@ -57,10 +84,15 @@ class BackendGenerator(GeneratorInterface):
             }
         else:
             if not self.docker_config_path:
-                print("No configuration docker file.")
+                logger.debug("No Docker configuration file provided.")
             else:
-                print(f"Configuration file not found at path: {self.docker_config_path}")
+                logger.warning("Docker configuration file not found at path: %s", self.docker_config_path)
             return None
+
+    def _regeneration_refusal(self) -> "str | None":
+        if self.docker_image and self.config:
+            return "with docker_image and a Docker configuration it builds and pushes an image without your edits."
+        return None
 
     def generate(self):
         """
@@ -70,19 +102,36 @@ class BackendGenerator(GeneratorInterface):
         Returns:
             None, but stores the generated code as files main_api.py, sql_alchemy.py and pydantic_classes.py
         """
+        require_valid_identifiers(self.model)
         if self.output_dir is not None:
             backend_folder_path = self.output_dir
             os.makedirs(backend_folder_path, exist_ok=True)
-            print(f"Backend folder created at {backend_folder_path}")
+            logger.info("Backend folder created at %s", backend_folder_path)
         else:
             backend_folder_path = os.path.join(os.path.abspath(''), "output_backend")
             os.makedirs(backend_folder_path, exist_ok=True)
-            print(f"Backend folder created at {backend_folder_path}")
+            logger.info("Backend folder created at %s", backend_folder_path)
 
-        docker_port = self.config["docker_port"] if self.config else 8000  # Use default port if config not provided
+        # An explicitly requested port wins over the docker configuration; 8000 is the fallback.
+        docker_port = self.port or (self.config["docker_port"] if self.config else 8000)
 
-        rest_api = RESTAPIGenerator(model=self.model, http_methods=self.http_methods, nested_creations=self.nested_creations, output_dir=backend_folder_path, backend=True, port=docker_port)
-        rest_api.generate()
+        # requirements.txt is shared boilerplate with the standalone REST API
+        # generator; reuse it instead of duplicating the dependency list here.
+        RESTAPIGenerator(model=self.model, output_dir=backend_folder_path).generate_requirements()
+
+        # main_api.py (slim app + router includes) + database.py + bal_stdlib.py
+        # + routers/<class>.py, one router per resource.
+        generate_modular_api(
+            model=self.model,
+            http_methods=self.http_methods,
+            nested_creations=self.nested_creations,
+            port=docker_port,
+            output_dir=backend_folder_path,
+            write=functools.partial(self._write_traced, output_dir=backend_folder_path),
+            api_title=self.api_title,
+            api_description=self.api_description,
+            api_version=self.api_version,
+        )
 
         sql_alchemy = SQLAlchemyGenerator(model=self.model, output_dir=backend_folder_path)
         sql_alchemy.generate()
@@ -90,11 +139,18 @@ class BackendGenerator(GeneratorInterface):
         pydantic_model = PydanticGenerator(model=self.model, output_dir=backend_folder_path, backend=True, nested_creations=self.nested_creations)
         pydantic_model.generate()
 
+        # The files of the generators this one is built from, by path in the output folder.
+        self._merge_traced_files(sql_alchemy)
+        self._merge_traced_files(pydantic_model)
+
+        # Methods implemented by a neural network: PyTorch modules + runtime + torch requirement.
+        self.has_nn_methods = generate_nn_methods(self.model, backend_folder_path)
+
         if self.docker_image:
             if self.config:
                 self.build_and_push_docker_image(backend_folder_path)
             else:
-                generate_docker_files(backend_folder_path)
+                generate_docker_files(backend_folder_path, include_nn=self.has_nn_methods)
 
     def build_and_push_docker_image(self, backend_folder_path):
         """
@@ -108,13 +164,21 @@ class BackendGenerator(GeneratorInterface):
         """
         docker_port = self.config["docker_port"]
 
+        nn_lines = ""
+        if self.has_nn_methods:
+            nn_lines = (f"COPY nn_runtime.py /app\n        COPY {NN_PACKAGE}/ /app/{NN_PACKAGE}/\n"
+                        f"        RUN pip install \"{TORCH_REQUIREMENT}\"\n")
+
         dockerfile_content = f"""
         FROM python:3.9-slim
         WORKDIR /app
 
         COPY main_api.py /app
+        COPY database.py /app
+        COPY bal_stdlib.py /app
         COPY pydantic_classes.py /app
         COPY sql_alchemy.py /app
+        COPY routers/ /app/routers/
 
         RUN pip install requests==2.31.0
         RUN pip install fastapi==0.110.0
@@ -122,6 +186,7 @@ class BackendGenerator(GeneratorInterface):
         RUN pip install uvicorn==0.28.0
         RUN pip install SQLAlchemy==2.0.29
         RUN pip install httpx==0.27.0
+        {nn_lines}
 
         EXPOSE {docker_port}
         CMD ["python", "main_api.py"]
@@ -135,6 +200,13 @@ class BackendGenerator(GeneratorInterface):
         tag = self.config["docker_tag"]
         full_image_name = f"{repository}/{image_name}:{tag}"
 
+        try:
+            import docker
+        except ImportError as exc:
+            raise ImportError(
+                'Building the Docker image needs the docker package: pip install "besser[docker]"'
+            ) from exc
+
         # Create docker client
         client = docker.from_env()
 
@@ -146,7 +218,7 @@ class BackendGenerator(GeneratorInterface):
         )
 
         for log in build_logs:
-            print(log)
+            logger.info("%s", log)
 
         # Docker login
         username = self.config["docker_username"]
@@ -156,4 +228,4 @@ class BackendGenerator(GeneratorInterface):
         # Push Docker image
         resp = client.api.push(full_image_name, stream=True, decode=True)
         for line in resp:
-            print(line)
+            logger.info("%s", line)

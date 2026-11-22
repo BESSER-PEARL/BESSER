@@ -1,0 +1,79 @@
+Version 8.6.0
+=============
+
+Minor release: **GitHub integration** and **apps for any target**. A project
+is linked to one GitHub repository, and the editor and the Spec-Driven Agent
+save to it, merge with it and can start from any repository. The Spec-Driven
+Agent and the modeling assistant now build the app the user asked for,
+**whatever the language** or platform (mobile, desktop, command line, ...), not
+always a web app, and the assistant replies in the user's language. Existing models and projects load as before.
+
+GitHub integration
+------------------
+
+* **One linked repository per project.** The *GitHub* menu in the top bar
+  saves the model to the project's repository, gets the latest version, shows
+  the history and says whether the project is in sync, behind or changed on
+  both sides. A new project can be saved on GitHub when it is created. Agent
+  credentials are removed from every model written to a repository or a gist.
+* **Every write merges instead of failing.** The editor's save, the Spec-Driven
+  Agent's push and *Go live* share one repository layout and one push, which
+  uploads only the files that changed. When the branch has moved, code is
+  merged through GitHub and ``buml/diagrams.json`` is merged three ways as
+  data, then the B-UML sources are written again from the merged model. A
+  change that cannot be merged is kept on its own branch, and the menu offers
+  to open a pull request for it.
+* **Start from any repository.** A repository with a BESSER model opens as a
+  Spec-Driven run with that model. Without one, BESSER reads the SQLAlchemy,
+  Django, Pydantic and dataclass models in the code and proposes a class
+  diagram. Each run's push goes back to the same repository. Personal,
+  collaborator and organisation repositories are listed.
+* **AI reading only with consent.** When BESSER cannot read the data classes
+  directly, it can send an excerpt of the code to the server's AI model for a
+  better diagram. It does so only after the user agrees; otherwise no model is
+  called.
+* See :doc:`/web_editor_github` for the architecture.
+
+Apps for any target
+-------------------
+
+* **The Spec-Driven Agent builds the requested target.** Planning decides
+  whether the user asked for a web app, a backend only, or another kind of
+  application, and records it with the run. A modify run reads it back. For a
+  mobile, desktop or command-line app, the web-only rules, checks and server
+  templates no longer apply, and the code is written for that target.
+* **Honest validation.** Source in a language the build server cannot compile
+  (Dart, C#, Swift, ...) gets one visible warning that it was not compiled,
+  never a silent skip and never a blocker.
+* **The modeling assistant names the target and remembers it.** Its
+  confirmation says what will be built and that the AI writes the code when
+  BESSER has no built-in generator for it. "No, a native app instead" is read
+  as a correction.
+* **Replies in the user's language.** The assistant answers in the language
+  the user writes in.
+* The Flutter generator is no longer one of the Spec-Driven Agent's tools; the
+  ``besser.generators.flutter`` generator itself is unchanged.
+
+Other changes
+-------------
+
+* The modeling assistant's classifier tier moves to ``gpt-6-luna``
+  (``BESSER_AGENT_MODEL_CLASSIFIER`` still overrides it).
+* When the server's free-tier key is rejected, the Spec-Driven Agent falls back
+  along the configured chain.
+
+Deployment
+----------
+
+The backend now writes records in the run directory it shares with the
+sandboxed worker. A hand-maintained compose file must mount the run volume
+read-write on the backend and set ``BESSER_LLM_RUN_WORKSPACE_ROOT``, as
+``docker-compose.prod.yml`` does.
+
+Known limitations
+-----------------
+
+* Importing a repository shares the run slots, so it can be refused while all
+  slots are busy.
+* The new interface translations have not yet been reviewed by native
+  speakers.

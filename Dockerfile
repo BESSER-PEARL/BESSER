@@ -1,26 +1,164 @@
-# Use slim variant to reduce image size (200MB smaller).
-# Python 3.12 matches the CI matrix; 3.10 was dropped in v7.5.1 because
-# ``typing.Self`` (used in the NN metamodel, PEP 673) requires 3.11+.
-FROM python:3.12-slim
+# Two targets, both with the Alloy Analyzer and its JRE:
+#   backend          the web editor backend: Python, its requirements and besser.
+#   smartgen-worker  the Spec-Driven Agent worker: backend plus the toolchains
+#                    Phase 3 compiles with and bubblewrap for run_command.
+# docker build --target backend|smartgen-worker. Without --target the last
+# stage (the worker) is built.
+
+# slim: 200MB smaller. 3.12 matches CI; 3.11+ is required for typing.Self
+# (NN metamodel, PEP 673).
+FROM python:3.12-slim AS python-deps
+
+# Build behind a TLS-inspecting proxy: drop its root + signing certs into
+# ca-certs-extra/ (gitignored) and pass --build-arg TRUST_EXTRA_CAS=1.
+# Opt-in so that a stray .crt in a local checkout never reaches an image
+# built for deployment. Each final stage strips it again before it ships.
+ARG TRUST_EXTRA_CAS=0
+# A BuildKit bind mount, not COPY, so the cert files get no layer of their own.
+RUN --mount=type=bind,source=ca-certs-extra,target=/tmp/ca-certs-extra \
+    if [ "$TRUST_EXTRA_CAS" = "1" ]; then \
+        cp /tmp/ca-certs-extra/*.crt /usr/local/share/ca-certificates/ \
+        && update-ca-certificates; \
+    fi
+# pip, npm and rustup each ship their own trust store and must be pointed at
+# the system bundle explicitly. No-op when no extra CA was injected.
+ENV PIP_CERT=/etc/ssl/certs/ca-certificates.crt \
+    REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt \
+    NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt \
+    SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
 WORKDIR /app
 
-# No additional system dependencies needed - Python slim has everything for a basic Flask/FastAPI app
-# If you need specific system libraries (e.g., for image processing), add them here
+# The Alloy Analyzer, which the semantic consistency check and the object
+# diagram generation run (services/validators/alloy), and the JRE it needs.
+# Shared by both targets, so the local stack (built from the worker) runs it too,
+# and before any COPY, so that no code change downloads them again.
+# Its MIT license must ship with the redistributed jar (THIRD_PARTY_LICENSES.md).
+# default-java is Debian's link to the default JRE, whatever the architecture.
+#
+# CVE-2026-114938 ("Java4Shell"): JAVA_TOOL_OPTIONS reaches every JVM in both
+# images, generated apps in the worker's sandbox included (subprocess_env.py
+# lets it through). It turns off the vulnerable Base64 intrinsic and keeps the
+# JIT off AVX-512. UseAVX exists only on x86-64; IgnoreUnrecognizedVMOptions
+# lets an arm64 build start. check_java.sh fails the build when Java is older
+# than the fixed release (trixie-security has it) or a flag is not applied.
+ENV JAVA_TOOL_OPTIONS="-XX:+IgnoreUnrecognizedVMOptions -XX:-UseBASE64Intrinsics -XX:UseAVX=2"
+COPY --chmod=0755 docker/check_java.sh /usr/local/bin/check_java
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends default-jre-headless \
+    && rm -rf /var/lib/apt/lists/* \
+    && check_java
+ADD --checksum=sha256:6b8c1cb5bc93bedfc7c61435c4e1ab6e688a242dc702a394628d9a9801edb78d \
+    https://github.com/AlloyTools/org.alloytools.alloy/releases/download/v6.2.0/org.alloytools.alloy.dist.jar /alloy/alloy.jar
+ADD --checksum=sha256:5e84c60adb66216c83e8f2ffbbcabcef06b55d24cadaf9f93d2d29118c8c6ab6 \
+    https://raw.githubusercontent.com/AlloyTools/org.alloytools.alloy/v6.2.0/LICENSE /alloy/LICENSE
+ENV JAVA_HOME=/usr/lib/jvm/default-java \
+    BESSER_ALLOY_JAR=/alloy/alloy.jar
 
-# Copy and install dependencies first for better layer caching
+# Shared by both targets, so the worker reuses these layers. ruff is one of
+# the backend requirements (Phase 3's undefined-name checks run it).
+# governancedsl is left out here: it depends on besser, which is not installed
+# yet, so pip would fetch besser from PyPI. Each target installs it right
+# after the local besser (governance-requirement.txt).
 COPY requirements.txt ./requirements.txt
 COPY besser/utilities/web_modeling_editor/backend/requirements.txt ./backend-requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt -r backend-requirements.txt
+RUN grep -v '^governancedsl' backend-requirements.txt > backend-requirements-base.txt \
+    && grep '^governancedsl' backend-requirements.txt > governance-requirement.txt \
+    && pip install --no-cache-dir -r requirements.txt -r backend-requirements-base.txt
 
-# Copy only necessary files
-COPY pyproject.toml README.md ./
+# The context-compaction token counter's BPE file. tiktoken otherwise downloads
+# it on first use with no timeout, so a host without internet access stalls.
+ENV TIKTOKEN_CACHE_DIR=/opt/tiktoken-cache
+RUN python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')"
+
+
+FROM python-deps AS backend
+
+COPY pyproject.toml setup.cfg README.md ./
 COPY besser/ ./besser/
+RUN pip install --no-cache-dir -e . && pip install --no-cache-dir -r governance-requirement.txt
 
-# Install BESSER package
-RUN pip install --no-cache-dir -e .
+# A build-time CA must not become runtime trust. Unconditional; the last lines
+# fail the build if a known TLS-inspection CA is still trusted. They read the
+# decoded subjects: the PEM bundle is base64, so grepping it never matches.
+# The JRE keystore was built while the proxy CA was trusted, and --fresh never
+# removes a cert from it: delete it so the jks-keystore hook rebuilds it from
+# the clean store, then check it the same way.
+RUN rm -f /usr/local/share/ca-certificates/*.crt /etc/ssl/certs/java/cacerts \
+    && update-ca-certificates --fresh >/dev/null 2>&1 \
+    && subjects="$(openssl crl2pkcs7 -nocrl -certfile /etc/ssl/certs/ca-certificates.crt \
+        | openssl pkcs7 -print_certs -noout)" && [ -n "$subjects" ] \
+    && ! printf '%s\n' "$subjects" | grep -qiE 'netskope|goskope' \
+    && jks="$(keytool -list -v -cacerts -storepass changeit)" && [ -n "$jks" ] \
+    && ! printf '%s\n' "$jks" | grep -qiE 'netskope|goskope'
 
 ENV PYTHONPATH=/app
+
+# Commit stamp, compared by the deploy workflow against the commit it built
+# (`.git` is not in the image, and a pull succeeds on a stale tag too).
+ARG GIT_SHA=unknown
+ENV BESSER_BUILD_SHA=${GIT_SHA}
+
+EXPOSE 9000
+
+CMD ["python", "-m", "besser.utilities.web_modeling_editor.backend.backend"]
+
+
+FROM python-deps AS smartgen-worker
+
+# Phase 3 compile validation soft-skips when these are missing from PATH
+# (shutil.which -> None), so nextjs/rust/spring-boot output ships unchecked.
+# JDK 21 because Debian Trixie no longer packages 17. build-essential is the
+# C linker cargo and native Python packages need. Node 22: Node 20's npm
+# 10.8.2 crashes installing a vite 8 tree ("reading 'edgesOut'").
+#
+# bubblewrap confines run_command's model-authored shell to its own run
+# directory. The worker fails closed without it, and needs
+# seccomp=unconfined to use it (see docker-compose.prod.yml). passt (pasta)
+# gives each shell session a private network; it needs /dev/net/tun.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        curl \
+        ca-certificates \
+        unzip \
+        build-essential \
+        bubblewrap \
+        passt \
+        openjdk-21-jdk-headless \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && npm install -g typescript \
+    && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+        | sh -s -- -y --default-toolchain stable --profile minimal --no-modify-path \
+    && curl -fsSL -o /tmp/kotlinc.zip \
+        https://github.com/JetBrains/kotlin/releases/download/v1.9.24/kotlin-compiler-1.9.24.zip \
+    && unzip -q /tmp/kotlinc.zip -d /opt \
+    && rm /tmp/kotlinc.zip \
+    && apt-get purge -y --auto-remove unzip \
+    && rm -rf /var/lib/apt/lists/* \
+    && check_java
+ENV PATH="/root/.cargo/bin:/opt/kotlinc/bin:${PATH}"
+
+# Same code layers and CA strip as the backend target.
+COPY pyproject.toml setup.cfg README.md ./
+COPY besser/ ./besser/
+RUN pip install --no-cache-dir -e . && pip install --no-cache-dir -r governance-requirement.txt
+
+# The JDK keystore was built while the proxy CA was trusted, and --fresh never
+# removes a cert from it: delete it so the jks-keystore hook rebuilds it from
+# the clean store, then check it the same way.
+RUN rm -f /usr/local/share/ca-certificates/*.crt /etc/ssl/certs/java/cacerts \
+    && update-ca-certificates --fresh >/dev/null 2>&1 \
+    && subjects="$(openssl crl2pkcs7 -nocrl -certfile /etc/ssl/certs/ca-certificates.crt \
+        | openssl pkcs7 -print_certs -noout)" && [ -n "$subjects" ] \
+    && ! printf '%s\n' "$subjects" | grep -qiE 'netskope|goskope' \
+    && jks="$(keytool -list -v -cacerts -storepass changeit)" && [ -n "$jks" ] \
+    && ! printf '%s\n' "$jks" | grep -qiE 'netskope|goskope'
+
+ENV PYTHONPATH=/app
+
+ARG GIT_SHA=unknown
+ENV BESSER_BUILD_SHA=${GIT_SHA}
 
 EXPOSE 9000
 

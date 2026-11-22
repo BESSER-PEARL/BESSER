@@ -8,12 +8,16 @@ and the web modeling editor backend. The most commonly used utilities are listed
 
    utilities/serializer
    utilities/buml_code_builder
+   utilities/agent_simulator
+   utilities/object_diagram_generator
 
 General Utilities
 -----------------
 
 * ``besser.utilities.utils`` provides shared helpers such as
-  ``sort_by_timestamp`` and the ``ModelSerializer`` class.
+  ``sort_by_timestamp``, ``timestamp_to_iso`` / ``parse_iso_timestamp``
+  (element timestamps as ISO 8601 strings, used by the code builder and the
+  editor converters) and the ``ModelSerializer`` class.
 * API reference: :doc:`Model serializer API <api/utilities/api_model_serializer>`.
 
 Model Building Helpers
@@ -23,11 +27,13 @@ These utilities help build BUML models from external sources:
 
 * :doc:`Image to BUML <buml_language/model_building/image_to_buml>`
 * :doc:`Knowledge Graph to BUML <buml_language/model_building/kg_to_buml>`
+* :doc:`SDMX dataflow to BUML <buml_language/model_building/sdmx_to_buml>` (official statistics APIs)
 
 For the low-level API documentation, see:
 
 * :doc:`Image-to-BUML API <api/BUML/notations/image2buml/image>`
 * :doc:`KG-to-BUML API <api/BUML/notations/kg2buml/kg>`
+* :doc:`SDMX-to-BUML API <api/BUML/notations/sdmx2buml/sdmx>`
 
 Web Modeling Editor Backend Helpers
 -----------------------------------

@@ -8,6 +8,48 @@ parsed AST.
 
 For language reference, see :doc:`../buml_language/model_types/ocl`.
 
+New to OCL?
+-----------
+
+An OCL constraint is a rule that every object of a class must satisfy. It names
+the class it applies to (its *context*), the kind of rule (``inv`` for an
+invariant, which must always hold), an optional name, and a Boolean expression
+in which ``self`` is the object being checked. For a step-by-step introduction
+to the language, see `The Ultimate Object Constraint Language (OCL) tutorial
+<https://modeling-languages.com/ocl-tutorial/>`_.
+
+The patterns below cover most everyday rules. They assume a ``Library`` with a
+``name``, a ``Book`` with a ``title``, ``pages`` and ``price``, and an
+association whose end ``books`` goes from a library to its books.
+
+.. list-table::
+  :header-rows: 1
+  :widths: 30 70
+
+  * - Rule
+    - Constraint
+  * - A value must be in a range
+    - ``context Book inv positive_pages: self.pages > 0``
+  * - Several conditions at once
+    - ``context Book inv price_range: self.price >= 0 and self.price <= 500``
+  * - A text must not be empty
+    - ``context Library inv has_name: self.name <> ''``
+  * - A rule that applies only in some cases
+    - ``context Book inv expensive_means_long: self.price > 100 implies self.pages > 200``
+  * - A collection must not be empty
+    - ``context Library inv at_least_one_book: self.books->size() > 0``
+  * - Every element must satisfy a condition
+    - ``context Library inv all_books_have_pages: self.books->forAll(b | b.pages > 0)``
+  * - At least one element must satisfy a condition
+    - ``context Library inv has_long_book: self.books->exists(b | b.pages > 300)``
+  * - Count the elements that satisfy a condition
+    - ``context Library inv few_expensive_books: self.books->select(b | b.price > 100)->size() <= 5``
+
+Navigation uses ``.`` for attributes and association ends (``self.books``) and
+``->`` for operations on collections (``size``, ``forAll``, ``exists``,
+``select``). The editor's validator does not evaluate every construct against
+an object diagram yet; see :ref:`ocl-object-diagram-validation`.
+
 Domain model
 ------------
 

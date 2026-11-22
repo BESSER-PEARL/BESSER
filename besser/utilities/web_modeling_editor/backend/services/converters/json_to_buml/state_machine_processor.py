@@ -11,20 +11,11 @@ from besser.BUML.metamodel.state_machine.state_machine import (
     StateMachine, Body, Event, Condition, CustomCodeAction,
 )
 from besser.BUML.metamodel.structural import Metadata
+from besser.utilities.buml_code_builder.common import _sanitize_identifier
+from besser.utilities.web_modeling_editor.backend.services.converters.element_ids import EditorIds
 from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
 
 logger = logging.getLogger(__name__)
-
-
-def _sanitize_identifier(name: str) -> str:
-    """Sanitize a string to be a valid Python identifier.
-
-    Replaces any non-alphanumeric character (except underscore) with underscore,
-    and strips leading digits.
-    """
-    sanitized = re.sub(r'[^a-zA-Z0-9_]', '_', name)
-    sanitized = re.sub(r'^[^a-zA-Z_]+', '', sanitized)
-    return sanitized or 'unnamed'
 
 
 def process_state_machine(json_data):
@@ -44,6 +35,9 @@ def process_state_machine(json_data):
         sm_name = sm_name.replace(' ', '_')
 
     sm = StateMachine(name=sm_name)
+    # States, transitions and code-block bodies take the id of the editor element they are built
+    # from: the id a trace refers to them by.
+    editor_ids = EditorIds()
 
     model_data = json_data.get('model')
     if not model_data:
@@ -108,7 +102,7 @@ def process_state_machine(json_data):
     condition_objects = {}  # function/guard name -> Condition instance
 
 
-    for element in elements.values():
+    for code_block_id, element in elements.items():
         if element.get("type") == "StateCodeBlock":
             name = element.get("name", "")
             code_content = element.get("code", "")
@@ -130,6 +124,7 @@ def process_state_machine(json_data):
                 # We cannot pass a live callable here since we only have source text,
                 # so we use the actions-based constructor with CustomCodeAction.
                 body = Body(name=name, actions=[CustomCodeAction(source=cleaned_code)])
+                editor_ids.assign(body, code_block_id)
                 body_objects[name] = body
 
 
@@ -185,6 +180,7 @@ def process_state_machine(json_data):
             # Handle duplicate state names or other validation errors gracefully
             raise ConversionError(str(e)) from e
 
+        editor_ids.assign(state, element_id)
         states_by_id[element_id] = state
 
     # Assign bodies and fallback bodies to states
@@ -210,7 +206,7 @@ def process_state_machine(json_data):
                         state.set_fallback_body(body=body_objects[fallback_name])
 
     # Create transitions
-    for relationship in relationships.values():
+    for relationship_id, relationship in relationships.items():
         if relationship.get("type") == "StateTransition":
             source_id = relationship.get("source", {}).get("element")
             target_id = relationship.get("target", {}).get("element")
@@ -231,6 +227,7 @@ def process_state_machine(json_data):
                 )
                 continue
 
+            transitions_before = len(source_state.transitions)
             event_name = relationship.get("name", "")
             params = relationship.get("params")
             guard_expr = relationship.get("guard", "")
@@ -277,6 +274,9 @@ def process_state_machine(json_data):
                     source_state.when_condition(guard_condition).go_to(target_state)
                 except ValueError as e:
                     raise ConversionError(str(e)) from e
+
+            if len(source_state.transitions) == transitions_before + 1:
+                editor_ids.assign(source_state.transitions[-1], relationship.get("id") or relationship_id)
 
     # Process comments - apply as metadata
     for comment_id, comment_text in comment_elements.items():

@@ -4,18 +4,39 @@ Splits rendering and serialization logic into mixins for clarity.
 """
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 from typing import Any, Dict, Tuple
 
-from jinja2 import Environment, FileSystemLoader
-
 from besser.BUML.metamodel.gui import GUIModel
 from besser.BUML.metamodel.structural import DomainModel
 from besser.generators import GeneratorInterface
+from besser.utilities.generation_trace import traced_environment
 
 from .page_builder import PageBuilderMixin
 from .serialization import GuiSerializationMixin
+
+logger = logging.getLogger(__name__)
+
+
+def _copy_template_file(src: str, dest: str) -> None:
+    """Copy a non-Jinja template file, normalising CRLF in text files.
+
+    git checks these templates out with CRLF on Windows (core.autocrlf), so a
+    verbatim copy shipped CRLF into the generated workspace while every
+    Jinja-rendered file stayed LF. Text files are rewritten (copy2's metadata
+    is not preserved for them); binary assets are copied byte-for-byte.
+    """
+    with open(src, "rb") as f:
+        raw = f.read()
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        shutil.copy2(src, dest)
+        return
+    with open(dest, mode="w", encoding="utf-8", newline="\n") as f:
+        f.write(text.replace("\r\n", "\n"))
 
 
 class ReactGenerator(GuiSerializationMixin, PageBuilderMixin, GeneratorInterface):
@@ -24,12 +45,16 @@ class ReactGenerator(GuiSerializationMixin, PageBuilderMixin, GeneratorInterface
     Walks templates, renders them with serialized GUI metadata, and builds pages.
     """
 
-    def __init__(self, model: DomainModel, gui_model: GUIModel, output_dir: str = None):
+    regenerable = True
+
+    def __init__(self, model: DomainModel, gui_model: GUIModel, output_dir: str = None, app_name: str = None):
         super().__init__(model, output_dir)
         self.gui_model = gui_model
+        # The application's name as its users see it (browser tab, README)
+        self.app_name = app_name
         templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
-        self.env = Environment(
-            loader=FileSystemLoader(templates_path),
+        self.env = traced_environment(
+            templates_path,
             trim_blocks=True,
             lstrip_blocks=True,
             extensions=["jinja2.ext.do"],
@@ -59,10 +84,11 @@ class ReactGenerator(GuiSerializationMixin, PageBuilderMixin, GeneratorInterface
                 os.makedirs(os.path.dirname(file_path), exist_ok=True)
                 template = self.env.get_template(rel_template_path.replace("\\", "/"))
                 generated_code = template.render(**context)
-                with open(file_path, mode="w", encoding="utf-8") as f:
-                    f.write(generated_code)
+                # Written with "\n" endings: a text-mode write turns "\n" into os.linesep,
+                # so a Windows host produced a CRLF workspace from LF templates.
+                self._write_traced(rel_output_path.replace("\\", "/"), generated_code)
             except Exception as exc:
-                print(f"Error generating {file_path} from {rel_template_path}: {exc}")
+                logger.error("Error generating %s from %s: %s", file_path, rel_template_path, exc)
                 raise
 
         templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
@@ -80,12 +106,25 @@ class ReactGenerator(GuiSerializationMixin, PageBuilderMixin, GeneratorInterface
                     rel_output_path = rel_template_path
                     dest_path = self.build_generation_path(file_name=rel_output_path)
                     os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-                    shutil.copy2(abs_template_path, dest_path)
+                    _copy_template_file(abs_template_path, dest_path)
 
         self._generate_pages()
 
     def _should_generate_file(self, rel_path: str, used_component_types: set) -> bool:
         """Determine if a file should be generated based on component usage."""
+        # MapBlock (and its leaflet deps in package.json.j2) only ship when the
+        # GUI model actually contains a Map component.
+        if os.path.basename(rel_path) == "MapBlock.tsx":
+            return "Map" in used_component_types
+
+        # The agent chat widget and its background image only ship with an agent component.
+        if os.path.basename(rel_path) in ("AgentComponent.tsx.j2", "agent_back.png"):
+            return "AgentComponent" in used_component_types
+
+        # design.css (and its import in index.tsx) only ship with a stylesheet.
+        if os.path.basename(rel_path) == "design.css.j2":
+            return bool(getattr(self.gui_model, "stylesheet", ""))
+
         if "charts" + os.sep not in rel_path and "table" + os.sep not in rel_path:
             return True
 

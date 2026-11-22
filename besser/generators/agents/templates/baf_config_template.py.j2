@@ -26,13 +26,33 @@ nlp:
     api_key: YOUR-API-KEY
   replicate:
     api_key: YOUR-API-KEY
+  mistral:
+    api_key: YOUR-API-KEY
+  deepseek:
+    api_key: YOUR-API-KEY
+  google:
+    api_key: YOUR-API-KEY
+  meta:
+    api_key: YOUR-API-KEY
+  anthropic:
+    api_key: YOUR-API-KEY
+  qwen:
+    api_key: YOUR-API-KEY
+  xai:
+    api_key: YOUR-API-KEY
+  groq:
+    api_key: YOUR-API-KEY
+  together:
+    api_key: YOUR-API-KEY
+  openrouter:
+    api_key: YOUR-API-KEY
 
 platforms:
   websocket:
-    host: localhost
+    host: {{ bind_host }}
     port: 8765
     streamlit:
-      host: localhost
+      host: {{ bind_host }}
       port: 5000
       chat:
         size: 16
@@ -72,6 +92,13 @@ db:
     username: YOUR-DB-USERNAME
     password: YOUR-DB-PASSWORD
   sql:
+{% if default_db %}
+    # db1 is the database a DBReply with db_selection_type 'default' queries
+    - db1:
+{% for key, value in default_db.items() %}
+        {{ key }}: {{ value | yaml_scalar }}
+{% endfor %}
+{% else %}
     - db1:
         dialect: postgresql
         host: YOUR-DB-HOST
@@ -79,6 +106,7 @@ db:
         database: YOUR-DB-NAME
         username: YOUR-DB-USERNAME
         password: YOUR-DB-PASSWORD
+{% endif %}
     - db2:
         dialect: postgresql
         host: YOUR-DB-HOST

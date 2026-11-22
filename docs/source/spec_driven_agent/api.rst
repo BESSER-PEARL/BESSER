@@ -1,0 +1,442 @@
+REST API and SSE stream
+=======================
+
+The agent has its own REST surface on the
+:doc:`web editor backend <../web_editor_backend>`. This page is the canonical
+contract: the endpoints, the request body, and the Server-Sent Events the run
+emits.
+
+All paths below are relative to the ``/besser_api`` router prefix.
+
+Endpoints
+---------
+
+.. list-table::
+   :header-rows: 1
+   :widths: 35 15 50
+
+   * - Endpoint
+     - Method
+     - Purpose
+   * - ``/spec-driven/generate``
+     - POST
+     - Start a run; streams SSE, returns a download URL on completion. A
+       request carrying an ``Idempotency-Key`` header that matches a recent
+       start attaches to that run's stream (replayed from the beginning)
+       instead of starting a second run.
+   * - ``/spec-driven/preview``
+     - POST
+     - Pre-flight plan (primary model + target generator). No API key, no
+       LLM call. For ``mode: "modify"`` it also returns ``model_change``
+       (see :ref:`spec-driven-preview-model-change`).
+   * - ``/spec-driven/config``
+     - GET
+     - Caps, the workspace and download lifetimes (``download_ttl_seconds``,
+       ``archive_ttl_seconds``), cost-tick interval, concurrency, feature flags,
+       the model catalog's providers and models (``providers``), provider
+       default models, and free-tier availability.
+   * - ``/spec-driven/runs/{run_id}``
+     - GET
+     - Durable lifecycle metadata for a run (never the request or the key).
+   * - ``/spec-driven/runs/{run_id}/events``
+     - GET
+     - Replay this run's events after ``?after=N``, then follow the live
+       stream. Also honours the ``Last-Event-ID`` header. Answers ``410``
+       for a finished run whose events have expired (see
+       :ref:`spec-driven-durable-runs`).
+   * - ``/spec-driven/runs/{run_id}/events.json``
+     - GET
+     - Polling alternative to the stream: the run's lifecycle metadata plus
+       up to ``limit`` events (default 250, max 1000) after ``?after=N``, as
+       a plain JSON response. Each event carries its ``sequence``, ``event``
+       and decoded ``data``; ``cursor`` is the last sequence returned and
+       ``hasMore`` says to poll again immediately. Polling and streaming
+       share one sequence, so a client can switch between them. Use it where
+       a proxy buffers responses and holds back an SSE stream. Each poll
+       counts as presence, like an open stream, so a polled run is not
+       stopped as abandoned. Answers ``410`` like the stream once a finished
+       run's events have expired.
+   * - ``/spec-driven/resume/{run_id}``
+     - POST
+     - Resume an interrupted run from its checkpoint (streams SSE).
+   * - ``/spec-driven/cancel/{run_id}``
+     - POST
+     - Cancel an in-flight run at its next turn boundary.
+   * - ``/spec-driven/download/{run_id}``
+     - GET
+     - Download the generated ZIP/file (re-fetchable for
+       ``BESSER_LLM_ARCHIVE_TTL_SECONDS``).
+   * - ``/spec-driven/push-to-github``
+     - POST
+     - Push a finished run's code — plus the re-importable model under
+       ``buml/`` — to a GitHub repository, as the change the run made: only
+       files that differ from the base commit are sent, modes are kept, and
+       paths the run never held (build output, ``*.db``, symlinks, secret
+       ``.env`` files) are left as they are. ``deploy_config.owner`` is the
+       owner of an existing repo (an organization or another user; the
+       signed-in user when omitted). ``deploy_config.base_commit_sha``
+       is the commit the run's code came from: commits made on the branch
+       since are merged in, never reverted, with the model merged as data.
+       ``deploy_config.push_mode`` is
+       ``"commit"`` (default) or ``"pull_request"``. The response's
+       ``status`` is ``"pushed"``, ``"merged"`` (with ``base_run_id``, a run
+       holding the merged repo for the next modify run), ``"conflict"``
+       (left on ``conflict_branch``) or ``"pull_request"``
+       (``pull_request_url``, on ``pull_request_branch``); ``commit_sha`` is
+       the next push's base and ``files_uploaded`` the number of files the
+       push changed (0 when nothing changed: no commit is made).
+       When the run changed the model (a modify run that added classes),
+       ``project_export`` is the model written to ``buml/``, which the editor
+       loads; otherwise it is ``null``. Requires an ``X-GitHub-Session``
+       header.
+   * - ``/spec-driven/import-github-run``
+     - POST
+     - Import a GitHub repo as a run, so it can be used as the seed of a
+       subsequent modify run. The repo is pinned at its branch head
+       (``commit_sha`` in the response) and written to the shared run
+       workspace, where the Spec-Driven worker finds it. A repo without a
+       BESSER model (``has_model: false``) is read for SQLAlchemy, Django,
+       Pydantic or dataclass models, with their enumerations (including
+       Django ``TextChoices``) and inheritance: ``analysis`` says what was
+       found and ``proposed_diagram`` is the resulting class diagram, or ``null``.
+       When no such models are found, or only Pydantic and dataclass models
+       (mostly API shapes), and the server offers the keyless model, that
+       model can read a bounded digest of the code (schemas, migrations,
+       types, entities, README; secrets left out) and propose the diagram
+       instead, with ``analysis.ai: true``, but only when the body sets
+       ``allow_ai_reading: true`` (default ``false``): the code goes to a
+       model that may be a third party's. Without it no model is called, the
+       exact reading (if any) is still proposed, and the response sets
+       ``ai_reading_offered: true`` with a ``message`` offering the reading.
+       A failed or timed-out reading falls back to the Pydantic or dataclass
+       models when there are any, else returns no proposal and a
+       ``message``. A body carrying the valid demo secret (``demo_token``,
+       from a ``?demo=`` link) is read by the sponsored model instead; a
+       wrong secret falls back to the keyless one. An import takes a
+       ``BESSER_LLM_MAX_CONCURRENT_RUNS`` slot while it runs and answers
+       ``429`` when none is free. Requires an ``X-GitHub-Session`` header.
+       ``has_code`` is ``false`` for a repo holding only a saved model, and
+       ``recap`` says what was done on its app and where it stands (``null``
+       when no run was pushed to it); ``push-to-github`` returns ``recap`` too.
+       See :ref:`web-editor-github-coming-back`.
+   * - ``/spec-driven/import-generated-code``
+     - POST
+     - Store the output of a deterministic generator (multipart field
+       ``file``: the ZIP or single file ``/generate-output`` returned) as a
+       run, so ``push-to-github`` can push it; returns its ``run_id``. A ZIP
+       is unpacked (no links, no ``.besser_*`` files, 50,000 files and 500 MB
+       at most), any other file is the run's only file. Upload limit 50 MB,
+       the backend's request size limit (``413`` above it). Requires an ``X-GitHub-Session`` header.
+
+Request body
+------------
+
+**Request body of** ``POST /spec-driven/generate``:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 28 22 50
+
+   * - Field
+     - Type
+     - Notes
+   * - ``project``
+     - ProjectInput
+     - The full project payload (same shape as ``/generate-output-from-project``).
+   * - ``instructions``
+     - string
+     - Natural-language description of what to build (1–64,000 characters).
+       This limit includes any modeling-agent summary and appended original
+       request. Longer input is rejected before generation, not truncated.
+       Accepted instructions reach planning and requirement extraction in full;
+       inventories and model summaries have separate context budgets.
+   * - ``requirements``
+     - list (optional)
+     - Requirements the modeling assistant extracted from the user's request,
+       each ``{"id", "text", "kind"}``: ``id`` is its ``RequirementArtifact`` id
+       in the project trace, ``kind`` a ``RequirementKind`` value (see
+       :doc:`../buml_language/model_types/traceability`). At most 128, ids
+       unique, text up to 1,000 characters. When given, the requirements ledger
+       judges these instead of extracting its own (see :doc:`validation`).
+       Left out, the run extracts them.
+   * - ``actorName``
+     - string (optional)
+     - The person starting the run (the project owner), at most 200
+       characters. The run's trace (``done.trace``) records them as a
+       ``Person`` beside the Spec-Driven Agent; left out, it names only the agent.
+   * - ``traceabilityEnabled``
+     - boolean (optional)
+     - Whether the project records traces (opt-in, default ``false``). Only
+       when true does the run build its trace, send it as ``done.trace`` and
+       ship it in the ZIP (see :ref:`spec-driven-run-trace`).
+   * - ``api_key``
+     - string (secret)
+     - BYOK. Required for ``anthropic`` / ``openai`` / ``mistral`` / ``nebius``
+       and the catalog gateways (``pia`` / ``gateway``); omitted for the
+       keyless tiers, which discard one if sent. Sent only in the body, never
+       logged or persisted.
+   * - ``provider``
+     - ``anthropic`` | ``openai`` | ``mistral`` | ``nebius`` | ``free`` |
+       ``sponsored`` | ``pia`` | ``gateway``
+     - Which provider serves the run. Default ``anthropic``; the editor
+       selects ``free`` when the deployment configures a free tier. ``pia``
+       and ``gateway`` are gateways the server's model catalog must define. See
+       :doc:`models`.
+   * - ``base_url``
+     - string (optional)
+     - An ``http(s)://`` OpenAI-compatible endpoint: the editor's Local
+       (self-hosted) provider sends ``provider: "openai"`` with it. Dropped
+       for ``pia`` / ``gateway``. For every other provider, the keyless tiers
+       included, a request carrying it is rejected with a ``BAD_REQUEST``
+       error event unless the server sets ``BESSER_LLM_ALLOW_CUSTOM_BASE_URL``;
+       where it is set, the keyless tiers still ignore it and use the server's
+       endpoint.
+   * - ``demo_token``
+     - string (secret, optional)
+     - The demo-link secret; required for ``sponsored`` and checked against
+       ``BESSER_DEMO_TOKEN`` (``403`` when it does not match or the server sets
+       none).
+   * - ``telemetry_session`` / ``telemetry_participant``
+     - string (optional)
+     - Study telemetry labels. A value that does not match the collection
+       pattern is dropped rather than rejected; a run summary is recorded only
+       when both survive and the server enables telemetry.
+   * - ``llm_model``
+     - string (optional)
+     - Model override; falls back to the provider default. For ``free`` only
+       the ids the server has configured are honoured (the primary, an entry in
+       ``BESSER_FREE_LLM_ALT_MODELS``, or the fallback model); any other value
+       is ignored and the run pins to the primary rather than erroring.
+   * - ``max_cost_usd``
+     - float
+     - Soft spend cap, clamped to the server hard cap (default 5.0, max 5.0).
+   * - ``max_runtime_seconds``
+     - int
+     - Soft runtime cap, clamped to the server hard cap (default 2400, max 2400).
+   * - ``max_turns``
+     - int
+     - Soft cap on LLM turns, clamped to the server hard cap (default 120,
+       max 150).
+   * - ``mode``
+     - ``generate`` | ``modify``
+     - ``modify`` seeds the workspace from ``base_run_id`` and edits it in
+       place instead of rebuilding. Default ``generate``. See
+       :ref:`spec-driven-modify-mode`.
+   * - ``base_run_id``
+     - string (optional)
+     - The 32-hex run id of the run to modify. Optional even for
+       ``mode: "modify"`` on ``/generate``: when it is missing or the base has
+       expired, the run degrades to a normal from-scratch generation rather
+       than failing. ``/preview`` is stricter and rejects
+       ``mode: "modify"`` without it.
+   * - ``primary_kind_override``
+     - string (optional)
+     - Force the primary model kind (``class``, ``gui``, ``agent``,
+       ``state_machine``, ``object``, ``bpmn``, ``nn``, ``quantum``) instead of
+       auto-detecting it.
+   * - ``target_generator_override``
+     - string (optional)
+     - Bind the Phase-1 deterministic generator (a registered generator-tool
+       name from an approved preview plan), skipping the agent's own
+       selection. Mutually exclusive with ``skip_deterministic_generator``.
+   * - ``skip_deterministic_generator``
+     - bool
+     - Explicitly skip Phase 1 and let the LLM scaffold from scratch.
+       Default ``false``.
+
+.. note::
+   The caps above are the shipped defaults. Every one of them is overridable
+   per deployment via ``BESSER_LLM_*`` environment variables — read the live
+   values from ``GET /besser_api/spec-driven/config`` rather than hardcoding
+   them in a client. The full variable reference is in :doc:`configuration`.
+
+.. _spec-driven-preview-model-change:
+
+Model change in the preview
+---------------------------
+
+With ``mode: "modify"`` and a
+``base_run_id`` whose workspace is still available, the ``/preview`` response
+carries ``model_change``: how the project's class diagram relates to the one
+the base run was built from. It is ``null`` for ``mode: "generate"``, an
+unknown or expired base run, or a base run without a recorded class model.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 80
+
+   * - Field
+     - Meaning
+   * - ``verdict``
+     - ``small``, ``large`` or ``unrelated``. ``large`` means ``gone`` is
+       above 0.15. ``unrelated`` means
+       more than half of it is gone, most of the new model is new elements,
+       and either most base classes or three quarters of the base model are
+       gone. Deleting classes, even all of them, is ``large``.
+   * - ``basis``
+     - ``attributes``, or ``classes`` when the base run predates the recorded
+       model (then only class names are compared and ``changes`` is empty).
+   * - ``gone``
+     - Share of the base model's classes and attributes (0 to 1) that are
+       removed, or are attributes now under another name. A renamed attribute
+       counts because the code still changes everywhere it is used; a renamed
+       class, and a change of letter case only, do not.
+   * - ``removed`` / ``added``
+     - ``Class`` and ``Class.attribute`` names, for display. Renamed elements
+       are not listed here.
+   * - ``renamed``
+     - ``[{"from": "Room", "to": "Suite"}, {"from": "Room.floorType", "to":
+       "Room.floor"}]``: classes and attributes kept under a new name. Empty
+       when none.
+   * - ``changes``
+     - One line per change, the list a modify run receives (see
+       :ref:`spec-driven-modify-mode`).
+
+The verdict, ``removed``/``added``/``renamed`` and ``changes`` come from one
+matching of old and new elements, so they always agree. Two elements are the
+same element when:
+
+1. both carry an editor id and the ids are equal (two different ids are two
+   different elements, whatever their names);
+2. otherwise, they have the same name, compared exactly first and then
+   ignoring case; attributes are matched only within their matched class;
+3. for classes only, when neither is matched yet: they are the only class on
+   each side with the same non-empty set of attribute names (a class whose
+   name alone changed).
+
+No element is matched twice.
+
+SSE event types
+---------------
+
+**SSE event types** emitted by ``/spec-driven/generate``:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 80
+
+   * - Event
+     - Meaning
+   * - ``start``
+     - Run accepted; carries ``runId``, provider, model, and caps.
+   * - ``phase``
+     - Pipeline advanced to a phase: ``select``, ``generate``, ``gap``,
+       ``customize``, ``validate``. Carries the run's ``usd``, ``turns`` and
+       ``elapsedSeconds`` when the phase started, measured like ``cost``: a
+       phase's own figures are the difference to the next phase, or to the
+       final ``cost`` event for the last one. ``validate`` is sent when Phase 3
+       starts, before the first check.
+   * - ``phase_update``
+     - Extra detail for the current phase (e.g. the gap task list); for
+       ``validate``, the first check's result as ``message``
+       (``"2 blockers / 5 total"``).
+   * - ``findings``
+     - One Phase 3 validation round: ``attempt`` (0 for the first check, n for
+       the re-check after fix attempt n), ``blockers`` (at most 20 messages,
+       each clipped to 300 characters), and the true ``blockerCount`` and
+       ``issueCount``. Blockers are counted as in ``done``, so the last round
+       matches the run's count. The ``tool_call`` events between two ``findings``
+       events are that fix attempt's repairs. ``restored: true`` marks a last
+       round after the run went back to a better earlier tree; it describes
+       the delivered app.
+   * - ``text``
+     - A streaming text delta from the LLM.
+   * - ``tool_call``
+     - The LLM invoked a :doc:`tool <tools>` (read/write/modify a file, query
+       the model, update its checklist, run a generator). Carries the turn
+       number, the tool name, a ``status`` (``executing``, ``done`` or
+       ``error``), an optional ``summary`` and a short non-content
+       ``detail``.
+   * - ``model_update``
+     - The model serving this run changed mid-run — the fallback chain took
+       over after the primary failed or hit its quota. Carries ``model``,
+       ``previousModel`` and ``reason`` (``primary_unavailable``). Only the
+       server-configured tiers (``free``, ``sponsored``) have one; a BYOK run
+       never switches models behind your back. The switch is sticky for the
+       rest of the run.
+   * - ``cost``
+     - Periodic cost / runtime / turn-count tick (``usd``, ``turns``,
+       ``elapsedSeconds``, and ``servedModel`` when the provider reports
+       which model answered).
+   * - ``done``
+     - Success. Carries ``downloadUrl``, ``fileName``, the run recipe, a file
+       count and top-level listing, ``tokensUsed``, ``blockerCount`` (unfixed
+       blocker-severity findings plus required checks that could not run,
+       ``validation unverified:``), ``verification`` (what the run verified,
+       could not verify, and shipped unenforced, with true totals in
+       ``counts``), ``incomplete`` / ``incompleteReason``, ``cancelled`` (true
+       when a cancel request was honoured after the run had written files, so
+       the output is what it had made by then; a run the server stopped because
+       nobody followed it reads the same; it is stored with the event, so a
+       replay carries it),
+       a three-way authorship split of the output tree, and ``aiShare``, the
+       AI-written share of the lines from the run's Agent Trace record (see
+       :ref:`spec-driven-agent-trace`). ``mode`` is ``create`` or ``modify``;
+       ``changedFiles`` (capped) and ``changedFileCount`` are the files the
+       agent wrote, edited or deleted, and ``modelChanges`` how the model
+       differs from the one the base app was built from (modify runs).
+       ``trace`` is the run's trace, a trace-file fragment (``projectId``
+       null) the editor merges into the project trace (see
+       :ref:`spec-driven-run-trace`); ``null`` when the request did not set
+       ``traceabilityEnabled`` or the trace could not be built.
+       ``verification`` lists what the run verified, could not verify and
+       shipped unenforced; a requirement item's ``id`` is its ``R<n>`` label
+       and its ``traceRef`` the id of its ``RequirementArtifact`` in ``trace``.
+   * - ``error``
+     - ``INVALID_KEY`` / ``UPSTREAM_LLM`` / ``INTERNAL`` / ``BAD_REQUEST`` /
+       ``CANCELLED`` are terminal; ``COST_CAP`` / ``TIMEOUT`` / ``INCOMPLETE``
+       are non-terminal warnings emitted just before ``done``. Carries
+       ``code`` and ``message``. A run a server restart interrupted ends with
+       ``INTERNAL`` and ``resumeAvailable``; the ``CANCELLED`` event of a run
+       stopped because no subscriber came back adds ``reason: "abandoned"``
+       and ``resumeAvailable``.
+
+Example
+-------
+
+**Example** — start a run with ``curl`` and read the stream::
+
+   curl -N -X POST https://<host>/besser_api/spec-driven/generate \
+     -H 'Content-Type: application/json' \
+     -H 'Accept: text/event-stream' \
+     -d '{
+       "project": { "...": "full ProjectInput payload" },
+       "instructions": "FastAPI backend with JWT auth and a Dockerfile",
+       "api_key": "sk-...",
+       "provider": "openai",
+       "llm_model": "gpt-4o",
+       "max_cost_usd": 1.0,
+       "max_runtime_seconds": 600
+     }'
+
+The response is a Server-Sent Events stream::
+
+   event: start
+   data: {"event":"start","runId":"4f3c9a1d8e2b47c6905af1e3d7b28c40","provider":"openai","llmModel":"gpt-4o","maxCost":1.0,"maxRuntime":600}
+
+   event: phase
+   data: {"event":"phase","phase":"generate","message":"running generate_fastapi_backend"}
+
+   event: tool_call
+   data: {"event":"tool_call","turn":1,"tool":"write_file","status":"executing","detail":"auth.py"}
+
+   event: cost
+   data: {"event":"cost","usd":0.07,"turns":3,"elapsedSeconds":24.1}
+
+   event: phase
+   data: {"event":"phase","phase":"validate","message":"1 blockers / 4 total"}
+
+   event: done
+   data: {"event":"done","runId":"4f3c9a1d8e2b47c6905af1e3d7b28c40","downloadUrl":"/besser_api/spec-driven/download/4f3c9a1d8e2b47c6905af1e3d7b28c40","fileName":"besser_smart_4f3c9a1d8e2b47c6905af1e3d7b28c40.zip","isZip":true,"blockerCount":0}
+
+Then issue a ``GET`` to the ``downloadUrl`` to retrieve the ZIP — it is
+re-fetchable for ``BESSER_LLM_ARCHIVE_TTL_SECONDS`` (24 hours by default),
+longer than the run's workspace, which a modify run or a push needs.
+
+.. note::
+   The frames above are shown without their sequence number for readability.
+   As actually delivered, every frame additionally carries an SSE ``id:`` line
+   and a ``sequence`` field in the JSON body — ``id: 3`` /
+   ``data: {"event":"cost", …,"sequence":3}``. That number is the cursor for
+   ``?after=`` and for ``Last-Event-ID``, so a client that wants to reconnect
+   must record it. See :ref:`spec-driven-durable-runs` for the reconnect flow.

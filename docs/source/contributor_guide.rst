@@ -83,7 +83,7 @@ Repository Layout
     verifying generator output or end-to-end flows.
 
 Frontend assets for the BESSER Web Modeling Editor live in the separate
-`BESSER-WEB-MODELING-EDITOR <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR>`_
+`BESSER-Web-Modeling-Editor <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor>`_
 repository (vendored here as the
 ``besser/utilities/web_modeling_editor/frontend`` submodule). Contribute UI
 updates there; this repository focuses on the backend APIs, metamodel,
@@ -95,10 +95,21 @@ Getting Started
 Prerequisites
 ~~~~~~~~~~~~~
 
-* **Python 3.10, 3.11, or 3.12** (CI tests against all three).
+* **Python 3.11 or 3.12** (``setup.cfg`` declares ``python_requires = >=3.11``;
+  CI tests both).
 * **Git**, including submodule support.
 * **Node.js 20+** *(only if you plan to run the web modeling editor frontend
   locally)*.
+* **System packages on Linux** (Debian/Ubuntu names):
+
+  .. code-block:: bash
+
+     sudo apt-get install python3-venv unixodbc bubblewrap
+
+  ``python3-venv`` (``python3.12-venv`` on Ubuntu 24.04) provides
+  ``ensurepip``, without which ``python -m venv`` fails. ``pyodbc`` needs
+  ``unixodbc`` at import time. ``bubblewrap`` is the Spec-Driven Agent's shell
+  sandbox; CI installs it, and the sandbox tests skip without it.
 
 Fork, clone, and initialize
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -134,13 +145,23 @@ Create a virtual environment
    source venv/bin/activate           # Linux / macOS
    venv\Scripts\activate              # Windows (cmd / PowerShell)
 
+Keep the environment activated in every terminal you use. The commands below
+(``pytest``, ``besser-wme-backend``) are installed into it. A user-level
+``pip install`` outside a virtual environment puts them in ``~/.local/bin`` on
+Linux, which is not on the default ``PATH``; run them through the interpreter
+instead (``python -m pytest``). BESSER starts its own child processes with the
+interpreter that runs it, so the generators do not depend on ``PATH``.
+
 Install dependencies
 ~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: bash
 
-   pip install -r requirements.txt
    pip install -e .                   # editable install of the BESSER package
+   pip install -r besser/utilities/web_modeling_editor/backend/requirements.txt
+
+The second line is what CI installs, and it is **required** to run the backend:
+FastAPI and its dependencies are not in the root ``requirements.txt``.
 
 Optional but recommended:
 
@@ -148,10 +169,13 @@ Optional but recommended:
 
    pip install -r docs/requirements.txt   # Sphinx + theme for building the docs
 
-Some test modules require extra packages that are **not** in
-``requirements.txt``: ``torch``, ``tensorflow`` (for ``tests/generators/nn/``),
-and ``openpyxl`` (for the spreadsheet importer test). CI installs them;
-locally, install them only if you intend to touch those areas.
+One test module imports a package that is **not** in the root
+``requirements.txt``: ``tests/utilities/web_modeling_editor/backend/test_spreadsheet_import.py``
+needs ``openpyxl``, which ships in the backend requirements file installed
+above. Without it, pytest stops at *collection* — an error, not a test
+failure. ``torch`` and ``tensorflow`` are needed only to *run* the generated
+neural-network code, not to run ``tests/generators/nn/``, which passes without
+them.
 
 Verify the install
 ~~~~~~~~~~~~~~~~~~
@@ -159,7 +183,7 @@ Verify the install
 .. code-block:: bash
 
    python tests/BUML/metamodel/structural/library/library.py
-   python -m pytest -k library
+   python -m pytest tests/ -k library
 
 If both run cleanly, you are ready to go.
 
@@ -170,23 +194,36 @@ If you want to run or extend the Web Modeling Editor (WME) frontend, use the
 WME repository directly or the git submodule inside this repo. Prerequisites:
 Node.js 20+ and npm.
 
+The submodule at ``besser/utilities/web_modeling_editor/frontend`` is the
+`BESSER-Web-Modeling-Editor <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor>`_
+repository, checked out at a fixed commit (a detached HEAD). To change the UI,
+create a branch inside the submodule and open the pull request in that
+repository; see `Coordinating Changes Across BESSER and WME`_.
+
 **Using the submodule:**
 
 1. Initialize the submodule: ``git submodule update --init --recursive``.
-2. Install dependencies:
-   ``cd besser/utilities/web_modeling_editor/frontend && npm install``.
+2. Install dependencies from the lockfile, in the submodule root:
+   ``cd besser/utilities/web_modeling_editor/frontend && npm ci``.
 3. Start the backend API (from the repo root):
    ``python besser/utilities/web_modeling_editor/backend/backend.py``.
 4. Start the webapp dev server: ``npm run dev`` (still in the frontend
    folder).
 
 The Vite dev server runs on http://localhost:8080 and expects the backend at
-http://localhost:9000/besser_api in development mode.
+http://localhost:9000/besser_api in development mode. Open the editor at
+``http://localhost:8080``: the backend's CORS allow-list (``DEFAULT_CORS_ORIGINS``)
+covers ``localhost`` and ``127.0.0.1``, and any other host name must be added
+through ``CORS_ORIGINS``.
+
+The backend logs a warning for each unset optional variable, including
+``GITHUB_CLIENT_ID`` and ``GITHUB_CLIENT_SECRET``. They are only needed for
+GitHub sign-in and deploy; drawing models and generating code work without them.
 
 **Using the standalone WME repo:**
 
-1. Clone `BESSER-WEB-MODELING-EDITOR <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR>`_.
-2. Run ``npm install`` and ``npm run dev``.
+1. Clone `BESSER-Web-Modeling-Editor <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor>`_.
+2. Run ``npm ci`` and ``npm run dev``.
 3. Start the BESSER backend as above if you need live API integration.
 
 Development Guidelines
@@ -212,8 +249,22 @@ We use **Ruff** for linting (run automatically in CI):
 
 .. code-block:: bash
 
-   pip install ruff
-   ruff check .
+   pip install ruff import-linter==2.15
+   ruff check besser/
+   lint-imports
+
+The rules live in ``pyproject.toml`` (``[tool.ruff]`` and
+``[tool.importlinter]``), so this is exactly what CI runs. Lint ``besser/``
+rather than ``.``: CI does not lint the tests.
+
+``lint-imports`` enforces the package layers. From top to bottom:
+``besser.utilities.web_modeling_editor`` (the editor backend),
+``besser.spec_driven_agent``, ``besser.generators``, ``besser.BUML.notations``
+and ``besser.BUML.metamodel``. A module imports only from the layers below it,
+and ``besser.utilities`` outside the backend never imports the generators, the
+agent or the backend. Inside the backend, ``services/`` never imports
+``routers/``. The few known exceptions are listed in
+``ignore_imports``, each with the change that removes it.
 
 Fix lint warnings before opening a PR. CI will fail on lint errors.
 
@@ -223,9 +274,9 @@ Working in core packages
 * **Generators** (``besser/generators/``) — inherit from
   :class:`~besser.generators.generator_interface.GeneratorInterface`; place
   Jinja2 templates in ``generators/<name>/templates/``; register the
-  generator in
-  ``besser/utilities/web_modeling_editor/backend/config/generators.py`` if it
-  should be exposed via the web editor.
+  generator with one entry in ``besser/generators/registry.py``, which the
+  web editor and the Spec-Driven Agent both read (see
+  :doc:`generators/build_generator`).
 * **Metamodel** (``besser/BUML/metamodel/``) — keep changes
   backward-compatible where possible; mirror existing patterns (private
   fields with validating setters, ``Element → NamedElement → …`` hierarchy).
@@ -235,6 +286,22 @@ Working in core packages
   FastAPI app uses a modular router architecture (routers, middleware,
   services, models). Prefer extending an existing module over creating
   bespoke helpers.
+* **Spec-Driven Agent** (``besser/spec_driven_agent/`` plus
+  ``.../backend/services/spec_driven/``) — the hybrid generation pipeline:
+  a deterministic generator, then an LLM customization loop, then validation
+  with a bounded auto-fix loop. ``pipeline/orchestrator.py`` owns Phases 1
+  and 2, ``pipeline/phase3_repair.py`` owns validation and repair, and
+  ``validation/issues.py`` classifies severity; ``agent/tools.py`` declares the LLM's tool surface
+  and ``tool_executor.py`` implements it; ``llm_client.py`` holds the provider
+  clients, pricing, and the keyless-tier fallback chain. On the service side,
+  ``runner.py`` drives a run and emits SSE, and ``run_manager.py`` gives runs
+  durable ownership and event replay. A new tool needs its declaration in
+  ``agent/tools.py``, an entry in ``_TOOL_MODEL_REQUIREMENTS`` in the same file
+  (so it is only offered when the models it needs are present), and a handler
+  in ``ToolExecutor._handlers``. A generator tool is declared instead by the
+  ``agent_tool`` of its entry in ``besser/generators/registry.py`` (which
+  carries its requirements), its id in ``AGENT_TOOL_ORDER`` and the handler. See
+  :doc:`spec_driven_agent/index`.
 * **Bidirectional converters** — if you support a feature in
   ``json_to_buml/``, add the symmetric path in ``buml_to_json/``. Round-trips
   must be lossless.
@@ -255,11 +322,13 @@ the full picture.
 Testing and Quality Checks
 --------------------------
 
-Run the full suite before pushing:
+Run the full suite before pushing, scoped to ``tests/``:
 
 .. code-block:: bash
 
-   python -m pytest
+   python -m pytest tests/
+
+CI runs ``python -m pytest tests/ -n auto -q --tb=short``; ``-n auto`` is pytest-xdist (in the ``dev`` extra) with one worker per core.
 
 While iterating, target the area you are changing:
 
@@ -268,13 +337,12 @@ While iterating, target the area you are changing:
    python -m pytest tests/generators -k sqlalchemy
    python -m pytest tests/BUML/metamodel/structural -k library
 
-If you do **not** have ``torch``, ``tensorflow``, or ``openpyxl`` installed
-locally, skip the modules that import them so collection does not fail:
+If ``openpyxl`` is not installed, skip the module that imports it so collection
+does not fail:
 
 .. code-block:: bash
 
    python -m pytest tests/ \
-     --ignore=tests/generators/nn \
      --ignore=tests/utilities/web_modeling_editor/backend/test_spreadsheet_import.py
 
 Guidelines:
@@ -309,8 +377,16 @@ Open ``docs/build/html/index.html`` to preview.
 Common pages to update:
 
 * ``buml_language.rst`` — metamodel additions
-* ``generators.rst`` — new generators
-* ``web_editor.rst`` — backend API changes
+* ``generators.rst`` — new deterministic generators (the toctree **and** the
+  "Choosing a Generator" table)
+* ``spec_driven_agent/`` — the Spec-Driven Agent: its pipeline
+  (``how_it_works.rst``), tool surface (``tools.rst``), severities
+  (``validation.rst``), caps and durable runs (``runs.rst``), the REST + SSE
+  contract (``api.rst``), and the ``BESSER_LLM_*`` reference
+  (``configuration.rst``)
+* ``web_editor.rst`` — editor workflows
+* ``web_editor_backend.rst`` — backend endpoints and environment variables
+* ``web_editor_github.rst`` — how the editor and the agent work with GitHub
 * ``utilities.rst`` — new utilities
 * ``contributor_guide.rst`` / ``ai_assistant_guide.rst`` — workflow changes
 
@@ -423,9 +499,9 @@ Step-by-step
 
    .. code-block:: bash
 
-      python -m pytest                # tests
-      ruff check .                    # lint
-      cd docs && make html && cd ..   # if you touched the docs
+      python -m pytest tests/         # tests
+      ruff check besser/              # lint, as CI runs it
+      python docs/check_docs.py                                     # if you touched the docs
 
 4. **Push your branch:**
 
@@ -547,8 +623,11 @@ Example (good)
 Review and merging
 ~~~~~~~~~~~~~~~~~~
 
-* All PRs must pass automated checks (tests on Python 3.10/3.11/3.12, Ruff
-  lint, frontend lint+build, CodeQL).
+* All PRs must pass automated checks. The CI workflow runs five jobs — tests
+  on Python 3.11 and 3.12, the Ruff lint above with the import-layer contracts,
+  the editor's OpenAPI schema check, a wheel build and install, and a docs
+  build that fails on any Sphinx warning (``python docs/check_docs.py``) — plus
+  CodeQL from the security workflow.
 * At least one maintainer review is required, per the
   `governance rules <https://github.com/BESSER-PEARL/BESSER/blob/master/GOVERNANCE.md>`_.
 * Maintainers choose the merge strategy (squash, rebase, or merge commit)
@@ -568,9 +647,9 @@ example, adding a new DSL with graphical notation):
 
    .. code-block:: bash
 
-      cd besser/utilities/web_modeling_editor/frontend
-      git pull origin develop
-      cd ../../../..
+      # Fast-forward the submodule to the tip of the branch ``.gitmodules``
+      # tracks for it (currently ``main``).
+      git submodule update --remote besser/utilities/web_modeling_editor/frontend
       git add besser/utilities/web_modeling_editor/frontend
       git commit -m "chore: bump frontend submodule"
 

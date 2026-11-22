@@ -1,0 +1,21 @@
+/* A design is written against the browser's defaults, which the Tailwind reset
+   imported by index.css (layer base) removes. Restore the ones a page shows:
+   the sizes and weights of headings and the look of a plain button. The rules
+   stay in that layer, so the design's own rules and utility classes win; text
+   colour keeps inheriting, and the runtime components (.bsr-runtime: tables,
+   charts, maps, dialogs) keep their own look. */
+@layer base {
+  .app-main :is(h1, h2, h3, h4, h5, h6):not(.bsr-runtime *) {
+    font-size: revert;
+    font-weight: revert;
+  }
+  .app-main button:not(.bsr-runtime *) {
+    background-color: revert;
+    border: revert;
+    border-radius: revert;
+    padding: revert;
+  }
+}
+
+/* Design stylesheet carried over from the GUI model (GUIModel.stylesheet). */
+[[ model.stylesheet ]]

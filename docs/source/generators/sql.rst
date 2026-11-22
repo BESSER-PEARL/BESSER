@@ -20,6 +20,14 @@ Parameters
 - ``model``: The input B-UML structural model.
 - ``sql_dialect``: The target SQL dialect for the generated statements (default: ``"sqlite"``).
 - ``output_dir``: Optional output directory (default: ``output/`` in the current directory).
+- ``ocl_check_constraints``: Translate simple OCL invariants into ``CHECK`` constraints
+  (default: ``True``). See :ref:`sql-ocl-check-constraints`.
+
+No database driver is needed: the statements are compiled against the SQLAlchemy dialect
+only, so generating, for example, ``mssql`` DDL does not require ``pyodbc``. SQL Server DDL
+targets a current server version (``DATE`` and ``TIME`` columns, not the pre-2008 ``DATETIME``
+fallback). An unknown dialect raises ``ValueError``; if the DDL cannot be produced, a
+``RuntimeError`` carrying the underlying error is raised.
 
 Supported Dialects
 ------------------
@@ -31,7 +39,9 @@ Supported Dialects
    * - Dialect
      - Description
    * - ``sqlite``
-     - Default. Generates SQLite-compatible DDL statements.
+     - Default. Generates SQLite-compatible DDL statements. SQLite matches names
+       case-insensitively, so only reserved words (``"order"``) and names with special
+       characters are quoted; ``createdAt`` is written as is.
    * - ``postgresql``
      - PostgreSQL DDL with ``CREATE TYPE`` for enumerations.
    * - ``mysql``
@@ -47,6 +57,46 @@ The generator handles enumeration types differently depending on the dialect: Po
 uses ``CREATE TYPE ... AS ENUM``, MySQL/MariaDB use inline ``ENUM()`` column types, and
 Oracle uses ``CHECK`` constraints.
 
+.. _sql-ocl-check-constraints:
+
+OCL Constraints as CHECK Constraints
+------------------------------------
+
+Simple OCL invariants of the model are emitted as table-level ``CHECK`` constraints on the
+table of their context class. An invariant is translated when its body is a comparison
+between an attribute of the context class and a literal, or several such comparisons joined
+by ``and``:
+
+.. code-block:: text
+
+    context Book inv minPages: self.pages > 0
+    context Book inv pagesRange: self.pages >= 1 and self.pages <= 5000
+    context Book inv hasTitle: self.title <> ''
+    context Book inv inPrint: self.inPrint = true
+
+.. code-block:: sql
+
+    CONSTRAINT ck_book_minpages CHECK (pages > 0),
+    CONSTRAINT ck_book_pagesrange CHECK (pages >= 1 AND pages <= 5000),
+    CONSTRAINT ck_book_hastitle CHECK (title != ''),
+    CONSTRAINT ck_book_inprint CHECK ("inPrint" = true)
+
+The rules are deliberately conservative:
+
+- the operators are ``=``, ``<>``, ``<``, ``<=``, ``>`` and ``>=``; the literal may be on either side;
+- ``Integer`` and ``Real`` attributes compare with numeric literals, ``String`` attributes with string
+  literals (``=`` and ``<>`` only, since string ordering depends on the database collation), and
+  ``Boolean`` attributes with ``true`` / ``false`` (``=`` and ``<>`` only);
+- the attribute must be declared on the context class itself (not inherited), single-valued and
+  not derived, and the context class must have its own table.
+
+Anything else (``or``, ``not``, ``implies``, navigation through associations, collection operations
+such as ``size()``, enumeration literals, comparisons between two attributes, ...) is skipped
+without an error; it is still enforced by the application-level validators of the other
+generators. Constraint names are ``ck_<class>_<constraint name>``, lower-cased and kept to
+30 characters. Column quoting and literal rendering follow the dialect (for example
+``[inPrint] = 1`` on SQL Server). Pass ``ocl_check_constraints=False`` to leave them out.
+
 Output
 ------
 The generated SQL script, ``tables_sqlite.sql``, will be saved in the ``output/`` folder inside your current working directory.
@@ -57,3 +107,17 @@ The generated output for this example is shown below.
 .. literalinclude:: ../../../tests/BUML/metamodel/structural/library/output/tables_sqlite.sql
    :language: sql
    :linenos:
+
+Trace Links
+-----------
+
+The DDL is produced by running the SQLAlchemy module that :doc:`alchemy` generates, so it has no template of its
+own. After ``generate()``, ``generator.traced_files["tables_<dialect>.sql"].regions`` still maps each statement back
+to its element: every ``CREATE TABLE`` (rule ``sql_generator.py#create_table``) of a class, association class or
+many-to-many association that has an ``id``, and every ``CREATE TYPE`` (``sql_generator.py#create_type``, PostgreSQL
+only) of an enumeration that has an ``id``. A statement is matched by the table or type name the SQLAlchemy
+generator gave it (the lower-cased class, association or enumeration name); a statement matching no traced element
+is left untraced, and the columns inside a statement are not traced individually. The SQL file itself is not
+changed. ``build_generation_trace`` in ``besser.utilities.generation_trace`` turns the regions into a
+:doc:`traceability model <../buml_language/model_types/traceability>`; the web editor shows them on its
+*Traceability* page.

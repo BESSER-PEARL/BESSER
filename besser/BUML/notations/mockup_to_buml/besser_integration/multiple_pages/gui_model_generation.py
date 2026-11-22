@@ -1,12 +1,10 @@
 import os
-import requests
-import retrying
+from besser.BUML.notations.mockup_to_structural.utilities.openai_request import request_completion
 from besser.BUML.notations.mockup_to_structural.utilities import *
 from besser.BUML.notations.mockup_to_structural.utilities import *
 from besser.BUML.notations.mockup_to_buml.config import *
 
 
-@retrying.retry(stop_max_attempt_number=3, wait_fixed=2000)
 def gpt4_add_navigation_between_screens(api_key, python_code, navigation_image_path, pages_order_file_path):
     # Encode the images
     if navigation_image_path:
@@ -14,11 +12,6 @@ def gpt4_add_navigation_between_screens(api_key, python_code, navigation_image_p
 
     if pages_order_file_path:
        pages_order_file_path = read_file_contents(pages_order_file_path)
-
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}"
-    }
 
     complete_prompt = "Please review the Python code below.\n"
     complete_prompt += "You will receive an text file that specifies the order of pages.\n"
@@ -87,25 +80,10 @@ def gpt4_add_navigation_between_screens(api_key, python_code, navigation_image_p
     }
 
 
-    response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
-
-    response_json = response.json()
-
-    try:
-        completed_code = response_json['choices'][0]['message']['content']
-        return completed_code
-    except (KeyError, IndexError) as e:
-        print(f"Error occurred: {e}")
-        return None
+    return request_completion(api_key, payload)
 
 
-@retrying.retry(stop_max_attempt_number=3, wait_fixed=2000)
 def gpt4_refactor(api_key, python_code):
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}"
-    }
-
     improve_prompt = "Please consider the Python code provided below.\n"
     improve_prompt += "Ensure that any buttons labeled with 'actionType=ButtonActionType.Navigate' without a specified target screen and starting with 'back' are removed.\n"
     improve_prompt += "Additionally, remove these buttons from the 'view_elements' of each screen where they are present.\n"
@@ -138,18 +116,9 @@ def gpt4_refactor(api_key, python_code):
         "temperature": 0.0
     }
 
-    response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
-    response_json = response.json()
-
-    try:
-        refactored_code = response_json['choices'][0]['message']['content']
-        return refactored_code
-    except (KeyError, IndexError) as e:
-        print(f"Error occurred: {e}")
-        return None
+    return request_completion(api_key, payload)
 
 # Function to facilitate self-improvement of a Python code representing GUI elements using the GPT-4o model
-@retrying.retry(stop_max_attempt_number=3, wait_fixed=2000)
 def gpt4_self_improvement_whole_app(api_key, base64_metamodel, gui_models_paths, metamodel_text_path, python_code, structural_model_path):
 
     # Encode the images
@@ -157,11 +126,6 @@ def gpt4_self_improvement_whole_app(api_key, base64_metamodel, gui_models_paths,
 
     metamodel_text_contents = read_file_contents(metamodel_text_path)
     structural_model_contents = read_file_contents(structural_model_path)
-
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}"
-    }
 
     ## revision_prompt
     revision_prompt = ""
@@ -263,18 +227,10 @@ def gpt4_self_improvement_whole_app(api_key, base64_metamodel, gui_models_paths,
         "temperature": 0.0
     }
 
-    response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
-    response_json = response.json()
-
-    try:
-        improved_code = response_json['choices'][0]['message']['content']
-        return improved_code
-    except KeyError:
-        return None
+    return request_completion(api_key, payload)
 
 
 # Function to call GPT-4o with the direct prompt method
-@retrying.retry(stop_max_attempt_number=3, wait_fixed=2000)
 def gpt4o_call_whole_app(api_key, base64_metamodel, prompt, gui_models_paths, first_gui_code_path, second_gui_code_path, third_gui_code_path, forth_gui_code_path, single_gui_code_path, metamodel_text_path, structural_model_path):
 
     # Encode the images
@@ -289,11 +245,6 @@ def gpt4o_call_whole_app(api_key, base64_metamodel, prompt, gui_models_paths, fi
 
     structural_model_contents = read_file_contents(structural_model_path)
 
-
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}"
-    }
 
     messages = [
         {
@@ -410,14 +361,7 @@ def gpt4o_call_whole_app(api_key, base64_metamodel, prompt, gui_models_paths, fi
         "temperature": 0.0
     }
 
-    response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
-    response_json = response.json()
-
-    try:
-        python_code = response_json['choices'][0]['message']['content']
-        return python_code
-    except KeyError:
-        return None
+    return request_completion(api_key, payload)
 
 # Function to send a direct prompt to GPT-4o for generating Python code
 def direct_prompting_whole_app(api_key, metamodel_image_path, gui_models_paths, first_gui_code_path, second_gui_code_path, third_gui_code_path, forth_gui_code_path,  single_gui_code_path, metamodel_text_path, structural_model_path):

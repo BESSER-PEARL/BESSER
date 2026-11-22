@@ -1,8 +1,15 @@
+import logging
 import os
-from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.structural import DomainModel
+from besser.generators.default_literals import register_default_literals
 from besser.generators import GeneratorInterface
+from besser.generators.generator_interface import require_valid_identifiers
+from besser.generators.structural_utils import normalize_method_code
 from besser.utilities import sort_by_timestamp
+from besser.utilities.generation_trace import traced_environment
+
+logger = logging.getLogger(__name__)
+
 
 class PythonGenerator(GeneratorInterface):
     """
@@ -14,6 +21,8 @@ class PythonGenerator(GeneratorInterface):
         output_dir (str, optional): The output directory where the generated code will be
             saved. Defaults to None.
     """
+    regenerable = True
+
     def __init__(self, model: DomainModel, output_dir: str = None):
         super().__init__(model, output_dir)
 
@@ -27,12 +36,13 @@ class PythonGenerator(GeneratorInterface):
         Returns:
             None, but store the generated code as a file named classes.py
         """
-        file_path = self.build_generation_path(file_name="classes.py")
+        require_valid_identifiers(self.model)
         templates_path = os.path.join(os.path.dirname(
             os.path.abspath(__file__)), "templates")
-        env = Environment(loader=FileSystemLoader(templates_path))
+        env = traced_environment(templates_path)
+        env.globals.update(normalize_code=normalize_method_code)
+        register_default_literals(env)
         template = env.get_template('python_classes_template.py.j2')
-        with open(file_path, mode="w", encoding='utf-8') as f:
-            generated_code = template.render(domain=self.model, sort_by_timestamp=sort_by_timestamp)
-            f.write(generated_code)
-            print("Code generated in the location: " + file_path)
+        rendered = template.render(domain=self.model, sort_by_timestamp=sort_by_timestamp)
+        self._write_traced("classes.py", rendered)
+        logger.info("Code generated in the location: %s", self.build_generation_path(file_name="classes.py"))

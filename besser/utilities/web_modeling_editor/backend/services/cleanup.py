@@ -13,22 +13,32 @@ import shutil
 import tempfile
 import time
 
+from besser.utilities.web_modeling_editor.backend.constants.constants import (
+    LLM_TEMP_DIR_PREFIX,
+    TEMP_DIR_PREFIXES,
+)
+from besser.utilities.web_modeling_editor.backend.settings import TEMP_DIR_MAX_AGE_HOURS, get_settings
+
 logger = logging.getLogger(__name__)
 
-# All known prefixes used by BESSER when creating temp directories.
-# Keep this in sync with constants.py and any ad-hoc prefixes in routers.
-_BESSER_TEMP_PREFIXES = (
-    "besser_",
-    "besser_agent_",
-    "besser_csv_",
+# Prefixes older releases used before every temp dir carried a ``besser_``
+# prefix. Still matched so directories left behind by those releases are
+# removed too.
+_LEGACY_TEMP_PREFIXES = (
     "user_profile_",
 )
+
+# All known prefixes used by BESSER when creating temp directories. Add new
+# prefixes to ``TEMP_DIR_PREFIXES`` in constants.py, not here.
+_BESSER_TEMP_PREFIXES = TEMP_DIR_PREFIXES + _LEGACY_TEMP_PREFIXES
 
 # How often the background cleanup task runs (in seconds).
 _CLEANUP_INTERVAL_SECONDS = 3600  # 1 hour
 
 
-def cleanup_old_temp_files(max_age_hours: int = 24) -> None:
+
+
+def cleanup_old_temp_files(max_age_hours: int = TEMP_DIR_MAX_AGE_HOURS) -> None:
     """Remove BESSER-created temp directories older than *max_age_hours*.
 
     The function iterates over the system temp directory, identifies
@@ -38,37 +48,48 @@ def cleanup_old_temp_files(max_age_hours: int = 24) -> None:
     Errors on individual directories are logged and silently skipped so
     that one problematic entry does not prevent the rest from being cleaned.
     """
-    tmp_root = tempfile.gettempdir()
     cutoff = time.time() - (max_age_hours * 3600)
     removed = 0
 
-    try:
-        entries = os.listdir(tmp_root)
-    except OSError:
-        logger.warning("Unable to list temp directory %s", tmp_root)
-        return
+    scan_roots: list[tuple[str, tuple[str, ...]]] = [
+        (tempfile.gettempdir(), _BESSER_TEMP_PREFIXES)
+    ]
+    workspace_root = get_settings().llm_run_workspace_root
+    if workspace_root:
+        configured = os.path.abspath(os.path.expanduser(workspace_root))
+        if os.path.normcase(configured) != os.path.normcase(tempfile.gettempdir()):
+            # The persistent volume is dedicated to spec-driven runs;
+            # never apply the broader temp prefix set to that location.
+            scan_roots.append((configured, (LLM_TEMP_DIR_PREFIX,)))
 
-    for entry in entries:
-        if not any(entry.startswith(prefix) for prefix in _BESSER_TEMP_PREFIXES):
-            continue
-
-        full_path = os.path.join(tmp_root, entry)
-        if not os.path.isdir(full_path):
-            continue
-
+    for tmp_root, prefixes in scan_roots:
         try:
-            mtime = os.path.getmtime(full_path)
-            if mtime < cutoff:
-                shutil.rmtree(full_path, ignore_errors=True)
-                removed += 1
-        except OSError as exc:
-            logger.debug("Skipping temp entry %s: %s", full_path, exc)
+            entries = os.listdir(tmp_root)
+        except OSError:
+            logger.warning("Unable to list temp directory %s", tmp_root)
+            continue
+
+        for entry in entries:
+            if not any(entry.startswith(prefix) for prefix in prefixes):
+                continue
+
+            full_path = os.path.join(tmp_root, entry)
+            if not os.path.isdir(full_path):
+                continue
+
+            try:
+                mtime = os.path.getmtime(full_path)
+                if mtime < cutoff:
+                    shutil.rmtree(full_path, ignore_errors=True)
+                    removed += 1
+            except OSError as exc:
+                logger.debug("Skipping temp entry %s: %s", full_path, exc)
 
     if removed:
         logger.info("Cleaned up %d stale BESSER temp directories", removed)
 
 
-async def _periodic_cleanup(max_age_hours: int = 24) -> None:
+async def _periodic_cleanup(max_age_hours: int = TEMP_DIR_MAX_AGE_HOURS) -> None:
     """Run :func:`cleanup_old_temp_files` in a loop every hour."""
     while True:
         await asyncio.sleep(_CLEANUP_INTERVAL_SECONDS)
@@ -78,7 +99,7 @@ async def _periodic_cleanup(max_age_hours: int = 24) -> None:
             logger.exception("Error during periodic temp-file cleanup")
 
 
-def schedule_cleanup(max_age_hours: int = 24) -> asyncio.Task:
+def schedule_cleanup(max_age_hours: int = TEMP_DIR_MAX_AGE_HOURS) -> asyncio.Task:
     """Start the periodic cleanup background task.
 
     Should be called once during application startup (inside the lifespan

@@ -63,6 +63,7 @@ def banking_model():
 def account_diagram_json():
     """A class-diagram JSON whose OCL boxes carry full-text constraints."""
     return {
+        "id": "banking-diagram",
         "title": "BankingTest",
         "model": {
             "elements": {
@@ -194,6 +195,7 @@ def test_precondition_routed_to_method_pre(account_diagram_json):
     assert [c.expression for c in deposit.pre] == [
         "context Account::deposit(amount: int) pre: amount > 0"
     ]
+    assert dm.conversion_issues == []
 
 
 def test_postcondition_routed_to_method_post(account_diagram_json):
@@ -203,6 +205,7 @@ def test_postcondition_routed_to_method_post(account_diagram_json):
     assert [c.expression for c in deposit.post] == [
         "context Account::deposit(amount: int) post: self.balance >= 0"
     ]
+    assert dm.conversion_issues == []
 
 
 def test_unknown_method_in_pre_skipped_with_warning(account_diagram_json):
@@ -214,6 +217,11 @@ def test_unknown_method_in_pre_skipped_with_warning(account_diagram_json):
     deposit = next(m for m in account.methods if m.name == "deposit")
     assert deposit.pre == []
     assert any("targets unknown method" in w for w in dm.ocl_warnings)
+    issue, = dm.conversion_issues
+    assert issue["code"] == "unknown_method"
+    assert (issue["context"], issue["method"], issue["kind"]) == ("Account", "missing", "precondition")
+    assert issue["expression"] == elems["ocl-pre"]["constraint"]
+    assert issue["source"]["element_id"] == "ocl-pre"
 
 
 def test_invalid_ocl_skipped_with_warning(account_diagram_json):
@@ -229,6 +237,15 @@ def test_invalid_ocl_skipped_with_warning(account_diagram_json):
         "context Account::deposit(amount: int) pre: amount > 0"
     ]
     assert any("Invalid OCL syntax" in w for w in dm.ocl_warnings)
+    issue, = dm.conversion_issues
+    assert issue["code"] == "parse_error"
+    assert issue["name"] == "broken"
+    assert issue["expression"] == issue["original_text"] == elems["ocl-inv"]["constraint"]
+    assert issue["source"] == {
+        "diagram_id": "banking-diagram", "diagram_title": "BankingTest",
+        "element_id": "ocl-inv", "block_index": 1,
+    }
+    assert process_class_diagram(account_diagram_json).conversion_issues == dm.conversion_issues
 
 
 def test_multi_block_textarea_parses_each_block_independently(banking_model, account_diagram_json):
@@ -242,12 +259,19 @@ def test_multi_block_textarea_parses_each_block_independently(banking_model, acc
         del rels[k]
     elems["ocl-inv"]["constraint"] = (
         "context Account inv positive: self.balance >= 0\n"
-        "context Account inv active: self.is_active"
+        "context Account inv active: self.is_active\n"
+        "context Account inv missingRole: self.guests->size() > 0"
     )
 
     dm = process_class_diagram(account_diagram_json)
     invariants = sorted(c.name for c in dm.constraints)
     assert invariants == ["active", "positive"]
+    issue, = dm.conversion_issues
+    assert issue["source"]["block_index"] == 3
+    assert issue["name"] == "missingRole"
+    assert issue["expression"] == "context Account inv missingRole: self.guests->size() > 0"
+    assert issue["original_text"] == elems["ocl-inv"]["constraint"]
+    assert "guests" in issue["reason"]
 
 
 # ---------------------------------------------------------------------------
@@ -302,6 +326,7 @@ def test_body_only_legacy_files_still_load():
         "context Account::deposit(amount: int) pre: amount > 0"
     ]
     assert dm.ocl_warnings == []
+    assert dm.conversion_issues == []
 
 
 def test_body_only_legacy_orphan_method_skipped_with_warning():
@@ -334,6 +359,26 @@ def test_body_only_legacy_orphan_method_skipped_with_warning():
     deposit = next(m for m in account.methods if m.name == "deposit")
     assert deposit.pre == []
     assert any("missing method" in w for w in dm.ocl_warnings)
+    issue, = dm.conversion_issues
+    assert issue["code"] == "unknown_method"
+    assert issue["context"] == "Account"
+    assert issue["expression"] == "amount > 0"
+    assert issue["name"] == "amt_pos"
+
+
+@pytest.mark.parametrize("kind,code", [("invariant", "detached"), (None, "unsupported_shape")])
+def test_unusable_body_only_rule_is_preserved_not_executed(account_diagram_json, kind, code):
+    element = account_diagram_json["model"]["elements"]["ocl-inv"]
+    element["constraint"] = "self.balance >= 0"
+    if kind:
+        element["kind"] = kind
+    del account_diagram_json["model"]["relationships"]["r-inv"]
+    dm = process_class_diagram(account_diagram_json)
+    assert not dm.constraints
+    issue, = dm.conversion_issues
+    assert issue["code"] == code
+    assert issue["expression"] == "self.balance >= 0"
+    assert issue["source"]["element_id"] == "ocl-inv"
 
 
 # ---------------------------------------------------------------------------
@@ -486,3 +531,8 @@ def test_duplicate_constraint_name_across_boxes_does_not_crash():
     assert dups[0].expression == "context Account inv dup: self.balance > 0"
     # And we surfaced the collision in ocl_warnings instead of crashing.
     assert any("duplicate constraint name" in w for w in dm.ocl_warnings)
+    issue, = dm.conversion_issues
+    assert issue["code"] == "duplicate_name"
+    assert issue["name"] == "dup"
+    assert issue["source"]["element_id"] == "ocl-2"
+    assert issue["expression"] == "context Account inv dup: self.balance >= 0"

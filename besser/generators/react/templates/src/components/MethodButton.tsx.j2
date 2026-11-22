@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import axios from "axios";
 import { useTableContext } from "../contexts/TableContext";
+import { notifyDataChanged } from "./runtime/dataVersion";
 
 export interface MethodParameter {
   name: string;
@@ -25,6 +26,11 @@ export interface MethodButtonProps {
   methodName?: string;
   
   // Common props
+  // The page builder emits id="..." on every component it renders
+  // (_build_component_props in page_builder.py). Without it declared here
+  // React's excess-property check rejects the generated page with TS2322 on
+  // every entity screen.
+  id?: string;
   label?: string;
   parameters?: MethodParameter[];
   isClassMethod?: boolean;
@@ -73,6 +79,7 @@ export const MethodButton: React.FC<MethodButtonProps> = ({
   entityType,
   entityId,
   methodName,
+  id,
   label,
   parameters = [],
   isClassMethod = false,
@@ -87,6 +94,10 @@ export const MethodButton: React.FC<MethodButtonProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [showSuccessToast, setShowSuccessToast] = useState(false);
+  // A method that guards itself - refusing a second bill, a departure before
+  // arrival - reports that by returning false. It ran, but it did not act, and
+  // saying "completed successfully" would tell the user the opposite.
+  const [declined, setDeclined] = useState(false);
   const [showErrorToast, setShowErrorToast] = useState(false);
   const [showResultModal, setShowResultModal] = useState(false);
   const [resultMessage, setResultMessage] = useState("");
@@ -275,16 +286,15 @@ export const MethodButton: React.FC<MethodButtonProps> = ({
       console.log(`[MethodButton] Method executed successfully:`, response.data);
       setResult(response.data);
       const formattedResult = formatMethodResult(response.data);
+      const wasDeclined = /^false$/i.test(String(formattedResult).trim());
+      setDeclined(wasDeclined);
       if (formattedResult) {
         setResultMessage(formattedResult);
         setShowResultModal(true);
       }
       
-      // Refresh the source table if this is an instance method
-      if (isInstanceMethod && instanceSourceTableId) {
-        console.log(`[MethodButton] Refreshing table: ${instanceSourceTableId}`);
-        tableContext.refreshTable(instanceSourceTableId);
-      }
+      // The method may have changed records: reload what the page shows
+      notifyDataChanged();
       
       if (onSuccess) {
         onSuccess(response.data);
@@ -295,17 +305,23 @@ export const MethodButton: React.FC<MethodButtonProps> = ({
         setShowModal(false);
       }
       
-      // Show brief success confirmation
-      setShowSuccessToast(true);
-      setTimeout(() => setShowSuccessToast(false), 3000);
+      // Show brief success confirmation, unless the method declined to act
+      if (!wasDeclined) {
+        setShowSuccessToast(true);
+        setTimeout(() => setShowSuccessToast(false), 3000);
+      }
     } catch (err: any) {
       console.error(`[MethodButton] Error executing method:`, err);
       
       // Handle different error response formats
       let errorMessage = "Error executing method";
       const statusCode = err.response?.status;
+      // 501: the method is modeled without an implementation; the backend's detail addresses developers
+      const notImplemented = statusCode === 501;
       
-      if (err.response?.data) {
+      if (notImplemented) {
+        errorMessage = "This action is not available yet.";
+      } else if (err.response?.data) {
         const data = err.response.data;
         
         // Try to extract error message from various formats
@@ -347,7 +363,7 @@ export const MethodButton: React.FC<MethodButtonProps> = ({
       }
       
       // Add status code prefix for server errors if not already included
-      if (statusCode && statusCode >= 500 && !errorMessage.includes(String(statusCode))) {
+      if (!notImplemented && statusCode && statusCode >= 500 && !errorMessage.includes(String(statusCode))) {
         errorMessage = `Server Error (${statusCode}): ${errorMessage}`;
       }
       
@@ -608,6 +624,7 @@ export const MethodButton: React.FC<MethodButtonProps> = ({
   return (
     <>
       <button
+        id={id}
         onClick={handleClick}
         disabled={loading}
         className={className}
@@ -671,7 +688,7 @@ export const MethodButton: React.FC<MethodButtonProps> = ({
 
       {/* Result popup */}
       {showResultModal && (
-        <div style={{
+        <div className="bsr-runtime" style={{
           position: "fixed",
           top: 0,
           left: 0,
@@ -698,8 +715,21 @@ export const MethodButton: React.FC<MethodButtonProps> = ({
               color: "#1e293b",
               fontSize: "18px",
             }}>
-              Method Result
+              {declined ? "Not applied" : "Method Result"}
             </h4>
+            {/* The backend states WHY it refused -- {"result": false, "message":
+                "Booking already has a Bill"} -- and this panel used to discard it
+                for a sentence that fits every refusal equally badly. A receptionist
+                refused a check-out could not tell whether the guest had not arrived,
+                the booking was cancelled, or the system was broken. Note the error
+                path below already surfaces data.message, so a 500 explained itself
+                while a correct business refusal did not. */}
+            {declined && (
+              <p style={{ margin: "0 0 12px", color: "#92400e", fontSize: "14px" }}>
+                {(result && (result.message || result.detail || result.error))
+                  || `${label || methodName} did not apply: the conditions it checks were not met, so nothing changed.`}
+              </p>
+            )}
             <pre style={{
               margin: 0,
               padding: "12px",
@@ -738,7 +768,7 @@ export const MethodButton: React.FC<MethodButtonProps> = ({
 
       {/* Parameter input modal */}
       {showModal && (
-        <div style={{
+        <div className="bsr-runtime" style={{
           position: "fixed",
           top: 0,
           left: 0,

@@ -1,15 +1,25 @@
+import logging
 import os
-from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.deployment import DeploymentModel, IPRangeType, ServiceType, Protocol
 from besser.generators import GeneratorInterface
+from besser.utilities.generation_trace import trace_source, traced_environment
+from besser.utilities.template_escaping import register_escaping_filters
+
+logger = logging.getLogger(__name__)
 
 class TerraformGenerator(GeneratorInterface):
     """
     TerraformGenerator is a class that implements the GeneratorInterface and is responsible for generating
     the Terraform models code based on the input B-UML model.
+
     Args:
-        deployement_model (DeployementModel): The deployment model containing multiple public clusters.
+        deployment_model (DeploymentModel): The deployment model containing multiple public clusters.
         output_dir (str, optional): The output directory where the generated code will be saved. Defaults to None.
+
+    Attributes:
+        traced_files (dict[str, FileTrace]): After ``generate()``, each file written (``<provider>_<cluster>/<file>``)
+            with its cluster as source, and the lines rendered from each deployment, container, service, ingress,
+            network and subnetwork that has an ``id``.
     """
 
     def __init__(self, deployment_model: DeploymentModel, output_dir: str = None):
@@ -23,10 +33,11 @@ class TerraformGenerator(GeneratorInterface):
         Sets up the Jinja2 environment and adds custom filters.
         """
         templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
-        env = Environment(loader=FileSystemLoader(templates_path), trim_blocks=True, lstrip_blocks=True)
+        env = traced_environment(templates_path, trim_blocks=True, lstrip_blocks=True)
         env.filters['class_name'] = self.get_class_name
         env.filters['to_str'] = self.convert_type
         env.filters['set_dict_item'] = self.set_dict_item
+        register_escaping_filters(env)
         return env
 
     @staticmethod
@@ -46,8 +57,10 @@ class TerraformGenerator(GeneratorInterface):
         """
         Converts the input value to its underlying value if it is an instance of an enum class,
         otherwise converts it to a string.
+
         Args:
             value: The value to convert, which can be of any type including enum instances.
+
         Returns:
             The underlying value if an enum instance, or the string representation of the value.
         """
@@ -71,15 +84,16 @@ class TerraformGenerator(GeneratorInterface):
                 # Read the configuration file .conf line by line
                 with open(public_cluster.config_file, 'r') as file:
                     config_lines = file.readlines()
-            except IOError as e:
-                print(f"Error reading configuration file {public_cluster.config_file}: {e}")
+            except OSError as e:
+                logger.error("Error reading configuration file %s: %s", public_cluster.config_file, e)
                 continue
 
             # Dictionary mapping template file names to output file names
             template_to_file_map = self.get_template_to_file_map(public_cluster.provider.value)
 
             if not template_to_file_map:
-                print(f"Unsupported provider: {public_cluster.provider.value}")
+                logger.warning("Unsupported provider '%s' for cluster '%s'; skipping it.",
+                               public_cluster.provider.value, public_cluster.name)
                 continue
 
             # Create a directory path with the provider and cluster name
@@ -91,17 +105,19 @@ class TerraformGenerator(GeneratorInterface):
                 file_path = os.path.join(cluster_dir, output_file_name)
                 try:
                     template = self.env.get_template(template_name)
-                except Exception as e:
-                    print(f"Error loading template {template_name}: {e}")
-                    continue
+                except Exception:
+                    logger.exception("Error loading template %s", template_name)
+                    raise
 
+                rendered = template.render(public_cluster=public_cluster, config_lines=config_lines)
                 try:
-                    with open(file_path, mode="w") as f:
-                        generated_code = template.render(public_cluster=public_cluster, config_lines=config_lines)
-                        f.write(generated_code)
-                        print(f"Code generated in the location: {file_path}")
-                except IOError as e:
-                    print(f"Error writing to file {file_path}: {e}")
+                    self._write_traced(os.path.relpath(file_path, output_base_dir), rendered,
+                                       trace_source(public_cluster, f"{template_name}#cluster"),
+                                       output_dir=output_base_dir)
+                except OSError:
+                    logger.exception("Error writing to file %s", file_path)
+                    raise
+                logger.info("Code generated in the location: %s", file_path)
 
     @staticmethod
     def get_template_to_file_map(provider):

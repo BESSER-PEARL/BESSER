@@ -3,35 +3,8 @@ Generator configuration and metadata for the BESSER backend.
 """
 
 from typing import Dict, Any, NamedTuple, Optional
-from besser.generators.django import DjangoGenerator
-from besser.generators.python_classes import PythonGenerator
-from besser.generators.java_classes import JavaGenerator
-from besser.generators.pydantic_classes import PydanticGenerator
-from besser.generators.sql_alchemy import SQLAlchemyGenerator
-from besser.generators.sql import SQLGenerator
-from besser.generators.supabase import SupabaseGenerator
-from besser.generators.backend import BackendGenerator
-from besser.generators.json import JSONSchemaGenerator, JSONObjectGenerator
-from besser.generators.agents.baf_generator import BAFGenerator
-from besser.generators.web_app import WebAppGenerator
-from besser.generators.qiskit import QiskitGenerator
-from besser.generators.rdf import RDFGenerator
-from besser.generators.rest_api import RESTAPIGenerator
-from besser.generators.react import ReactGenerator
-from besser.generators.flutter import FlutterGenerator
-from besser.generators.terraform import TerraformGenerator
-from besser.generators.testgen import TestCaseGenerator
-from besser.generators.bpmn import BPMNGenerator
-from besser.utilities.web_modeling_editor.backend.constants.constants import BPMN_DIAGRAM_TYPE
-try:
-    from besser.generators.nn.pytorch.pytorch_code_generator import PytorchGenerator
-except ImportError:
-    PytorchGenerator = None
 
-try:
-    from besser.generators.nn.tf.tf_code_generator import TFGenerator
-except ImportError:
-    TFGenerator = None
+from besser.generators.registry import GENERATORS
 
 
 class GeneratorInfo(NamedTuple):
@@ -47,201 +20,38 @@ class GeneratorInfo(NamedTuple):
     # project endpoint to dispatch to the right diagram without branching
     # on generator-name string literals.
     required_diagram_type: Optional[str] = None
+    # Name of the downloaded file (``Content-Disposition``). ``None`` falls
+    # back to ``<generator_type>_output<file_extension>``; see
+    # ``get_filename_for_generator``.
+    download_filename: Optional[str] = None
+    # Single-file generators only: ship the file under the name the generator
+    # chose instead of ``download_filename`` (e.g. Supabase's migration-style
+    # ``<timestamp>_<slug>.sql``, whose name is meaningful).
+    keep_generated_filename: bool = False
+    # What the generator needs besides one diagram, so ``/generate-output``
+    # refuses it (``GeneratorSpec.needs_beyond_one_diagram``).
+    needs_beyond_one_diagram: Optional[str] = None
 
 
-# Generator configuration mapping
-SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
-    # Object-oriented generators (class diagram based)
-    "python": GeneratorInfo(
-        generator_class=PythonGenerator,
-        output_type="file",
-        file_extension=".py",
-        category="object_oriented",
-        requires_class_diagram=True
-    ),
-    "java": GeneratorInfo(
-        generator_class=JavaGenerator,
-        output_type="zip",
-        file_extension=".zip",
-        category="object_oriented",
-        requires_class_diagram=True
-    ),
-    "pydantic": GeneratorInfo(
-        generator_class=PydanticGenerator,
-        output_type="file",
-        file_extension=".py",
-        category="object_oriented",
-        requires_class_diagram=True
-    ),
+def _supported_generators() -> Dict[str, GeneratorInfo]:
+    """The web editor's generators, from ``besser.generators.registry``."""
+    supported: Dict[str, GeneratorInfo] = {}
+    for spec in GENERATORS:
+        supported[spec.id] = GeneratorInfo(
+            generator_class=spec.load_class(),
+            output_type=spec.output_type,
+            file_extension=spec.file_extension,
+            category=spec.category,
+            requires_class_diagram=spec.requires_class_diagram,
+            required_diagram_type=spec.required_diagram_type,
+            download_filename=spec.download_filename,
+            keep_generated_filename=spec.keep_generated_filename,
+            needs_beyond_one_diagram=spec.needs_beyond_one_diagram,
+        )
+    return supported
 
-    "test_case": GeneratorInfo(
-        generator_class=TestCaseGenerator,
-        output_type="file",
-        file_extension=".py",
-        category="object_oriented",
-        requires_class_diagram=True
-    ),
 
-    # Web framework generators (class diagram based)
-    "django": GeneratorInfo(
-        generator_class=DjangoGenerator,
-        output_type="zip",
-        file_extension=".zip",
-        category="web_framework",
-        requires_class_diagram=True
-    ),
-    "backend": GeneratorInfo(
-        generator_class=BackendGenerator,
-        output_type="zip",
-        file_extension=".zip",
-        category="web_framework",
-        requires_class_diagram=True
-    ),
-    "web_app": GeneratorInfo(
-        generator_class=WebAppGenerator,
-        output_type="zip",
-        file_extension=".zip",
-        category="web_framework",
-        requires_class_diagram=True
-    ),
-
-    # Database generators (class diagram based)
-    "sqlalchemy": GeneratorInfo(
-        generator_class=SQLAlchemyGenerator,
-        output_type="file",
-        file_extension=".py",
-        category="database",
-        requires_class_diagram=True
-    ),
-    "sql": GeneratorInfo(
-        generator_class=SQLGenerator,
-        output_type="file",
-        file_extension=".sql",
-        category="database",
-        requires_class_diagram=True
-    ),
-    "supabase": GeneratorInfo(
-        generator_class=SupabaseGenerator,
-        output_type="file",
-        file_extension=".sql",
-        category="database",
-        requires_class_diagram=True
-    ),
-
-    # Data format generators (class diagram based)
-    # Note: "Smart Data Models" in the frontend uses this same generator with mode="smart_data".
-    # There is no separate "smartdata" generator entry; the mode is passed via config.
-    "jsonschema": GeneratorInfo(
-        generator_class=JSONSchemaGenerator,
-        output_type="file",  # file for regular mode, zip for smart_data mode
-        file_extension=".json",
-        category="data_format",
-        requires_class_diagram=True
-    ),
-    "jsonobject": GeneratorInfo(
-        generator_class=JSONObjectGenerator,
-        output_type="file",
-        file_extension=".json",
-        category="object_model",
-        requires_class_diagram=False
-    ),
-
-    # AI/Agent generators (agent diagram based)
-    "agent": GeneratorInfo(
-        generator_class=BAFGenerator,
-        output_type="zip",
-        file_extension=".zip",
-        category="ai_agent",
-        requires_class_diagram=False
-    ),
-
-    # Quantum generators
-    "qiskit": GeneratorInfo(
-        generator_class=QiskitGenerator,
-        output_type="file",
-        file_extension=".py",
-        category="quantum",
-        requires_class_diagram=False,
-        required_diagram_type="QuantumCircuitDiagram",
-    ),
-
-    # RDF generator (class diagram based)
-    "rdf": GeneratorInfo(
-        generator_class=RDFGenerator,
-        output_type="file",
-        file_extension=".ttl",
-        category="data_format",
-        requires_class_diagram=True
-    ),
-
-    # REST API generator (class diagram based)
-    "rest_api": GeneratorInfo(
-        generator_class=RESTAPIGenerator,
-        output_type="zip",
-        file_extension=".zip",
-        category="web_framework",
-        requires_class_diagram=True
-    ),
-
-    # React generator (requires class diagram + GUI model)
-    "react": GeneratorInfo(
-        generator_class=ReactGenerator,
-        output_type="zip",
-        file_extension=".zip",
-        category="frontend",
-        requires_class_diagram=True
-    ),
-
-    # Flutter generator (requires class diagram + GUI model)
-    "flutter": GeneratorInfo(
-        generator_class=FlutterGenerator,
-        output_type="zip",
-        file_extension=".zip",
-        category="frontend",
-        requires_class_diagram=True
-    ),
-
-    # Terraform generator (deployment model based)
-    "terraform": GeneratorInfo(
-        generator_class=TerraformGenerator,
-        output_type="zip",
-        file_extension=".zip",
-        category="deployment",
-        requires_class_diagram=False
-    ),
-
-    # BPMN generator (vendor-neutral BPMN 2.0 XML; reads BPMNDiagram)
-    "bpmn": GeneratorInfo(
-        generator_class=BPMNGenerator,
-        output_type="file",
-        file_extension=".bpmn",
-        category="business_process",
-        requires_class_diagram=False,
-        required_diagram_type=BPMN_DIAGRAM_TYPE,
-    ),
-}
-
-# Neural network generators are conditionally registered since they
-# require optional dependencies (torch, tensorflow) that may not be installed.
-if PytorchGenerator is not None:
-    SUPPORTED_GENERATORS["pytorch"] = GeneratorInfo(
-        generator_class=PytorchGenerator,
-        output_type="file",
-        file_extension=".py",
-        category="neural_network",
-        requires_class_diagram=False,
-        required_diagram_type="NNDiagram",
-    )
-
-if TFGenerator is not None:
-    SUPPORTED_GENERATORS["tensorflow"] = GeneratorInfo(
-        generator_class=TFGenerator,
-        output_type="file",
-        file_extension=".py",
-        category="neural_network",
-        requires_class_diagram=False,
-        required_diagram_type="NNDiagram",
-    )
+SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = _supported_generators()
 
 
 # Filename prefix for NN generator output. The NN generator strips the
@@ -269,44 +79,16 @@ def get_generator_info(generator_type: str) -> GeneratorInfo | None:
 
 
 def get_filename_for_generator(generator_type: str, base_name: str = "output") -> str:
-    """Get the appropriate filename for a generator."""
+    """Return the download filename for a generator.
+
+    Uses ``GeneratorInfo.download_filename`` when set, otherwise
+    ``<generator_type>_output<file_extension>``; an unknown generator gets
+    ``<base_name>.txt``.
+    """
     info = get_generator_info(generator_type)
     if not info:
         return f"{base_name}.txt"
-    if generator_type == "python":
-        return "classes.py"
-    elif generator_type == "test_case":
-        return "test_hypothesis.py"
-    elif generator_type == "pydantic":
-        return "pydantic_classes.py"
-    elif generator_type == "sqlalchemy":
-        return "sql_alchemy.py"
-    elif generator_type == "sql":
-        return "tables.sql"
-    elif generator_type == "jsonschema":
-        return "json_schema.json"
-    elif generator_type == "jsonobject":
-        return "object_model.json"
-    elif generator_type == "qiskit":
-        return "qiskit_circuit.py"
-    elif generator_type == "rdf":
-        return "vocabulary.ttl"
-    elif generator_type == "rest_api":
-        return "rest_api.zip"
-    elif generator_type == "react":
-        return "react_app.zip"
-    elif generator_type == "flutter":
-        return "flutter_app.zip"
-    elif generator_type == "terraform":
-        return "terraform.zip"
-    elif generator_type == "pytorch":
-        return "pytorch_nn.py"
-    elif generator_type == "tensorflow":
-        return "tf_nn.py"
-    elif generator_type == "bpmn":
-        return "bpmn_diagram.bpmn"
-    else:
-        return f"{generator_type}_output{info.file_extension}"
+    return info.download_filename or f"{generator_type}_output{info.file_extension}"
 
 
 def is_generator_supported(generator_type: str) -> bool:

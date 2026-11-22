@@ -32,6 +32,7 @@ provider "kubernetes" {
 
 {% set default_dep = 1 %}
 {% for dep in public_cluster.deployments%}
+{% trace dep, "deployment" %}
 resource "kubernetes_deployment_v1" "default-{{default_net}}" {
   {% set default_dep = default_dep + 1 %}
   metadata {
@@ -59,6 +60,7 @@ resource "kubernetes_deployment_v1" "default-{{default_net}}" {
 
       spec {
         {%for container in dep.containers%}
+        {% trace container, "container" %}
         container {
           image = "{{container.application.image_repo}}"
           name  = "{{container.name}}"
@@ -74,16 +76,19 @@ resource "kubernetes_deployment_v1" "default-{{default_net}}" {
             }
           }
         }
+        {% endtrace %}
         {%endfor%}
       }
     }
   }
 depends_on = [google_project_service.compute]
 }
+{% endtrace %}
 {%endfor%}
 
 {% set default_service = 1 %}
 {% for service in public_cluster.services%}
+{% trace service, "service" %}
 resource "kubernetes_service_v1" "default-{{default_service}}" {
   {% set default_service = default_service + 1 %}
   metadata {
@@ -104,6 +109,7 @@ resource "kubernetes_service_v1" "default-{{default_service}}" {
 
   depends_on = [time_sleep.wait_service_cleanup]
 }
+{% endtrace %}
 {%endfor%}
 
 

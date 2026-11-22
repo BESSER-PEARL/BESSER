@@ -1,8 +1,7 @@
 """Utilities for rendering a UserDiagram into a normalized user-profile JSON document.
 
-These helpers were previously colocated in ``generation_router.py`` but are
-needed from both the router and ``services/deployment/github_deploy_api.py``.
-Keeping them here avoids the circular import between router and deployment.
+Used by the generation service (``services/generation``) and the GitHub
+deploy endpoints (``routers/github_deploy_api.py``).
 
 This module is service-layer code: it raises BESSER's custom exceptions
 (``ValidationError``, ``GenerationError``) rather than ``HTTPException`` so
@@ -22,6 +21,9 @@ from collections import defaultdict
 from copy import deepcopy
 from typing import Any, Dict, List, Optional, Set
 
+from besser.utilities.web_modeling_editor.backend.constants.constants import (
+    USER_PROFILE_TEMP_DIR_PREFIX,
+)
 from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
     domain_model as user_reference_domain_model,
 )
@@ -170,17 +172,11 @@ def safe_path(base_dir: str, user_filename: str) -> str:
     safe_name = os.path.basename(user_filename)
     full_path = os.path.realpath(os.path.join(base_dir, safe_name))
     real_base = os.path.realpath(base_dir)
-    try:
-        if os.path.commonpath([full_path, real_base]) != real_base:
-            raise ValueError("Invalid path")
-    except ValueError as exc:
-        # commonpath raises ValueError when paths are on different drives
-        # (Windows) or otherwise incomparable — treat as not contained.
-        # Re-raise the explicit traversal-rejection with its real cause; only
-        # the cross-drive fallback should swallow the original exception.
-        if "Invalid path" in str(exc):
-            raise
-        raise ValueError("Invalid path") from None
+    # A prefix check on the resolved path, the form CodeQL recognises as a
+    # path-injection guard. Another drive never matches; the base itself
+    # does not either, unless it is a filesystem root (``/``, ``C:\``).
+    if not full_path.startswith(real_base.rstrip(os.sep) + os.sep):
+        raise ValueError("Invalid path")
     return full_path
 
 
@@ -368,6 +364,32 @@ def build_user_model_hierarchies(document: Dict[str, Any]) -> List[Dict[str, Any
     return hierarchies
 
 
+_CRITERIA_COMPARATORS = ("<=", ">=", "<", ">")
+
+
+def user_criteria_comparators(diagram_payload: Dict[str, Any]) -> Dict[str, Dict[str, str]]:
+    """Map object name -> {attribute: comparator} for the UserDiagram's non-equality criteria.
+
+    The object model keeps only a criterion's value, so without this ``age > 65``
+    reaches the profile document as ``age: 65``.
+    """
+    model_data = diagram_payload.get("model") if isinstance(diagram_payload, dict) else None
+    if not isinstance(model_data, dict):
+        return {}
+    elements = model_data.get("elements") or (model_data.get("model") or {}).get("elements") or {}
+    comparators: Dict[str, Dict[str, str]] = defaultdict(dict)
+    for element in elements.values():
+        if not isinstance(element, dict) or element.get("type") != "UserModelAttribute":
+            continue
+        operator = element.get("attributeOperator")
+        name = element.get("name") or ""
+        owner = elements.get(element.get("owner")) or {}
+        if operator in _CRITERIA_COMPARATORS and operator in name and owner.get("name"):
+            comparators[owner["name"]][name.split(operator, 1)[0].strip()] = operator
+    return dict(comparators)
+
+
+
 def build_user_model_hierarchy(document: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """Backward-compatible single-root variant: the first ``User`` hierarchy."""
     hierarchies = build_user_model_hierarchies(document)
@@ -377,6 +399,7 @@ def build_user_model_hierarchy(document: Dict[str, Any]) -> Optional[Dict[str, A
 def normalize_user_model_output(
     object_model,
     temp_dir: str,
+    comparators: Optional[Dict[str, Dict[str, str]]] = None,
     profile_names: Optional[Dict[str, str]] = None,
 ) -> List[str]:
     """Rewrite the generated JSON so the flat ``objects`` list is folded into a
@@ -407,6 +430,14 @@ def normalize_user_model_output(
             document = json.load(source)
     except (OSError, json.JSONDecodeError):
         return []
+
+    for obj in document.get("objects") or []:
+        attributes = obj.get("attributes") if isinstance(obj, dict) else None
+        if not isinstance(attributes, dict):
+            continue
+        for attribute, operator in (comparators or {}).get(obj.get("id"), {}).items():
+            if attribute in attributes:
+                attributes[attribute] = f"{operator} {attributes[attribute]}"
 
     hierarchies = build_user_model_hierarchies(document)
     if not hierarchies:
@@ -495,8 +526,8 @@ def generate_user_profile_document(user_profile_model: Dict[str, Any]) -> Dict[s
         model_section.setdefault("type", "UserDiagram")
 
     try:
-        with tempfile.TemporaryDirectory(prefix=f"user_profile_{uuid.uuid4().hex}_") as temp_dir:
-            object_model = process_object_diagram(prepared_payload, user_reference_domain_model)
+        with tempfile.TemporaryDirectory(prefix=f"{USER_PROFILE_TEMP_DIR_PREFIX}{uuid.uuid4().hex}_") as temp_dir:
+            object_model = process_object_diagram(reinject_hidden_containers(prepared_payload), user_reference_domain_model)
             generator_info = get_generator_info("jsonobject")
             if not generator_info:
                 raise GenerationError("JSONObject generator is not configured")
@@ -504,7 +535,9 @@ def generate_user_profile_document(user_profile_model: Dict[str, Any]) -> Dict[s
             generator_instance = generator_class(object_model, output_dir=temp_dir)
             generator_instance.generate()
 
-            normalize_user_model_output(object_model, temp_dir)
+            normalize_user_model_output(
+                object_model, temp_dir, user_criteria_comparators(prepared_payload)
+            )
 
             file_name = sanitize_object_model_filename(getattr(object_model, "name", None))
             json_path = safe_path(temp_dir, f"{file_name}.json")

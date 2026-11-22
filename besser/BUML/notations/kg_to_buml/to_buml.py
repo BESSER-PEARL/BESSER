@@ -1,0 +1,1014 @@
+"""Lower the intermediate ``ModelPlan`` onto a BUML ``DomainModel``.
+
+The paper's rules are expressed against plain UML, which is more permissive
+than BUML's metamodel. This module is where every BUML-specific concession
+lives, so the ported rules in
+:mod:`besser.BUML.notations.kg_to_buml.owl2uml` stay faithful to the paper.
+
+The concessions, and why each is forced:
+
+* **A class reaches at most one association end of each name**, own and
+  inherited (``Class._duplicate_end_names``). Meanwhile OCL navigation
+  ``self.<p>`` resolves through the end's name, so renaming an end silently
+  breaks every invariant that mentions it. Two ends of one name are one
+  property declared twice, so they are merged rather than renamed: onto a
+  union class over the targets (:func:`_merge_fanout`), or onto one end
+  declared above every class that declared it, with each class's narrower
+  bound or target restated as OCL (:func:`_hoist_shared_ends`).
+* **Only nine primitives exist** and they cannot be extended, so materialised
+  data ranges (O01-O05) become ordinary classes carrying a ``value``
+  attribute. ``Property.owner`` outright rejects a ``DataType`` owner, so this
+  is a hard constraint, not a preference.
+* **``Multiplicity.max`` rejects ``<= 0``**, so an ``owl:maxCardinality 0`` is
+  clamped.
+* **Inheritance must be acyclic**: ``DomainModel.validate()`` reports a cycle
+  as an error, and the ``Generalization`` that would close one cannot be
+  constructed. Cycles are broken here.
+* **The editor drops any OCL constraint** whose expression does not start with
+  ``context <TypeName>`` and have at least four whitespace-separated tokens
+  (``ocl_parser.py``), so that shape is mandatory rather than stylistic.
+
+Generalizations are built before associations because merging ends needs the
+finished hierarchy: whether two declarations clash depends on which classes
+inherit from both. BUML checks the end-name rule the same way whichever comes
+first, so a consumer that reloads the model in the other order (the JSON
+processor, the generated code) accepts it too.
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field, replace
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
+
+from besser.BUML.metamodel.structural import (
+    UNLIMITED_MAX_MULTIPLICITY,
+    BinaryAssociation,
+    Class,
+    Constraint,
+    DomainModel,
+    Enumeration,
+    EnumerationLiteral,
+    Generalization,
+    Metadata,
+    Multiplicity,
+    Property,
+    StringType,
+)
+
+from besser.BUML.notations.kg_to_buml._common import (
+    KGConversionWarning,
+    _unique_name,
+    add_warning,
+    find_back_edges,
+)
+from besser.BUML.notations.kg_to_buml.datatype_mapping import PRIMITIVE_BY_NAME
+from besser.BUML.notations.kg_to_buml.owl2uml import naming
+from besser.BUML.notations.ocl.api import parse_ocl
+from besser.BUML.notations.kg_to_buml.owl2uml.plan import (
+    ModelPlan,
+    PlannedAssociation,
+    PlannedClass,
+    PlannedInvariant,
+)
+
+__all__ = ["build_domain_model", "ClassConversionResult"]
+
+
+_TYPE_CHECK_RE = re.compile(r"ocl(?:IsKindOf|IsTypeOf|AsType)\(\s*([A-Za-z_]\w*)\s*\)")
+
+
+@dataclass
+class ClassConversionResult:
+    """Output of :func:`~besser.BUML.notations.kg_to_buml.kg_to_class_diagram`.
+
+    Defined here, beside the code that fills it in, because the lowering
+    populates its maps while it builds the model; ``kg_to_class_diagram``
+    re-exports it as the public name.
+    """
+
+    domain_model: DomainModel
+    iri_to_class: Dict[str, Class] = field(default_factory=dict)
+    property_iri_to_attribute: Dict[str, Property] = field(default_factory=dict)
+    property_iri_to_association: Dict[str, BinaryAssociation] = field(default_factory=dict)
+    # For each derived BinaryAssociation, the Property end that represents the
+    # *source* (KG triple subject) side. Important for self-referential
+    # associations where both ends share the same type and would otherwise be
+    # indistinguishable.
+    assoc_source_end: Dict[int, Property] = field(default_factory=dict)
+    warnings: List[KGConversionWarning] = field(default_factory=list)
+    # Classifications BUML has nowhere to store — class name → ["aux"],
+    # ["external"], ["deprecated"], ["dataType"]. See ``_report_stereotypes``.
+    class_stereotypes: Dict[str, List[str]] = field(default_factory=dict)
+
+
+def build_domain_model(
+    model: ModelPlan,
+    *,
+    model_name: str,
+    emit_ocl: bool = True,
+    warnings: Optional[List[KGConversionWarning]] = None,
+) -> ClassConversionResult:
+    """Build a ``DomainModel`` (plus OCL constraints) from ``model``."""
+    # The result is filled in as the model is built (the passes record the IRI
+    # maps and stereotypes on it), so it exists before the DomainModel does.
+    out = ClassConversionResult(
+        domain_model=None,   # type: ignore[arg-type]  # assigned below, once assembled
+        warnings=warnings if warnings is not None else [],
+    )
+
+    renames = _plan_renames(model, out.warnings)
+    generalizations = _break_cycles(model, renames, out.warnings)
+
+    classes = _build_classes(model, renames, out)
+    enumerations = _build_enumerations(model, renames, out.warnings)
+    # Generalizations before attributes: which attributes a class already
+    # inherits is read off the metamodel, which knows its ancestors only once
+    # they exist. They still come before associations (see the module docstring).
+    buml_generalizations = _build_generalizations(generalizations, classes)
+    _build_attributes(model, renames, classes, enumerations, out)
+    associations, restated = _build_associations(model, renames, classes, buml_generalizations, out)
+
+    domain_model = DomainModel(
+        name=_safe_model_name(model_name),
+        types=set(classes.values()) | set(enumerations.values()),
+        associations=set(associations),
+        generalizations=set(buml_generalizations),
+    )
+    out.domain_model = domain_model
+
+    if emit_ocl:
+        _build_constraints(model, renames, classes, domain_model, out, restated)
+    return out
+
+
+# ----------------------------------------------------------------------
+# Naming
+# ----------------------------------------------------------------------
+
+
+def _safe_model_name(raw: str) -> str:
+    name = naming.sanitize((raw or "KGClassDiagram").strip())
+    return name or "KGClassDiagram"
+
+
+def _plan_renames(model: ModelPlan, warnings) -> Dict[str, str]:
+    """Map UML type name → BUML-safe type name.
+
+    ``naming.sanitize`` already satisfies ``NamedElement.name`` (no spaces, no
+    hyphens, non-empty). The one residual hazard is a class named after a BUML
+    primitive: ``DomainModel.types`` treats the presence of a primitive-named
+    type as "primitives already supplied", suppresses its own injection, and
+    then raises on the duplicate name.
+    """
+    renames: Dict[str, str] = {}
+    taken: Set[str] = set()
+    names = sorted(set(model.classes) | set(model.enumerations))
+    for name in names:
+        safe = naming.sanitize(name) or "_"
+        if safe in PRIMITIVE_BY_NAME:
+            safe = f"{safe}_"
+            add_warning(
+                warnings,
+                "NAME_SHADOWS_PRIMITIVE",
+                f"Class {name!r} collides with the BUML primitive of the same name; "
+                f"renamed to {safe!r}.",
+            )
+        renames[name] = _unique_name(safe, taken)
+    return renames
+
+
+def _resolve(name: str, renames: Dict[str, str]) -> str:
+    return renames.get(name, naming.sanitize(name) or "_")
+
+
+# ----------------------------------------------------------------------
+# Generalizations
+# ----------------------------------------------------------------------
+
+
+def _break_cycles(model: ModelPlan, renames, warnings) -> List[Tuple[str, str]]:
+    """Return ``(subclass, superclass)`` pairs with cycle-forming edges removed.
+
+    BUML forbids inheritance cycles: the ``Generalization`` that would close one
+    cannot be built, and ``DomainModel.validate()`` reports one as an error. An
+    ontology with mutually ``rdfs:subClassOf``-related classes (or an
+    ``owl:equivalentClass`` pair the canonicaliser could not merge) is enough
+    to produce one.
+    """
+    edges = sorted(
+        {(_resolve(sub, renames), _resolve(sup, renames))
+         for sub, sup in model.generalizations}
+    )
+    parents: Dict[str, List[str]] = {}
+    for sub, sup in edges:
+        parents.setdefault(sub, []).append(sup)
+
+    dropped: Set[Tuple[str, str]] = set()
+    for node, parent, _cycle in find_back_edges(parents):
+        dropped.add((node, parent))
+        add_warning(
+            warnings,
+            "CYCLIC_SUBCLASS",
+            f"Generalization {node} -> {parent} closes an inheritance cycle; dropped.",
+        )
+    return [(sub, sup) for sub, sup in edges if sub != sup and (sub, sup) not in dropped]
+
+
+def _build_generalizations(pairs, classes) -> List[Generalization]:
+    out: List[Generalization] = []
+    for sub, sup in pairs:
+        specific, general = classes.get(sub), classes.get(sup)
+        if specific is None or general is None:
+            continue
+        out.append(Generalization(general=general, specific=specific))
+    return out
+
+
+# ----------------------------------------------------------------------
+# Types
+# ----------------------------------------------------------------------
+
+
+def _build_classes(model: ModelPlan, renames, out: ClassConversionResult) -> Dict[str, Class]:
+    """Create one ``Class`` per UML class, plus one per materialised data range.
+
+    Materialised data ranges (``DataUnionOf`` and friends, O01-O05) are the
+    paper's ``<<dataType>>`` classes. They must be BUML ``Class`` objects, not
+    ``DataType`` objects: ``Property.owner`` raises for a ``DataType`` owner, so
+    a ``DataType`` cannot carry the ``value`` attribute the rule requires.
+    """
+    classes: Dict[str, Class] = {}
+
+    for name in sorted(model.classes):
+        uml_class = model.classes[name]
+        safe = _resolve(name, renames)
+        buml_class = Class(
+            name=safe,
+            is_abstract=uml_class.is_abstract,
+            metadata=_metadata_for(uml_class),
+        )
+        classes[safe] = buml_class
+        if uml_class.uri:
+            out.iri_to_class[uml_class.uri] = buml_class
+        stereotypes = uml_class.stereotypes()
+        if stereotypes:
+            out.class_stereotypes[safe] = stereotypes
+
+    for name in sorted(model.datatypes):
+        datatype = model.datatypes[name]
+        if datatype.is_primitive:
+            continue  # resolves to a BUML primitive singleton, not a type of its own
+        safe = _resolve(name, renames) if name in renames else naming.sanitize(name)
+        if safe in classes:
+            continue
+        description = "; ".join(datatype.facets) if datatype.facets else None
+        classes[safe] = Class(
+            name=safe,
+            metadata=Metadata(uri=datatype.uri, description=description)
+            if (datatype.uri or description)
+            else None,
+        )
+        out.class_stereotypes.setdefault(safe, []).append("dataType")
+
+    _report_stereotypes(out)
+    return classes
+
+
+def _metadata_for(uml_class: PlannedClass) -> Optional[Metadata]:
+    return Metadata(uri=uml_class.uri) if uml_class.uri else None
+
+
+def _report_stereotypes(out: ClassConversionResult) -> None:
+    """Summarise the classifications BUML has no place to store.
+
+    BUML has no stereotype concept, and ``Metadata.description`` round-trips
+    into a visible comment box in the editor — misrepresenting a classification
+    as authored prose. The classification is exposed on the result object and
+    summarised as warnings instead.
+    """
+    buckets: Dict[str, List[str]] = {}
+    for name, stereotypes in out.class_stereotypes.items():
+        for stereotype in stereotypes:
+            buckets.setdefault(stereotype, []).append(name)
+    labels = {
+        "aux": ("AUX_CLASSES_MATERIALISED", "auxiliary class(es) materialised from OWL expressions"),
+        "external": ("EXTERNAL_CLASSES_STUBBED", "class(es) referenced but never declared"),
+        "deprecated": ("DEPRECATED_CLASSES", "class(es) marked owl:deprecated"),
+        "dataType": ("DATA_RANGES_MATERIALISED", "materialised data range(s)"),
+    }
+    for stereotype, names in sorted(buckets.items()):
+        code, description = labels.get(stereotype, ("CLASS_STEREOTYPE", stereotype))
+        add_warning(
+            out.warnings,
+            code,
+            f"{len(names)} {description}: {', '.join(sorted(names)[:8])}"
+            + (" …" if len(names) > 8 else ""),
+        )
+
+
+def _build_enumerations(model: ModelPlan, renames, warnings) -> Dict[str, Enumeration]:
+    """Create one ``Enumeration`` per planned enumeration, with BUML-valid literal names.
+
+    A literal value is not necessarily a valid name (``"extra large"``), and two
+    values can sanitise to the same one (``"extra-large"``). Both are renamed --
+    BUML has nowhere to keep the original value -- and the renames are reported,
+    since an instance holding the original value no longer matches by name.
+    """
+    enumerations: Dict[str, Enumeration] = {}
+    for name in sorted(model.enumerations):
+        uml_enum = model.enumerations[name]
+        safe = _resolve(name, renames)
+        literals, taken, renamed = [], set(), []
+        for raw in uml_enum.literals:
+            # ``Mapper.literal_value`` quotes strings; a literal like "foo bar"
+            # would otherwise be rejected by ``NamedElement.name``.
+            text = str(raw).strip().strip('"')
+            literal = _unique_name(naming.sanitize(text) or "_", taken)
+            if literal != text:
+                renamed.append(f"{text!r} -> {literal}")
+            literals.append(EnumerationLiteral(name=literal))
+        if renamed:
+            add_warning(
+                warnings,
+                "ENUM_LITERAL_RENAMED",
+                f"Enumeration {safe}: {len(renamed)} literal(s) renamed to valid, unique "
+                f"BUML names: {', '.join(renamed[:8])}{' …' if len(renamed) > 8 else ''}.",
+            )
+        enumerations[safe] = Enumeration(name=safe, literals=set(literals))
+    return enumerations
+
+
+def _lower_type(type_name: str, renames, classes, enumerations, warnings=None, *, label: str = ""):
+    """Resolve a UML type name to a BUML type object.
+
+    Falls back to ``StringType`` for a name that resolves to neither a class,
+    an enumeration nor a primitive -- but says so. Silently typing an
+    unresolved range as a string produced a model that looked complete and
+    was wrong, with nothing to point at.
+    """
+    primitive = PRIMITIVE_BY_NAME.get(type_name)
+    if primitive is not None:
+        return primitive
+    safe = _resolve(type_name, renames)
+    resolved = classes.get(safe) or enumerations.get(safe)
+    if resolved is not None:
+        return resolved
+    if warnings is not None:
+        add_warning(
+            warnings,
+            "TYPE_UNRESOLVED",
+            f"{label or type_name} has type {type_name!r}, which resolves to no "
+            f"class, enumeration or primitive; defaulted to String.",
+        )
+    return StringType
+
+
+def _multiplicity(lower: int, upper, warnings, *, label: str) -> Multiplicity:
+    """Build a fresh ``Multiplicity``.
+
+    Never reuse the ``Property`` default — it is a shared module-level
+    singleton, so mutating it would affect every other property.
+    """
+    maximum = UNLIMITED_MAX_MULTIPLICITY if upper == "*" else int(upper)
+    if maximum <= 0:
+        add_warning(
+            warnings,
+            "MULTIPLICITY_CLAMPED",
+            f"{label} has an upper bound of {upper}, which BUML rejects; clamped to 1.",
+        )
+        maximum = 1
+    minimum = max(0, int(lower))
+    if minimum > maximum:
+        minimum = maximum
+    return Multiplicity(minimum, maximum)
+
+
+# ----------------------------------------------------------------------
+# Attributes
+# ----------------------------------------------------------------------
+
+
+def _build_attributes(model: ModelPlan, renames, classes, enumerations, out: ClassConversionResult) -> None:
+    """Attach every class's attributes, ancestors first.
+
+    A restriction over a data property declares the attribute on the auxiliary
+    class it materialises, above the class it constrains -- the mirror of what an
+    object restriction does with the association. The constrained class usually
+    declares the same attribute itself, from the property's own ``rdfs:domain``,
+    and then ``all_attributes()`` would hand every consumer the name twice.
+
+    The ancestor's copy is the one to keep (the auxiliary class carries the
+    tighter multiplicity and type). So classes are filled in ancestor-first
+    order and each asks the metamodel what it already inherits
+    (``Class.inherited_attributes()``). A class has strictly more ancestors than
+    any of its ancestors, so ordering by ``len(all_parents())`` is
+    ancestors-first.
+
+    Warnings are collected per class and emitted in class-name order, so they do
+    not depend on the fill order.
+    """
+    by_name: Dict[str, Tuple[Class, Any]] = {}
+    for name in sorted(model.classes):
+        uml_class = model.classes[name]
+        buml_class = classes.get(_resolve(name, renames))
+        if buml_class is not None and uml_class.attributes:
+            by_name[name] = (buml_class, uml_class)
+
+    warnings_of: Dict[str, List[KGConversionWarning]] = {}
+    for name in sorted(by_name, key=lambda n: (len(by_name[n][0].all_parents()), n)):
+        buml_class, uml_class = by_name[name]
+        warnings_of[name] = []
+        inherited = {attribute.name for attribute in buml_class.inherited_attributes()}
+        _attach_attributes(buml_class, uml_class.attributes, renames, classes, enumerations,
+                           out, inherited, warnings=warnings_of[name])
+    for name in by_name:                      # `by_name` is in sorted-name order
+        out.warnings.extend(warnings_of[name])
+
+    # Materialised data ranges carry a single `value` attribute (O01-O05).
+    for name in sorted(model.datatypes):
+        datatype = model.datatypes[name]
+        if datatype.is_primitive or not datatype.attributes:
+            continue
+        safe = _resolve(name, renames) if name in renames else naming.sanitize(name)
+        buml_class = classes.get(safe)
+        if buml_class is None:
+            continue
+        _attach_attributes(buml_class, datatype.attributes, renames, classes, enumerations, out)
+
+
+def _attach_attributes(buml_class, attributes, renames, classes, enumerations, out,
+                       inherited: Optional[Set[str]] = None, *,
+                       warnings: Optional[List[KGConversionWarning]] = None) -> None:
+    warnings = out.warnings if warnings is None else warnings
+    built: List[Property] = []
+    taken: Set[str] = set(inherited or ())
+    for attribute in attributes:
+        attr_name = naming.sanitize(attribute.name) or "_"
+        if attr_name in taken:
+            if inherited and attr_name in inherited:
+                add_warning(
+                    warnings,
+                    "ATTR_INHERITED_SHADOWED",
+                    f"{buml_class.name}.{attr_name} is already inherited from an ancestor "
+                    f"that constrains it; the redundant declaration was dropped.",
+                )
+            continue
+        taken.add(attr_name)
+        prop = Property(
+            name=attr_name,
+            type=_lower_type(
+                attribute.type, renames, classes, enumerations, warnings,
+                label=f"Attribute {buml_class.name}.{attr_name}",
+            ),
+            multiplicity=_multiplicity(
+                attribute.lower, attribute.upper, warnings,
+                label=f"Attribute {buml_class.name}.{attr_name}",
+            ),
+            metadata=Metadata(uri=attribute.uri) if attribute.uri else None,
+            is_id=attribute.is_id,
+            is_derived=attribute.is_derived,
+        )
+        built.append(prop)
+        if attribute.uri:
+            out.property_iri_to_attribute[attribute.uri] = prop
+    if built:
+        buml_class.attributes = set(built)
+
+
+# ----------------------------------------------------------------------
+# Associations
+# ----------------------------------------------------------------------
+
+
+def _build_associations(
+    model: ModelPlan, renames, classes, generalizations, out: ClassConversionResult
+) -> Tuple[List[BinaryAssociation], List[PlannedInvariant]]:
+    """Build the associations, and the invariants restating what merging them moved.
+
+    BUML lets a class reach one association end per name, own and inherited
+    (``Class._duplicate_end_names``). A forward end is never renamed to get
+    there: its name is its property's, unique per IRI (the canonicaliser sees
+    to that), and every ``self.<role>`` in the generated OCL navigates by it.
+    Two ends of one name are therefore one property declared twice, and are
+    merged: :func:`_merge_fanout` when one class declares it towards several
+    targets, :func:`_hoist_shared_ends` when several classes declare it for a
+    shared subclass.
+    """
+    resolved = _resolve_association_types(model, renames, classes)
+    resolved = _merge_fanout(resolved, classes, generalizations, out)
+    resolved, restated = _hoist_shared_ends(resolved, classes, generalizations, out)
+    return _instantiate_associations(resolved, classes, out), restated
+
+
+def _resolve_association_types(model, renames, classes) -> List[PlannedAssociation]:
+    """Resolve each association's names, returning copies the lowering may adjust.
+
+    Copies, because :func:`_merge_fanout` retargets and widens them in place and
+    the mapper's records must stay as the rules stated them.
+    """
+    planned: List[PlannedAssociation] = []
+    seen: Set[Tuple[str, str, str]] = set()
+    ordered = sorted(
+        model.associations,
+        key=lambda a: (a.source, a.role or a.name, a.target, a.uri or ""),
+    )
+    for assoc in ordered:
+        source = _resolve(assoc.source, renames)
+        target = _resolve(assoc.target, renames)
+        if source not in classes or target not in classes:
+            continue
+        role = naming.sanitize(assoc.role or assoc.name) or "target"
+        key = (source, target, role)
+        if key in seen:
+            continue
+        seen.add(key)
+        planned.append(replace(
+            assoc,
+            source=source,
+            target=target,
+            role=role,
+            source_role=naming.sanitize(assoc.source_role) if assoc.source_role else None,
+            name=naming.sanitize(assoc.name) or role,
+        ))
+    return planned
+
+
+def _merge_fanout(planned, classes, generalizations, out: ClassConversionResult):
+    """Collapse associations that would give one class two ends of the same name.
+
+    Rules D30/D31 link a union-typed ``rdfs:domain``/``rdfs:range`` directly to
+    every member class rather than through the union class, which yields several
+    associations sharing a source and a role name. BUML rejects that, and
+    renaming the ends would invalidate every ``self.<role>`` in the generated
+    OCL — so the group is reinstated as the D19 union construction: one
+    association to an abstract auxiliary class that every former target
+    specialises. ``oclIsKindOf(Ti)`` still holds, so the invariants stay true.
+    """
+    groups: Dict[Tuple[str, str], List[PlannedAssociation]] = {}
+    for assoc in planned:
+        groups.setdefault((assoc.source, assoc.role), []).append(assoc)
+
+    merged: List[PlannedAssociation] = []
+    for (source, role), group in sorted(groups.items()):
+        targets = sorted({a.target for a in group})
+        if len(targets) <= 1:
+            merged.extend(group)
+            continue
+        aux_name = _ensure_union_class(targets, classes, generalizations, out)
+        head = group[0]
+        head.target = aux_name
+        head.tgt_mult = _widest([a.tgt_mult for a in group])
+        head.src_mult = _widest([a.src_mult for a in group])
+        merged.append(head)
+        add_warning(
+            out.warnings,
+            "ASSOC_FANOUT_MERGED",
+            f"{source}.{role} pointed at {len(targets)} classes "
+            f"({', '.join(targets[:5])}{' …' if len(targets) > 5 else ''}); "
+            f"merged onto the auxiliary union class {aux_name}.",
+        )
+    return merged
+
+
+def _ensure_union_class(targets, classes, generalizations, out) -> str:
+    aux_name = naming.sanitize(naming.union_name(list(targets)))
+    if aux_name in classes:
+        return aux_name
+    aux = Class(name=aux_name, is_abstract=True)
+    classes[aux_name] = aux
+    out.class_stereotypes.setdefault(aux_name, []).append("aux")
+    for target in targets:
+        specific = classes.get(target)
+        if specific is not None:
+            generalizations.append(Generalization(general=aux, specific=specific))
+    return aux_name
+
+
+def _widest(bounds: Sequence[Tuple[int, Any]]) -> Tuple[int, Any]:
+    lower = min(b[0] for b in bounds)
+    if any(b[1] == "*" for b in bounds):
+        return lower, "*"
+    return lower, max(int(b[1]) for b in bounds)
+
+
+def _hoist_shared_ends(planned, classes, generalizations, out: ClassConversionResult):
+    """Declare each role at most once per hierarchy: the mirror image of :func:`_merge_fanout`.
+
+    The rules declare a property's end on every class that constrains it -- its
+    ``rdfs:domain`` and each auxiliary restriction class (D22-D25, O07) -- so a
+    class below two of them would inherit two ends of the same name, which BUML
+    rejects. Both ends are the one OWL property: renaming one splits it (the
+    reason :func:`_merge_fanout` does not rename either), and dropping one
+    loses the restriction it carries. Instead, for each group of declarations
+    whose hierarchies meet (:func:`_overlapping_groups`), the role is declared
+    once, on
+
+    * the member that is an ancestor of all the others, when there is one (a
+      class and a restriction class above it): its end stays as it is; or else
+    * a new abstract auxiliary parent of the members, ``_<role>_Domain``, whose
+      end takes their widest bounds and a target every member's target
+      specialises (an existing one, or the D19 union class).
+
+    Every member inherits that end, and whatever its own end said beyond it --
+    a tighter bound, a narrower target -- is restated as an invariant on the
+    member (:func:`_restate_end`), so the member's own invariants still
+    resolve and the model still says what the rules stated.
+
+    Returns the associations to build and the restated invariants.
+    """
+    by_role: Dict[str, List[PlannedAssociation]] = {}
+    for assoc in planned:
+        by_role.setdefault(assoc.role, []).append(assoc)
+
+    kept: List[PlannedAssociation] = []
+    restated: List[PlannedInvariant] = []
+    for role, declarations in sorted(by_role.items()):
+        for group in _overlapping_groups(declarations, classes):
+            if len(group) == 1:
+                kept.extend(group)
+                continue
+            head, invariants = _hoist(role, group, classes, generalizations, out)
+            kept.append(head)
+            restated.extend(invariants)
+    return kept, restated
+
+
+def _overlapping_groups(declarations, classes) -> List[List[PlannedAssociation]]:
+    """Partition one role's declarations into the groups whose source hierarchies meet.
+
+    Two declarations clash when one class is, or specialises, both sources: it
+    would inherit both ends. Clashing is made transitive, so a group is a
+    connected component. Groups are sorted by source name, inside and between.
+    """
+    parent = list(range(len(declarations)))
+
+    def find(index: int) -> int:
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]
+            index = parent[index]
+        return index
+
+    first_reached_by: Dict[str, int] = {}
+    for index, assoc in enumerate(declarations):
+        source = classes[assoc.source]
+        for cls in {source} | source.all_specializations():
+            if cls.name in first_reached_by:
+                parent[find(index)] = find(first_reached_by[cls.name])
+            else:
+                first_reached_by[cls.name] = index
+
+    groups: Dict[int, List[PlannedAssociation]] = {}
+    for index, assoc in enumerate(declarations):
+        groups.setdefault(find(index), []).append(assoc)
+    return sorted(
+        (sorted(group, key=lambda a: a.source) for group in groups.values()),
+        key=lambda group: group[0].source,
+    )
+
+
+def _hoist(role: str, group, classes, generalizations, out: ClassConversionResult):
+    """Declare ``role`` once for ``group`` (see :func:`_hoist_shared_ends`).
+
+    Returns the association to build and the invariants restating each moved end.
+    """
+    sources = {assoc.source: classes[assoc.source] for assoc in group}
+    # The property's own declaration carries its IRI (a restriction's end does
+    # not), so it names the merged association and keeps the IRI mapping.
+    declaration = next((assoc for assoc in group if assoc.uri), group[0])
+    host = next(
+        (assoc for assoc in group
+         if all(cls is sources[assoc.source] or sources[assoc.source] in cls.all_parents()
+                for cls in sources.values())),
+        None,
+    )
+
+    if host is not None:
+        head = replace(host, name=declaration.name, uri=declaration.uri)
+        moved = [assoc for assoc in group if assoc is not host]
+        for assoc in moved:
+            add_warning(
+                out.warnings,
+                "ASSOC_INHERITED_SHADOWED",
+                f"{assoc.source}.{role} is already declared by its ancestor {host.source}; "
+                f"the two ends were merged into the ancestor's, and any narrower bound or "
+                f"target of {assoc.source}'s restated as an invariant on it.",
+            )
+    else:
+        aux_name = _unique_name(naming.sanitize(naming.domain_name(role)), set(classes))
+        aux = Class(name=aux_name, is_abstract=True)
+        classes[aux_name] = aux
+        out.class_stereotypes.setdefault(aux_name, []).append("aux")
+        for cls in sources.values():
+            # Only the topmost members: the others already inherit through them.
+            if not any(other in cls.all_parents() for other in sources.values()):
+                generalizations.append(Generalization(general=aux, specific=cls))
+        head = replace(
+            declaration,
+            source=aux_name,
+            target=_common_target(sorted({a.target for a in group}), classes, generalizations, out),
+            tgt_mult=_widest([assoc.tgt_mult for assoc in group]),
+            src_mult=_widest([assoc.src_mult for assoc in group]),
+        )
+        moved = list(group)
+        names = sorted(sources)
+        add_warning(
+            out.warnings,
+            "ASSOC_END_HOISTED",
+            f"{len(names)} classes declare '{role}' and share a subclass, which BUML lets "
+            f"inherit only one '{role}' end ({', '.join(names[:5])}{' …' if len(names) > 5 else ''}); "
+            f"declared once on their auxiliary parent {aux_name}, with each class's narrower "
+            f"bound or target restated as an invariant on it.",
+        )
+
+    restated = [invariant for assoc in moved for invariant in _restate_end(assoc, head, classes)]
+    return head, restated
+
+
+def _common_target(targets: List[str], classes, generalizations, out) -> str:
+    """The class every one of ``targets`` is or specialises: one of them, else their D19 union class."""
+    tops = [
+        name for name in targets
+        if not any(classes[other] in classes[name].all_parents() for other in targets)
+    ]
+    if len(tops) == 1:
+        return tops[0]
+    return _ensure_union_class(tops, classes, generalizations, out)
+
+
+def _restate_end(assoc: PlannedAssociation, head: PlannedAssociation, classes) -> List[PlannedInvariant]:
+    """Invariants saying what ``assoc``'s own end said beyond the ``head`` end it now inherits.
+
+    The end ``source --role--> target [lower..upper]`` says that every linked
+    object is a ``target`` and that there are ``lower`` to ``upper`` of them. A
+    narrower target becomes ``self.role->forAll(o | o.oclIsKindOf(target))``
+    and a tighter bound ``self.role->size() >= lower`` / ``<= upper``, on the
+    source. A tighter reverse bound is stated from the target's side, the way
+    O22 states inverse functionality.
+    """
+    role, source, target = assoc.role, assoc.source, assoc.target
+    invariants: List[PlannedInvariant] = []
+
+    def restate(context: str, body: str, hint: str) -> None:
+        invariants.append(PlannedInvariant(context=context, body=body, name=f"{role}_{hint}",
+                                           origin_rule="lowering"))
+
+    if target != head.target and classes[target] not in classes[head.target].all_parents():
+        restate(source, f"self.{role}->forAll(o | o.oclIsKindOf({target}))", "type")
+    for operator, bound, hint in _narrower_bounds(assoc.tgt_mult, head.tgt_mult):
+        restate(source, f"self.{role}->size() {operator} {bound}", hint)
+    for operator, bound, hint in _narrower_bounds(assoc.src_mult, head.src_mult):
+        restate(target, f"{source}.allInstances()->select(c | c.{role}->includes(self))->size() "
+                        f"{operator} {bound}", f"source_{hint}")
+    return invariants
+
+
+def _narrower_bounds(bounds: Tuple[int, Any], inherited: Tuple[int, Any]) -> List[Tuple[str, Any, str]]:
+    """``(operator, bound, hint)`` for each of ``bounds`` tighter than the ``inherited`` one."""
+    (lower, upper), (inherited_lower, inherited_upper) = bounds, inherited
+    narrower = []
+    if lower > inherited_lower:
+        narrower.append((">=", lower, "min"))
+    if upper != "*" and (inherited_upper == "*" or int(upper) < int(inherited_upper)):
+        narrower.append(("<=", upper, "max"))
+    return narrower
+
+
+class _ReachableEndNames:
+    """The end names each class reaches, for choosing reverse-end names.
+
+    A class reaches the ends declared on it and on its ancestors, and an end
+    declared on ``cls`` is reached by ``cls`` and all its descendants -- so it
+    must avoid every name any of those reaches, through any of their parents.
+    Every forward role is recorded up front, so a reverse end never takes a
+    name an association built after it needs.
+    """
+
+    def __init__(self, planned: List[PlannedAssociation]) -> None:
+        self._declared: Dict[str, Set[str]] = {}
+        for assoc in planned:
+            self._declared.setdefault(assoc.source, set()).add(assoc.role)
+
+    def claim(self, cls: Class, candidate: str, *, besides: str) -> str:
+        """Return ``candidate`` or the first free ``candidate_<n>`` for a new end on ``cls``, and record it.
+
+        ``besides`` is the other end of the same association, whose name it must
+        also differ from.
+        """
+        taken = {besides}
+        for below in {cls} | cls.all_specializations():
+            for declaring in {below} | below.all_parents():
+                taken |= self._declared.get(declaring.name, set())
+        name = _unique_name(candidate, taken)
+        self._declared.setdefault(cls.name, set()).add(name)
+        return name
+
+
+def _instantiate_associations(planned, classes, out: ClassConversionResult) -> List[BinaryAssociation]:
+    """Build one ``BinaryAssociation`` per planned association.
+
+    The forward end names are settled by now (:func:`_merge_fanout`,
+    :func:`_hoist_shared_ends`), and BUML's construction check enforces the
+    end-name rule in whichever order things are built. The one name chosen
+    here is the reverse end's, which the paper's model leaves anonymous.
+    """
+    associations: List[BinaryAssociation] = []
+    used_names: Set[str] = set()
+    reachable = _ReachableEndNames(planned)
+
+    for assoc in sorted(planned, key=lambda a: (a.source, a.role, a.target)):
+        source_class, target_class = classes[assoc.source], classes[assoc.target]
+        target_role = assoc.role
+        if target_role in {attribute.name for attribute in source_class.attributes}:
+            add_warning(
+                out.warnings,
+                "NAME_SHADOWS_ATTRIBUTE",
+                f"{assoc.source}.{target_role} names both an attribute and an "
+                f"association end; kept as-is (the ambiguity is in the source ontology).",
+            )
+
+        # The reverse end can always be renamed; the forward one cannot without
+        # invalidating the generated OCL.
+        source_role = reachable.claim(
+            target_class, assoc.source_role or _default_source_role(assoc), besides=target_role
+        )
+
+        source_end = Property(
+            name=source_role,
+            type=source_class,
+            multiplicity=_multiplicity(
+                *assoc.src_mult, out.warnings, label=f"Association end {assoc.source}.{source_role}"
+            ),
+            is_navigable=assoc.navigable_source,
+        )
+        target_end = Property(
+            name=target_role,
+            type=target_class,
+            multiplicity=_multiplicity(
+                *assoc.tgt_mult, out.warnings, label=f"Association end {assoc.target}.{target_role}"
+            ),
+            is_derived=assoc.derived,
+        )
+        name = _unique_association_name(assoc, used_names)
+        try:
+            association = BinaryAssociation(name=name, ends={source_end, target_end})
+        except (ValueError, TypeError) as exc:
+            add_warning(
+                out.warnings,
+                "ASSOC_DROPPED",
+                f"Could not build association {name!r} "
+                f"({assoc.source} -> {assoc.target}): {exc}",
+            )
+            continue
+        associations.append(association)
+        out.assoc_source_end[id(association)] = source_end
+        if assoc.uri:
+            out.property_iri_to_association[assoc.uri] = association
+    return associations
+
+
+def _default_source_role(assoc: PlannedAssociation) -> str:
+    """Name for the reverse end, which the paper's model leaves anonymous.
+
+    Always safe to choose freely: generated OCL only navigates a source role
+    when the reference marked it navigable, which happens exactly when the
+    source ontology named it via ``owl:inverseOf``.
+    """
+    base = assoc.source[:1].lower() + assoc.source[1:] if assoc.source else "source"
+    if assoc.source == assoc.target:
+        # Self-association: BUML keeps both ends only when their names differ.
+        base = f"source_{base}"
+    return naming.sanitize(base) or "source"
+
+
+def _unique_association_name(assoc: PlannedAssociation, used: Set[str]) -> str:
+    """The association's own name, else qualified by its source class, else numbered."""
+    if assoc.name not in used:
+        used.add(assoc.name)
+        return assoc.name
+    return _unique_name(f"{assoc.name}_{assoc.source}", used)
+
+
+# ----------------------------------------------------------------------
+# OCL constraints
+# ----------------------------------------------------------------------
+
+
+def _build_constraints(model: ModelPlan, renames, classes, domain_model, out: ClassConversionResult,
+                       restated: Sequence[PlannedInvariant] = ()) -> None:
+    """Attach the invariants, re-validated against the finished model.
+
+    The mapper already guards emission with ``_has_property``, but that only
+    asks whether the property exists *somewhere* — and it runs before the end
+    renames above. The question that decides whether an invariant is worth
+    anything is narrower: can its context class navigate every feature the body
+    mentions? An OCL evaluator answers that by walking the context and its
+    ancestors (``Class.all_attributes()`` / ``all_association_ends()``, both via
+    ``all_parents()``), so that is the rule applied here.
+
+    Nothing is re-targeted to make it fit: a rule that emits an invariant is
+    responsible for putting it on a class that owns what it navigates, which is
+    why every materialised class declares the feature it constrains (see
+    :mod:`~besser.BUML.notations.kg_to_buml.owl2uml.expressions`). What is left
+    unresolvable here is genuinely unexpressible — a property with no domain
+    that the user declined to attach to ``Thing`` — and is dropped with a
+    warning rather than shipped in a form no evaluator can read.
+    """
+    type_names = {t.name for t in domain_model.types}
+    used_names: Set[str] = set()
+
+    invariants = [(_resolve(invariant.context, renames), invariant) for invariant in model.ocl_constraints()]
+    stated = {(context_name, " ".join(invariant.body.split())) for context_name, invariant in invariants}
+    # Restated end constraints are already in BUML names. One the rules already
+    # emit (O07 states a restriction's target as exactly this ``forAll``) is not
+    # added twice.
+    invariants += [
+        (invariant.context, invariant) for invariant in restated
+        if (invariant.context, " ".join(invariant.body.split())) not in stated
+    ]
+
+    for context_name, invariant in invariants:
+        context = classes.get(context_name)
+        if context is None:
+            continue
+        body = " ".join(invariant.body.split())
+        if not body:
+            continue
+        if re.search(r"\bcontext\b", body):
+            add_warning(
+                out.warnings,
+                "OCL_DROPPED_MALFORMED_BODY",
+                f"Invariant on {context_name} contains a bare 'context' token, which "
+                f"the editor's OCL parser uses as a block separator; dropped.",
+            )
+            continue
+        if not _types_resolve(body, type_names, out, context_name):
+            continue
+
+        if not _parses_against_model(body, context_name, context, domain_model, out):
+            continue
+
+        name = _unique_constraint_name(context_name, invariant, used_names)
+        domain_model.add_constraint(Constraint(
+            name=name,
+            context=context,
+            expression=f"context {context_name} inv {name}: {body}",
+            language="OCL",
+        ))
+
+
+_MISSING_PROPERTY_RE = re.compile(r"Property '([^']+)' not found")
+
+
+def _parses_against_model(body, context_name, context, domain_model, out) -> bool:
+    """Whether the real OCL parser accepts ``body`` on ``context`` in the finished model.
+
+    This used to be two regexes: one pulled out every ``self.<name>`` and checked
+    it against a hand-built map of what each class can navigate, which only ever
+    looked at the first hop. The parser resolves the whole expression (every hop,
+    iterator variables, operations) against the same metamodel that
+    ``Class.all_attributes()`` / ``all_association_ends()`` walk, so there is no
+    second opinion to keep in step with it.
+
+    A failure is dropped with a warning rather than shipped in a form no
+    evaluator can read. The type check stays separate (:func:`_types_resolve`):
+    the parser accepts ``oclIsKindOf(Unknown)``.
+    """
+    try:
+        parse_ocl(f"context {context_name} inv: {body}", domain_model, context_class=context)
+    except Exception as exc:   # BOCLSyntaxError, or ValueError for an unresolvable context
+        missing = _MISSING_PROPERTY_RE.search(str(exc))
+        if missing:
+            add_warning(
+                out.warnings,
+                "OCL_DROPPED_UNRESOLVED_FEATURE",
+                f"Invariant on {context_name} navigates self.{missing.group(1)}, which neither "
+                f"the class nor any of its ancestors has; dropped.",
+            )
+        else:
+            add_warning(
+                out.warnings,
+                "OCL_DROPPED_INVALID",
+                f"Invariant on {context_name} is not valid OCL against the model "
+                f"({str(exc).splitlines()[0] if str(exc) else type(exc).__name__}); dropped.",
+            )
+        return False
+    return True
+
+
+def _types_resolve(body, type_names, out, label) -> bool:
+    for type_name in _TYPE_CHECK_RE.findall(body):
+        if type_name in type_names or type_name in PRIMITIVE_BY_NAME:
+            continue
+        add_warning(
+            out.warnings,
+            "OCL_DROPPED_UNKNOWN_TYPE",
+            f"Invariant on {label} references the unknown type {type_name}; dropped.",
+        )
+        return False
+    return True
+
+
+def _unique_constraint_name(context_name, invariant, used: Set[str]) -> str:
+    hint = invariant.name or invariant.origin_rule or "inv"
+    return _unique_name(naming.sanitize(f"{context_name}_{hint}") or f"{context_name}_inv", used)

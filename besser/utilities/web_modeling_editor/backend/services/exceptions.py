@@ -16,6 +16,25 @@ class ValidationError(BesserError):
     pass
 
 
+class GovernanceDslValidationError(ValidationError):
+    """Raised when a gateway's Governance DSL is syntactically or semantically invalid."""
+    pass
+
+
+class UpstreamError(BesserError):
+    """Raised when an external service the backend calls on the user's behalf fails.
+
+    ``status_code`` is the HTTP status the endpoint answers with: 401 (it does not know the
+    user), 404 (the resource does not exist there), 413 (its answer is too large), 500 (it
+    accepted the request but did not carry it out), 502 (it failed), 503 (this server is busy)
+    or 504 (it took too long).
+    """
+
+    def __init__(self, message: str, status_code: int = 502):
+        super().__init__(message)
+        self.status_code = status_code
+
+
 class GenerationError(BesserError):
     """Raised when code generation fails."""
     pass
@@ -23,4 +42,14 @@ class GenerationError(BesserError):
 
 class ConfigurationError(BesserError):
     """Raised when configuration is invalid."""
+    pass
+
+
+class CodeValidationError(ValidationError):
+    """Raised when a CustomCodeAction fails structural or semantic validation.
+
+    Subclasses :class:`ValidationError` so ``@handle_endpoint_errors`` and the
+    app-level exception handlers map it to HTTP 400 with its message, like any
+    other user-input validation failure.
+    """
     pass

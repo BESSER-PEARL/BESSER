@@ -11,6 +11,12 @@ The BESSER backend generator streamlines the development process by leveraging m
 - **Database Models**: Integrates BESSER's SQL Alchemy Generator to construct efficient ORM-based models for database interactions.
 - **Data Validation Models**: Employs BESSER's Pydantic Generator to ensure that data conforms to the defined schemas, enhancing the integrity and security of the backend.
 
+.. seealso::
+   This generator emits a fixed scaffold. If you need more than the template
+   provides — JWT authentication, a Dockerfile, migrations, tests — the
+   :doc:`Spec-Driven Agent <../spec_driven_agent/index>` runs *this* generator
+   first and then lets an LLM customise its output to a natural-language
+   request, validating and repairing the result before handing it back.
 
 To generate the complete backend for a B-UML model, follow the steps below. The example uses the ``library`` example B-UML model as a reference.
 
@@ -29,14 +35,41 @@ the linking of existing entities via identifiers and the nested creation of new 
 entities using their identifiers. The default setting is False, which restricts the functionality to linking by identifiers. Finally, the 
 ``docker_image`` parameter is there to assist you in `creating a Docker image <#docker-image-generation>`_ for your application.
 
+The ``api_title``, ``api_description`` and ``api_version`` parameters set the metadata of the generated FastAPI
+application, shown in the OpenAPI docs (``/docs``) and returned by the ``/`` endpoint. They default to
+``"<model name> API"``, a generic description and ``"1.0.0"``.
+
+.. code-block:: python
+
+    backend = BackendGenerator(
+        model=library_model,
+        api_title="Library Service",
+        api_description="Manage libraries, books and authors.",
+        api_version="2.1.0",
+    )
+
 
 Invoke the generate method to produce the backend code.The generated files will be placed in the ``<<current_directory>>/output_backend``.
-This method will generate several files:
+This method will generate a modular project (rather than one large file) so each concern lives in its own module:
 
-   + ``main_api.py``: Contains the REST API endpoints.
+   + ``main_api.py``: The slim FastAPI application entry point (app setup, middleware, exception handlers, system endpoints, and one ``include_router`` per resource). It keeps its historical filename and module-level ``app`` object, so ``uvicorn main_api:app`` works unchanged.
+   + ``routers/<class>.py``: One router module per class in the model, containing all of that class's CRUD, relationship and method endpoints.
+   + ``database.py``: The shared engine/session setup and the ``get_db`` dependency. The database defaults to ``sqlite:///./data/<model>.db`` and can be overridden with the ``DATABASE_URL`` environment variable (shared with ``sql_alchemy.py``, so the ORM and the API always point at the same database).
+   + ``bal_stdlib.py``: The B-UML Action Language standard-library helpers plus the association-class link helpers, shared by the routers.
    + ``sql_alchemy.py``: Includes SQL Alchemy database models.
    + ``pydantic_classes.py``: Consists of Pydantic validation models.
-   + ``database.db``: A SqlLite database file.
+   + ``requirements.txt``: The dependencies of the generated application.
+
+Running the application creates the SQLite database file under ``data/`` (unless ``DATABASE_URL`` points elsewhere).
+
+After ``generate()``, ``backend.traced_files`` records what each file was rendered from, by path in the output
+folder, for the elements that have an ``id`` (as every element drawn in the web editor does): the lines of each
+class, enumeration, association, attribute and method in ``sql_alchemy.py`` (see :doc:`alchemy`), of each class,
+enumeration and attribute and each OCL constraint's validator in ``pydantic_classes.py``, of each class's
+``include_router`` lines in ``main_api.py`` and of each method in ``routers/<class>_methods.py``;
+``routers/<class>.py`` is recorded as generated as a whole from its class.
+Recording them does not change the generated files. The web editor turns them into a :doc:`trace
+<../buml_language/model_types/traceability>` of the run.
 
 
 .. image:: ../img/backend_generator_schema.png
@@ -51,6 +84,50 @@ When you run the code generated, a SqlLite database and the OpenAPI specificatio
 We have an example demonstrating how this generator works, which you can find here: :doc:`../examples/backend_example`.
 This example showcases the usage of the Backend Generator with our :doc:`../examples/library_example` Example, illustrating its application in generating a fully functional backend from a B-UML model.
 
+Extending the Generated Backend
+-------------------------------
+Regenerating the backend overwrites the generated files, so keep your own code in separate files and
+plug it into the generated ``app`` with the standard FastAPI mechanisms. For example, a ``my_extensions.py``
+next to the generated code can add endpoints, middleware or authentication:
+
+.. code-block:: python
+
+    from fastapi import APIRouter, Depends
+    from sqlalchemy.orm import Session
+
+    from database import get_db
+    from main_api import app
+    from sql_alchemy import Library
+
+    router = APIRouter(prefix="/custom", tags=["Custom"])
+
+
+    @router.get("/library-names")
+    def library_names(database: Session = Depends(get_db)):
+        return [library.name for library in database.query(Library).all()]
+
+
+    @app.middleware("http")
+    async def add_custom_header(request, call_next):
+        response = await call_next(request)
+        response.headers["X-Custom"] = "yes"
+        return response
+
+
+    app.include_router(router)
+
+Start the application from your file, so that your additions are loaded with the generated routes:
+``uvicorn my_extensions:app`` instead of ``python main_api.py``. If you use the generated ``Dockerfile``,
+copy your file into the image and change its start command the same way.
+
+- **Endpoints**: put them in your own ``APIRouter`` and add it with ``app.include_router()``. Use ``get_db``
+  from ``database.py`` for a database session and the models from ``sql_alchemy.py`` to query it.
+- **Middleware and authentication**: register them on ``app`` (``app.middleware()``, ``app.add_middleware()``),
+  or protect your own routes with FastAPI dependencies.
+- **Configuration and secrets**: read them from environment variables (``os.environ``) instead of writing them
+  into code. The generated code already reads ``DATABASE_URL`` this way. With Docker, pass them at run time,
+  for example ``docker run --env-file .env ...``.
+
 Docker Image Generation
 -----------------------
 The Backend Generator offers the ``docker_image`` boolean parameter, designed to streamline the creation and uploading of Docker images for the generated backend. When 
@@ -60,6 +137,7 @@ you set this parameter to *True*, you have two options for creating your image:
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 Our code generator can create and upload the Docker image to your `DockerHub <https://hub.docker.com>`_ in one step. Provide a configuration file through the ``docker_config_path`` parameter, which 
 enables the generator to automatically create and upload the image in your DockerHub accout using the provided configurations.
+This option uses the Docker SDK for Python: ``pip install "besser[docker]"``.
 
 To create the configuration file, use the following template and save it as a .conf file:
 
@@ -137,6 +215,66 @@ CRUD Operations
    * - DELETE
      - ``/{entity}/bulk/``
      - Bulk delete by IDs
+
+How the model shapes these endpoints:
+
+* An **abstract class** has no endpoint that creates a record (no ``POST
+  /{entity}/`` and no bulk create): records are created through the concrete
+  subclasses. Its other endpoints read, change, link and delete the records of
+  its subclasses.
+* The **search filters** are the text, number and boolean attributes of the
+  class and its parents, except derived attributes (their stored value is not
+  kept up to date by the generated code) and **stored secrets**.
+* The search endpoint does not filter by an attribute whose name marks a
+  stored secret, since a partial match would reveal its value one character at
+  a time, but every other endpoint stores and returns it like any other
+  attribute: an application that stores credentials must leave them out of its
+  own responses. The name of a text attribute is read as camelCase or
+  snake_case words, and marks a stored secret when its last word, or the word
+  before a last ``hash``, is ``password``, ``passwd``, ``pwd``,
+  ``passphrase``, ``passcode``, ``secret`` or ``salt`` (``passwordHash``,
+  ``clientSecret``), or when it is ``token`` alone or after ``access``,
+  ``refresh``, ``auth``, ``api``, ``reset`` or ``session``
+  (``refreshToken``). Any other last word keeps the filter (``passwordHint``,
+  ``tokenCount``, ``inviteToken``).
+* An association **from a class to itself** has a field, and for a
+  many-to-many a link endpoint, for each of its two ends. The id lists of a
+  many-to-many are returned as ``<target class>_ids``; when that does not tell
+  two ends apart (an association to the same class, or two many-to-many
+  associations to one class) each list is named after its end, ``<end>_ids``.
+* When an attribute and an **association end share a name**, the association
+  end is generated and the attribute is left out (model validation warns about
+  the clash).
+* A ``DELETE`` that would leave another record without a link it requires is
+  refused with ``409`` and a message naming that record, including when the
+  record is required by a part that would be deleted with its whole.
+
+Known limits:
+
+* An association from a class to itself carried by an association class is
+  not supported (the generated app does not start serving).
+* A record that is, directly or through others, one of its own parts cannot be
+  deleted (``409``) until the cycle is broken. In a one-to-many from a class to
+  itself that is not a composition, deleting a record whose to-one end points
+  at the record itself answers ``500``; clear that end with an update first.
+* With ``nested_creations=True``, a many-to-many end that carries a new object
+  instead of an id answers ``500``; create the related record first and send
+  its id.
+
+.. versionchanged:: 8.0.0
+   The request bodies of ``POST`` and ``PUT`` (the Pydantic ``<Class>Create``
+   schemas) no longer accept fields the server owns: an attribute named ``id``
+   that is not a declared primary key, the ``createdAt`` / ``updatedAt``
+   timestamps, and attributes marked ``is_derived``. A declared primary key
+   (``is_id=True``) is client-supplied and stays in the schema, so a model
+   whose ``id`` must come from the client should mark it ``is_id``. On the
+   non-owning side of a one-to-one association the schema has no field for the
+   link; set it from the side that holds the foreign key. Relationship fields
+   are typed after the referenced primary key rather than always ``int``.
+
+   A ``default_value`` must be expressible as a literal of the attribute's
+   type; otherwise generation raises ``InvalidDefaultValueError``. See the
+   :doc:`release notes </releases/v8/v8.0.0>`.
 
 Relationship Management (N:M)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -270,6 +408,33 @@ The generator creates:
 
    The ``database`` parameter is automatically injected by the API framework and should not be passed in the request body.
    Any ``print()`` statements executed during method execution are captured and returned in the ``output`` field of the response.
+
+.. _backend-nn-methods:
+
+Methods Implemented by a Neural Network
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+A method whose ``implementation_type`` is ``NEURAL_NETWORK`` and whose ``neural_network`` points to an
+:doc:`NN model <../buml_language/model_types/nn>` becomes a class-level endpoint that runs the network
+(see :doc:`../buml_language/model_types/structural` for how to link one). The generator then also emits:
+
+- ``neural_networks/<network>.py``: the PyTorch ``NeuralNetwork`` class, as produced by the :doc:`pytorch`.
+- ``neural_networks/weights/``: where you put the trained weights, ``<network>.pt`` (a ``state_dict``
+  saved with ``torch.save(model.state_dict(), ...)``). The folder's ``README.md`` lists the expected files.
+- ``nn_runtime.py``: loads each network once, on first call, and runs it.
+- ``torch`` in ``requirements.txt`` (and in the ``Dockerfile`` when ``docker_image=True``).
+
+Calling the method runs the network on its parameters, in their declared order, as one input sample; the
+batch dimension is added for you. A method with a single list parameter uses that list as the whole sample
+(for example an image as nested lists). For a ``Patient`` class with ``score(height: float, weight: float)``:
+
+- Endpoint: ``POST /patient/methods/score/``
+- Request body: ``{"params": {"height": 1.7, "weight": 70.0}}``
+- Response ``result``: ``{"network": "scorer", "output": [0.42]}``
+
+Until the weights file exists, the endpoint answers ``503``; inputs that are not numbers, or that do not match
+the network's input shape, answer ``422``. Methods with the ``NEURAL_NETWORK`` type but no linked network
+answer ``501`` like any other method without an implementation.
 
 
 System Endpoints

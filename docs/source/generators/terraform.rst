@@ -16,8 +16,15 @@ Basic Usage Example
 
     from besser.generators.terraform import TerraformGenerator
 
-    terraform_generator = TerraformGenerator(deployment_model=deployment_model)
+    terraform_generator = TerraformGenerator(
+        deployment_model=deployment_model,
+        output_dir="output",
+    )
     terraform_generator.generate()
+
+.. note::
+   Unlike most generators, ``output_dir`` is **required** here: the constructor
+   creates the directory immediately, so leaving it unset raises a ``TypeError``.
 
 
 Although B-UML enables the modeling of public clusters for different cloud providers and on-premises, currently the 
@@ -62,20 +69,20 @@ For example, if deploying to AWS with a cluster named "my-cluster", the folder s
 
     aws_my-cluster/
     ├── eks.tf
-    ├── iam-config.tf
+    ├── iam-oidc.tf
     ├── igw.tf
     ├── nat.tf
     ├── nodes.tf
     ├── provider.tf
-    ├── route.tf
+    ├── routes.tf
     ├── setup.bat
-    ├── subnet.tf
+    ├── subnets.tf
     └── vpc.tf
 
 For GCP with a cluster named "my-cluster", the folder structure would be:
 ::
 
-    gcp_my-cluster/
+    google_my-cluster/
     ├── api.tf
     ├── app.tf
     ├── cluster.tf
@@ -103,3 +110,14 @@ To run the setup script, use the following command in your terminal:
     setup.bat
 
 This script will initialize and apply your Terraform configuration, deploying your resources to the specified cloud provider.
+
+Trace Links
+-----------
+
+After ``generate()``, ``generator.traced_files`` maps each file written (``<provider>_<cluster>/<file>``) to what
+it was rendered from: the cluster is recorded as the source of every file, and the ``cluster.tf``, ``app.tf`` and
+``eks.tf`` files also list the line ranges rendered from each deployment (``deployment``), container
+(``container``, Google only), service (``service``), ingress (``ingress``, AWS only), network (``network``) and
+subnetwork (``subnetwork``) that has an ``id``. Elements without an ``id`` are rendered untraced, and recording
+the trace does not change the generated files. The deployment model of this generator is built in Python: the web
+editor does not produce it, so its elements carry no ids unless you set them. See :doc:`traceable_generator`.

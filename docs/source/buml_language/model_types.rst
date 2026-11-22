@@ -13,6 +13,10 @@ Model types
   model_types/state_machine
   model_types/agent
   model_types/bpmn
+  model_types/uml_component
+  model_types/uml_deployment
   model_types/feature_model
   model_types/nn
   model_types/quantum
+  model_types/knowledge_graph
+  model_types/traceability

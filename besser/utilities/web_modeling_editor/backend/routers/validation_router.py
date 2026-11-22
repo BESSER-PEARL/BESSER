@@ -7,6 +7,7 @@ Handles all diagram validation endpoints for the BESSER web modeling editor back
 import logging
 
 from fastapi import APIRouter
+from fastapi.responses import StreamingResponse
 
 # Backend models
 from besser.utilities.web_modeling_editor.backend.models import (
@@ -23,21 +24,38 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_agent_diagram,
     process_object_diagram,
     process_nn_diagram,
+    process_component_diagram,
+    process_deployment_diagram,
     process_bpmn_diagram,
+)
+from besser.utilities.web_modeling_editor.backend.services.kg.payloads import parse_kg_diagram
+from besser.utilities.web_modeling_editor.backend.services.kg.validation import (
+    validate_knowledge_graph,
 )
 from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
     domain_model as user_reference_domain_model,
 )
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
     BPMN_DIAGRAM_TYPE,
+    DEPLOYMENT_DIAGRAM_TYPE,
+    KG_DIAGRAM_TYPE,
 )
 
 # Backend services - Validators
 from besser.utilities.web_modeling_editor.backend.services.validators import (
     check_ocl_constraint,
 )
+from besser.utilities.web_modeling_editor.backend.services.validators.alloy.semantic_consistency import (
+    check_semantic_consistency,
+    generate_object_diagram,
+)
 
 # Centralized error handling
+from besser.utilities.web_modeling_editor.backend.dependencies import (
+    KgConsistencySlotsDep,
+    SemanticCheckSlotsDep,
+    SettingsDep,
+)
 from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
     handle_endpoint_errors,
 )
@@ -51,6 +69,11 @@ from besser.utilities.web_modeling_editor.backend.services.utils.user_profile_ut
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/besser_api", tags=["validation"])
+
+OCL_SYNTAX_ONLY_WARNING = (
+    "OCL invariants were checked for syntax only; evaluation is disabled on this server "
+    "(BESSER_ENABLE_OCL_EVALUATION)."
+)
 
 
 def _user_name_attribute_errors(model: dict) -> list:
@@ -76,7 +99,7 @@ def _user_name_attribute_errors(model: dict) -> list:
 
 @router.post("/validate-diagram", response_model=ValidationResponse)
 @handle_endpoint_errors("validate_diagram")
-async def validate_diagram(input_data: DiagramInput):
+async def validate_diagram(input_data: DiagramInput, kg_slots: KgConsistencySlotsDep, settings: SettingsDep):
     """
     Validate diagram by converting to BUML and running metamodel validation.
 
@@ -142,7 +165,8 @@ async def validate_diagram(input_data: DiagramInput):
             buml_model = user_reference_domain_model
             domain_validation = buml_model.validate(raise_exception=False)
             validation_errors.extend(domain_validation.get("errors", []))
-            validation_warnings.extend(domain_validation.get("warnings", []))
+            # The reference model is BESSER's, not the user's: its warnings are not theirs to fix,
+            # and the editor asks before generating from a model with warnings.
 
             # The `name` attribute is used to build identifiers, so it cannot contain
             # spaces. Report it per element instead of the cryptic generated-name
@@ -185,6 +209,14 @@ async def validate_diagram(input_data: DiagramInput):
             except ValueError as e:
                 validation_errors.extend(str(e).splitlines())
 
+        elif diagram_type == KG_DIAGRAM_TYPE:
+            kg = parse_kg_diagram(input_data.model_dump())
+            # The preflight and the OWL/SHACL consistency check, as in the
+            # editor's Refine KG modal (see services/kg/validation.py).
+            kg_errors, kg_warnings = await validate_knowledge_graph(kg, kg_slots)
+            validation_errors.extend(kg_errors)
+            validation_warnings.extend(kg_warnings)
+
         elif diagram_type == "GUINoCodeDiagram":
             return {
                 "isValid": True,
@@ -222,6 +254,14 @@ async def validate_diagram(input_data: DiagramInput):
                 "warnings": []
             }
 
+        elif diagram_type in ("ComponentDiagram", DEPLOYMENT_DIAGRAM_TYPE):
+            # Conversion and construction errors are collected by the handlers below.
+            processor = (process_component_diagram if diagram_type == "ComponentDiagram"
+                         else process_deployment_diagram)
+            result = processor(input_data.model_dump()).validate(raise_exception=False)
+            validation_errors.extend(result["errors"])
+            validation_warnings.extend(result["warnings"])
+
         else:
             return {
                 "isValid": False,
@@ -239,23 +279,33 @@ async def validate_diagram(input_data: DiagramInput):
         # Construction validation errors (from BUML creation setters)
         logger.warning("Construction validation error: %s", e)
         validation_errors.extend(str(e).splitlines())
-    except Exception as e:
+    except Exception:
+        # A bug, not a problem with the diagram: the message describes our
+        # internals and helps nobody drawing a diagram. Traceback to the log, one
+        # sentence to the caller - as the OCL check below already does.
         logger.exception("Unexpected error during diagram conversion/validation")
-        error_msg = str(e).strip()
-        validation_errors.append(error_msg if error_msg else "An unexpected error occurred during validation.")
+        validation_errors.append("An unexpected error occurred during validation.")
 
     # Step 2: If BUML model created successfully AND it's a diagram with OCL support
     ocl_results = None
     if buml_model and diagram_type in ["ClassDiagram", "ObjectDiagram", "UserDiagram"] and len(validation_errors) == 0:
         try:
             if diagram_type in ["ObjectDiagram", "UserDiagram"] and object_model:
-                ocl_results = check_ocl_constraint(buml_model, object_model)
+                # Off by default: the evaluator runs Python built from the diagram's values.
+                evaluate = settings.ocl_evaluation_enabled
+                ocl_results = check_ocl_constraint(buml_model, object_model, evaluate=evaluate)
+                # A user diagram's invariants are BESSER's reference model's, not the
+                # user's (see Step 1); their entries in valid_constraints say it.
+                if not evaluate and diagram_type == "ObjectDiagram" and buml_model.constraints:
+                    validation_warnings.append(OCL_SYNTAX_ONLY_WARNING)
             else:
                 ocl_results = check_ocl_constraint(buml_model)
 
             # Add OCL warnings if present
             if hasattr(buml_model, "ocl_warnings") and buml_model.ocl_warnings:
                 validation_warnings.extend(buml_model.ocl_warnings)
+            # Constraints that parse but cannot be evaluated on the object diagram
+            validation_warnings.extend(ocl_results.get("warnings", []))
 
         except Exception:
             logger.exception("Unexpected error during OCL constraint check")
@@ -282,10 +332,46 @@ async def validate_diagram(input_data: DiagramInput):
 
 @router.post("/check-ocl", response_model=ValidationResponse)
 @handle_endpoint_errors("check_ocl")
-async def check_ocl(input_data: DiagramInput):
+async def check_ocl(input_data: DiagramInput, kg_slots: KgConsistencySlotsDep, settings: SettingsDep):
     """
     Deprecated: Use /validate-diagram instead.
     This endpoint is kept for backwards compatibility and redirects to the new unified validation.
     """
     logger.warning("/check-ocl is deprecated. Use /validate-diagram instead.")
-    return await validate_diagram(input_data)
+    return await validate_diagram(input_data, kg_slots, settings)
+
+
+# Headers of the Server-Sent Events streams: no caching, and no buffering by proxies such as nginx
+_SSE_HEADERS = {"Cache-Control": "no-cache, no-transform", "Connection": "keep-alive", "X-Accel-Buffering": "no"}
+
+
+@router.post("/semantic-consistency-check", response_class=StreamingResponse)
+@handle_endpoint_errors("semantic_consistency_check")
+async def semantic_consistency_check(input_data: DiagramInput, slots: SemanticCheckSlotsDep) -> StreamingResponse:
+    """Searches for an instance of a class diagram and its OCL invariants with the Alloy Analyzer.
+
+    The search tries increasingly larger scopes (objects per class) and streams its progress as
+    Server-Sent Events. A search that finds nothing says in its ``message`` what it searched and
+    why it stopped: "No instance within N objects per class, integers in [a, b], ...", "Timed out
+    searching within ..." or "Too large to search within ...". While the Alloy Analyzer runs, SSE
+    comment lines are sent as heartbeats. Answers 503, without a stream, while
+    ``BESSER_ALLOY_MAX_CONCURRENT_CHECKS`` checks are running.
+    """
+    return StreamingResponse(
+        check_semantic_consistency(input_data, slots=slots), media_type="text/event-stream", headers=_SSE_HEADERS
+    )
+
+
+@router.post("/generate-object-diagram", response_class=StreamingResponse)
+@handle_endpoint_errors("generate_object_diagram")
+async def generate_object_diagram_endpoint(
+    input_data: DiagramInput, slots: SemanticCheckSlotsDep
+) -> StreamingResponse:
+    """Generates an object diagram of a class diagram that satisfies its OCL invariants.
+
+    Searches as ``/semantic-consistency-check`` does; the event of the instance found carries it
+    as an object diagram, in ``object_model``.
+    """
+    return StreamingResponse(
+        generate_object_diagram(input_data, slots=slots), media_type="text/event-stream", headers=_SSE_HEADERS
+    )

@@ -8,6 +8,7 @@ export interface TableBlockProps {
   options?: Record<string, any>;
   dataBinding?: Record<string, any>;
   styles?: CSSProperties;
+  className?: string;
 }
 
 const isNestedField = (field?: string): boolean => !!field && field.includes(".");
@@ -18,6 +19,7 @@ export const TableBlock: React.FC<TableBlockProps> = ({
   options,
   dataBinding,
   styles,
+  className,
 }) => {
   const [tableData, setTableData] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
@@ -34,8 +36,17 @@ export const TableBlock: React.FC<TableBlockProps> = ({
     const hasLookupColumns = (options?.columns || []).some(
       (col: any) => typeof col === "object" && col.column_type === "lookup"
     );
+    // The edit form prefills relationship selections (and association-class link
+    // attributes) from the detailed response only, so any lookup in the form -
+    // not just a displayed lookup column - needs the detailed fetch. Otherwise
+    // the form opens with empty selections and a save detaches the relationships.
+    const hasLookupFormColumns = ((options as any)?.formColumns ?? (options as any)?.form_columns ?? []).some(
+      (col: any) => typeof col === "object" && col && (
+        col.column_type === "lookup" || col.columnType === "lookup" || (col.association_class ?? col.associationClass)
+      )
+    );
     const hasNestedFields = isNestedField(dataBinding?.label_field) || isNestedField(dataBinding?.data_field);
-    const detailed = hasLookupColumns || hasNestedFields;
+    const detailed = hasLookupColumns || hasLookupFormColumns || hasNestedFields;
 
     const urlParams = detailed ? "?detailed=true" : "";
     const url = endpoint.startsWith("/") ? backendBase + endpoint + urlParams : endpoint + urlParams;
@@ -66,8 +77,8 @@ export const TableBlock: React.FC<TableBlockProps> = ({
       .finally(() => setLoading(false));
   }, [dataBinding?.endpoint, dataBinding?.label_field, dataBinding?.data_field, options?.columns]);
 
-  if (loading) return <div id={id}>Loading data...</div>;
-  if (error) return <div id={id}>{error}</div>;
+  if (loading) return <div id={id} className={className}>Loading data...</div>;
+  if (error) return <div id={id} className={className}>{error}</div>;
 
   return (
     <TableComponent
@@ -76,6 +87,7 @@ export const TableBlock: React.FC<TableBlockProps> = ({
       data={tableData}
       options={options || {}}
       styles={styles}
+      className={className}
       dataBinding={dataBinding}
     />
   );

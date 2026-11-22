@@ -22,6 +22,22 @@ folder and it will look as follows.
    :language: Python
    :linenos:
 
+.. versionchanged:: 8.0.0
+   With ``backend=True``, the ``<Class>Create`` schemas no longer contain
+   fields the server owns: an attribute named ``id`` that is not a declared
+   primary key, the ``createdAt`` / ``updatedAt`` timestamps, and attributes
+   marked ``is_derived``. A declared primary key (``is_id=True``) is
+   client-supplied and always stays in the schema. On the non-owning side of a
+   one-to-one association the Create schema has no field for the link, and
+   relationship fields are typed after the referenced primary key rather than
+   always ``int``.
+
+   A ``default_value`` is now coerced to the attribute's type and emitted as a
+   literal. A default that cannot be coerced (for example ``"abc"`` for an
+   ``int``), an empty default for a non-string type, or an enumeration default
+   that names none of its literals raises ``InvalidDefaultValueError`` at
+   generation time. See the :doc:`release notes </releases/v8/v8.0.0>`.
+
 OCL Constraint Validation
 -------------------------
 
@@ -100,3 +116,15 @@ For each OCL constraint, the generator produces a Pydantic ``field_validator``:
 
 These validators automatically enforce constraints when creating or updating entities via the REST API, 
 and the error messages are displayed in the frontend web application.
+OCL constraint support details
+------------------------------
+
+- ``self.<attr>.matches('<regex>')`` becomes a ``re.fullmatch(...)`` field validator
+  (the module imports ``re`` automatically).
+- Constraints comparing two attributes of the same class (e.g.
+  ``self.check_in <= self.check_out``) become ``@model_validator(mode='after')``
+  validators.
+- Constraints that involve collections or relationships (``->size()``,
+  ``->collect()``, ``->sum()``, …) cannot be enforced on a Create payload; the
+  generator emits an explanatory ``# NOTE:`` comment instead of broken code, and
+  every emitted validator is syntax-checked before it is written.

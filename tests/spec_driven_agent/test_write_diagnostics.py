@@ -1,0 +1,266 @@
+"""Same-turn parser and undefined-name feedback for file writes."""
+
+import json
+
+import pytest
+
+from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
+from besser.spec_driven_agent.validation.write_diagnostics import diagnose_written_content
+
+
+def _call(executor: ToolExecutor, tool: str, arguments: dict) -> dict:
+    return json.loads(executor.execute(tool, arguments))
+
+
+def test_python_syntax_error_is_reported_without_rejecting_write(tmp_path):
+    executor = ToolExecutor(workspace=str(tmp_path))
+    result = _call(executor, "write_file", {
+        "path": "app.py",
+        "content": "def broken(:\n    pass\n",
+    })
+    assert result["status"] == "written"
+    assert result["diagnostics"][0]["source"] == "python"
+    assert result["diagnostics"][0]["code"] == "syntax"
+    assert (tmp_path / "app.py").is_file()
+
+
+def test_undefined_annotation_is_reported_same_turn(tmp_path):
+    pytest.importorskip("pyflakes")
+    executor = ToolExecutor(workspace=str(tmp_path))
+    result = _call(executor, "write_file", {
+        "path": "services/forecast.py",
+        "content": (
+            "def forecast():\n"
+            "    method: linear_trend = 'linear_trend'\n"
+            "    return method\n"
+        ),
+    })
+    finding = next(item for item in result["diagnostics"] if item["source"] == "pyflakes")
+    assert finding["code"] == "UndefinedName"
+    assert "linear_trend" in finding["message"]
+
+
+@pytest.mark.parametrize(
+    ("path", "content", "source"),
+    [
+        ("package.json", '{"name": }', "json"),
+        ("config.yaml", "items: [one, two", "yaml"),
+        ("pyproject.toml", 'name = "unterminated', "toml"),
+    ],
+)
+def test_structured_data_parse_errors_are_reported(tmp_path, path, content, source):
+    executor = ToolExecutor(workspace=str(tmp_path))
+    result = _call(executor, "write_file", {"path": path, "content": content})
+    assert result["diagnostics"][0]["source"] == source
+
+
+@pytest.mark.parametrize(("path", "content"), [
+    # Kubernetes manifests put several documents in one file.
+    ("k8s/app.yaml", "apiVersion: v1\nkind: Service\n---\napiVersion: apps/v1\nkind: Deployment\n"),
+    # GitLab CI and CloudFormation use application-defined tags.
+    (".gitlab-ci.yml", "test:\n  script:\n    - !reference [.setup, script]\n    - pytest\n"),
+    ("infra/stack.yaml", "Resources:\n  Bucket:\n    Properties:\n      Name: !Sub '${AWS::StackName}-b'\n"
+                         "      Arn: !GetAtt [Role, Arn]\n      Tags: !Ref Tags\n"),
+    ("docker-compose.yml", "x-env: &env\n  A: 1\nservices:\n  api:\n    environment:\n      <<: *env\n"),
+])
+def test_valid_yaml_is_not_a_parse_error(path, content):
+    assert diagnose_written_content(path, content) == []
+
+
+def test_broken_yaml_in_a_later_document_is_still_reported():
+    findings = diagnose_written_content("k8s/app.yaml", "a: 1\n---\nb: [1, 2\n")
+    assert findings and findings[0]["code"] == "parse" and findings[0]["line"] >= 3
+
+
+def test_modify_file_diagnoses_the_resulting_whole_file(tmp_path):
+    target = tmp_path / "settings.json"
+    target.write_text('{"enabled": true}', encoding="utf-8")
+    executor = ToolExecutor(workspace=str(tmp_path))
+    result = _call(executor, "modify_file", {
+        "path": "settings.json",
+        "old_text": "true",
+        "new_text": "oops",
+    })
+    assert result["status"] == "modified"
+    assert result["diagnostics"][0]["source"] == "json"
+
+
+def test_diagnostics_can_be_disabled_without_affecting_write(tmp_path):
+    executor = ToolExecutor(
+        workspace=str(tmp_path),
+        per_write_diagnostics=False,
+    )
+    result = _call(executor, "write_file", {
+        "path": "broken.json",
+        "content": "{",
+    })
+    assert result["status"] == "written"
+    assert "diagnostics" not in result
+
+
+def test_findings_are_bounded():
+    pytest.importorskip("pyflakes")
+    source = "\n".join(f"value_{i} = missing_{i}" for i in range(30))
+    findings = diagnose_written_content("many.py", source)
+    assert len(findings) == 10
+
+
+def test_generated_backend_contract_failures_are_reported_same_turn(tmp_path):
+    """The 772298cb failures must reach the editor before a final sweep."""
+    executor = ToolExecutor(workspace=str(tmp_path))
+    _call(executor, "write_file", {
+        "path": "backend/database.py", "content": "DATABASE_URL = 'sqlite:///test.db'\n",
+    })
+    broken = (
+        "from enum import Enum\n"
+        "from sqlalchemy import CheckConstraint, Integer\n"
+        "from sqlalchemy.orm import mapped_column\n"
+        "class Status(Enum):\n    READY = 'READY'\n"
+        "class Booking:\n"
+        "    id = mapped_column(Integer, primary_key=True)\n"
+        "    status = mapped_column(default=Status.ready)\n"
+        "    __table_args__ = (CheckConstraint('agreedPrice > 0'),)\n"
+        "    __table_args__ = (CheckConstraint('NOT EXISTS (SELECT 1 FROM room)'),)\n"
+        "    def validate_capacity(self):\n        return self\n"
+        "    def validate_capacity(self):\n        return self\n"
+    )
+    result = _call(executor, "write_file", {"path": "backend/sql_alchemy.py", "content": broken})
+    assert result["status"] == "written"
+    findings = result["diagnostics"]
+    assert {"invalid-enum-member", "duplicate-declaration",
+            "invalid-sqlite-check"} <= {item["code"] for item in findings}
+    # One finding per duplicated name (__table_args__, validate_capacity).
+    assert [item["line"] for item in findings if item["code"] == "duplicate-declaration"] == [9, 11]
+    assert any("agreedPrice" in item["message"] for item in findings)
+    assert any("subqueries prohibited" in item["message"] for item in findings)
+    assert any("validate_capacity" in item["message"] for item in findings)
+    assert all(item.get("line", 0) > 0 for item in findings)
+    assert (tmp_path / "backend" / "sql_alchemy.py").read_text() == broken
+
+    # Replacing the declarations with valid ones clears the immediate errors.
+    repaired = broken[:broken.index("    status =")] + (
+        "    status = mapped_column(default=Status.READY)\n"
+        "    __table_args__ = (CheckConstraint('id > 0'),)\n"
+        "    def validate_capacity(self):\n        return self\n"
+    )
+    result = _call(executor, "modify_file", {
+        "path": "backend/sql_alchemy.py", "old_text": broken, "new_text": repaired,
+    })
+    assert result["status"] == "modified"
+    assert not result.get("diagnostics"), result
+
+    schemas = (
+        "from pydantic import BaseModel\n"
+        "class PersonCreate(BaseModel):\n"
+        "    phone: str\n    booking: list[int] = []\n"
+        "class EmployeeCreate(PersonCreate):\n    pass\n"
+    )
+    _call(executor, "write_file", {"path": "backend/pydantic_classes.py", "content": schemas})
+    for entity in ("person", "employee"):
+        result = _call(executor, "write_file", {
+            "path": f"backend/routers/{entity}.py",
+            "content": f"def create_{entity}({entity}_data):\n    return {entity}_data.booking\n",
+        })
+        assert not result.get("diagnostics"), result
+    result = _call(executor, "modify_file", {
+        "path": "backend/pydantic_classes.py",
+        "old_text": "    booking: list[int] = []\n", "new_text": "",
+    })
+    assert result["status"] == "modified"
+    mismatches = [item for item in result["diagnostics"] if item["code"] == "schema-consumer-mismatch"]
+    assert len(mismatches) == 2
+    assert all("does not define `booking`" in item["message"] for item in mismatches)
+    assert any("routers/person.py" in item["message"] for item in mismatches)
+    assert any("routers/employee.py" in item["message"] for item in mismatches)
+
+    # The supported verification tool must not report success when unwired,
+    # and must surface the orchestrator's actual execution report when wired.
+    unavailable = _call(executor, "validate_app", {})
+    assert "unavailable" in unavailable["error"]
+    report = {"blocker_count": 2, "issues": [item["message"] for item in mismatches]}
+    executor.app_validator = lambda: report
+    assert _call(executor, "validate_app", {}) == report
+
+
+# ------------------------------------------------------ bounded messages
+
+def test_invalid_enum_member_lists_a_bounded_set_of_closest_members():
+    """A 250-member enum misused 25 times used to paste all 250 names into
+    each of the 25 findings (~84k characters re-sent every turn)."""
+    source = ("from enum import Enum\nclass Country(Enum):\n"
+              + "".join(f"    COUNTRY_{i:03d} = {i}\n" for i in range(250))
+              + "".join(f"x{i} = Country.country_17\n" for i in range(25)))
+    findings = diagnose_written_content("backend/enums.py", source, limit=25)
+    assert len(findings) == 25
+    message = findings[0]["message"]
+    assert len(message) < 400, len(message)
+    assert "Country.country_17 does not exist" in message
+    assert message.index("COUNTRY_017") < message.index("(+240 more)")
+    small = diagnose_written_content(
+        "e.py", "from enum import Enum\nclass S(Enum):\n    A = 1\n    B = 2\nS.C\n")
+    assert "declared members: A, B." in small[0]["message"]
+
+
+def test_star_import_misuse_never_pastes_a_value_repr(tmp_path):
+    """``from os import environ`` re-exported by a star import: the finding
+    named the object by ``repr()``, i.e. the whole process environment."""
+    (tmp_path / "backend").mkdir()
+    (tmp_path / "backend" / "settings.py").write_text("from os import environ\n")
+    findings = diagnose_written_content(
+        "backend/app.py", "from settings import *\nkey = environ.API_KEY\n", workspace=str(tmp_path))
+    misuse = [f for f in findings if f["code"] == "star-import-attribute-misuse"]
+    assert len(misuse) == 1
+    assert "PATH" not in misuse[0]["message"] and len(misuse[0]["message"]) < 600
+
+
+def test_enum_members_bound_by_tuple_assignment_exist():
+    findings = diagnose_written_content("backend/enums.py", (
+        "from enum import Enum\nclass Color(Enum):\n    RED, GREEN = 1, 2\n    [BLUE] = [3]\n"
+        "print(Color.RED, Color.GREEN, Color.BLUE, Color.PINK)\n"))
+    assert [f["message"].split(" does not")[0] for f in findings] == ["Color.PINK"]
+
+
+# ------------------------------------------------- duplicate declarations
+
+def _declaration_findings(source: str) -> list[dict]:
+    return [f for f in diagnose_written_content("backend/models.py", source)
+            if f["code"] in {"duplicate-declaration", "shadowed-declaration"}]
+
+
+def test_redecorating_through_the_first_declaration_is_not_a_duplicate():
+    """``@<name>.<attr>`` re-binds the name on purpose (ruff F811 agrees)."""
+    hybrid = (
+        "from sqlalchemy import func\n"
+        "from sqlalchemy.ext.hybrid import hybrid_property\n"
+        "class Person:\n"
+        "    @hybrid_property\n"
+        "    def full_name(self):\n        return self.first + self.last\n"
+        "    @full_name.expression\n"
+        "    def full_name(cls):\n        return func.concat(cls.first, cls.last)\n"
+        "    @full_name.inplace.setter\n"
+        "    def full_name(self, value):\n        self.first = value\n"
+    )
+    dispatch = (
+        "from functools import singledispatchmethod\n"
+        "class Fmt:\n"
+        "    @singledispatchmethod\n"
+        "    def show(self, value):\n        return str(value)\n"
+        "    @show.register\n"
+        "    def _(self, value: int):\n        return 'int'\n"
+        "    @show.register(float)\n"
+        "    def _(self, value):\n        return 'float'\n"
+    )
+    assert _declaration_findings(hybrid) == []
+    assert _declaration_findings(dispatch) == []
+
+
+def test_a_real_duplicate_method_is_one_finding_naming_both_lines():
+    findings = _declaration_findings(
+        "class BookingService:\n"
+        "    def total(self, booking):\n        return booking.nights\n"
+        "    def total(self, booking):\n        return booking.nights * 2\n"
+    )
+    assert len(findings) == 1, findings
+    assert findings[0]["line"] == 2 and findings[0]["end_line"] == 3
+    assert "BookingService.total" in findings[0]["message"]
+    assert "line 2" in findings[0]["message"] and "line 4" in findings[0]["message"]

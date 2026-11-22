@@ -1,0 +1,141 @@
+Version 8.8.0
+=============
+
+Minor release: **edits survive a model change, and the code base is consolidated**.
+When the class model of a Spec-Driven app changes, the generated files are
+regenerated and merged with the edits made since, instead of being rewritten by
+the LLM. The editor backend, the Spec-Driven Agent and the editor each get one
+settings layer, one LLM layer, one secret redactor and a typed API contract.
+Analytics and error reports now start only after consent. Request shapes and
+routes are unchanged; some error status codes are corrected (listed below).
+
+Edits survive a model change (#659)
+-----------------------------------
+
+* **Untouched generated files are regenerated.** A modify run that changes the
+  class model regenerates the backend files nobody edited, deterministically,
+  instead of asking the LLM to edit them. Files of removed classes that no one
+  edited and nothing imports are deleted.
+* **Edited generated files are merged.** A file that was both generated and
+  edited is merged three ways (the stored generator output, the edited file,
+  the new generator output) with ``pygit2``. A renamed class moves its file and
+  keeps its edits. Only a conflicting hunk is left to the agent, with the exact
+  lines it needs.
+* **Measured effect.** On recorded model changes, the share that needs no
+  hand edit rises from 31% to 78%.
+* **Run records travel with the app.** ``.besser_generator_output.json``,
+  ``.besser_attribution.json`` and ``.besser_recipe.json`` ship in the ZIP and
+  the GitHub push, and a push marks them ``linguist-generated`` in
+  ``.gitattributes`` so GitHub folds their diffs. A repository's own
+  ``.gitattributes`` lines are kept byte for byte.
+* **Limits.** Method, ``is_id`` and OCL changes alone do not trigger a
+  regeneration; a rename chain (A to B while C becomes A) is left to the agent.
+  Details: :doc:`/spec_driven_agent/regeneration`.
+
+Generated backends
+------------------
+
+* **Association tables with method-like end names work.** The router template
+  read many-to-many columns as ``table.c.<end>``, so an end named ``items``,
+  ``keys``, ``values`` or ``get`` resolved to a ``ColumnCollection`` method and
+  every endpoint on that association returned 500; an end named ``t`` broke
+  updates the same way through ``Row``. Columns and rows are now read by key
+  (#718).
+
+GitHub
+------
+
+* **History reaches back past the move to** ``buml/diagrams.json``. A project
+  saved by an older editor keeps its earlier versions in the model history,
+  and they can be restored (#723).
+* **The latest version can be restored again** once the model has unsaved
+  changes, so restoring an older version is no longer one-way (editor #250).
+* **GitHub errors have real status codes on every endpoint**: a revoked token
+  answers 401, a taken repository name 409, an unreachable GitHub 502, instead
+  of 500. ``/file/exists`` no longer reads every failure as "missing".
+
+Editor
+------
+
+* **What's new panel.** A ✨ menu in the top bar lists the latest releases,
+  with an unread dot after an update. An entry can turn on a diagram type a
+  saved project hides, such as the Knowledge Graph editor (editor #252).
+* **Privacy.** Google Analytics, PostHog and Sentry start only after analytics
+  consent and stop on withdrawal; the privacy page and the consent banner name
+  all three, in all six languages. Sentry events carry no IP address, free
+  text, model content or project names. Deploy events no longer send the
+  repository name or owner. The consent banner shows once more for people who
+  accepted the previous version (consent version 1.3). ``?study=`` and
+  ``?pilot=`` labels leave the address bar after they are stored.
+* **Product analytics on outcomes** (editor #253). With consent, each editor
+  action (Spec-Driven runs, the assistant, generators, deploy, GitHub,
+  projects, editors, settings) records whether it succeeded or failed, how long
+  it took and the error type, from one typed event catalog. Events carry only
+  enums, counts, durations, status codes and error class names, never names,
+  prompts, messages, URLs, repositories or keys. Nothing reaches PostHog
+  before consent, and the PostHog id is deleted on withdrawal. The privacy
+  page and the consent banner list outcomes, heatmaps and page-load
+  performance. The app no longer mounts twice on every page load.
+* **B-UML import keeps the diagram type.** Component, Deployment, NN, BPMN and
+  Agent diagrams import as themselves instead of as a class diagram, and a type
+  no project slot holds (GUI, quantum, KG) gets a clear error.
+* **Dialogs instead of browser alerts**, and one error reporter for every
+  toast.
+
+Consolidation (repository review, Phase 4)
+------------------------------------------
+
+Behaviour is preserved and was checked item by item (byte-identical output of
+all 25 generators, captured responses and redaction results compared before
+and after).
+
+* **Typed settings.** ``BackendSettings`` and ``AgentSettings``
+  (``pydantic-settings``) read every environment variable by its exact name,
+  with the same defaults and parsing as before.
+* **One LLM layer.** ``besser/llm/`` holds the transport, the SDK clients, one
+  retry policy, the token prices and the model catalog. The mockup-to-model
+  notations go through it, gaining a 120 s timeout and retries on 429 and 5xx.
+  Claude Haiku 5.5 cache reads and writes are priced at Anthropic's rates.
+* **One secret redactor**, ``besser/utilities/secret_redaction.py``, imported
+  eagerly so it can no longer switch itself off. Logged generator configs, the
+  agent transform's config log and passwords in local database URLs are now
+  redacted.
+* **One generator registry.** ``besser/generators/registry.py`` feeds both the
+  editor's generator list and the agent's tools.
+* **Thin routers.** Generation dispatch and GitHub sync live in services; an
+  import contract forbids services from importing routers.
+* **A typed API contract.** Response models state the fields the backend always
+  sends, the editor's API types are generated from the OpenAPI schema, and CI
+  fails when the committed schema is stale.
+
+Behaviour changes
+-----------------
+
+* ``/generate-output`` answers 400, not 500, for generators it cannot feed
+  (``web_app``, ``react``, ``flutter``, ``terraform``).
+* A malformed ``owner``, ``repo`` or ``model_path`` on ``import-github-run``
+  answers 422 before the session check (it was 400 after it).
+* A project or version name that resolves to the output folder itself
+  (``"."``) is refused with 400.
+* A Spec-Driven run started from the modeling agent with no model picked uses
+  the deployment's catalog default.
+* The durable run store opens at startup instead of at import.
+
+Dependencies
+------------
+
+* New: ``pydantic-settings>=2.4,<3`` (base install), ``pygit2==1.20.1``
+  (base install, pinned: a new release bundles a libgit2 whose merge may
+  resolve hunks differently), ``typing-extensions>=4.12`` (editor backend).
+
+Modeling agent
+--------------
+
+Deploy the modeling agent ``v8.0.0`` alongside (its own release, from
+``develop``). It is packaged with ``pyproject.toml``, prices calls from the
+same price file as BESSER, routes every model call and every image through
+the user's own key where one is given, and sends images only to models that
+read them. A user's key with no model picked now runs on the current models
+(OpenAI ``gpt-6-sol`` / ``gpt-6-luna``, Anthropic ``claude-sonnet-5-5`` /
+``claude-haiku-5-5``). A parallel plan asks one question at a time instead of
+losing a confirmation.

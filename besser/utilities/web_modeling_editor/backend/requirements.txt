@@ -1,12 +1,55 @@
-fastapi
-uvicorn
+# Pinned to a minor, not left open. Unpinned, the SAME middleware code
+# deadlocked every POST on starlette 0.27.0, returned 500 on every POST on
+# 0.36.3, and worked on 1.6.0 - so a developer machine, CI and a fresh
+# install each got different behaviour from one commit, and a Docker build
+# rolled the dice at exactly the moment of deploying. This range is what CI
+# resolves and tests against.
+fastapi>=0.159,<0.160
+starlette>=1.9,<1.10
+uvicorn>=0.28.0
 pydantic
-python-multipart
+# NotRequired/TypedDict in the GitHub router (routers/github_deploy_api.py).
+typing-extensions>=4.12
+python-multipart>=0.0.17
 PyYAML
+pyflakes>=3.2.0,<4
+# Phase 3 promotes ruff's undefined-name findings (F811/F821/F822/F823) to
+# blockers. Without ruff those checks are skipped and the run says so, but it
+# checks nothing -- so it is a runtime dependency of the backend, not just a
+# CI tool. The Dockerfile installs it from this file, so Docker and non-Docker
+# deploys share this one pin and see the same rule semantics.
+ruff==0.16.6
+# The Spec-Driven Agent tells code from comments and strings in every language
+# it generates (citation checks, the frontend import scan, JSONC config files),
+# by lexing each file.
+pygments==2.19.2
 deep_translator
-bocl == 1.0.1
+bocl == 1.0.4
+# Generators and the Spec-Driven Agent the backend runs; optional extras of the
+# library (setup.cfg), always installed here.
+Django>=5.1.5
+docker>=7.1.0
+tiktoken>=0.7,<1
+# The Spec-Driven Agent's shell can run the pytest suites generated apps carry.
+pytest>=7.4.0
 cryptography
 openpyxl >= 3.1.0
 openai >= 1.52.0, < 2.0.0
-# Keep standalone backend installs consistent with the root HTTPX requirement.
+# Governance DSL parser for governed merging gateways (Docker Compose swarms).
+# It depends on besser itself (besser>=6.5.2) and on
+# antlr4-python3-runtime==4.13.1, which the root requirement
+# antlr4-python3-runtime>=4.13.1 admits. Install it after the local besser
+# (the Dockerfile does) so pip never pulls besser from PyPI.
+governancedsl==0.1.1
+# The Spec-Driven Agent's Claude client; 1.x changes the SDK surface.
+anthropic >= 0.88.0, < 1
+# Three-way merge of generated files a modify run regenerates (#659). Pinned:
+# a pygit2 release bundles a new libgit2, whose merge can resolve hunks differently.
+pygit2==1.20.1
+websockets >= 15.0
+# SHACL validation for Knowledge Graph consistency checks. The backend always
+# offers the check; for the library it is the optional ``besser[kg]`` extra
+# (setup.cfg), as only besser.BUML.notations.kg_to_buml.consistency uses it.
+pyshacl>=0.25.0
+
 httpx >= 0.27.0, < 0.28.0

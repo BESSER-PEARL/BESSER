@@ -3,7 +3,16 @@ import logging
 import os
 import re
 
-from besser.BUML.metamodel.state_machine.agent import AgentReply
+import time
+
+from besser.BUML.metamodel.state_machine.agent import (
+    AgentReply,
+    WebSocketReplyMarkdown,
+    WebSocketReplyOptions,
+)
+from besser.generators.agents.markdown_segments import join_markdown, same_inline_markup, split_markdown
+from besser.llm import openai_client
+from besser.llm.retry import backoff_seconds, is_quota_exhausted, is_retryable_status, status_code
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +54,15 @@ OPENAI_API_KEY_ENV_VAR = "OPENAI_API_KEY"
 
 # Single default model for all OpenAI-backed personalization helpers.
 DEFAULT_OPENAI_MODEL = "gpt-6-luna"
+
+# Retries after the first attempt, as many as the SDK's own default made.
+_MAX_RETRIES = 2
+
+
+def _is_transport_error(error: Exception) -> bool:
+    """No answer from OpenAI: a connection error or a timeout."""
+    from openai import APIConnectionError  # the client exists, so the SDK is installed
+    return isinstance(error, APIConnectionError)
 
 
 def _resolve_openai_api_key(config: dict = None, openai_api_key: str = None) -> str | None:
@@ -102,6 +120,7 @@ def flatten_agent_config_structure(raw_config):
         },
         "system": {
             "agentPlatform": "agentPlatform",
+            "agentPlatformUseStreamlit": "agentPlatformUseStreamlit",
             "intentRecognitionTechnology": "intentRecognitionTechnology",
             "llm": "llm",
         },
@@ -115,6 +134,13 @@ def flatten_agent_config_structure(raw_config):
             if source_key in section_data:
                 flattened[target_key] = section_data[source_key]
         flattened.pop(section_name, None)
+
+    # Resolve WME's WebSocket UI checkbox for code generation and Docker ports.
+    if (
+        flattened.get("agentPlatform") == "websocket"
+        and flattened.get("agentPlatformUseStreamlit") is True
+    ):
+        flattened["agentPlatform"] = "streamlit"
 
     # Accept saved configurations using the former name, but emit only the new one.
     if "conversationalTone" not in flattened and "agentStyle" in flattened:
@@ -134,21 +160,33 @@ def call_openai_chat(system_prompt, user_prompt, model=DEFAULT_OPENAI_MODEL, ope
             f"OpenAI API key not found. Set '{OPENAI_API_KEY_ENV_VAR}' or pass it via generator config."
         )
 
-    try:
-        from openai import OpenAI  # lazy import – optional dependency
-    except ImportError as exc:
-        raise ImportError(
-            "OpenAI personalization requires the 'agents' extra: pip install besser[agents]"
-        ) from exc
-    client = OpenAI(api_key=resolved_api_key)
-    response = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ]
-    )
+    # besser.llm's retry policy, not the SDK's: a spent quota fails at once.
+    client = openai_client(api_key=resolved_api_key, max_retries=0)
+    started = time.monotonic()
+    for attempt in range(_MAX_RETRIES + 1):
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ]
+            )
+            break
+        except Exception as error:
+            status = status_code(error)
+            transient = is_retryable_status(status) if status is not None else _is_transport_error(error)
+            if attempt == _MAX_RETRIES or not transient or is_quota_exhausted(error):
+                raise
+            backoff = backoff_seconds(error, attempt)
+            logger.warning("OpenAI call failed (attempt %d/%d), retrying in %.1fs: %s",
+                           attempt + 1, _MAX_RETRIES + 1, backoff, type(error).__name__)
+            time.sleep(backoff)
     result = response.choices[0].message.content.strip()
+    logger.info(
+        "Personalization LLM call took %.1fs (model=%s, attempts=%d, prompt=%d chars, reply=%d chars)",
+        time.monotonic() - started, model, attempt + 1, len(user_prompt), len(result),
+    )
     logger.debug("OpenAI response: %s", result)
     return result
 
@@ -348,6 +386,28 @@ def explanation_text_batch(texts, style, model=DEFAULT_OPENAI_MODEL, openai_api_
         rewritten[index] = result
     return rewritten
 
+def personalization_uses_llm(config) -> bool:
+    """Whether :func:`configure_agent` asks an LLM for ``config``.
+
+    It does when the config translates the agent (``agentLanguage``), restyles its replies
+    (``agentStyle``, ``languageComplexity``, ``sentenceLength``) or adapts them to a user profile
+    model (``userProfileModel``): the conditions under which ``configure_agent`` calls OpenAI
+    (and raises without an API key). Any other personalization (an avatar, modalities) changes no text.
+
+    Args:
+        config: The personalization configuration, structured or flat.
+
+    Returns:
+        bool: True when the personalized agent holds text an LLM wrote.
+    """
+    config = flatten_agent_config_structure(config or {})
+    return (
+        config.get('agentLanguage', 'none') not in ('none', 'original') and 'agentLanguage' in config
+        or any(key in config and config[key] != 'original'
+               for key in ('agentStyle', 'conversationalTone', 'explanationStyle', 'languageComplexity', 'sentenceLength'))
+        or isinstance(config.get('userProfileModel'), dict)
+    )
+
 
 def configure_agent(agent, config, openai_api_key: str = None):
     """
@@ -366,6 +426,7 @@ def configure_agent(agent, config, openai_api_key: str = None):
     # openai.api_key = os.getenv('OPENAI_API_KEY')
     # ... personalization logic ...
     training_sentences = []
+    option_translations: dict[str, str] = {}
     for intent in getattr(agent, 'intents', []):
         for idx, sentence in enumerate(getattr(intent, 'training_sentences', [])):
             logger.debug("Intent: %s, Sentence %d: %s", getattr(intent, 'name', ''), idx, sentence)
@@ -379,37 +440,62 @@ def configure_agent(agent, config, openai_api_key: str = None):
                 "or include 'openaiApiKey'/'openai_api_key' in generator config."
             )
         target_language = config['agentLanguage']
-        translated_sentences = translate_text_batch(
-            training_sentences,
+        # Option labels ride in the same call as the training sentences: one LLM round
+        # trip instead of two.
+        option_replies, option_labels = _collect_option_labels(agent)
+        translated_batch = translate_text_batch(
+            training_sentences + option_labels,
             target_language,
             openai_api_key=resolved_api_key,
             config=config,
+        )
+        translated_sentences = translated_batch[:len(training_sentences)]
+        option_translations = _apply_option_translations(
+            option_replies, option_labels, translated_batch[len(training_sentences):]
         )
         ti = 0
         for intent in getattr(agent, 'intents', []):
             for idx, sentence in enumerate(getattr(intent, 'training_sentences', [])):
                 if 'agentLanguage' in config and config['agentLanguage'] != 'none' and config['agentLanguage'] != 'original':
                     logger.debug("Replacing sentence %d with translated version.", ti)
-                    intent.training_sentences[idx] = translated_sentences[ti]
+                    # A button click comes back as its label text, so a sentence that is
+                    # exactly an option label takes that label's translation: the buttons
+                    # and the intents must keep matching.
+                    original_sentence = training_sentences[ti]
+                    intent.training_sentences[idx] = option_translations.get(
+                        _option_key(original_sentence), translated_sentences[ti]
+                    )
                     ti += 1
 
-    messages = []
-    for state in getattr(agent, 'states', []):
-
-        for body_attr in ['body', 'fallback_body']:
-            body = getattr(state, body_attr, None)
-            if body and body.actions:
-                for action in body.actions:
-                    if isinstance(action, AgentReply):
-                        # process each message individually
-                        # action.message = replace_reply(action.message, config)
-                        messages.append(action.message)
+    # What gets personalized: plain replies as one text each; Markdown replies as one
+    # text per line of prose, so list markers, headings and code blocks never reach
+    # the LLM (see markdown_segments).
+    messages: list[str] = []
+    markdown_flags: list[bool] = []
+    # (action, markdown skeleton / _OPTIONS_LABEL / None, index of its first text, text count)
+    slots = []
+    for action in _body_actions(agent):
+        if isinstance(action, AgentReply):
+            slots.append((action, None, len(messages), 1))
+            messages.append(action.message)
+            markdown_flags.append(False)
+        elif isinstance(action, WebSocketReplyOptions) and isinstance(action.label, str) and action.label.strip():
+            # the text shown with the buttons is prose like any reply (the buttons are not)
+            slots.append((action, _OPTIONS_LABEL, len(messages), 1))
+            messages.append(action.label)
+            markdown_flags.append(False)
+        elif isinstance(action, WebSocketReplyMarkdown) and isinstance(action.message, str):
+            parts, units = split_markdown(action.message)
+            slots.append((action, parts, len(messages), len(units)))
+            messages.extend(units)
+            markdown_flags.extend([True] * len(units))
 
     personalized_messages = replace_reply_batch(
         messages,
         config,
         openai_api_key=resolved_api_key,
-    )
+        markdown_flags=markdown_flags,
+    ) if messages else []
 
     if len(personalized_messages) != len(messages):
         logger.warning(
@@ -418,20 +504,83 @@ def configure_agent(agent, config, openai_api_key: str = None):
         )
         personalized_messages = list(messages)
 
-    msg_index = 0
+    for action, parts, first, count in slots:
+        if parts is _OPTIONS_LABEL:
+            # the rewriting steps pre-escape quotes for plain replies; the generator escapes itself
+            action.label = personalized_messages[first].replace("\\'", "'")
+        elif parts is None:
+            action.message = personalized_messages[first]
+            action.message = action.message.replace("'", "\\'")
+        else:
+            action.message = join_markdown(parts, personalized_messages[first:first + count])
+
+
+_OPTIONS_LABEL = object()  # marks a slot holding the label of an options reply
+
+
+def _body_actions(agent):
+    """Every action of every state body and fallback body, in order."""
     for state in getattr(agent, 'states', []):
         for body_attr in ['body', 'fallback_body']:
             body = getattr(state, body_attr, None)
             if body and body.actions:
-                for action in body.actions:
-                    if isinstance(action, AgentReply):
-                        action.message = personalized_messages[msg_index]
-                        msg_index += 1
+                yield from body.actions
 
 
+def _option_key(label) -> str:
+    return label.strip().casefold() if isinstance(label, str) else ""
 
 
-def replace_reply_batch(messages: list[str], config: dict, openai_api_key: str = None) -> list[str]:
+def _collect_option_labels(agent):
+    """The option-button replies of ``agent`` and their distinct, non-empty labels."""
+    option_replies = [a for a in _body_actions(agent) if isinstance(a, WebSocketReplyOptions)]
+    labels = list(dict.fromkeys(
+        label.strip() for reply in option_replies for label in reply.options
+        if isinstance(label, str) and label.strip()
+    ))
+    return option_replies, labels
+
+
+def _apply_option_translations(option_replies, labels, translated) -> dict[str, str]:
+    """Write translated labels into the option replies, in place.
+
+    Only translation applies to a label (style, complexity or profile rewrites would
+    change what the user clicks). Returns ``{original label key: translated label}``
+    so the intents that match the labels can be given the same text.
+    """
+    if not labels:
+        return {}
+    if len(translated) != len(labels):
+        logger.warning(
+            "Option translation returned %d labels but expected %d; keeping the original labels.",
+            len(translated), len(labels),
+        )
+        return {}
+    by_label = {_option_key(label): text.strip() or label for label, text in zip(labels, translated)}
+    for reply in option_replies:
+        reply.options = [by_label.get(_option_key(label), label) for label in reply.options]
+    return by_label
+
+
+def _keep_markdown_markup(before: list[str], after: list[str], markdown_flags) -> list[str]:
+    """Undo, per Markdown unit, a step that dropped or changed its inline markup."""
+    if not markdown_flags or len(after) != len(before):
+        return after
+    kept = []
+    for old, new, is_markdown in zip(before, after, markdown_flags):
+        if is_markdown:
+            new = new.replace("\\'", "'") if isinstance(new, str) else new
+            if not same_inline_markup(old, new):
+                logger.debug("Personalization changed Markdown formatting; keeping %r", old)
+                new = old
+        kept.append(new)
+    return kept
+
+
+def replace_reply_batch(messages: list[str], config: dict, openai_api_key: str = None,
+                        markdown_flags: list[bool] = None) -> list[str]:
+    """Personalize ``messages``; ``markdown_flags[i]`` marks a single-line Markdown unit
+    whose inline formatting must survive every step (a step that breaks it is undone)."""
     config = flatten_agent_config_structure(config or {})
     explanation_style = config.get('explanationStyle', 'original')
     if not isinstance(explanation_style, str) or explanation_style not in EXPLANATION_STYLE_INSTRUCTIONS:
@@ -445,12 +594,14 @@ def replace_reply_batch(messages: list[str], config: dict, openai_api_key: str =
                 "or include 'openaiApiKey'/'openai_api_key' in generator config."
             )
         target_language = config['agentLanguage']
+        previous_messages = personalized_messages
         personalized_messages = translate_text_batch(
             personalized_messages,
             target_language,
             openai_api_key=openai_api_key,
             config=config,
         )
+        personalized_messages = _keep_markdown_markup(previous_messages, personalized_messages, markdown_flags)
     if 'conversationalTone' in config and config['conversationalTone'] != 'original':
         if not openai_api_key:
             raise RuntimeError(
@@ -458,12 +609,14 @@ def replace_reply_batch(messages: list[str], config: dict, openai_api_key: str =
                 "or include 'openaiApiKey'/'openai_api_key' in generator config."
             )
         style = config['conversationalTone']
+        previous_messages = personalized_messages
         personalized_messages = style_text_batch(
             personalized_messages,
             style,
             openai_api_key=openai_api_key,
             config=config,
         )
+        personalized_messages = _keep_markdown_markup(previous_messages, personalized_messages, markdown_flags)
     if 'sentenceLength' in config and config['sentenceLength'] != 'original':
         if not openai_api_key:
             raise RuntimeError(
@@ -471,23 +624,27 @@ def replace_reply_batch(messages: list[str], config: dict, openai_api_key: str =
                 "or include 'openaiApiKey'/'openai_api_key' in generator config."
             )
         length_pref = config['sentenceLength']
+        previous_messages = personalized_messages
         personalized_messages = sentence_length_batch(
             personalized_messages,
             length_pref,
             openai_api_key=openai_api_key,
             config=config,
         )
+        personalized_messages = _keep_markdown_markup(previous_messages, personalized_messages, markdown_flags)
     if isinstance(config.get('userProfileModel'), dict):
         if not openai_api_key:
             raise RuntimeError(
                 f"OpenAI API key is required for agent personalization. Set '{OPENAI_API_KEY_ENV_VAR}' "
                 "or include 'openaiApiKey'/'openai_api_key' in generator config."
             )
+        previous_messages = personalized_messages
         personalized_messages = replace_content_profile_batch(
             personalized_messages,
             config,
             openai_api_key=openai_api_key,
         )
+        personalized_messages = _keep_markdown_markup(previous_messages, personalized_messages, markdown_flags)
 
 
     if explanation_style != 'original':
@@ -496,9 +653,11 @@ def replace_reply_batch(messages: list[str], config: dict, openai_api_key: str =
                 f"OpenAI API key is required for agent personalization. Set '{OPENAI_API_KEY_ENV_VAR}' "
                 "or include 'openaiApiKey'/'openai_api_key' in generator config."
             )
+        previous_messages = personalized_messages
         personalized_messages = explanation_text_batch(
             personalized_messages, explanation_style, openai_api_key=openai_api_key, config=config,
         )
+        personalized_messages = _keep_markdown_markup(previous_messages, personalized_messages, markdown_flags)
     # Apply complexity last so later rewriting cannot undo the requested reading level.
     if 'languageComplexity' in config and config['languageComplexity'] != 'original':
         if not openai_api_key:
@@ -507,12 +666,14 @@ def replace_reply_batch(messages: list[str], config: dict, openai_api_key: str =
                 "or include 'openaiApiKey'/'openai_api_key' in generator config."
             )
         complexity = config['languageComplexity']
+        previous_messages = personalized_messages
         personalized_messages = complexity_text_batch(
             personalized_messages,
             complexity,
             openai_api_key=openai_api_key,
             config=config,
         )
+        personalized_messages = _keep_markdown_markup(previous_messages, personalized_messages, markdown_flags)
     return personalized_messages
 
 

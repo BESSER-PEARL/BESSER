@@ -1,5 +1,5 @@
 BESSER Action Language (BAL)
-==============
+============================
 
 BAL (short for BESSER Action Language) is a language to specify the behavioral aspects of B-UML models.
 This language is heavily inspired ALF, the Action Language for Foundational UML, but does not aim to be fully compliant with it.

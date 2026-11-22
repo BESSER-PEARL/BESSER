@@ -1,4 +1,3 @@
-sphinx==9.1.0
-sphinx-copybutton==0.5.2
-sphinx-paramlinks==0.6.0
-furo==2025.12.19
+# Sphinx 9 changes the search stopwords format; Material currently expects 8.x.
+sphinx==8.2.3
+sphinx-immaterial==0.13.9

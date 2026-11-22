@@ -1,23 +1,32 @@
+import copy
 import logging
 import os
 import textwrap
 from enum import Enum
 from typing import Optional
 
-from jinja2 import Environment, FileSystemLoader
+from jinja2 import Environment
 import json
 import re
 
-from besser.BUML.metamodel.state_machine.agent import Agent
+from besser.BUML.metamodel.state_machine.agent import Agent, GUIReplyAction
+from besser.utilities.template_escaping import register_escaping_filters
 from besser.BUML.metamodel.structural import Method
+from besser.BUML.metamodel.traceability import LLM
 from besser.generators import GeneratorInterface
 
-from besser.generators.agents.agent_personalization import configure_agent, flatten_agent_config_structure
+from besser.generators.agents.agent_personalization import (
+    DEFAULT_OPENAI_MODEL, configure_agent, flatten_agent_config_structure, personalization_uses_llm,
+)
+from besser.generators.agents.baf_version import BAF_VERSION
+from besser.generators.agents.deployment_components import materialize_deployment_components
 
 # BESSER utilities
 from besser.utilities.buml_code_builder.agent_model_builder import agent_model_to_code
-from besser.utilities.buml_code_builder.common import safe_var_name
-from besser.utilities.web_modeling_editor.backend.services.converters import agent_buml_to_json
+from besser.utilities.buml_code_builder.common import identifier_part, safe_var_name
+from besser.utilities.buml_code_builder.gui_model_builder import gui_model_to_code
+from besser.utilities.generation_trace import trace_source, traced_environment
+from besser.utilities.path_utils import normalize_relative_path
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +85,266 @@ def _config_has_personalization_content(config) -> bool:
     return False
 
 
+def json_literal(value, indent: int = 2) -> str:
+    r"""JSON for a ``json.loads(r'''...''')`` literal in generated code.
+
+    Unlike Jinja's ``tojson`` it keeps ``<``, ``>`` and ``&`` readable (``age > 65``,
+    not ``age \u003e 65``); only ``'`` is escaped, so the raw string cannot close early.
+    """
+    return json.dumps(value, indent=indent, ensure_ascii=False).replace("'", r"\u0027")
+
+
+def extract_braced_vars(template: str) -> list[str]:
+    """Return the unique ``{identifier}`` placeholders of *template*, in order of first appearance.
+
+    Used by the agent template to emit one ``session.get(...)`` substitution per
+    session variable referenced in a message or prompt.
+
+    Args:
+        template (str): Message or prompt text; ``None`` is treated as empty.
+
+    Returns:
+        list[str]: Placeholder names without braces, e.g. ``["name", "user_message"]``.
+    """
+    return list(dict.fromkeys(re.findall(r'\{(\w+)\}', template or '')))
+
+
+_SQL_ITEM_HEADER = re.compile(r'^(\s*)-\s+[\w-]+\s*:\s*$')
+_SQLITE_DIALECT = re.compile(r'^\s*dialect\s*:\s*["\']?sqlite')
+_FILE_KEY = re.compile(r'^\s*file\s*:')
+_DATABASE_KEY = re.compile(r'^(\s*)database(\s*:)')
+
+
+def sqlite_database_to_file(config_yaml: str) -> str:
+    """Rename ``database:`` to ``file:`` in sqlite ``db.sql`` entries of *config_yaml*.
+
+    BAF reads a sqlite path from ``file``; older editor builds wrote ``database``.
+    """
+    lines = config_yaml.splitlines(keepends=True)
+    i = 0
+    while i < len(lines):
+        header = _SQL_ITEM_HEADER.match(lines[i])
+        i += 1
+        if not header:
+            continue
+        start = i
+        while i < len(lines) and (not lines[i].strip() or
+                                  len(lines[i]) - len(lines[i].lstrip()) > len(header.group(1))):
+            i += 1
+        block = range(start, i)
+        if (any(_SQLITE_DIALECT.match(lines[j]) for j in block)
+                and not any(_FILE_KEY.match(lines[j]) for j in block)):
+            for j in block:
+                if _DATABASE_KEY.match(lines[j]):
+                    lines[j] = _DATABASE_KEY.sub(r'\1file\2', lines[j], count=1)
+                    break
+    return ''.join(lines)
+
+
+DEFAULT_DB_NAME = 'db1'
+"""``db.sql`` entry that a ``DBReply`` with ``db_selection_type='default'`` queries."""
+
+_PLACEHOLDER_PREFIX = 'YOUR-'
+
+
+def _find_sql_db(data, db_name: str):
+    """Return the ``db.sql.<db_name>`` entry of a parsed BAF config, or ``None``.
+
+    ``db.sql`` may be a list of single-key mappings (the generated layout) or a
+    mapping; BAF flattens both to ``db.sql.<name>.<key>``.
+    """
+    db = data.get('db') if isinstance(data, dict) else None
+    sql = db.get('sql') if isinstance(db, dict) else None
+    if isinstance(sql, dict):
+        return sql.get(db_name)
+    if isinstance(sql, list):
+        for item in sql:
+            if isinstance(item, dict) and len(item) == 1 and db_name in item:
+                return item[db_name]
+    return None
+
+
+def _is_placeholder_db(entry) -> bool:
+    """True when a ``db.sql`` entry is missing, empty or still holds a ``YOUR-...`` placeholder."""
+    if not isinstance(entry, dict) or not entry:
+        return True
+    return any(isinstance(v, str) and v.strip().startswith(_PLACEHOLDER_PREFIX) for v in entry.values())
+
+
+def yaml_scalar(value) -> str:
+    """*value* as a YAML scalar; strings are double-quoted (a JSON string is valid YAML)."""
+    if isinstance(value, bool):
+        return 'True' if value else 'False'
+    if isinstance(value, (int, float)):
+        return str(value)
+    return json.dumps(str(value))
+
+
+def link_default_database(config_yaml: str, db_entry: dict, db_name: str = DEFAULT_DB_NAME) -> str:
+    """Point ``db.sql.<db_name>`` of a user-supplied *config_yaml* at *db_entry*.
+
+    The entry is replaced only when it is missing or still holds ``YOUR-...``
+    placeholders, so a database the user configured on purpose is kept. The
+    ``- <db_name>:`` list item under ``db:`` -> ``sql:`` is rewritten in place,
+    keeping the rest of the text (comments included); an item of that name under
+    any other key is left alone. Otherwise, or if the in-place edit would not
+    parse to exactly the intended change, the YAML is parsed, updated and dumped.
+    Text that is not a YAML mapping is returned unchanged.
+
+    Args:
+        config_yaml (str): The ``config.yaml`` text.
+        db_entry (dict): The connection properties, e.g. ``{"dialect": "sqlite", "file": "..."}``.
+        db_name (str): The ``db.sql`` entry to set. Defaults to ``db1``.
+
+    Returns:
+        str: The updated ``config.yaml`` text.
+    """
+    try:
+        import yaml  # pylint: disable=import-outside-toplevel
+    except ImportError:  # pragma: no cover - PyYAML ships with the backend requirements
+        return config_yaml
+    try:
+        data = yaml.safe_load(config_yaml) if config_yaml.strip() else {}
+    except yaml.YAMLError:
+        return config_yaml
+    if data is None:
+        data = {}
+    if not isinstance(data, dict):
+        return config_yaml
+    if not _is_placeholder_db(_find_sql_db(data, db_name)):
+        return config_yaml
+
+    expected = copy.deepcopy(data)
+    db = expected.get('db')
+    if not isinstance(db, dict):
+        db = expected['db'] = {}
+    sql = db.get('sql')
+    if isinstance(sql, dict):
+        sql[db_name] = dict(db_entry)
+    else:
+        others = [item for item in (sql if isinstance(sql, list) else [])
+                  if not (isinstance(item, dict) and db_name in item)]
+        db['sql'] = [{db_name: dict(db_entry)}] + others
+
+    rewritten = _rewrite_sql_list_item(config_yaml, db_entry, db_name)
+    if rewritten is not None:
+        # Keep the in-place edit only when it means exactly the intended
+        # change; anything the line scan misread falls back to a re-dump.
+        try:
+            if yaml.safe_load(rewritten) == expected:
+                return rewritten
+        except yaml.YAMLError:
+            pass
+    return yaml.safe_dump(expected, sort_keys=False)
+
+
+# A block-style ``key:`` or ``- key:`` line; group 5 is whatever follows the colon.
+_YAML_KEY_LINE = re.compile(r'''^(\s*)(-\s+)?(["']?)([^\s#"':][^#"':]*?)\3\s*:(?:\s+(.*))?$''')
+
+
+def _rewrite_sql_list_item(config_yaml: str, db_entry: dict, db_name: str):
+    """Rewrite the ``- <db_name>:`` block item of ``db.sql`` in *config_yaml*, in place.
+
+    Block-style YAML is scanned line by line, tracking the chain of open parent
+    keys by indentation, so only the item whose parents are exactly the
+    top-level ``db`` then ``sql`` is touched; a ``- db1:`` under any other key
+    is not the agent's database. The rest of the text, comments included, is
+    kept. Returns ``None`` when there is no such item.
+    """
+    text = config_yaml if config_yaml.endswith('\n') else config_yaml + '\n'
+    lines = text.splitlines(keepends=True)
+    parents: list = []  # (indent, key) of each open block key above the line
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped or stripped.startswith('#'):
+            continue
+        indent = len(line) - len(line.lstrip())
+        is_item = stripped.startswith('-')
+        # A block sequence may sit at its parent key's own indentation.
+        parents = [(ind, key) for ind, key in parents if ind < indent or (is_item and ind == indent)]
+        match = _YAML_KEY_LINE.match(line.rstrip('\r\n'))
+        if not match:
+            continue
+        key, value = match.group(4).strip(), (match.group(5) or '').strip()
+        opens_block = not value or value.startswith('#')
+        if (is_item and key == db_name and opens_block
+                and [k for _, k in parents] == ['db', 'sql'] and parents[0][0] == 0):
+            end = i + 1
+            while end < len(lines) and (not lines[end].strip()
+                                        or len(lines[end]) - len(lines[end].lstrip()) > indent):
+                end += 1
+            body = [f"{' ' * (indent + 4)}{k}: {yaml_scalar(v)}\n" for k, v in db_entry.items()]
+            return ''.join(lines[:i + 1] + body + lines[end:])
+        if opens_block:
+            key_indent = indent + len(match.group(2)) if is_item else indent
+            parents.append((key_indent, key))
+    return None
+
+
+def workspace_rel_dir(path: str, name: str) -> str:
+    """Return the directory of a workspace relative to the generated agent's folder.
+
+    Test sessions run the generated agent inside an isolated folder, so every
+    declared workspace is created relative to it. A blank *path* falls back to
+    the workspace *name* (as a safe identifier).
+
+    Args:
+        path (str): The workspace path declared in the model (absolute or relative).
+        name (str): The workspace name.
+
+    Returns:
+        str: A POSIX path relative to the output directory.
+
+    Raises:
+        ValueError: If *path* would resolve outside the output directory
+            (``..`` segments) or has no relative component (e.g. ``/``).
+    """
+    if not path.strip():
+        return safe_var_name(name)
+    try:
+        return normalize_relative_path(path)
+    except ValueError as exc:
+        raise ValueError(
+            f"Workspace '{name}' has path {path!r}, which cannot be created inside the "
+            f"generated agent's folder: {exc}"
+        ) from exc
+
+
+def collect_gui_modules(agent: Agent) -> dict[str, GUIReplyAction]:
+    """Map each ``guis/<module>.py`` module name to the GUIReplyAction it serves.
+
+    Walks the body and fallback body of every state and keeps the first
+    GUIReplyAction per ``gui_id``; the module name is ``safe_var_name(gui_id)``.
+
+    Args:
+        agent (Agent): The agent model.
+
+    Returns:
+        dict[str, GUIReplyAction]: Module name to action, in declaration order.
+
+    Raises:
+        ValueError: If two different ``gui_id`` values map to the same module name.
+    """
+    modules: dict[str, GUIReplyAction] = {}
+    for state in agent.states:
+        for body in (state.body, state.fallback_body):
+            if body is None:
+                continue
+            for action in body.actions:
+                if not isinstance(action, GUIReplyAction):
+                    continue
+                module = safe_var_name(action.gui_id)
+                existing = modules.get(module)
+                if existing is None:
+                    modules[module] = action
+                elif existing.gui_id != action.gui_id:
+                    raise ValueError(
+                        f"GUI ids {existing.gui_id!r} and {action.gui_id!r} both map to the "
+                        f"generated module 'guis/{module}.py'; rename one of them."
+                    )
+    return modules
+
+
 class GenerationMode(Enum):
     FULL = "full"
     PERSONALIZED_ONLY = "personalized_only"
@@ -94,6 +363,36 @@ class BAFGenerator(GeneratorInterface):
             - GenerationMode.FULL (default): personalization (if config) + templated code.
             - GenerationMode.PERSONALIZED_ONLY: run personalization JSON/model export only.
             - GenerationMode.CODE_ONLY: skip personalization helpers, render templates immediately.
+        a2a_descriptor (dict, optional): Resolved deployment topology and governance.
+            Extends the authored agent graph when peers or an A2A server are present.
+        bind_host (str, optional): Interface the websocket and Streamlit servers bind to in
+            the default ``config.yaml``. Defaults to ``"localhost"`` so a standalone agent is
+            not exposed on the network; container builds (e.g. ``DockerComposeGenerator``)
+            pass ``"0.0.0.0"`` so the published ports reach the servers. A supplied
+            ``config_yaml`` is written as-is.
+        default_db (dict, optional): Connection properties of ``db1``, the database a
+            ``DBReply`` with ``db_selection_type='default'`` queries (e.g.
+            ``{"dialect": "sqlite", "file": "/app/webapp_data/app.db"}``). ``None`` (the
+            default) keeps the ``YOUR-DB-*`` placeholders. A supplied ``config_yaml`` is
+            changed only when its ``db1`` is missing or still holds placeholders (see
+            :func:`link_default_database`). ``WebAppGenerator`` uses it to connect the
+            agent to the web app's database.
+
+    Attributes:
+        traced_files (dict[str, FileTrace]): After ``generate()``, each file written with the elements it
+            was rendered from: in ``<agent>.py`` the lines of each intent, entity, state (its creation and
+            its behaviour) with its body, fallback body and transitions, in ``tools.py`` those of each
+            tool; ``config.yaml`` and ``readme.txt`` name the agent as source, a skill file its skill, a
+            ``guis/`` module its GUI model. Only elements with an ``id`` are recorded.
+        ai_files (set[str]): The files, by path relative to the output directory, an LLM produced or
+            modified in this run: the personalization step (``configure_agent`` with an OpenAI key)
+            rewrites the agent's replies and training sentences, so ``personalized_agent_model.py``,
+            ``personalized_agent_model.json`` and ``<agent>.py`` are listed when it asked the LLM
+            (``personalization_uses_llm``). Their regions are not deterministic template output:
+            pass this set as ``ai_files`` to ``build_generation_trace``, which records them as AI
+            evidence of an LLM call instead of a rule. Empty when no LLM was involved.
+        ai_llm (LLM): The LLM the personalization step asked (OpenAI's ``DEFAULT_OPENAI_MODEL``), when
+            ``ai_files`` is not empty; pass it as ``llm`` to ``build_generation_trace``.
     """
     def __init__(
         self,
@@ -104,11 +403,27 @@ class BAFGenerator(GeneratorInterface):
         openai_api_key: str = None,
         generation_mode: GenerationMode | str = GenerationMode.FULL,
         config_yaml: Optional[str] = None,
+        test_mode: bool = False,
+        a2a_descriptor: Optional[dict] = None,
+        deployment_component_metadata: bool = False,
+        bind_host: str = "localhost",
+        default_db: Optional[dict] = None,
     ):
         super().__init__(model, output_dir)
+        self.ai_files: set[str] = set()
+        self.bind_host = bind_host
+        self.default_db = dict(default_db) if default_db else None
         self.config = flatten_agent_config_structure(config) if isinstance(config, dict) else config
         self.config_yaml = config_yaml
         self.openai_api_key = openai_api_key
+        self.test_mode = test_mode
+        self.deployment_component_metadata = deployment_component_metadata
+        self.a2a_descriptor = (
+            a2a_descriptor if a2a_descriptor and
+            (a2a_descriptor.get('to_peers') or a2a_descriptor.get('a2a_server')) else None
+        )
+        if self.a2a_descriptor and sum(bool(state.initial) for state in model.states) != 1:
+            raise ValueError('A2A generation requires exactly one authored initial state')
         if isinstance(generation_mode, GenerationMode):
             self.generation_mode = generation_mode
         elif isinstance(generation_mode, str):
@@ -127,6 +442,31 @@ class BAFGenerator(GeneratorInterface):
                     if isinstance(loaded_config, dict)
                     else loaded_config
                 )
+
+    def _intent_classifier_llm_name(self) -> str:
+        """Name of the LLM the default LLM intent classifier uses; ``''`` when none is configured."""
+        config = self.config if isinstance(self.config, dict) else {}
+        llm_config = config.get('llm') if isinstance(config.get('llm'), dict) else {}
+        if llm_config.get('name'):
+            return llm_config['name']
+        if self.model.default_llm_name:
+            return self.model.default_llm_name
+        if self.model.llms:
+            return self.model.llms[0].name
+        if llm_config.get('model'):
+            return llm_config['model']
+        return 'gpt-4o-mini' if self.a2a_descriptor else ''
+
+    def _uses_classical_ic_fallback(self, ic_llm_name: str) -> bool:
+        """True when no intent classifier is chosen and no LLM is configured for one.
+
+        BAF's LLM classifier looks the LLM up by name and swallows the KeyError
+        of an empty name, so every message would fall back; the template then
+        emits BAF's classical (PyTorch) classifier instead.
+        """
+        config = self.config if isinstance(self.config, dict) else {}
+        technology_chosen = config.get('intentRecognitionTechnology') in ('llm-based', 'classical')
+        return not technology_chosen and self.model.default_ic_config is None and not ic_llm_name
 
     def generate(self):
         """
@@ -154,8 +494,11 @@ class BAFGenerator(GeneratorInterface):
             if func:
                 # Replace 'AgentSession' with 'Session' in the code
                 code = func.code.replace('AgentSession', 'Session')
-                # Extract function name using regex
-                match = re.search(r'def\s+(\w+)\s*\(.*session\s*:\s*Session.*\)', code)
+                # Extract function name using regex. The first parameter only needs to be
+                # named 'session'; its type annotation is irrelevant here (and may be
+                # quoted, e.g. session: 'Session', unquoted, e.g. session: Session, or
+                # absent altogether).
+                match = re.search(r'def\s+(\w+)\s*\(\s*session\b', code)
                 if match:
                     code = code + "\n" + f"{func.name} = {match.group(1)}\n"
                 return textwrap.dedent(code)
@@ -207,11 +550,7 @@ class BAFGenerator(GeneratorInterface):
         )
 
         templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
-        env = Environment(
-            loader=FileSystemLoader(templates_path),
-            trim_blocks=True,
-            lstrip_blocks=True,
-        )
+        env = traced_environment(templates_path, trim_blocks=True, lstrip_blocks=True)
         env.globals['is_class'] = is_class
         env.globals['is_type'] = is_type
         env.globals['replace_bot_session_with_session_in_signature'] = replace_agent_session_with_session_in_signature
@@ -220,8 +559,14 @@ class BAFGenerator(GeneratorInterface):
         # always valid Python (handles leading digits, dashes, dots, spaces, …).
         env.globals['safe_var_name'] = safe_var_name
         env.globals['resolve_rag_var_name'] = resolve_rag_var_name
+        env.globals['extract_braced_vars'] = extract_braced_vars
+        env.filters['python_repr'] = repr
+        env.filters['json_literal'] = json_literal
+        env.filters['yaml_scalar'] = yaml_scalar
+        register_escaping_filters(env)
         agent_template = env.get_template('baf_agent_template.py.j2')
-        agent_path = self.build_generation_path(file_name=f"{self.model.name}.py")
+        gui_modules = collect_gui_modules(self.model)
+        agent_file = f"{self.model.name}.py"
         personalized_agent_path = self.build_generation_path(file_name="personalized_agent_model.py")
         personalized_json_path = self.build_generation_path(file_name="personalized_agent_model.json")
         config_for_personalization = dict(self.config) if self.config else None
@@ -235,12 +580,18 @@ class BAFGenerator(GeneratorInterface):
             # config consumed by ``configure_agent``. We no longer ship a
             # generator for the legacy format, so skip the pass entirely when
             # only legacy rules are present.
+            llm_personalized = False
             if 'personalizationrules' not in config_for_personalization:
                 configure_agent(
                     self.model,
                     config_for_personalization,
                     openai_api_key=self.openai_api_key,
                 )
+                llm_personalized = personalization_uses_llm(config_for_personalization)
+            if llm_personalized:
+                # The model now holds LLM-written text: record it, so a trace does not call it deterministic.
+                self.ai_files.update((agent_file, "personalized_agent_model.py"))
+                self.ai_llm = LLM(DEFAULT_OPENAI_MODEL, "openai")
 
             # Persist personalized agent python for downstream conversion.
             agent_model_to_code(self.model, personalized_agent_path)
@@ -249,11 +600,20 @@ class BAFGenerator(GeneratorInterface):
             # tooling (frontend preview, debugging). A conversion failure here
             # is non-fatal — the .py model is already on disk.
             try:
+                # Imported here, not at module level: the web editor backend
+                # registers this generator in ``config.generators``, so a
+                # module-level import would make ``import BAFGenerator`` circular.
+                from besser.utilities.web_modeling_editor.backend.services.converters import (
+                    agent_buml_to_json,
+                )
+
                 with open(personalized_agent_path, "r", encoding="utf-8") as f:
                     personalized_code = f.read()
                 personalized_json = agent_buml_to_json(personalized_code)
                 with open(personalized_json_path, "w", encoding="utf-8") as jf:
                     json.dump(personalized_json, jf, indent=2)
+                if llm_personalized:
+                    self.ai_files.add("personalized_agent_model.json")
                 logger.info("Personalized agent JSON generated at %s", personalized_json_path)
             except Exception:
                 logger.exception("Failed to convert personalized agent to JSON")
@@ -271,62 +631,96 @@ class BAFGenerator(GeneratorInterface):
             if not generate_code_assets:
                 return
 
+        deployment_component_bindings = None
+        if self.deployment_component_metadata and generate_code_assets:
+            deployment_component_bindings = materialize_deployment_components(
+                self.model, self.build_generation_dir())
+
+        # Resolved after personalization, which can change the model's LLMs.
+        ic_llm_name = self._intent_classifier_llm_name()
+        classical_ic_fallback = self._uses_classical_ic_fallback(ic_llm_name)
+        if classical_ic_fallback:
+            logger.warning(
+                "Agent '%s' has no intent classifier set and no LLM configured: it uses BAF's classical "
+                "intent classifier, which needs PyTorch.",
+                self.model.name,
+            )
+
         if config_for_personalization and 'personalizationMapping' in config_for_personalization:
             logger.info("Generating agent with personalization mappings")
-            with open(agent_path, mode="w", encoding="utf-8") as f:
-                generated_code = agent_template.render(
-                    agent=self.model,
-                    config=self.config,
-                    personalization_mapping=config_for_personalization['personalizationMapping'],
-                )
-                f.write(generated_code)
+            rendered = agent_template.render(
+                agent=self.model,
+                config=self.config,
+                personalization_mapping=config_for_personalization['personalizationMapping'],
+                test_mode=self.test_mode,
+                gui_modules=list(gui_modules),
+                a2a=self.a2a_descriptor,
+                deployment_component_bindings=deployment_component_bindings,
+                ic_llm_name=ic_llm_name,
+                classical_ic_fallback=classical_ic_fallback,
+            )
+            self._write_traced(agent_file, rendered, trace_source(self.model, "baf_agent_template.py.j2#agent"))
         else:
-            with open(agent_path, mode="w", encoding="utf-8") as f:
-                # TODO: how to handle llm variable names that are used in bodies?
-                generated_code = agent_template.render(agent=self.model, config=self.config)
-                f.write(generated_code)
-            logger.info("Agent script generated at %s", agent_path)
+            # TODO: how to handle llm variable names that are used in bodies?
+            rendered = agent_template.render(
+                agent=self.model,
+                config=self.config,
+                test_mode=self.test_mode,
+                gui_modules=list(gui_modules),
+                a2a=self.a2a_descriptor,
+                deployment_component_bindings=deployment_component_bindings,
+                ic_llm_name=ic_llm_name,
+                classical_ic_fallback=classical_ic_fallback,
+            )
+            self._write_traced(agent_file, rendered, trace_source(self.model, "baf_agent_template.py.j2#agent"))
+            logger.info("Agent script generated at %s", self.build_generation_path(agent_file))
         if generate_code_assets:
             config_path = self.build_generation_path(file_name="config.yaml")
-            with open(config_path, mode="w", encoding="utf-8") as f:
-                if self.config_yaml is not None:
-                    f.write(self.config_yaml)
-                else:
-                    config_template = env.get_template('baf_config_template.py.j2')
-                    properties = sorted(self.model.properties, key=lambda prop: prop.section)
-                    f.write(config_template.render(properties=properties, agent=self.model))
+            if self.config_yaml is not None:
+                config_yaml = sqlite_database_to_file(self.config_yaml)
+                if self.default_db:
+                    config_yaml = link_default_database(config_yaml, self.default_db)
+                self._write_file("config.yaml", config_yaml, trace_source(self.model, "config.yaml#agent"))
+            else:
+                config_template = env.get_template('baf_config_template.py.j2')
+                properties = sorted(self.model.properties, key=lambda prop: prop.section)
+                self._write_traced("config.yaml", config_template.render(
+                    properties=properties, agent=self.model, bind_host=self.bind_host, default_db=self.default_db),
+                    trace_source(self.model, "baf_config_template.py.j2#config"))
             logger.info("Agent config file generated at %s", config_path)
             # Generate readme.txt using the Jinja2 template
             readme_template = env.get_template('readme.txt.j2')
             readme_path = self.build_generation_path(file_name="readme.txt")
-            with open(readme_path, mode="w", encoding="utf-8") as f:
-                generated_code = readme_template.render(agent=self.model)
-                f.write(generated_code)
+            self._write_traced("readme.txt", readme_template.render(
+                agent=self.model, classical_ic_fallback=classical_ic_fallback, baf_version=BAF_VERSION),
+                trace_source(self.model, "readme.txt.j2#readme"))
             logger.info("Agent readme file generated at %s", readme_path)
 
             # Generate tools.py — one file containing all tool function definitions
             tools = getattr(self.model, 'tools', []) or []
-            if tools:
+            if tools and not self.deployment_component_metadata:
                 tools_path = self.build_generation_path(file_name="tools.py")
-                with open(tools_path, mode="w", encoding="utf-8") as f:
-                    f.write("# Auto-generated tool definitions\n\n")
-                    for tool in tools:
-                        f.write(tool.code)
-                        if not tool.code.endswith('\n'):
-                            f.write('\n')
-                        f.write('\n')
+                self._write_traced("tools.py", env.get_template('tools.py.j2').render(tools=tools))
                 logger.info("Tools file generated at %s", tools_path)
 
             # Generate skills/ directory — one .md file per skill
             skills = getattr(self.model, 'skills', []) or []
-            if skills:
+            if skills and not self.deployment_component_metadata:
                 skills_dir = os.path.join(self.build_generation_dir(), "skills")
                 os.makedirs(skills_dir, exist_ok=True)
                 for skill in skills:
-                    skill_file = os.path.join(skills_dir, f"{skill.name}.md")
-                    with open(skill_file, mode="w", encoding="utf-8") as f:
-                        f.write(skill.content)
+                    self._write_file(f"skills/{identifier_part(skill.name)}.md", skill.content,
+                                       trace_source(skill, "skill.md#skill"))
                 logger.info("Skills directory generated at %s", skills_dir)
+
+            # Test sessions run generated agents in an isolated sandbox folder.
+            # Pre-create declared workspaces there so tooling can rely on them.
+            if self.test_mode and self.model.workspaces:
+                base_dir = self.build_generation_dir()
+                for ws in self.model.workspaces:
+                    ws_dir = workspace_rel_dir(ws.path, ws.name)
+                    os.makedirs(os.path.join(base_dir, ws_dir), exist_ok=True)
+                logger.info("Workspace directories generated for test mode in %s", base_dir)
 
             rag_configs = getattr(self.model, 'rags', []) or []
             if rag_configs:
@@ -341,3 +735,38 @@ class BAFGenerator(GeneratorInterface):
                                 "Place your PDF documents for this RAG database inside this "
                                 "folder before running the agent.\n"
                             )
+
+            if gui_modules:
+                self._generate_guis(env, gui_modules)
+
+    def _generate_guis(self, env: Environment, gui_modules: dict[str, GUIReplyAction]):
+        """Write the ``guis`` package: one module per GUIReplyAction exposing ``gui``.
+
+        Each module holds the BUML code of the referenced ``Agent.gui_models``
+        entry (``gui_model``) followed by the ``AgentGUI`` wrapper rendered from
+        ``agent_gui.py.j2``.
+
+        Raises:
+            ValueError: If a GUIReplyAction references a ``gui_id`` that has no
+                entry in ``Agent.gui_models``.
+        """
+        guis_dir = os.path.join(self.build_generation_dir(), "guis")
+        os.makedirs(guis_dir, exist_ok=True)
+        with open(os.path.join(guis_dir, "__init__.py"), "w", encoding="utf-8"):
+            pass
+        gui_template = env.get_template('agent_gui.py.j2')
+        for module, gui_action in gui_modules.items():
+            gui_model = self.model.gui_models.get(gui_action.gui_id)
+            if gui_model is None:
+                raise ValueError(
+                    f"GUIReplyAction references gui_id {gui_action.gui_id!r}, but agent "
+                    f"'{self.model.name}' has no GUI model with that id in gui_models."
+                )
+            gui_file_path = os.path.join(guis_dir, f"{module}.py")
+            gui_model_to_code(gui_model, gui_file_path, model_var_name="gui_model")
+            with open(gui_file_path, mode="a", encoding="utf-8") as gf:
+                gf.write(gui_template.render(gui_action=gui_action))
+            with open(gui_file_path, encoding="utf-8", newline="") as gf:
+                gui_code = gf.read()
+            self._write_traced(f"guis/{module}.py", gui_code, trace_source(gui_model, "agent_gui.py.j2#gui"))
+        logger.info("GUIs directory generated at %s", guis_dir)

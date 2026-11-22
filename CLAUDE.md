@@ -4,409 +4,358 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-BESSER is a low-code platform for building software through model-driven engineering. It consists of:
-- **B-UML**: A Python-based metamodel for describing domain models, state machines, GUI designs, agents, quantum circuits, and more
-- **Code Generators**: Transform B-UML models into executable code (Django, FastAPI, SQLAlchemy, Flutter, React, etc.)
-- **Web Modeling Editor Backend**: FastAPI services powering the online visual editor at https://editor.besser-pearl.org
-- **Frontend Submodule**: TypeScript/React UI at `besser/utilities/web_modeling_editor/frontend` (maintained separately)
+BESSER is a low-code platform for model-driven engineering:
+- **B-UML**: a Python metamodel for domain, object, state-machine, GUI, agent, BPMN, neural-network,
+  quantum, deployment, feature and project models, plus OCL constraints
+- **Code generators**: B-UML → Django, FastAPI, SQLAlchemy, React, Flutter, Qiskit, Terraform, etc.
+- **Spec-Driven Agent**: a *hybrid* generator — deterministic scaffold, then an LLM customization loop,
+  then validation with a bounded auto-fix loop. A first-class peer of the deterministic generators.
+- **Web Modeling Editor backend**: FastAPI services behind https://editor.besser-pearl.org
+- **Frontend**: git submodule at `besser/utilities/web_modeling_editor/frontend` (has its own `CLAUDE.md`)
+
+Long-form contributor docs live in `docs/source/` (start at `contributor_guide.rst`; published at
+https://besser.readthedocs.io/). Examples: https://github.com/BESSER-PEARL/BESSER-examples
 
 ## Essential Commands
 
-### Setup and Installation
+### Setup
 ```bash
-# Create virtual environment and install dependencies
 python -m venv venv
-venv/Scripts/activate  # Windows: venv\Scripts\activate
-pip install -r requirements.txt
-
-# Install in editable mode (for development)
-pip install -e .
-
-# Install documentation dependencies (optional)
-pip install -r docs/requirements.txt
+source venv/bin/activate            # Windows: venv\Scripts\activate
+pip install -e .                    # editable install — this is what makes `besser` importable
+# Required to run or test the editor backend. FastAPI, openpyxl, openai etc. are NOT in the root requirements.txt.
+pip install -r besser/utilities/web_modeling_editor/backend/requirements.txt
+pip install -r docs/requirements.txt   # docs toolchain (optional)
 ```
 
 ### Testing
 ```bash
-# Run all tests
-python -m pytest
-
-# Run specific test module
-python -m pytest tests/generators -k sqlalchemy
-
-# Run targeted tests
-python -m pytest tests/BUML/metamodel/structural -k library
-
-# Run a standalone example to verify setup
-python tests/BUML/metamodel/structural/library/library.py
+python -m pytest tests/                                             # ALWAYS scope to tests/
+python -m pytest tests/ -n auto -q --tb=short                         # what CI runs (Python 3.11 + 3.12; -n is pytest-xdist, in the dev extra)
+python -m pytest tests/generators -k sqlalchemy                     # targeted
+python tests/BUML/metamodel/structural/library/library.py           # standalone example, verifies the install
 ```
+- Without `openpyxl`, pytest fails at *collection* (`test_spreadsheet_import.py` imports it at module level) —
+  an error, not a test failure. It ships in the backend requirements file.
+- `torch` / `tensorflow` are not needed: `tests/generators/nn/` skips what needs them (CI installs CPU torch).
+- CI installs `bubblewrap`; without it the shell-sandbox tests skip and shell tests run unconfined.
+- `governancedsl` (backend requirements, pinned `==0.1.1`) parses the Governance DSL of governed BPMN
+  gateways; without it the governance tests skip. It depends on `besser`, so install it after `pip install -e .`
+  or pip pulls `besser` from PyPI.
+
+### Linting
+```bash
+# Exactly what CI runs; the rules live in pyproject.toml ([tool.ruff], [tool.importlinter]).
+ruff check besser/
+lint-imports            # pip install import-linter==2.15
+```
+`lint-imports` enforces the layers: editor backend -> Spec-Driven Agent -> generators -> notations ->
+metamodel, each importing only the layers below it, and `besser.utilities` (outside the backend) never
+importing the generators, the agent or the backend. `besser.llm` imports none of its callers (of the
+utilities it uses `secret_redaction`, which brings `workspace_fs`), so every layer can use it. Inside the backend, `services/` never imports
+`routers/`. Known exceptions are listed, with the change that
+removes each, in `ignore_imports`; do not add one to make a new import pass.
+`F821` (undefined names) is on because `from __future__ import annotations` hides them from every other
+rule here. The `mockup_to_buml/llm_assistant` prompt examples are few-shot snippets, not importable
+modules, so they alone are exempt from it.
 
 ### Documentation
 ```bash
-# Build documentation locally
-cd docs
-make html  # Windows: make.bat html
-
-# View built docs
-# Open docs/build/html/index.html in browser
+cd docs && make html                # output in docs/build/html/
+python docs/check_docs.py           # what CI runs (check-docs-warnings.sh is a wrapper)
 ```
+The docs gate fails on **any** Sphinx warning or error, except an unreachable external intersphinx inventory
+(an outage at docs.python.org is not a docs defect). Pass `--offline` to skip fetching them.
 
-### Local Stack Deployment
+### Running locally
 ```bash
-# Run full stack with Docker Compose
-docker compose up --build
+docker compose up --build           # backend on :9000, frontend on :8080
+python -m besser.utilities.web_modeling_editor.backend.backend   # backend alone, on :9000
+besser-wme-backend --port 9000      # same, via the console script (--host, --port, --log-level)
 ```
+The Spec-Driven Agent's Local (Ollama) provider needs `BESSER_LLM_ALLOW_CUSTOM_BASE_URL=true`
+(the local `docker-compose.yml` sets it; running the backend alone does not). Gateway providers such as
+PIA, and the key dialog's model lists, come from the model catalog (`BESSER_MODEL_CATALOG`, default in
+`besser/llm/data/model_catalog.json`).
 
-## Architecture Overview
+### Docker images
+The root `Dockerfile` has two targets. `backend` is Python + requirements + `besser`, no compilers.
+`smartgen-worker` adds Node 22/`tsc`, JDK 21, Rust, `kotlinc`, build-essential and bubblewrap, for the
+Spec-Driven Agent's Phase 3 and `run_command`. Production runs `backend:latest` for the backend service
+and `smartgen_worker:latest` for `besser-wme-smartgen`; the local `docker-compose.yml` builds the worker
+target, since one container serves both. Behind a TLS-inspecting proxy, put its certs in `ca-certs-extra/`
+(gitignored) and build with `--build-arg TRUST_EXTRA_CAS=1`; both targets strip them before shipping.
+Host requirements: `docs/source/spec_driven_agent/production_deployment.rst`.
 
-### Core Architecture Pattern: Metamodel → Conversion → Generation
+## Where Things Live
 
-```
-Frontend JSON (visual editor)
-    ↕ (json_to_buml / buml_to_json converters)
-BUML Metamodel (Python objects)
-    ↕ (notations parsers / code builders)
-Generated Code (Django, React, SQL, etc.)
-```
+Core flow: frontend JSON ⇄ (`json_to_buml` / `buml_to_json`) ⇄ B-UML objects → generators → code,
+optionally followed by the Spec-Driven Agent's LLM customization + validation.
 
-### Major Components
+| Path | What |
+|------|------|
+| `besser/BUML/metamodel/` | Abstract syntax: `structural/` (DomainModel, Class, Property, associations, generalization), `state_machine/`, `gui/`, `action_language/` (BAL), `bpmn/`, `deployment/`, `feature_model/`, `nn/`, `object/`, `ocl/`, `project/`, `quantum/`, `traceability/` (traces kept apart from models) |
+| `besser/BUML/notations/` | ANTLR-based parsers (PlantUML class/object, OCL, NN, deployment, BAL), draw.io import, LLM-assisted mockup → model, knowledge graph ↔ OWL/RDF/SHACL: import, export and the projection the conversion reads (`kg_rdf/`), KG → class diagram (`kg_to_buml/`) |
+| `besser/llm/` | What every LLM call shares: OpenAI chat over HTTP (`openai_chat.py`: timeout, optional retries, errors that never echo the provider's body), the one retry policy (`retry.py`, also used by the Spec-Driven Agent's clients), lazy `openai`/`anthropic` SDK clients (`sdk.py`), JSON-from-reply helpers, the model catalog (`catalog.py`) and per-model token prices (`pricing.py`), both reading `data/`. The agent's provider clients are still in `spec_driven_agent/providers/llm_client.py` (they move with its split). `besser.utilities.llm_utils` re-exports the old names |
+| `besser/utilities/image_to_buml.py`, `kg_llm_to_buml.py` | Image → class diagram; TTL/RDF/JSON knowledge graph → class diagram via an LLM (`kg_to_buml.py` is its deprecated alias) |
+| `besser/utilities/buml_code_builder/` | B-UML instance → Python code that `exec()`s back into the model; `common.py` has `safe_var_name()` and `_escape_python_string()` (use it for any user-controlled string) |
+| `besser/generators/` | Deterministic generators, all `GeneratorInterface`; Jinja2 templates in `generators/<name>/templates/`; `registry.py` is the one list of generators (web editor + agent tools) |
+| `besser/spec_driven_agent/` | Spec-Driven Agent engine (see below) |
+| `…/web_modeling_editor/backend/` | FastAPI app (`backend.py`: middleware, routers, lifespan tasks; per-app state on `app.state` — spec-driven runs, GitHub sign-in stores, agent-simulator limits, KG/SDMX slots — handed to routes by `dependencies.py`) |
+| `…/backend/routers/` | One thin router per concern (generation, conversion, validation, deployment, kg, spec_driven, telemetry, agent_simulator, github_oauth, github_deploy_api, traceability): parse the request, call a service, map the result/exception to HTTP; `error_handler.py` has `@handle_endpoint_errors` |
+| `…/backend/config/generators.py` | `SUPPORTED_GENERATORS` (`GeneratorInfo`, derived from `besser/generators/registry.py`) + `get_filename_for_generator` |
+| `…/backend/constants/constants.py` | API version, temp prefixes, CORS origins. Deploy-time configuration (the `BESSER_LLM_*` caps and flags, SDMX, agent simulation) is `BackendSettings` in `…/backend/settings.py` |
+| `…/backend/models/` | Pydantic request/response models (`diagram.py`, `project.py`, `responses.py`, `spec_driven.py`, `kg.py`, `traceability.py`) |
+| `…/backend/services/converters/` | `json_to_buml/` and `buml_to_json/`, one processor per diagram type + the project converter |
+| `…/backend/services/validators/ocl_checker.py` | Metamodel + OCL validation behind `/validate-diagram` |
+| `…/backend/services/generation/` | Generator dispatch behind `/generate-output*` and the traced `/traceability/generate-output*`: `dispatch.py` (path from the registry entry, per-generator option builders; every path returns a `Generation`: download + diagrams read), `agents.py` (BAF), `downloads.py` (`GeneratedOutput`: ZIP + provenance, or one file + version comment, with the generators' `traced_files` by delivered path) |
+| `…/backend/services/deployment/` | Docker Compose deploy, the GitHub API client (`github_service.py`), repo model files, model merge, Render blueprints |
+| `…/backend/services/kg/` | Knowledge Graph service layer behind `routers/kg_router.py` (endpoints under `/besser_api/kg`): request parsing, Refine-KG decisions, the user's-own-LLM adapter, the consistency check under its concurrency cap |
+| `…/backend/services/spec_driven/` | Spec-Driven service layer (see below) |
+| `…/backend/services/exceptions.py` | `BesserError` → `ConversionError`, `ValidationError` (incl. `CodeValidationError` → 400), `GenerationError`, `ConfigurationError` |
+| `…/web_modeling_editor/agent_simulator/` | Separate container that runs generated BAF agents in a bubblewrap sandbox; only `agent_simulator_router.py` talks to it |
 
-#### 1. B-UML Metamodel (`besser/BUML/metamodel/`)
+(`…` = `besser/utilities/web_modeling_editor`.) Router layout, middleware, endpoint list and environment
+variables are documented in `docs/source/web_editor_backend.rst`. Backend facts that are easy to get wrong:
+- Every router mounts under `/besser_api`, so a path is `/besser_api` + the decorator path. Exceptions
+  declared on the app itself: `GET /health` (no prefix) and `GET /besser_api/`. OpenAPI UI is at `/docs`,
+  not `/besser_api/docs`.
+- Unhandled exceptions are deliberately flattened to a generic HTTP 500; the traceback is in the server log.
+- No per-client rate limiting; the only throughput control is `BESSER_LLM_MAX_CONCURRENT_RUNS` on
+  spec-driven runs (429 when full, 409 when that run id is already active).
 
-The metamodel defines abstract syntax for all domain concepts:
+### Multi-diagram projects
+Some generators need several diagrams (e.g. `WebAppGenerator` = `ClassDiagram` + `GUINoCodeDiagram` + optional
+`AgentDiagram`) and go through `POST /besser_api/generate-output-from-project`. `ProjectInput.diagrams` is
+`Dict[str, List[DiagramInput]]`; `currentDiagramIndices` picks the active diagram per type, and per-diagram
+`references` resolve cross-diagram dependencies by ID (stable across deletion/reordering). Old single-diagram
+payloads are auto-converted by a Pydantic validator. Diagram types: `ClassDiagram`, `ObjectDiagram`,
+`StateMachineDiagram`, `AgentDiagram`, `GUINoCodeDiagram`, `QuantumCircuitDiagram`, `UserDiagram`, `NNDiagram`, `BPMN`,
+`ComponentDiagram`, `DeploymentDiagram`, `KnowledgeGraphDiagram` (a single BPMN payload has type `BPMNDiagram`).
 
-- **`structural/`**: Core object-oriented modeling
-  - `DomainModel` - container for all types
-  - `Class`, `Property`, `Method` - OOP constructs
-  - `Association` types: `BinaryAssociation`, `AssociationClass`
-  - `Generalization` - inheritance relationships
-  - `PrimitiveDataType`, `Enumeration` - data types
-  - Base classes: `Element` → `NamedElement` → domain concepts
+## Spec-Driven Agent
 
-- **`state_machine/`**: Behavioral state modeling
-  - `StateMachine`, `State`, `Transition`
-  - `Condition` accepts optional `source` parameter (for serialization round-trips)
-  - `StateMachine.validate()` returns `{success, errors, warnings}` dict
+Pipeline, tools, severities, caps and configuration are documented in `docs/source/spec_driven_agent/`
+(`how_it_works.rst`, `tools.rst`, `validation.rst`, `configuration.rst`, `runs.rst`). Map:
 
-- **`gui/`**: UI modeling
-  - `GUIModel` - top-level container
-  - `Screen`, `Module` - logical organization
-  - `ViewComponent`, `ViewContainer` - UI building blocks
-  - `Style`, `Binding`, `EventsActions` - styling/interactivity
+- `pipeline/orchestrator.py` (`LLMOrchestrator`) — Phase 1 deterministic scaffold (+ Phase 0.5 stack metadata
+  when no generator fits, Phase 1.5 scaffold validation), Phase 2 LLM loop and its guards.
+  `pipeline/phase3_repair.py` — Phase 3 validation + bounded auto-fix with best-tree snapshot/restore.
+  `pipeline/constants.py` — loop caps (the rest are `LLMOrchestrator` class constants).
+- `agent/tools.py` — the LLM's tool surface; `agent/tool_executor.py` — tool implementations and the
+  `task_list` checklist; `agent/edit_apply.py` — the lenient match ladder behind `modify_file`;
+  `agent/compaction.py` / `agent/history_eviction.py` — context management.
+- `providers/llm_client.py` — provider clients, keyless `free` and `sponsored` tiers, planning-model
+  routing, free-tier fallback chain. Its retry policy is `besser.llm.retry`, its prices `besser.llm.pricing`.
+- `planning/gap_analyzer.py` — produces the Phase 2 checklist. Its return value is load-bearing: `None` =
+  analysis failed, `[]` = scaffold already sufficient (Phase 2 may be skipped), a list = the tasks.
+- `validation/` — code checks; `validation/issues.py::_classify_issue` assigns severity.
+- `state/checkpoint.py`, `state/tracing.py` — per-run checkpoint and run log (`.besser_trace.jsonl`).
+- `state/trace_model.py` — the run trace: a B-UML `TraceModel` fragment built at packaging from the run log,
+  the recipe and the attribution, sent as `done.trace` and zipped as `.besser_trace_model.json`, only when the
+  request sets `traceabilityEnabled` (opt-in). Three names,
+  three records: run log, Agent Trace record, run trace (see the agent's README).
+- `state/agent_trace.py` — line-level attribution (`.besser_attribution.json`: line hashes per contributor,
+  updated on generator writes, on seeding and at packaging) and the run's Agent Trace record
+  (`.agent-trace/<run id>.json`, shipped in the ZIP and the GitHub push).
+- Service layer `backend/services/spec_driven/`: `runner.py` (drives a run, emits SSE), `github_sync.py` (push a run
+  to GitHub, import a repo as a run), `run_manager.py`
+  (durable runs: SQLite event store, sequence numbers assigned *before* any subscriber sees a frame, replay
+  via `?after=` / `Last-Event-ID`, `interrupted` marking on restart), `sse_events.py` (typed event schema).
+- Secret redaction: one module, `besser/utilities/secret_redaction.py` (every SSE frame, the workspace before
+  packaging, repo writes, the agent's trace, `besser.llm.openai_chat`'s error logs, generator-config logs). Imported eagerly; never
+  add a fallback that turns it off. The one exception is `api_probe._scrub`: that probe's child process
+  imports no BESSER package.
 
-- **`action_language/`**: Business Action Language (BAL) for behavior specification
+Invariants and rules:
+- **A new agent tool needs three edits**: `agent/tools.py`, `_TOOL_MODEL_REQUIREMENTS` in the same file, and a
+  handler in `ToolExecutor._handlers` (`agent/tool_executor.py`); without the requirements entry it is
+  offered on projects that cannot satisfy it. A generator tool is instead the `agent_tool` of its entry in
+  `besser/generators/registry.py` (schema + requirements), its id in `AGENT_TOOL_ORDER`, plus the handler.
+  `tests/spec_driven_agent/test_added_generator_tools.py` asserts every generator tool has both.
+- **New validator findings need a stable message prefix** classified in `_classify_issue` — the classifier
+  keys on prefixes, not on which validator produced them. Severities: `blocker` (drives the auto-fix loop),
+  `warning` (recorded), `style` (truncation-count notes, recorded; the lint selects no cosmetic rule).
+  Full table: `validation.rst`.
+- **Runtime gate**: every Phase 3 exit, including budget exhaustion, runs a gate — a run cannot report
+  complete while the delivered app cannot boot or create a record.
+- **Client-visible contract**: request = `backend/models/spec_driven.py` (API key is a `SecretStr`, caps clamped
+  by validators); stream = `services/spec_driven/sse_events.py`. Both are consumed by the frontend's
+  spec-driven trigger — adding a field to a client-visible event means editing `sse_events.py`.
+- Configuration is via `BESSER_LLM_*` / `BESSER_FREE_LLM_*` / `BESSER_SPONSORED_LLM_*` env vars, each declared
+  once: backend caps and flags on `BackendSettings` (`backend/settings.py`), engine knobs (compaction, history
+  eviction, planning model, keyless tiers, shell sessions, …) on `AgentSettings` (`spec_driven_agent/settings.py`).
+  All documented in `configuration.rst`.
 
-- **Other metamodels**: `feature_model/`, `nn/` (neural networks), `quantum/`, `deployment/`, `object/` (instances)
+### Security defaults — do not flip
+- `BESSER_LLM_ENABLE_SHELL_TOOLS` — code default **off** (arbitrary shell on a shared BYOK host is RCE).
+  `docker-compose.prod.yml` enables it only on the isolated `besser-wme-smartgen` worker, which has no
+  `env_file`, receives only LLM credentials, and confines each run's shell with bubblewrap. Enable per
+  service, never through the shared `.env`; changing the code default is a maintainer decision.
+- `BESSER_LLM_ALLOW_CUSTOM_BASE_URL` — **off** by default (SSRF: the server would open a user-supplied URL).
+  Requests carrying `base_url` (Local/Ollama) are rejected unless set. Keep it off on shared hosts and
+  in `docker-compose.prod.yml`; only the local `docker-compose.yml` turns it on.
 
-**Key Pattern**: Private properties with getter/setter validation. Base classes define interfaces, subclasses add domain-specific behavior. `NamedElement.name` setter validates against None, empty/whitespace, and warns on Python keywords. Structural model validates attribute shadowing in inheritance hierarchies.
+### Debugging a run
+Each run workspace holds `.besser_trace.jsonl` (phases, turns, tool calls, costs, checkpoints, snapshots,
+rollbacks, regeneration, findings; compactions are counted in the recipe), `.besser_tool_inputs.jsonl` (untruncated
+write-tool inputs), `.besser_checkpoint.json` (kept unless Phase 2 exited cleanly and Phase 3 finished with no
+blocker or `validation unverified:` finding — that is what makes a run resumable) and `.besser_recipe.json`
+(final summary, validation issues, authorship split). The download sits beside it in `<run dir>.download/`. The
+durable event store is SQLite at `BESSER_LLM_RUN_STORE_PATH` or the system temp directory.
 
-#### 2. Notations (`besser/BUML/notations/`)
+## Conventions
 
-Parse concrete syntaxes into metamodel instances:
+### Engineering standard
+Every change is production code: what is merged ships to https://editor.besser-pearl.org as is.
+- **Reuse before writing.** Use the existing BESSER helper (`constants/constants.py`,
+  `buml_code_builder/common.py`, the converters, the `tests/conftest.py` fixtures) or a maintained library before
+  writing a parser, diff, merge, retry or validator yourself. A new dependency is pinned, MIT-compatible, and in
+  the requirements file the code runs from.
+- **Simplest design that solves the problem.** No options, flags or layers nobody asked for. A flag needs a
+  rollout reason. When a new path replaces an old one, remove the old one.
+- **Put logic in the layer that owns it**: metamodel rules in the metamodel, conversion in
+  `services/converters/`, request/response models in `models/`, Spec-Driven planning and checks in `planning/`
+  and `validation/`. Define a shared data shape once and name the other side of the contract (e.g. the
+  frontend type in `shared/api/`).
+- **One name per concept** across backend, frontend, modeling-agent, docs and UI copy.
+- **No silent behaviour.** A fallback or skip that changes the outcome logs at warning level and is reported to
+  the user or the agent.
+- **Readable**: one job per function, names that say what a thing is, thresholds as named constants with a
+  one-line reason, short factual comments.
+- **Prove it.** A fix comes with a test that fails before it; verify a defect before reporting or fixing it.
 
-- **`structuralPlantUML/`**: ANTLR-based PlantUML parser for class diagrams
-- **`objectPlantUML/`**: Object diagram notation
-- **`ocl/`**: Object Constraint Language support (`BOCLParser`, `BOCLLexer`)
-- **`mockup_to_buml/`**: LLM-assisted UI mockup → GUI model conversion
-- **`nn/`**, **`deployment/`**: Specialized notation parsers
+### Code style
+- PEP 8, 4-space indentation, 120-char line target (pylint `max-line-length` in `pyproject.toml`; CI's ruff
+  ignores `E501`, so long lines won't fail the build — keep them short anyway)
+- Type hints on public APIs, docstrings; `snake_case` / `PascalCase` / `UPPER_CASE`; imports stdlib → third-party → local
+- Metamodel classes use private attributes with validating setters (`NamedElement.name` rejects None/blank
+  and warns on Python keywords); fail fast in setters
+- `UNLIMITED_MAX_MULTIPLICITY = 9999` (`besser/BUML/metamodel/structural/structural.py`)
 
-**Pattern**: Grammar-based parsing (ANTLR) + listener pattern for AST traversal.
+### Validation
+Three modeling-side layers: construction (setters), metamodel (`.validate()`), OCL constraints. Collect
+errors rather than raising, for unified reporting — `/validate-diagram` returns every metamodel and OCL error
+in one response. (Spec-Driven code validation is a separate, fourth layer; see above.)
 
-#### 3. Generators (`besser/generators/`)
+### Adding a deterministic generator
+1. Package in `besser/generators/<name>/` implementing `GeneratorInterface` (`__init__(model, output_dir=None)`,
+   `generate()`; `output_dir=None` means `<cwd>/output`); templates in `generators/<name>/templates/`
+2. Register with one `GeneratorSpec` in `besser/generators/registry.py` (`GENERATORS`); the editor's
+   `SUPPORTED_GENERATORS` and the agent's generator tools are derived from it. Fields: `class_path`
+   (`"module:Class"`, imported lazily), `output_type` `"file"`/`"zip"`, `requires_class_diagram`,
+   `required_diagram_type`, `download_filename` (without one the download falls back to
+   `<key>_output<ext>`), `keep_generated_filename` (keeps a single-file generator's own filename),
+   `needs_beyond_one_diagram` (what it needs besides one diagram; `/generate-output` refuses it), `agent_tool`. Don't rename an existing `download_filename` — users rely on it.
+   `tests/generators/test_generator_registry.py` pins both derived lists (snapshots in
+   `tests/generators/snapshots/`)
+3. Tests in `tests/generators/<name>/`
+4. `docs/source/generators/<name>.rst`, added to a toctree **and** the "Choosing a Generator" table in
+   `docs/source/generators.rst`
+5. If the LLM agent should call it: an `agent_tool` (with its preview `label`) on its registry entry, its id in
+   `AGENT_TOOL_ORDER` (the prompt order; `agent_tools()` raises on a tool missing from it), a handler in
+   `ToolExecutor._handlers`, a row in `docs/source/spec_driven_agent/tools.rst`, and the tool in the pinned lists and
+   snapshots of `test_generator_registry.py`
 
-Transform B-UML models into executable artifacts. All implement `GeneratorInterface`:
+Walkthrough: `docs/source/generators/build_generator.rst` and `docs/source/contributing/create_generator.rst`.
 
-```python
-class GeneratorInterface(ABC):
-    def __init__(self, model: Model, output_dir: str): ...
-    def generate(self): ...
-```
+The NN generators register like any other: their modules do not import `torch` / `tensorflow`. The Spec-Driven
+Agent is not in `SUPPORTED_GENERATORS`; it has its own router rather than `/generate-output`.
 
-**Generator Categories** (see `utilities/web_modeling_editor/backend/config/generators.py`):
+### Making a generator traceable
+Every generator already gets file-level trace links (each input model -> each text file it writes) from the
+traced endpoints, with no code. Instrumenting adds which lines come from which element; full guide:
+`docs/source/generators/traceable_generator.rst`. Helpers: `besser/utilities/generation_trace.py` and
+`GeneratorInterface`.
+1. Build the Jinja env with `traced_environment(templates_dir_or_loader, **env_options)` (adds `TraceExtension`).
+2. In templates wrap an element's block in `{% trace element, "label" %}…{% endtrace %}` (rule
+   `<template>#<label>`; label defaults to the metaclass). Elements without an `id` render untraced.
+3. Write each render with `self._write_traced(relative_path, rendered, *sources, output_dir=None)`: strips the
+   markers, writes UTF-8 with `\n` endings and records `self.traced_files[relative_path]` (a `FileTrace`). A file
+   generated as a whole from one element passes `trace_source(element, rule)` as a source. Text that is not a
+   render (a user's own config) goes through `self._write_file` (no extraction). Never assign
+   `traced_files` (a property, always present, `{}` by default).
+4. A composite calls `self._merge_traced_files(child, prefix)` after `child.generate()` (`prefix` = the child's
+   folder relative to the composite's output dir, `""` if the same). Files an LLM step wrote go in `ai_files`
+   (with `ai_llm`); merging moves a child's there too, and a trace links them by `AIEvidence`, not a rule.
+5. Test that `traced_files` points at the right lines and that a model with ids generates the same bytes as
+   one without (`tests/generators/backend/test_backend_trace.py`). The backend needs no change: it reads
+   `traced_files` from the generator instance after any run.
+6. Elements drawn in the editor get their ids from the `json_to_buml` processors (`converters/element_ids.py`:
+   `EditorIds` gives each element the id the editor's trace records it by, once per model). A new element kind a
+   generator traces needs its processor to set it, and `test_traced_generation_all.py` to check it.
 
-- **Object-Oriented**: `PythonGenerator`, `JavaGenerator`, `PydanticGenerator`
-- **Web Frameworks**: `DjangoGenerator`, `BackendGenerator` (FastAPI), `WebAppGenerator` (full-stack)
-- **Databases**: `SQLGenerator`, `SQLAlchemyGenerator`
-- **Data Formats**: `JSONSchemaGenerator`
-- **Frontend**: `ReactGenerator`, `FlutterGenerator`
-- **AI/Agents**: `BAFGenerator` (BESSER Agent Framework)
-- **Specialized**: `RESTAPIGenerator`, `NNCodeGenerator`, `QiskitGenerator`, `TerraformGenerator`
+### Pitfalls
+1. **Keep converters symmetric**: if `json_to_buml` supports a feature, `buml_to_json` must too
+   (e.g. `class_diagram_processor.py` ↔ `class_diagram_converter.py`); test round-trips (JSON→BUML→JSON is identity)
+2. **Determinism**: identical input → identical output (no timestamps in file names)
+3. **Shared helpers** belong in `besser/utilities`, not in individual generators
+4. **Temp directories** use the `besser_*` prefixes from `constants.py` (`besser_`, `besser_agent_`,
+   `besser_csv_`, `besser_llm_`, `besser_user_profile_`) so the hourly cleanup task (`services/cleanup.py`,
+   >24 h) finds them — never a bare `TemporaryDirectory()`; a new prefix goes in `TEMP_DIR_PREFIXES`, which
+   cleanup reads; clean up with try/finally; stream large outputs as ZIPs
+5. **Backend contract changes** (endpoints, request/response shapes) must be coordinated with the frontend's
+   `shared/api/` layer
+6. **Docs sync**: public-surface changes usually need `docs/source/` updates (see below)
 
-**Key Pattern**: Template-based generation with Jinja2. Templates live in `generators/[type]/templates/`.
+## Testing Conventions
+- Tests in `tests/` mirroring the source tree, named `test_*.py`; add tests for behavioral changes,
+  especially metamodel and generator logic; assert structure (names, endpoints) and content
+- Reuse fixtures from `tests/conftest.py` (`library_book_author_model`, `employee_self_assoc_model`,
+  `simple_library_book_model`, `player_team_domain_model`, …) and `tests/generators/conftest.py`
+- `pyproject.toml` sets `--import-mode=importlib` to avoid test/source namespace collisions
 
-#### 4. Web Modeling Editor Backend (`besser/utilities/web_modeling_editor/backend/`)
+## Frontend Submodule
 
-FastAPI service with a **modular router architecture**. The application factory lives in `backend.py` (~270 lines), which sets up middleware, registers routers, and starts a background cleanup task.
-
-**Routers** (`backend/routers/`):
-Endpoints are split by concern into dedicated routers:
-
-- **`generation_router.py`** - Code generation for all supported generators (single-diagram and project-based)
-- **`conversion_router.py`** - BUML import/export, CSV reverse engineering, image-to-model
-- **`validation_router.py`** - Diagram validation (metamodel + OCL constraints)
-- **`deployment_router.py`** - GitHub deployment and Docker integration
-- **`error_handler.py`** - Centralized `@handle_endpoint_errors` decorator mapping custom exceptions to HTTP status codes
-
-**Middleware** (`backend/middleware/`):
-- **`request_logging.py`** - Structured request logging with unique request IDs (UUID), performance timing, and slow-request warnings (>1s)
-
-**Constants** (`backend/constants/constants.py`):
-- API version, temp directory prefixes, generator defaults, CORS origins, relationship type mappings
-
-**Core Services** (`backend/services/`):
-
-- **Conversion Services** (`services/converters/json_to_buml/`, `services/converters/buml_to_json/`):
-  - Bidirectional transformations between frontend JSON and B-UML metamodel
-  - 7 processors: class diagrams, state machines, agents, objects, GUI, quantum circuits, projects
-  - Detailed parsers for attributes, methods, multiplicity, OCL constraints
-
-- **Validation Services** (`services/validators/`):
-  - 3-level validation: construction (setters), metamodel (`.validate()`), OCL constraints
-
-- **Deployment Services** (`services/deployment/`):
-  - Docker Compose orchestration (`docker_deployment.py`)
-  - GitHub integration (`github_service.py`, `github_oauth.py`, `github_deploy_api.py`)
-  - Session store (`session_store.py`) for OAuth state management
-
-- **Reverse Engineering** (`services/reverse_engineering/`):
-  - CSV → domain model (`csv_reverse.py`)
-  - Image → class diagram (OpenAI integration)
-
-- **Cleanup Service** (`services/cleanup.py`):
-  - Background task that removes temp directories older than 24 hours (configurable)
-  - Runs hourly, handles prefixes: `besser_`, `besser_agent_`, `besser_csv_`, `user_profile_`
-
-- **Exception Hierarchy** (`services/exceptions.py`):
-  - Custom exceptions: `ConversionError`, `ValidationError`, `GenerationError`, `DeploymentError`
-
-- **Feedback Service** (`services/feedback_service.py`):
-  - Handles user feedback submissions
-
-**Key API Endpoints**:
-- `POST /generate-output` - Single diagram → code
-- `POST /generate-output-from-project` - Multi-diagram project → code (e.g., WebApp needs ClassDiagram + GUINoCodeDiagram)
-- `POST /export-buml` - Diagram JSON → BUML Python code
-- `POST /get-json-model` - BUML file → JSON (auto-detects diagram type)
-- `POST /get-json-model-from-image` - Image → ClassDiagram JSON (via OpenAI)
-- `POST /validate-diagram` - Unified validation
-- `POST /deploy-app` - Docker Compose deployment
-
-**Configuration Layer** (`backend/config/`):
-- `generators.py` - Centralized generator registry with metadata (`GeneratorInfo` NamedTuple with `requires_class_diagram` flag)
-
-**Models Layer** (`backend/models/`):
-- Pydantic schemas: `DiagramInput`, `ProjectInput`, `FeedbackSubmission`
-- Response models (`models/responses.py`): `DiagramExportResponse`, `ProjectExportResponse`, `ValidationResponse`, `ApiInfoResponse`, `FeedbackResponse`
-
-#### 5. BUML Code Builders (`besser/utilities/buml_code_builder/`)
-
-Generate executable Python code from B-UML metamodel instances:
-- `domain_model_builder.py` - DomainModel → Python code
-- `agent_model_builder.py` - AgentModel → Python code
-- `gui_model_builder.py` - GUIModel → Python code
-- `project_builder.py` - Project → Python code
-- `quantum_model_builder.py` - QuantumCircuit → Python code
-- `common.py` - Shared utilities: `safe_var_name()` (converts names to safe Python identifiers), `_escape_python_string()` (prevents code injection from user-controlled inputs)
-
-**Pattern**: Generated code can be `exec()`'d to recreate the metamodel instance.
-
-### Multi-Diagram Projects
-
-Some generators require multiple diagram types:
-- **WebAppGenerator**: Needs `ClassDiagram` (backend) + `GUINoCodeDiagram` (frontend) + optional `AgentDiagram`
-- Projects use `ProjectInput` with `diagrams: Dict[str, List[DiagramInput]]` (multiple diagrams per type)
-- `currentDiagramIndices: Dict[str, int]` tracks the active diagram per type
-- Per-diagram `references: Dict[str, str]` resolve cross-diagram dependencies by ID (stable across deletions/reordering)
-- Backward compatible: old single-diagram format auto-converts to arrays via Pydantic model validator
-
-**Flow Example**:
-```
-1. Frontend sends ProjectInput with ClassDiagram + GUINoCodeDiagram
-2. /generate-output-from-project endpoint
-3. Active ClassDiagram resolved via currentDiagramIndices or per-diagram references
-4. ClassDiagram JSON → process_class_diagram → DomainModel
-5. GUINoCodeDiagram JSON → process_gui_diagram → GUIModel
-6. WebAppGenerator(domain_model, gui_model, agent_model)
-7. Templates rendered → React/TypeScript + FastAPI backend
-8. ZIP streamed to frontend
-```
-
-## Important Conventions
-
-### Code Style
-- PEP 8 with 4-space indentation, 120-character line limit (configured in `pyproject.toml`)
-- Type hints for public APIs, descriptive docstrings
-- Naming: `snake_case` functions/variables, `PascalCase` classes, `UPPER_CASE` constants
-- Import order: standard library, third-party, local modules
-
-### Validation Strategy
-Three layers:
-1. **Construction validation**: Setter constraints in metamodel (e.g., multiplicity bounds)
-2. **Metamodel validation**: `.validate()` method checks structural rules
-3. **Constraint validation**: OCL constraints evaluated on models
-
-All validation errors should be collected (not thrown) for unified reporting.
-
-### Generator Development
-To add a new generator:
-1. Create package in `besser/generators/[name]/`
-2. Implement `GeneratorInterface` with `__init__(model, output_dir)` and `generate()`
-3. Add templates in `generators/[name]/templates/`
-4. Register in `utilities/web_modeling_editor/backend/config/generators.py`
-5. Add tests in `tests/generators/[name]/`
-6. Document in `docs/source/generators.rst`
-
-### Resource Management
-- Temp directories use UUID prefixes for uniqueness
-- Always use try-finally blocks for cleanup
-- ZIP streaming for large outputs to avoid memory issues
-
-## Frontend Integration
-
-The frontend lives at `besser/utilities/web_modeling_editor/frontend` (git submodule pointing to `BESSER-PEARL/BESSER-WEB-MODELING-EDITOR`, branch `main`). It has its own `CLAUDE.md` with detailed instructions for working in the frontend codebase.
-
+`besser/utilities/web_modeling_editor/frontend` → `BESSER-PEARL/BESSER-Web-Modeling-Editor`, branch `main`.
 ```bash
-# Initialize the submodule (first time)
-git submodule update --init --recursive
-
-# Update to latest frontend
-cd besser/utilities/web_modeling_editor/frontend
-git pull origin main
-cd ../../../..
-git add besser/utilities/web_modeling_editor/frontend
+git submodule update --init --recursive                                       # first time
+git submodule update --remote besser/utilities/web_modeling_editor/frontend   # fast-forward to tracked branch
+git add besser/utilities/web_modeling_editor/frontend                         # record the new pointer
 ```
+Cross-repo changes: implement each side in its own repo, update the submodule pointer here, link both PRs
+and note the merge order.
 
-**Cross-repo changes**: If modifying both frontend and backend, implement each side in its respective repo, update the submodule pointer, and link both PRs with notes on merge order.
-
-**Backend API contract**: If you change backend endpoints or request/response shapes, coordinate with the frontend's `shared/api/` layer.
-
-## Testing Approach
-
-- Place tests in `tests/` mirroring source structure
-- Name test files `test_*.py`
-- Add tests for behavioral changes, especially metamodel and generator logic
-- **Centralized fixtures** in `tests/conftest.py` provide shared models (e.g., `library_book_author_model`, `employee_self_assoc_model`, `player_team_domain_model`). Prefer reusing these over duplicating test models.
-- Additional domain-specific fixtures in `tests/generators/conftest.py`
-- Validate both structure (class names, endpoints) and content (business logic)
-- `pyproject.toml` configures `--import-mode=importlib` to prevent namespace collisions between test and source packages
-
-Optional test dependencies (not in `requirements.txt`; CI installs them but local machines may not):
-- `tests/generators/nn/` imports `torch` (PyTorch) and `tensorflow`.
-- `tests/utilities/web_modeling_editor/backend/test_spreadsheet_import.py` imports `openpyxl`.
-
-When running pytest locally without those installed, pytest stops at collection with `ModuleNotFoundError` *before* any unrelated test runs. The pragmatic workaround for a quick sweep is to skip them:
-```bash
-python -m pytest tests/ \
-  --ignore=tests/generators/nn \
-  --ignore=tests/utilities/web_modeling_editor/backend/test_spreadsheet_import.py
-```
-Don't mistake these for failures introduced by your change — the errors are always collection errors, never test failures.
-
-## CI/CD Pipelines
-
-- **`.github/workflows/ci.yml`**: Runs backend tests on Python 3.10/3.11/3.12, backend linting with Ruff, and frontend lint+build. Triggered on push to master/development and PRs.
-- **`.github/workflows/security.yml`**: CodeQL security scanning, runs weekly and on push/PRs.
-- **`.github/dependabot.yml`**: Automated dependency updates (weekly for pip, monthly for GitHub Actions).
+## CI/CD
+- `.github/workflows/ci.yml` — on PRs to `master`/`development`: tests (3.11, 3.12), the ruff command above,
+  and the docs gate. It does **not** build the frontend, but `.github/scripts/check_openapi.py` fails when the
+  editor's committed `packages/webapp/openapi/besser-openapi.json` (frontend submodule) differs from
+  `app.openapi()`: a backend change to a route, model or docstring then needs the editor's `npm run api:generate`.
+- `security.yml` — CodeQL. `python-publish.yml` — PyPI release.
+- `deploy-wme.yml` — manual (`workflow_dispatch`) build + push of backend, `smartgen_worker`, frontend and
+  agent-simulator images, then EC2 deploy. A backend deploy recreates `besser-wme-backend` and
+  `besser-wme-smartgen` and verifies the build stamp in both; it aborts before pushing if the host's compose
+  file is missing a service or the worker is not on the `smartgen_worker` image. Images go through
+  `.github/scripts/publish_image.sh` (Buildx push as an OCI index, then a check that the registry serves that
+  digest): a plain `docker push` to Artifactory does not move a tag that already holds an index.
 
 ## Documentation Sync
+Keep `docs/source/` in step with code:
+- `buml_language.rst` — metamodel additions
+- `generators.rst` + `generators/<name>.rst` — generators (toctree **and** choosing table)
+- `spec_driven_agent/` — pipeline, tools, severities, caps, config
+- `web_editor.rst` — editor workflows; `spec_driven_agent/api.rst` — the spec-driven API contract
+- `web_editor_backend.rst` — endpoint and environment-variable tables
+- `utilities.rst`, `utilities/` — utilities (incl. `buml_code_builder.rst`, `agent_simulator.rst`)
+- `contributor_guide.rst`, `ai_assistant_guide.rst` — workflow changes
 
-Keep docs in `docs/source/` synchronized with code changes:
-- `buml_language.rst` - Metamodel additions
-- `generators.rst` - New generator documentation
-- `web_editor.rst` - API endpoint changes
-- `utilities.rst` - New utility documentation
-- `contributor_guide.rst`, `ai_assistant_guide.rst` - Workflow changes
+## Commits and PRs
+- Conventional Commits (`feat:`, `fix:`, `refactor:`, `docs:`, `test:`); short imperative subjects;
+  topic branches (`feature/add-generator`)
+- **Open pull requests against `development`, not `master`.**
+- `.github/copilot-instructions.md` and `.cursorrules` only point here — edit `CLAUDE.md`, not them.
+  See also `CONTRIBUTING.md`, `DEVELOPMENT_SETUP.md`, `GOVERNANCE.md`.
 
-Build locally before committing: `cd docs && make html`
+## Agent skills
 
-## Commit Conventions
+### Issue tracker
 
-Recent history uses Conventional Commits style:
-- `feat:` - New features
-- `fix:` - Bug fixes
-- `refactor:` - Code restructuring
-- `docs:` - Documentation updates
-- `test:` - Test additions/modifications
+GitHub Issues via `gh` (this repo, plus the web editor and modeling-agent with `--repo`). See `docs/agents/issue-tracker.md`.
 
-Keep subjects short and imperative. Use topic branches (`feature/add-generator`).
+### Triage labels
 
-## Related Files
+Default five-role vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
 
-- **`.github/copilot-instructions.md`**: Comprehensive AI assistant guidelines (also in `.cursorrules`)
-- **`CONTRIBUTING.md`**: Contribution workflow and expectations
-- **`AGENTS.md`**: Custom Claude Code agent configuration for this repository
-- **`README.md`**: Project overview and quick start
-- **`GOVERNANCE.md`**: Project governance and decision-making
+### Domain docs
 
-## Key Technical Patterns
-
-### Multiplicity Constant
-```python
-UNLIMITED_MAX_MULTIPLICITY = 9999  # Used throughout for "many" relationships
-```
-
-### Metamodel Base Hierarchy
-```
-Element (base) → NamedElement → {Class, Property, Method, Association, ...}
-```
-
-### Generator Registry Pattern
-Generators registered in `config/generators.py` with metadata:
-```python
-GeneratorInfo(
-    generator_class=DjangoGenerator,
-    output_type="zip",           # "file" or "zip"
-    file_extension=".zip",
-    category="web_framework",
-    requires_class_diagram=True   # whether it needs a class diagram as input
-)
-```
-Neural network generators (PyTorch, TensorFlow) are conditionally registered only when their dependencies are installed.
-
-### Bidirectional Converters
-Always maintain symmetry:
-- `json_to_buml/class_diagram_processor.py` ↔ `buml_to_json/class_diagram_converter.py`
-- Same features supported in both directions
-
-### Template Rendering
-```python
-from jinja2 import Environment, FileSystemLoader
-env = Environment(loader=FileSystemLoader('templates/'))
-template = env.get_template('model.py.j2')
-output = template.render(model=domain_model, config=config)
-```
-
-## Common Pitfalls to Avoid
-
-1. **Don't duplicate logic**: Shared helpers belong in `besser/utilities`, not in individual generators
-2. **Maintain determinism**: Generators should produce identical output for identical input (avoid timestamps in file names)
-3. **Validate early**: Use construction validation in setters to fail fast
-4. **Clean up resources**: Always use try-finally for temp directories and file handles
-5. **Keep converters symmetric**: If JSON→BUML supports a feature, BUML→JSON must too
-6. **Test round-trips**: Especially for converters (JSON→BUML→JSON should be identity)
-7. **Update docs**: Backend changes often require `docs/source/` updates
-
-## Debugging Tips
-
-### Running Individual Examples
-```bash
-cd tests/BUML/metamodel/structural/library
-python library.py
-```
-
-### Inspecting Generated Output
-Check `generated/` directory (git-ignored build output).
-
-### Validation Debugging
-Enable verbose OCL validation in `/validate-diagram` endpoint responses.
-
-### Frontend-Backend Integration
-Use browser DevTools Network tab to inspect API payloads. Backend returns detailed error messages.
-
-## Support Resources
-
-- Documentation: https://besser.readthedocs.io/
-- Online Editor: https://editor.besser-pearl.org/
-- Examples: https://github.com/BESSER-PEARL/BESSER-examples
-- Contributor Guide: `docs/source/contributor_guide.rst`
-- AI Assistant Guide: `docs/source/ai_assistant_guide.rst`
+Single-context. See `docs/agents/domain.md`.

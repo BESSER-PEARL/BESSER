@@ -1,0 +1,62 @@
+"""Spec-driven generation service package.
+
+Glue between the LLM orchestrator (``besser.spec_driven_agent``) and the
+FastAPI SSE endpoint. Exposes:
+
+- Event models and the ``format_sse`` serializer used by the router.
+- The ``SmartGenerationRunner`` that drives a run and yields SSE bytes.
+- The in-memory ``SmartRunRegistry`` that tracks generated-output paths
+  awaiting download.
+- ``SpecDrivenRuntime``: the registry, run store, run slots, cancel events and
+  thread pool of one app, built in the backend's lifespan.
+- ``assemble_models_from_project`` which converts a ``ProjectInput`` into
+  the BUML models the LLM orchestrator needs.
+"""
+
+from .sse_events import (
+    BaseSseEvent,
+    CostEvent,
+    DoneEvent,
+    ErrorEvent,
+    PhaseEvent,
+    StartEvent,
+    TextDeltaEvent,
+    ToolCallEvent,
+    format_sse,
+)
+from .model_assembly import AssembledModels, assemble_models_from_project
+from .runner import SmartGenerationRunner, SmartRunEntry, SmartRunRegistry
+from .run_manager import (
+    DurableRunManager,
+    RunRecord,
+    SqliteRunEventStore,
+)
+from .runtime import ActiveRuns, RunSlots, SpecDrivenRuntime
+
+__all__ = [
+    # Events
+    "BaseSseEvent",
+    "StartEvent",
+    "PhaseEvent",
+    "TextDeltaEvent",
+    "ToolCallEvent",
+    "CostEvent",
+    "DoneEvent",
+    "ErrorEvent",
+    "format_sse",
+    # Model assembly
+    "AssembledModels",
+    "assemble_models_from_project",
+    # Runner
+    "SmartGenerationRunner",
+    "SmartRunRegistry",
+    "SmartRunEntry",
+    # Durable lifecycle / replay
+    "DurableRunManager",
+    "RunRecord",
+    "SqliteRunEventStore",
+    # Per-app state (``app.state.spec_driven``)
+    "SpecDrivenRuntime",
+    "RunSlots",
+    "ActiveRuns",
+]

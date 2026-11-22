@@ -20,6 +20,13 @@ the ``generate`` method as follows:
 The ``dbms`` parameter specifies the target database management system. 
 In this example, we use ``sqlite``, but you can also specify ``postgresql``, ``mysql``, ``mssql``, ``mariadb``, or ``oracle``.
 
+Pass ``ocl_check_constraints=True`` to ``generate`` to turn the simple OCL invariants of the model
+into ``CheckConstraint`` entries in each table's ``__table_args__`` (off by default). Which invariants
+are translated is described in :ref:`sql-ocl-check-constraints`.
+
+Both can also be given to the generator when you create it, which is how
+:doc:`regenerating` gets them, as it calls ``generate`` with no arguments.
+
 Generated Output
 ----------------
 
@@ -29,6 +36,19 @@ folder and it will look as follows.
 .. literalinclude:: ../../../tests/BUML/metamodel/structural/library/output/sql_alchemy.py
    :language: python
    :linenos:
+
+Trace Links
+-----------
+
+The generator records which lines of ``sql_alchemy.py`` come from which model element: after ``generate()``,
+``generator.traced_files["sql_alchemy.py"].regions`` lists, for every class, enumeration, association,
+attribute, method and OCL constraint that has an ``id`` (as every element drawn in the web editor does), the line
+ranges rendered from it and the template block that rendered them (``class``, ``enumeration``,
+``association_table``, ``association_class``, ``foreign_key``, ``relationship``, ``attribute``, ``method``,
+``check_constraint``). An attribute's or method's lines lie within its class's and record the class as their
+owner. Recording them does not change the generated file. ``build_generation_trace`` in
+``besser.utilities.generation_trace`` turns them into a :doc:`traceability model
+<../buml_language/model_types/traceability>`; the web editor shows them on its *Traceability* page.
 
 Creating the Database
 ---------------------

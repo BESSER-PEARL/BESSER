@@ -2,6 +2,9 @@ Django Generator
 ================
 
 BESSER provides a code generator for `Django web applications <https://www.djangoproject.com/>`_.
+It runs Django's ``startproject`` and ``startapp`` commands, so install Django with the extra:
+``pip install "besser[django]"``.
+
 You can create the application in two ways:
 
 1. :doc:`Django App with Admin Panel </generators/django/django_admin_panel>` — A Django application with database models and CRUD functionality, accessible via Django’s admin panel.
@@ -12,6 +15,27 @@ You can create the application in two ways:
 
    The :doc:`../web_editor` supports only the generation of Django apps with the Admin Panel. To generate a Django app with UI Components,
    you must use the Python API.
+
+.. seealso::
+   For a Django project that goes beyond the template — custom apps, auth,
+   containerisation, tests — the
+   :doc:`Spec-Driven Agent <../spec_driven_agent/index>` runs this generator
+   first and then lets an LLM customise the result to a natural-language
+   request.
+
+.. versionchanged:: 8.0.0
+   ``DjangoGenerator.generate()`` raises when generation fails, including
+   while updating ``settings.py``, instead of printing the error and
+   returning. It writes under ``output_dir`` without
+   changing the process's working directory, and refuses to replace an
+   existing, non-empty directory that is not a generated Django project (one
+   without ``manage.py``). A ``default_value`` that cannot be expressed as a
+   literal of the attribute's type raises ``InvalidDefaultValueError``, and a
+   method without an implementation that cannot be inferred from the class
+   raises ``NotImplementedError`` in the generated code. Inferred bodies
+   (``__str__``, getters, predicates) take inherited attributes into account.
+   See the
+   :doc:`release notes </releases/v8/v8.0.0>`.
 
 Check the guidelines below to learn how to generate a Django app depending on your needs:
 
@@ -89,6 +113,19 @@ Login Credentials:
 If you have generated the full web app, you can also check the home page and different forms at:
 
 `http://localhost:8000 <http://localhost:8000>`_
+
+Trace Links
+-----------
+
+The generator records which lines of the files it renders come from which model element: after ``generate()``,
+``generator.traced_files`` maps each such path (relative to the output directory, e.g.
+``<project>/<app>/models.py``) to the line ranges rendered from every element that has an ``id`` (as every element
+drawn in the web editor does). ``models.py`` has regions for enumerations and their literals, classes, attributes,
+methods and the ``ForeignKey`` / ``ManyToManyField`` / ``OneToOneField`` lines of associations; ``forms.py``,
+``views.py``, ``urls.py`` and ``admin.py`` have one region per class (and per method action, or association field).
+The per-class HTML pages are traced as a whole to the class and the GUI screen listing it, and ``home.html`` to the
+main screen. Files written by ``django-admin`` (``manage.py``, ``settings.py``...) stay file-level. Recording
+traces does not change the generated files; see :doc:`traceable_generator`.
 
 Example
 -------

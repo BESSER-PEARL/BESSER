@@ -17,6 +17,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:multiselect/multiselect.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
 import 'sql_helper.dart';
 
 
@@ -39,7 +41,7 @@ class MyApp extends StatelessWidget {
   }
 }
 
-class MyHomePage extends StatefulWidget {
+{% trace screen, "main_screen" %}class MyHomePage extends StatefulWidget {
   const MyHomePage({super.key});
 
   @override
@@ -72,10 +74,37 @@ class _MyHomePageState extends State<MyHomePage> {
                   setState(() {});
                 });
               },
-              child: const Text('{{component.label}}'),
+              child: const Text('{{component.label | dart_str}}'),
             ),
             const SizedBox(height: 16),
                 {%- endif %}
+              {%- endif %}
+              {%- if component is is_Map %}
+            SizedBox(
+              height: 350,
+              child: FlutterMap(
+                options: MapOptions(
+                  initialCenter: LatLng(
+                    {{component.center_latitude if component.center_latitude is not none else 0.0}},
+                    {{component.center_longitude if component.center_longitude is not none else 0.0}},
+                  ),
+                  initialZoom: {{component.zoom if component.zoom is not none else 10}}.0,
+                ),
+                children: [
+                  TileLayer(
+                    urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                    userAgentPackageName: '{{app.name|lower|replace(' ', '_')}}',
+                  ),
+                  // OSM tile usage policy requires visible attribution
+                  RichAttributionWidget(
+                    attributions: [
+                      TextSourceAttribution('OpenStreetMap contributors'),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
               {%- endif %}
             {%- endfor %}
           ],
@@ -84,12 +113,13 @@ class _MyHomePageState extends State<MyHomePage> {
     );
   }
 }
+{%- endtrace %}
 
 {%- for screen in screens%}
   {%- set is_primary = false %}
   {%- set name_of_the_column = ''%}
 
-//for {{screen.name}} screen
+{% trace screen, "screen" %}//for {{screen.name}} screen
 class {{screen.name}} extends StatefulWidget {
   const {{screen.name}}({super.key});
 
@@ -1394,6 +1424,10 @@ class _{{screen.name}}State extends State<{{screen.name}}> {
         ),
           {%- endif%}
         {%- endif%}
+        {%- if component is is_Map %}
+        // Map widget for {{component.name}}
+        // Note: FlutterMap is rendered inline; nest inside Scaffold body for full layout.
+        {%- endif%}
       {%- endfor%}
     );
   }
@@ -1402,4 +1436,5 @@ class _{{screen.name}}State extends State<{{screen.name}}> {
      {%- endfor %}
    {%- endif %}
   {%- endfor %}
+{%- endtrace %}
 {%- endfor %}

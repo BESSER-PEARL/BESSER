@@ -4,16 +4,27 @@ Project Builder
 This module generates Python code for complete BUML projects including all models.
 """
 
+import logging
 import os
 import tempfile
 import uuid
 import shutil
+from collections import Counter
+from typing import Dict, List, Optional, Sequence
 from besser.BUML.metamodel.structural.structural import DomainModel
+from besser.BUML.metamodel.bpmn import BPMNModel
+from besser.BUML.metamodel.gui import GUIModel
+from besser.BUML.metamodel.kg import KnowledgeGraph
+from besser.BUML.metamodel.nn import NN
 from besser.BUML.metamodel.object.object import ObjectModel
 from besser.BUML.metamodel.project import Project
+from besser.BUML.metamodel.quantum import QuantumCircuit
 from besser.BUML.metamodel.state_machine.agent import Agent
 from besser.BUML.metamodel.state_machine.state_machine import StateMachine
-from besser.utilities.buml_code_builder.common import _comment_safe, _escape_python_string
+from besser.BUML.metamodel.traceability import TraceModel
+from besser.BUML.metamodel.uml_component import ComponentModel
+from besser.BUML.metamodel.uml_deployment import DeploymentModel
+from besser.utilities.buml_code_builder.common import _comment_safe, _escape_python_string, buml_header
 from besser.utilities.buml_code_builder.domain_model_builder import (
     domain_model_to_code,
     object_model_to_code,
@@ -23,8 +34,14 @@ from besser.utilities.buml_code_builder.domain_model_builder import (
 from besser.utilities.buml_code_builder.agent_model_builder import agent_model_to_code
 from besser.utilities.buml_code_builder.state_machine_builder import state_machine_to_code
 from besser.utilities.buml_code_builder.quantum_model_builder import quantum_model_to_code
+from besser.utilities.buml_code_builder.kg_model_builder import kg_model_to_code
 from besser.utilities.buml_code_builder.nn_model_builder import nn_model_to_code
 from besser.utilities.buml_code_builder.bpmn_model_builder import bpmn_model_to_code
+from besser.utilities.buml_code_builder.component_model_builder import component_model_to_code
+from besser.utilities.buml_code_builder.deployment_model_builder import deployment_model_to_code
+from besser.utilities.buml_code_builder.trace_model_builder import structural_variables, trace_model_to_code
+
+logger = logging.getLogger(__name__)
 
 try:
     from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
@@ -34,6 +51,35 @@ except ImportError:
     reference_user_domain_model = None
 
 
+def is_user_reference_domain_model(model: DomainModel) -> bool:
+    """Return True if *model* is the user reference domain model (User Modeling Language).
+
+    It is the model itself, or a model with exactly its classes (the
+    reference model re-executed from an exported project). A class diagram
+    that merely has a class named ``User`` is an ordinary domain model. When
+    the reference model is unavailable, any model with a ``User`` class counts.
+    """
+    if reference_user_domain_model is None:
+        return contains_user_class(model)
+    if model is reference_user_domain_model:
+        return True
+    reference_names = {cls.name for cls in reference_user_domain_model.get_classes()}
+    return {cls.name for cls in model.get_classes()} == reference_names
+
+
+def _is_user_reference_object_model(model: ObjectModel, user_classes: set) -> bool:
+    """Return True if every object of *model* instantiates a user reference class.
+
+    *user_classes* holds the classes of the user reference domain model(s).
+    When the reference model is unavailable, falls back to the name-based
+    ``is_user_object_model`` heuristic.
+    """
+    if reference_user_domain_model is None:
+        return is_user_object_model(model)
+    objects = model.objects or set()
+    return bool(objects) and all(obj.classifier in user_classes for obj in objects)
+
+
 def _suffixed_name(base_name: str, index: int, total: int) -> str:
     """Return *base_name* with a ``_<index>`` suffix when *total* > 1."""
     if total <= 1:
@@ -41,17 +87,37 @@ def _suffixed_name(base_name: str, index: int, total: int) -> str:
     return f"{base_name}_{index}"
 
 
+def _section_titles(models: Sequence, titles_by_id: Dict[int, str]) -> List[str]:
+    """Return the title each model's section banner carries, in order.
+
+    A model's diagram title (``titles_by_id``, keyed by ``id(model)``: the NN
+    and KG metamodels store only a sanitized ``name``), else its name. A title
+    that siblings share gets the model's 1-based position appended,
+    ``"Graph (2)"``, so the re-imported diagrams can be told apart; a title of
+    its own is kept as it is, so it survives any number of round trips.
+    """
+    titles = [titles_by_id.get(id(m)) or getattr(m, "name", "") or "" for m in models]
+    counts = Counter(titles)
+    return [
+        f"{title} ({idx})" if title and counts[title] > 1 else title
+        for idx, title in enumerate(titles, start=1)
+    ]
+
+
 def _write_temp_to_output(temp_path: str, out_file, section_header: str = ""):
     """Read a temp file and append its content (with optional header) to *out_file*."""
     with open(temp_path, "r", encoding="utf-8") as tmp:
         content = tmp.read()
+    # One version header per file: the project writes its own at the top.
+    content = content.removeprefix(buml_header())
     if section_header:
         out_file.write(section_header)
     out_file.write(content)
     out_file.write("\n\n")
 
 
-def project_to_code(project: Project, file_path: str, sm: str = ""):
+def project_to_code(project: Project, file_path: str, sm: str = "", emit_ids: bool = False,
+                    trace: Optional[TraceModel] = None):
     """
     Generates Python code for a complete B-UML project and writes it to a specified file.
 
@@ -67,6 +133,12 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
         sm (str): Deprecated. Legacy state machine code string (kept for backward
                   compatibility). StateMachine objects in the project's model list
                   are now handled automatically.
+        emit_ids (bool): Write element ids in the structural models (see
+                  ``domain_model_to_code``). Off by default.
+        trace (TraceModel): The project trace, written as a TRACEABILITY
+                  section bound to ``trace_model``, which references the
+                  elements of the structural sections it is about. It is not one
+                  of the project's models, so it stays out of ``Project(models=...)``.
 
     Outputs:
         - A Python file containing all models in the project
@@ -87,42 +159,31 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
     agent_models = []
     gui_models = []
     quantum_models = []
+    kg_models = []
     state_machine_models = []   # StateMachine models
     nn_models = []
     bpmn_models = []
+    component_models = []        # ComponentModel models (UML Component diagrams)
+    deployment_models = []       # DeploymentModel models (UML Deployment diagrams)
 
-    # Import GUIModel locally to avoid circular imports
-    try:
-        from besser.BUML.metamodel.gui import GUIModel
-    except ImportError:
-        GUIModel = None
-
-    # Import QuantumCircuit locally
-    try:
-        from besser.BUML.metamodel.quantum import QuantumCircuit
-    except ImportError:
-        QuantumCircuit = None
-
-    # Import NN locally
-    try:
-        from besser.BUML.metamodel.nn import NN
-    except ImportError:
-        NN = None
-
-    # Import BPMNModel locally to avoid potential circular imports
-    try:
-        from besser.BUML.metamodel.bpmn import BPMNModel
-    except ImportError:
-        BPMNModel = None
+    # A UserDiagram is an ObjectModel over the user reference domain model, so
+    # it is recognised by its objects' classes: those of the reference model
+    # itself or of a copy of it in the project.
+    user_reference_classes = set()
+    if reference_user_domain_model is not None:
+        user_reference_classes.update(reference_user_domain_model.get_classes())
+    for model in project.models:
+        if isinstance(model, DomainModel) and is_user_reference_domain_model(model):
+            user_reference_classes.update(model.get_classes())
 
     for model in project.models:
         if isinstance(model, DomainModel):
-            if contains_user_class(model):
+            if is_user_reference_domain_model(model):
                 user_domain_models.append(model)
             else:
                 domain_models.append(model)
         elif isinstance(model, ObjectModel):
-            if is_user_object_model(model):
+            if _is_user_reference_object_model(model, user_reference_classes):
                 user_object_models.append(model)
             else:
                 object_models.append(model)
@@ -130,14 +191,20 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
             agent_models.append(model)
         elif isinstance(model, StateMachine):
             state_machine_models.append(model)
-        elif GUIModel and isinstance(model, GUIModel):
+        elif isinstance(model, GUIModel):
             gui_models.append(model)
-        elif QuantumCircuit and isinstance(model, QuantumCircuit):
+        elif isinstance(model, QuantumCircuit):
             quantum_models.append(model)
-        elif NN and isinstance(model, NN):
+        elif isinstance(model, NN):
             nn_models.append(model)
-        elif BPMNModel and isinstance(model, BPMNModel):
+        elif isinstance(model, BPMNModel):
             bpmn_models.append(model)
+        elif isinstance(model, KnowledgeGraph):
+            kg_models.append(model)
+        elif isinstance(model, ComponentModel):
+            component_models.append(model)
+        elif isinstance(model, DeploymentModel):
+            deployment_models.append(model)
 
     # If we have user object models but no user domain model, use the
     # reference one shipped with the editor backend (when available).
@@ -161,11 +228,14 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
 
     # Similarly pair user domain models with user object models
     user_pairs = []
+    standalone_user_object_models = []
     if len(user_domain_models) == 1 and len(user_object_models) <= 1:
         user_pairs.append((user_domain_models[0], user_object_models[0] if user_object_models else None))
     else:
         for udm in user_domain_models:
             user_pairs.append((udm, None))
+        # Written after the user domain model(s), whose classes they reference.
+        standalone_user_object_models = user_object_models
 
     # ------------------------------------------------------------------ #
     # Helper: count totals so we know whether to add numeric suffixes     #
@@ -175,6 +245,7 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
     n_agent = len(agent_models)
     n_gui = len(gui_models)
     n_quantum = len(quantum_models)
+    n_kg = len(kg_models)
     n_sm = len(state_machine_models)
     n_nn = len(nn_models)
     n_bpmn = len(bpmn_models)
@@ -182,13 +253,21 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
     # Variable names collected for the final Project(...) definition
     model_vars = []
 
+    # Diagram titles json_to_buml_project kept for the NN and KG sections; see
+    # _section_titles.
+    diagram_titles = getattr(project, "_diagram_titles", {}) or {}
+
     with open(file_path, 'w', encoding='utf-8') as f:
+        f.write(buml_header())
         temp_dir = tempfile.mkdtemp(prefix=f"besser_{uuid.uuid4().hex}_")
 
         try:
             # ---------------------------------------------------------- #
             # DOMAIN MODELS (regular, non-user)                          #
             # ---------------------------------------------------------- #
+            # Association variables by association id, for the trace to reference (see structural_variables).
+            association_vars: Dict[str, str] = {}
+            user_association_vars: Dict[str, str] = {}
             for idx, (dm, om) in enumerate(domain_pairs, start=1):
                 var_name = _suffixed_name("domain_model", idx, n_domain)
                 obj_var_name = _suffixed_name("object_model", idx, n_domain)
@@ -196,7 +275,7 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
 
                 section = ""
                 if n_domain > 1:
-                    label = getattr(dm, "name", f"Model {idx}")
+                    label = _comment_safe(getattr(dm, "name", "")) or f"Model {idx}"
                     section = f"# STRUCTURAL MODEL {idx}: \"{label}\" #\n\n"
 
                 tmp_path = os.path.join(temp_dir, f"domain_model_{idx}.py")
@@ -208,7 +287,9 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
                         objectmodel=om,
                         model_var_name=var_name,
                         metadata_var_name=meta_var_name,
+                        emit_ids=emit_ids,
                         object_model_var_name=obj_var_name,
+                        variables=association_vars,
                     )
                     _write_temp_to_output(tmp_path, f, section_header=section)
                     model_vars.append(var_name)
@@ -219,6 +300,8 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
                         file_path=tmp_path,
                         model_var_name=var_name,
                         metadata_var_name=meta_var_name,
+                        emit_ids=emit_ids,
+                        variables=association_vars,
                     )
                     _write_temp_to_output(tmp_path, f, section_header=section)
                     model_vars.append(var_name)
@@ -264,7 +347,7 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
 
                 section = ""
                 if n_user > 1:
-                    label = getattr(udm, "name", f"User Model {idx}")
+                    label = _comment_safe(getattr(udm, "name", "")) or f"User Model {idx}"
                     section = f"# USER MODEL {idx}: \"{label}\" #\n\n"
 
                 tmp_path = os.path.join(temp_dir, f"user_model_{idx}.py")
@@ -275,11 +358,35 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
                     model_var_name=var_name,
                     metadata_var_name=meta_var,
                     object_model_var_name=obj_var,
+                    emit_ids=emit_ids,
+                    variables=user_association_vars,
                 )
                 _write_temp_to_output(tmp_path, f, section_header=section)
                 model_vars.append(var_name)
                 if uom:
                     model_vars.append(obj_var)
+
+            # User object models that could not be paired (several UserDiagrams
+            # over the one reference model). Like the standalone object models
+            # above, object_model_to_code writes the only section header.
+            n_standalone_user = len(standalone_user_object_models)
+            for idx, uom in enumerate(standalone_user_object_models, start=1):
+                obj_var = _suffixed_name("user_object_model", idx, n_standalone_user)
+
+                header_label = None
+                if n_standalone_user > 1:
+                    label = (_comment_safe(getattr(uom, "name", "")) or f"User Diagram {idx}").replace('"', "'")
+                    header_label = f'OBJECT MODEL {idx}: "{label}"'
+
+                tmp_path = os.path.join(temp_dir, f"user_object_model_{idx}.py")
+                object_model_to_code(
+                    objectmodel=uom,
+                    file_path=tmp_path,
+                    object_model_var_name=obj_var,
+                    header_label=header_label,
+                )
+                _write_temp_to_output(tmp_path, f)
+                model_vars.append(obj_var)
 
             # ---------------------------------------------------------- #
             # AGENT MODELS                                               #
@@ -289,7 +396,7 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
 
                 section = ""
                 if n_agent > 1:
-                    label = getattr(am, "name", f"Agent {idx}")
+                    label = _comment_safe(getattr(am, "name", "")) or f"Agent {idx}"
                     section = f"# AGENT MODEL {idx}: \"{label}\" #\n\n"
 
                 tmp_path = os.path.join(temp_dir, f"agent_model_{idx}.py")
@@ -312,7 +419,7 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
 
                     section = ""
                     if n_gui > 1:
-                        label = getattr(gm, "name", f"GUI {idx}")
+                        label = _comment_safe(getattr(gm, "name", "")) or f"GUI {idx}"
                         section = f"# GUI MODEL {idx}: \"{label}\" #\n\n"
 
                     tmp_path = os.path.join(temp_dir, f"gui_model_{idx}.py")
@@ -334,7 +441,7 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
 
                 section = ""
                 if n_quantum > 1:
-                    label = getattr(qm, "name", f"Quantum {idx}")
+                    label = _comment_safe(getattr(qm, "name", "")) or f"Quantum {idx}"
                     section = f"# QUANTUM MODEL {idx}: \"{label}\" #\n\n"
 
                 tmp_path = os.path.join(temp_dir, f"quantum_model_{idx}.py")
@@ -347,6 +454,26 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
                 model_vars.append(var_name)
 
             # ---------------------------------------------------------- #
+            # KNOWLEDGE GRAPH MODELS                                     #
+            # ---------------------------------------------------------- #
+            kg_titles = _section_titles(kg_models, diagram_titles)
+            for idx, (kgm, title) in enumerate(zip(kg_models, kg_titles), start=1):
+                var_name = _suffixed_name("kg_model", idx, n_kg)
+
+                # kg_model_to_code writes the only section header, and it
+                # carries the title, which project_to_json reads back as the
+                # diagram's title (the NN block below does the same).
+                tmp_path = os.path.join(temp_dir, f"kg_model_{idx}.py")
+                kg_model_to_code(
+                    model=kgm,
+                    file_path=tmp_path,
+                    model_var_name=var_name,
+                    title=title,
+                )
+                _write_temp_to_output(tmp_path, f)
+                model_vars.append(var_name)
+
+            # ---------------------------------------------------------- #
             # STATE MACHINE MODELS                                       #
             # ---------------------------------------------------------- #
             for idx, smm in enumerate(state_machine_models, start=1):
@@ -354,7 +481,7 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
 
                 section = ""
                 if n_sm > 1:
-                    label = getattr(smm, "name", f"State Machine {idx}")
+                    label = _comment_safe(getattr(smm, "name", "")) or f"State Machine {idx}"
                     section = f"# STATE MACHINE MODEL {idx}: \"{label}\" #\n\n"
 
                 tmp_path = os.path.join(temp_dir, f"state_machine_{idx}.py")
@@ -369,12 +496,8 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
             # ---------------------------------------------------------- #
             # NN MODELS                                                  #
             # ---------------------------------------------------------- #
-            # Source of titles: json_to_buml_project attaches them to the
-            # Project as ``_nn_diagram_titles`` (id(nn) -> title) so we can
-            # round-trip the user-facing diagram title — the NN metamodel
-            # only stores a sanitized name.
-            nn_titles_by_id = getattr(project, "_nn_diagram_titles", {}) or {}
-            for idx, nm in enumerate(nn_models, start=1):
+            nn_titles = _section_titles(nn_models, diagram_titles)
+            for idx, (nm, title) in enumerate(zip(nn_models, nn_titles), start=1):
                 # Use the static "nn_model" prefix (suffixed when multiple)
                 # so the resulting Python identifier in `models=[...]` matches
                 # SECTION_CONFIG['nn_model'] in the importer. Previously we
@@ -383,14 +506,8 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
                 # silently dropping the diagram on round-trip.
                 var_name = _suffixed_name("nn_model", idx, n_nn)
 
-                # Header is written exclusively by nn_model_to_code to avoid
-                # double-headers (one from project_builder, one from the NN
-                # builder) that confused `_extract_all_sections` and erased
-                # titles even in the multi-NN case.
-                title = nn_titles_by_id.get(id(nm)) or getattr(nm, "name", None)
-                if n_nn > 1 and title and not str(title).strip().startswith(f"NN {idx}"):
-                    # Disambiguate within the file when there are siblings.
-                    title = f"{title} ({idx})"
+                # Header is written exclusively by nn_model_to_code, carrying
+                # the title, so there is one banner per section.
 
                 tmp_path = os.path.join(temp_dir, f"nn_model_{idx}.py")
                 # Thread the suffixed var_name through so the NN builder
@@ -430,11 +547,65 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
                 _write_temp_to_output(tmp_path, f, section_header=section)
                 model_vars.append(var_name)
 
+            # ---------------------------------------------------------- #
+            # COMPONENT MODELS                                           #
+            # ---------------------------------------------------------- #
+            n_comp = len(component_models)
+            for idx, cm in enumerate(component_models, start=1):
+                var_name = _suffixed_name("component_model", idx, n_comp)
+
+                section = ""
+                if n_comp > 1:
+                    label = _comment_safe(getattr(cm, "name", "")) or f"Component {idx}"
+                    section = f'# COMPONENT MODEL {idx}: "{label}" #\n\n'
+
+                tmp_path = os.path.join(temp_dir, f"component_model_{idx}.py")
+                component_model_to_code(
+                    model=cm,
+                    file_path=tmp_path,
+                    model_var_name=var_name,
+                )
+                _write_temp_to_output(tmp_path, f, section_header=section)
+                model_vars.append(var_name)
+
+            # ---------------------------------------------------------- #
+            # DEPLOYMENT MODELS                                          #
+            # ---------------------------------------------------------- #
+            n_dep = len(deployment_models)
+            for idx, dm in enumerate(deployment_models, start=1):
+                var_name = _suffixed_name("deployment_model", idx, n_dep)
+
+                section = ""
+                if n_dep > 1:
+                    label = _comment_safe(getattr(dm, "name", "")) or f"Deployment {idx}"
+                    section = f'# DEPLOYMENT MODEL {idx}: "{label}" #\n\n'
+
+                tmp_path = os.path.join(temp_dir, f"deployment_model_{idx}.py")
+                deployment_model_to_code(
+                    model=dm,
+                    file_path=tmp_path,
+                    model_var_name=var_name,
+                )
+                _write_temp_to_output(tmp_path, f, section_header=section)
+                model_vars.append(var_name)
+
             # Legacy: if a raw code string was passed, include it as-is
             if sm != "" and not state_machine_models:
                 f.write(sm)
                 model_vars.append("sm")
                 f.write("\n\n")
+
+            if trace is not None:
+                # The trace references the elements the structural sections above define.
+                references = structural_variables(
+                    [(dm, _suffixed_name("domain_model", idx, n_domain)) for idx, (dm, _) in enumerate(domain_pairs, start=1)],
+                    other_models=[udm for udm, _ in user_pairs],
+                    association_variables=association_vars,
+                    other_association_variables=user_association_vars.values(),
+                )
+                tmp_path = os.path.join(temp_dir, "trace_model.py")
+                trace_model_to_code(trace, tmp_path, references=references)
+                _write_temp_to_output(tmp_path, f)
 
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
@@ -457,4 +628,4 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
         f.write("    metadata=metadata\n")
         f.write(")\n")
 
-    print(f"Project saved to {file_path}")
+    logger.info("Project saved to %s", file_path)

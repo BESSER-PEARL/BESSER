@@ -1,0 +1,187 @@
+import enum
+import os
+# Both spellings are bound on purpose. Generated code uses the trailing-
+# underscore aliases so a modelled class named List, Optional or DateTime
+# cannot shadow them. The PLAIN names are imported too because this file is
+# routinely edited afterwards by an LLM, which writes ordinary Python and has
+# no reason to know about our aliasing convention. Observed in generated apps
+# on 2026-09-11, each one an app that would not import:
+#
+#     Mapped_[Optional[int]]        undefined name 'Optional'
+#     mapped_column(DateTime())     undefined name 'DateTime'
+#
+# Binding only the names we had seen fail left the same trap set for every
+# other alias, so every aliased name below is bound both ways.
+from typing import List, Optional, List as List_, Optional as Optional_
+from sqlalchemy import (
+    create_engine, Enum,
+    Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, Interval,
+    PickleType, String, Table, Text, Time,
+    Column as Column_, ForeignKey as ForeignKey_, Table as Table_,
+    Text as Text_, Boolean as Boolean_, String as String_, Date as Date_,
+    Time as Time_, DateTime as DateTime_, Float as Float_, Integer as Integer_,
+    Interval as Interval_, PickleType as PickleType_,
+)
+from sqlalchemy.orm import (
+    column_property, DeclarativeBase, Mapped, Mapped as Mapped_, mapped_column,
+    relationship
+)
+from datetime import datetime as dt_datetime, time as dt_time, date as dt_date, timedelta as dt_timedelta
+from uuid import uuid4 as _uuid4
+
+
+def _new_str_id() -> str:
+    """Server-side surrogate for string primary keys named ``id``.
+
+    A string PK has no autoincrement; without a default every INSERT dies
+    on NOT NULL (the id is in nobody's hands: create schemas rightly
+    exclude the server-owned ``id``, so the server must mint it).
+    """
+    return _uuid4().hex
+
+class Base(DeclarativeBase):
+    pass
+
+# Definitions of Enumerations
+class TodoStatus(enum.Enum):
+    PENDING = "PENDING"
+    CANCELLED = "CANCELLED"
+    IN_PROGRESS = "IN_PROGRESS"
+    COMPLETED = "COMPLETED"
+
+class Priority(enum.Enum):
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+    URGENT = "URGENT"
+
+
+# Tables definition for many-to-many relationships
+tags = Table_(
+    "tags",
+    Base.metadata,
+    Column_("tags", ForeignKey_("tag.id"), primary_key=True),
+    Column_("todoitem", ForeignKey_("todoitem.id"), primary_key=True),
+)
+
+# Tables definition
+class Reminder(Base):
+    __tablename__ = "reminder"
+    id: Mapped_[int] = mapped_column(Integer_, primary_key=True)
+    remindAt: Mapped_[dt_datetime] = mapped_column(DateTime_)
+    isSent: Mapped_[bool] = mapped_column(Boolean_, default=False)
+    method: Mapped_[str] = mapped_column(String_(100))
+    createdAt: Mapped_[dt_datetime] = mapped_column(DateTime_, default=dt_datetime.now)
+    todoitem_id: Mapped_[int] = mapped_column(ForeignKey_("todoitem.id"))
+
+class Comment(Base):
+    __tablename__ = "comment"
+    id: Mapped_[int] = mapped_column(Integer_, primary_key=True)
+    content: Mapped_[str] = mapped_column(String_(100))
+    authorName: Mapped_[Optional_[str]] = mapped_column(String_(100), nullable=True)
+    createdAt: Mapped_[dt_datetime] = mapped_column(DateTime_, default=dt_datetime.now)
+    editedAt: Mapped_[Optional_[dt_datetime]] = mapped_column(DateTime_, nullable=True)
+    user_id: Mapped_[int] = mapped_column(ForeignKey_("user.id"), nullable=True)
+    todoitem_id: Mapped_[int] = mapped_column(ForeignKey_("todoitem.id"))
+
+class Attachment(Base):
+    __tablename__ = "attachment"
+    id: Mapped_[int] = mapped_column(Integer_, primary_key=True)
+    filename: Mapped_[str] = mapped_column(String_(100))
+    url: Mapped_[str] = mapped_column(String_(100))
+    contentType: Mapped_[str] = mapped_column(String_(100))
+    size: Mapped_[int] = mapped_column(Integer_)
+    uploadedAt: Mapped_[dt_datetime] = mapped_column(DateTime_)
+    todoitem_id: Mapped_[int] = mapped_column(ForeignKey_("todoitem.id"))
+
+class Tag(Base):
+    __tablename__ = "tag"
+    id: Mapped_[int] = mapped_column(Integer_, primary_key=True)
+    name: Mapped_[str] = mapped_column(String_(100))
+    color: Mapped_[Optional_[str]] = mapped_column(String_(100), nullable=True)
+    createdAt: Mapped_[dt_datetime] = mapped_column(DateTime_, default=dt_datetime.now)
+
+class TodoItem(Base):
+    __tablename__ = "todoitem"
+    id: Mapped_[int] = mapped_column(Integer_, primary_key=True)
+    title: Mapped_[str] = mapped_column(String_(100))
+    description: Mapped_[Optional_[str]] = mapped_column(String_(100), nullable=True)
+    createdAt: Mapped_[dt_datetime] = mapped_column(DateTime_, default=dt_datetime.now)
+    updatedAt: Mapped_[dt_datetime] = mapped_column(DateTime_, default=dt_datetime.now, onupdate=dt_datetime.now)
+    dueDate: Mapped_[Optional_[dt_date]] = mapped_column(Date_, nullable=True)
+    completedAt: Mapped_[Optional_[dt_datetime]] = mapped_column(DateTime_, nullable=True)
+    status: Mapped_[TodoStatus] = mapped_column(Enum(TodoStatus), default=TodoStatus.PENDING)
+    priority: Mapped_[Priority] = mapped_column(Enum(Priority), default=Priority.MEDIUM)
+    isArchived: Mapped_[bool] = mapped_column(Boolean_, default=False)
+    todolist_id: Mapped_[int] = mapped_column(ForeignKey_("todolist.id"))
+
+class TodoList(Base):
+    __tablename__ = "todolist"
+    id: Mapped_[int] = mapped_column(Integer_, primary_key=True)
+    title: Mapped_[str] = mapped_column(String_(100))
+    description: Mapped_[Optional_[str]] = mapped_column(String_(100), nullable=True)
+    createdAt: Mapped_[dt_datetime] = mapped_column(DateTime_, default=dt_datetime.now)
+    updatedAt: Mapped_[dt_datetime] = mapped_column(DateTime_, default=dt_datetime.now, onupdate=dt_datetime.now)
+    isShared: Mapped_[bool] = mapped_column(Boolean_, default=False)
+    user_id: Mapped_[int] = mapped_column(ForeignKey_("user.id"))
+
+class User(Base):
+    __tablename__ = "user"
+    id: Mapped_[int] = mapped_column(Integer_, primary_key=True)
+    username: Mapped_[str] = mapped_column(String_(100))
+    email: Mapped_[str] = mapped_column(String_(100))
+    createdAt: Mapped_[dt_datetime] = mapped_column(DateTime_, default=dt_datetime.now)
+    updatedAt: Mapped_[dt_datetime] = mapped_column(DateTime_, default=dt_datetime.now, onupdate=dt_datetime.now)
+    isActive: Mapped_[bool] = mapped_column(Boolean_, default=True)
+    # Authentication secret; never expose this field in API responses.
+    passwordHash: Mapped_[Optional_[str]] = mapped_column(String_(255), nullable=True)
+    todoitem_id: Mapped_[int] = mapped_column(ForeignKey_("todoitem.id"), nullable=True)
+
+
+#--- Relationships of the reminder table
+
+Reminder.todoitem: Mapped_["TodoItem"] = relationship("TodoItem", back_populates="reminders", uselist=False, foreign_keys=[Reminder.todoitem_id])
+
+#--- Relationships of the comment table
+
+Comment.user: Mapped_["User"] = relationship("User", back_populates="userComment", uselist=False, foreign_keys=[Comment.user_id])
+
+Comment.todoitem: Mapped_["TodoItem"] = relationship("TodoItem", back_populates="comments", uselist=False, foreign_keys=[Comment.todoitem_id])
+
+#--- Relationships of the attachment table
+
+Attachment.todoitem: Mapped_["TodoItem"] = relationship("TodoItem", back_populates="attachments", uselist=False, foreign_keys=[Attachment.todoitem_id])
+
+#--- Relationships of the tag table
+Tag.todoitem: Mapped_[List_["TodoItem"]] = relationship("TodoItem", secondary=tags, back_populates="tags")
+
+#--- Relationships of the todoitem table
+TodoItem.tags: Mapped_[List_["Tag"]] = relationship("Tag", secondary=tags, back_populates="todoitem")
+TodoItem.comments: Mapped_[List_["Comment"]] = relationship("Comment", back_populates="todoitem", foreign_keys=[Comment.todoitem_id])
+TodoItem.attachments: Mapped_[List_["Attachment"]] = relationship("Attachment", back_populates="todoitem", foreign_keys=[Attachment.todoitem_id])
+TodoItem.assignee: Mapped_[List_["User"]] = relationship("User", back_populates="todoitem", foreign_keys=[User.todoitem_id])
+
+TodoItem.todolist: Mapped_["TodoList"] = relationship("TodoList", back_populates="items", uselist=False, foreign_keys=[TodoItem.todolist_id])
+TodoItem.reminders: Mapped_[List_["Reminder"]] = relationship("Reminder", back_populates="todoitem", foreign_keys=[Reminder.todoitem_id])
+
+#--- Relationships of the todolist table
+
+TodoList.user: Mapped_["User"] = relationship("User", back_populates="lists", uselist=False, foreign_keys=[TodoList.user_id])
+TodoList.items: Mapped_[List_["TodoItem"]] = relationship("TodoItem", back_populates="todolist", foreign_keys=[TodoItem.todolist_id])
+
+#--- Relationships of the user table
+
+User.todoitem: Mapped_["TodoItem"] = relationship("TodoItem", back_populates="assignee", uselist=False, foreign_keys=[User.todoitem_id])
+User.lists: Mapped_[List_["TodoList"]] = relationship("TodoList", back_populates="user", foreign_keys=[TodoList.user_id])
+User.userComment: Mapped_[List_["Comment"]] = relationship("Comment", back_populates="user", foreign_keys=[Comment.user_id])
+
+# Database connection (override the default with the DATABASE_URL environment variable)
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./data/Class_Diagram.db")  # SQLite connection
+engine = create_engine(DATABASE_URL)
+
+if __name__ == "__main__":
+    # Create tables in the database only when this module is executed directly,
+    # so importing it never touches the database as a side effect.
+    if DATABASE_URL.startswith("sqlite"):
+        os.makedirs("data", exist_ok=True)  # folder for the default SQLite database
+    Base.metadata.create_all(engine, checkfirst=True)

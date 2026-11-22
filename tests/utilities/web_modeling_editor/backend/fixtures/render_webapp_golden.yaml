@@ -1,0 +1,32 @@
+services:
+  # Backend API (Free tier - 750 hours/month, spins down after 15 min idle)
+  - type: web
+    name: library-app-backend-a1b2c3
+    runtime: python
+    plan: free
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: cd backend && uvicorn main_api:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.3
+
+  # Frontend (Free static site)
+  - type: web
+    name: library-app-frontend-a1b2c3
+    runtime: static
+    buildCommand: cd frontend && npm install && npm run build
+    staticPublishPath: frontend/build
+    envVars:
+      - key: VITE_API_URL
+        value: https://library-app-backend-a1b2c3.onrender.com
+    headers:
+      - path: /assets/*.js
+        name: Content-Type
+        value: application/javascript
+      - path: /assets/*.css
+        name: Content-Type
+        value: text/css
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html

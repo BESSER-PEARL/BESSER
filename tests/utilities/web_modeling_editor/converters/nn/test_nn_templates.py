@@ -1,7 +1,7 @@
 """Smoke tests for the shipped NN editor templates.
 
 Every template JSON under
-``besser/utilities/web_modeling_editor/frontend/packages/webapp2/src/main/
+``besser/utilities/web_modeling_editor/frontend/packages/webapp/src/main/
 templates/pattern/nn/`` must parse cleanly through ``process_nn_diagram``
 — otherwise a schema/field drift silently breaks "Load Template" in the
 editor. These tests also exercise the full builder + converter round-trip
@@ -20,7 +20,6 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_nn_diagram,
 )
 
-
 _TEMPLATE_DIR = (
     Path(__file__).resolve().parents[5]
     / "besser"
@@ -28,7 +27,7 @@ _TEMPLATE_DIR = (
     / "web_modeling_editor"
     / "frontend"
     / "packages"
-    / "webapp2"
+    / "webapp"
     / "src"
     / "main"
     / "templates"

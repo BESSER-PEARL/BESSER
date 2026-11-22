@@ -9,16 +9,25 @@ across router modules.
 import functools
 import logging
 import asyncio
+import subprocess
 
 from fastapi import HTTPException
 
 from besser.utilities.web_modeling_editor.backend.services.exceptions import (
+    ConfigurationError,
     ConversionError,
+    GovernanceDslValidationError,
     ValidationError,
     GenerationError,
+    UpstreamError,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _timeout_detail(exc: subprocess.TimeoutExpired) -> str:
+    # The command line holds server paths, so the client sees only the limit.
+    return f"Generation timed out: a generator step ran longer than {exc.timeout:g} seconds."
 
 
 def handle_endpoint_errors(endpoint_name: str):
@@ -34,10 +43,16 @@ def handle_endpoint_errors(endpoint_name: str):
 
     Exception mapping:
         * ``ConversionError``  -> HTTP 400
+        * ``GovernanceDslValidationError`` -> HTTP 422
         * ``ValidationError``  -> HTTP 400
         * ``GenerationError``  -> HTTP 500
         * ``ValueError``       -> HTTP 400 with message
         * ``RuntimeError``     -> HTTP 400 with message (e.g. missing API key)
+        * ``UpstreamError``    -> its ``status_code`` (an external service failed)
+        * ``ConfigurationError`` -> HTTP 500 (server set-up, e.g. a missing
+          optional dependency), with its message
+        * ``subprocess.TimeoutExpired`` -> HTTP 504 (a generator's child process
+          ran past ``BESSER_GENERATOR_SUBPROCESS_TIMEOUT``)
         * ``HTTPException``    -> re-raised as-is
         * ``Exception``        -> HTTP 500 with generic message
 
@@ -58,12 +73,24 @@ def handle_endpoint_errors(endpoint_name: str):
             except ConversionError as exc:
                 logger.warning("Conversion error in %s: %s", endpoint_name, exc)
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
+            except GovernanceDslValidationError as exc:
+                logger.warning("Governance DSL validation error in %s: %s", endpoint_name, exc)
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
             except ValidationError as exc:
                 logger.warning("Validation error in %s: %s", endpoint_name, exc)
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
             except GenerationError as exc:
                 logger.error("Generation error in %s: %s", endpoint_name, exc)
                 raise HTTPException(status_code=500, detail=str(exc)) from exc
+            except UpstreamError as exc:
+                logger.warning("Upstream error in %s: %s", endpoint_name, exc)
+                raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+            except ConfigurationError as exc:
+                logger.error("Configuration error in %s: %s", endpoint_name, exc)
+                raise HTTPException(status_code=500, detail=str(exc)) from exc
+            except subprocess.TimeoutExpired as exc:
+                logger.error("Subprocess timed out in %s after %ss: %s", endpoint_name, exc.timeout, exc.cmd)
+                raise HTTPException(status_code=504, detail=_timeout_detail(exc)) from exc
             except ValueError as exc:
                 logger.warning("Value error in %s: %s", endpoint_name, exc)
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -85,12 +112,24 @@ def handle_endpoint_errors(endpoint_name: str):
             except ConversionError as exc:
                 logger.warning("Conversion error in %s: %s", endpoint_name, exc)
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
+            except GovernanceDslValidationError as exc:
+                logger.warning("Governance DSL validation error in %s: %s", endpoint_name, exc)
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
             except ValidationError as exc:
                 logger.warning("Validation error in %s: %s", endpoint_name, exc)
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
             except GenerationError as exc:
                 logger.error("Generation error in %s: %s", endpoint_name, exc)
                 raise HTTPException(status_code=500, detail=str(exc)) from exc
+            except UpstreamError as exc:
+                logger.warning("Upstream error in %s: %s", endpoint_name, exc)
+                raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+            except ConfigurationError as exc:
+                logger.error("Configuration error in %s: %s", endpoint_name, exc)
+                raise HTTPException(status_code=500, detail=str(exc)) from exc
+            except subprocess.TimeoutExpired as exc:
+                logger.error("Subprocess timed out in %s after %ss: %s", endpoint_name, exc.timeout, exc.cmd)
+                raise HTTPException(status_code=504, detail=_timeout_detail(exc)) from exc
             except ValueError as exc:
                 logger.warning("Value error in %s: %s", endpoint_name, exc)
                 raise HTTPException(status_code=400, detail=str(exc)) from exc

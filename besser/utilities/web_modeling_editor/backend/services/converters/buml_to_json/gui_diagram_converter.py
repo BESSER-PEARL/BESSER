@@ -3,6 +3,8 @@ GUI Diagram converter module for BUML to JSON conversion.
 Reconstructs GrapesJS-compatible JSON structures from BUML GUI models.
 """
 from __future__ import annotations
+import inspect
+import json
 import logging
 import re
 import uuid
@@ -11,12 +13,8 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence
 logger = logging.getLogger(__name__)
 from besser.BUML.metamodel.gui import (
     Alert,
-    AlertSeverity,
     Button,
-    ButtonActionType,
-    ButtonType,
     DataList,
-    DataSourceElement,
     EmbeddedContent,
     Form,
     GUIModel,
@@ -24,15 +22,23 @@ from besser.BUML.metamodel.gui import (
     InputField,
     Link,
     Menu,
-    MenuItem,
-    Module,
     Screen,
-    SelectOption,
     Text,
     ViewComponent,
     ViewContainer,
 )
-from besser.BUML.metamodel.gui.binding import DataBinding
+from besser.BUML.metamodel import gui as _gui_module
+from besser.BUML.metamodel.gui import binding as _binding_module
+from besser.BUML.metamodel.gui import dashboard as _dashboard_module
+from besser.BUML.metamodel.gui import events_actions as _events_module
+from besser.BUML.metamodel import structural as _structural_module
+from besser.utilities.buml_code_builder.common import (
+    bind_association_end,
+    bind_data_source,
+    bind_domain_field,
+    attribute_var_name,
+    build_data_binding,
+)
 from besser.BUML.metamodel.gui.dashboard import (
     AgentComponent,
     BarChart,
@@ -40,6 +46,7 @@ from besser.BUML.metamodel.gui.dashboard import (
     LookupColumn,
     ExpressionColumn,
     LineChart,
+    Map,
     MetricCard,
     PieChart,
     RadarChart,
@@ -49,18 +56,25 @@ from besser.BUML.metamodel.gui.dashboard import (
 from besser.BUML.metamodel.gui.events_actions import (
     Create,
     Delete,
-    Event,
-    Parameter,
     Read,
     Transition,
     Update,
 )
-from besser.BUML.metamodel.gui.graphical_ui import InputFieldType
-from besser.BUML.metamodel.gui.style import Alignment, Color, Layout, LayoutType, Position, PositionType, Size, Styling, UnitSize
+from besser.BUML.metamodel.gui.style import Layout, LayoutType, PositionType, Styling
+from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._safe_buml_loader import (
+    SAFE_DATETIME_MODULE,
+    safe_load_buml,
+)
+from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.class_diagram_converter import (
+    fresh_primitive_types,
+)
+
+# Namespace root used to decide which objects a GUI BUML section may name.
+_METAMODEL_PREFIX = "besser.BUML.metamodel"
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
-def gui_buml_to_json(buml_content: str) -> Dict[str, Any]:
+def gui_buml_to_json(buml_content: str, context_code: Optional[str] = None) -> Dict[str, Any]:
     """
     Convert BUML GUI model Python code to GrapesJS JSON format.
     Args:
@@ -70,7 +84,7 @@ def gui_buml_to_json(buml_content: str) -> Dict[str, Any]:
     """
     if not buml_content or not buml_content.strip():
         return _empty_gui_project()
-    gui_model = _parse_gui_model(buml_content)
+    gui_model = _parse_gui_model(buml_content, context_code)
     if not gui_model:
         return _empty_gui_project()
     try:
@@ -107,98 +121,132 @@ def parse_gui_buml_content(content: str) -> Optional[Dict[str, Any]]:
 # ---------------------------------------------------------------------------
 # Parsing helpers
 # ---------------------------------------------------------------------------
-def _parse_gui_model(content: str) -> Optional[GUIModel]:
+def _metamodel_namespace() -> Dict[str, Any]:
+    """Return the B-UML names a GUI BUML section may reference, keyed by name.
+
+    Derived from the metamodel modules rather than hand-listed. The previous
+    hand-written mapping had drifted: the GUI code builder emitted
+    ``FieldColumn``, ``LookupColumn``, ``ExpressionColumn`` and ``Series``,
+    but this reader had never been told about them, so exporting a project
+    containing a table and importing it back failed with ``NameError``.
+
+    The structural metamodel is included because a GUI section legitimately
+    refers to the domain elements it binds to -- ``FieldColumn(field=Guest_id)``
+    names a ``Property`` defined in the structural section, which the project
+    converter prepends as context. Both classes (``Class``, ``Property``) and
+    module-level metamodel instances (``StringType`` and the other primitive
+    types) are collected, since the emitted code uses both.
+    """
+    return _namespace_of(
+        _gui_module, _dashboard_module, _events_module, _binding_module
+    )
+
+
+def _structural_namespace() -> Dict[str, Any]:
+    """Return the structural metamodel names, for the domain context only.
+
+    Kept separate from the GUI vocabulary because ``Parameter`` means two
+    different classes: ``gui.events_actions.Parameter`` in a GUI section and
+    ``structural.Parameter`` in a method signature. Executing the domain code
+    against the GUI namespace bound the wrong one and raised
+    ``Parameter.__init__() got an unexpected keyword argument 'type'``.
+    """
+    return _namespace_of(_structural_module)
+
+
+def _namespace_of(*modules) -> Dict[str, Any]:
+    """Collect the public metamodel classes and instances exported by modules."""
+    namespace: Dict[str, Any] = {}
+    for module in modules:
+        for attr_name, attr in vars(module).items():
+            if attr_name.startswith("_"):
+                continue
+            origin = attr.__module__ if inspect.isclass(attr) else type(attr).__module__
+            if origin.startswith(_METAMODEL_PREFIX):
+                namespace.setdefault(attr_name, attr)
+    return namespace
+
+
+def _bind_domain_aliases(namespace: Dict[str, Any]) -> None:
+    """Bind ``ClassName_attributeName`` for every attribute a class exposes.
+
+    A GUI section refers to domain properties by this convention, but the
+    domain model builder only emits a variable for the class that *declares*
+    an attribute. For an inherited attribute the GUI side historically wrote
+    the binding class instead, e.g. ``Guest_id`` for ``Person.id`` -- a name
+    nothing defined. Binding the convention against ``all_attributes()``
+    resolves both spellings exactly: ``Guest`` really does expose ``id``, so
+    ``Guest_id`` and ``Person_id`` denote the same Property. Existing exports
+    therefore load, and nothing is guessed.
+    """
+    domain_model = namespace.get("domain_model")
+    types = getattr(domain_model, "types", None) or []
+    for domain_class in types:
+        get_attrs = getattr(domain_class, "all_attributes", None)
+        if not callable(get_attrs):
+            continue
+        try:
+            attributes = get_attrs()
+        except Exception:  # pragma: no cover - defensive
+            continue
+        for attribute in attributes:
+            namespace.setdefault(attribute_var_name(domain_class.name, attribute.name), attribute)
+
+
+def _parse_gui_model(content: str, context_code: Optional[str] = None) -> Optional[GUIModel]:
     """Execute BUML GUI python content and return the first GUIModel found."""
-    safe_globals: Dict[str, Any] = {
-        "__builtins__": {
-            "set": set,
-            "list": list,
-            "dict": dict,
-            "tuple": tuple,
-            "str": str,
-            "int": int,
-            "float": float,
-            "bool": bool,
-            "len": len,
-            "range": range,
-            "True": True,
-            "False": False,
-            "None": None,
-            "print": lambda *a, **kw: None,  # no-op to prevent info leakage
-        },
-        "GUIModel": GUIModel,
-        "Module": Module,
-        "Screen": Screen,
-        "ViewComponent": ViewComponent,
-        "ViewContainer": ViewContainer,
-        "Button": Button,
-        "ButtonType": ButtonType,
-        "ButtonActionType": ButtonActionType,
-        "Text": Text,
-        "Image": Image,
-        "Link": Link,
-        "InputField": InputField,
-        "SelectOption": SelectOption,
-        "Alert": Alert,
-        "AlertSeverity": AlertSeverity,
-        "Form": Form,
-        "Menu": Menu,
-        "MenuItem": MenuItem,
-        "DataList": DataList,
-        "DataSourceElement": DataSourceElement,
-        "EmbeddedContent": EmbeddedContent,
-        "LineChart": LineChart,
-        "BarChart": BarChart,
-        "PieChart": PieChart,
-        "RadarChart": RadarChart,
-        "RadialBarChart": RadialBarChart,
-        "Table": Table,
-        "MetricCard": MetricCard,
-        "AgentComponent": AgentComponent,
-        "Transition": Transition,
-        "Create": Create,
-        "Read": Read,
-        "Update": Update,
-        "Delete": Delete,
-        "Event": Event,
-        "Parameter": Parameter,
-        "DataBinding": DataBinding,
-        "Styling": Styling,
-        "Size": Size,
-        "Position": Position,
-        "Color": Color,
-        "UnitSize": UnitSize,
-        "Layout": Layout,
-        "LayoutType": LayoutType,
-        "Alignment": Alignment,
-        "PositionType": PositionType,
-        "InputFieldType": InputFieldType,
+    # The GUI vocabulary is derived from the metamodel (see _metamodel_namespace),
+    # but execution still goes through the AST-allowlist loader, not exec().
+    allowed_names: Dict[str, Any] = {
+        **_metamodel_namespace(),
         "domain_model": None,
         "set": set,
         "list": list,
         "tuple": tuple,
         "dict": dict,
+        # Emitted GUI code calls this to resolve a domain-bound DataBinding.
+        # It replaces an inline globals()/if/generator-expression block that the
+        # safe loader refused, which made such models un-importable.
+        "bind_domain_field": bind_domain_field,
+        "build_data_binding": build_data_binding,
+        "bind_data_source": bind_data_source,
+        "bind_association_end": bind_association_end,
     }
-    # Strip import lines -- all required types are in safe_globals already.
-    # Handle multi-line imports (e.g. from ... import (\n    ...\n))
-    cleaned_lines = []
-    in_import_block = False
-    for line in content.splitlines():
-        stripped = line.lstrip()
-        if in_import_block:
-            if ")" in line:
-                in_import_block = False
-            continue
-        if stripped.startswith(("import ", "from ")):
-            if "(" in line and ")" not in line:
-                in_import_block = True
-            continue
-        cleaned_lines.append(line)
-    cleaned_content = "\n".join(cleaned_lines)
-
-    local_vars: Dict[str, Any] = {}
+    # Execute the domain context first so the GUI code can name the domain
+    # elements it binds to, then bind the ClassName_attributeName aliases
+    # the GUI section uses before running it.
+    if context_code:
+        # Run the domain code against the structural vocabulary, not the GUI
+        # one, so names that mean different things in the two metamodels
+        # (Parameter) resolve correctly on each side. It goes through the same
+        # safe loader as every other uploaded section.
+        context_names: Dict[str, Any] = {
+            **_structural_namespace(),
+            # Not the process-wide StringType & co., which an upload could rename.
+            **fresh_primitive_types(),
+            "UNLIMITED_MAX_MULTIPLICITY": _structural_module.UNLIMITED_MAX_MULTIPLICITY,
+            # Element timestamps: ``timestamp=datetime.datetime.fromisoformat(...)``.
+            "datetime": SAFE_DATETIME_MODULE,
+            "set": set,
+            "list": list,
+            "dict": dict,
+            "tuple": tuple,
+        }
+        try:
+            context_vars = safe_load_buml(context_code, context_names)
+        except Exception as exc:
+            raise ValueError(f"Failed to execute domain context: {exc}") from exc
+        # Carry over what the domain code *built* -- the DomainModel and the
+        # Class/Property/Enumeration objects the GUI section binds to -- and
+        # not the structural vocabulary itself, which would shadow the GUI
+        # classes of the same name.
+        for context_name, context_value in context_vars.items():
+            if context_name.startswith("__") or inspect.isclass(context_value):
+                continue
+            allowed_names[context_name] = context_value
+        _bind_domain_aliases(allowed_names)
     try:
-        exec(cleaned_content, safe_globals, local_vars)
+        local_vars = safe_load_buml(content, allowed_names)
     except Exception as exc:
         raise ValueError(f"Failed to execute GUI BUML content: {exc}") from exc
     gui_candidates = [
@@ -206,7 +254,7 @@ def _parse_gui_model(content: str) -> Optional[GUIModel]:
     ]
     if not gui_candidates:
         gui_candidates = [
-            value for value in safe_globals.values() if isinstance(value, GUIModel)
+            value for value in allowed_names.values() if isinstance(value, GUIModel)
         ]
     return gui_candidates[0] if gui_candidates else None
 # ---------------------------------------------------------------------------
@@ -228,6 +276,7 @@ def _serialize_gui_model(gui_model: GUIModel) -> Dict[str, Any]:
     if not pages:
         return _empty_gui_project()
     styles = _denormalize_styles(getattr(gui_model, "style_entries", None) or [])
+    styles.extend(_stylesheet_to_styles(getattr(gui_model, "stylesheet", "")))
     return {
         "pages": pages,
         "styles": styles,
@@ -274,6 +323,8 @@ def _serialize_screen(screen: Screen) -> Dict[str, Any]:
         "name": screen.description or screen.name or screen_id,
         "frames": [frame],
     }
+    if screen.route_path:
+        page["route_path"] = screen.route_path
     if page_attrs:
         page["attributes"] = page_attrs
     return page
@@ -311,6 +362,8 @@ def _serialize_component(element: ViewComponent) -> Dict[str, Any]:
             serialized_child = _serialize_component(child)
             if serialized_child:
                 children.append(serialized_child)
+    if isinstance(element, Form):
+        children.extend(_serialize_form_children(element))
     if isinstance(element, Text):
         content = element.content or element.description or element.name or ""
         children = [{"type": "textnode", "content": content}]
@@ -328,6 +381,41 @@ def _serialize_component(element: ViewComponent) -> Dict[str, Any]:
     if children:
         node["components"] = children
     return _clean_dict(node)
+def _serialize_form_children(form: Form) -> List[Dict[str, Any]]:
+    """A form's inputs, each after its ``<label>``, then its submit button.
+
+    ``parse_form`` folds the labels into ``InputField.label`` and the button
+    into ``Form.submit_label``; rebuilding them keeps the form visible as
+    authored. Editor ``gui-input-*`` inputs render their own label.
+    """
+    children: List[Dict[str, Any]] = []
+    for field in _sorted_elements(getattr(form, "inputFields", None) or []):
+        serialized = _serialize_component(field)
+        if not serialized:
+            continue
+        label = getattr(field, "label", None)
+        attrs = serialized.get("attributes") or {}
+        self_labelled = any(
+            str(kind or "").startswith("gui-input-")
+            for kind in (serialized.get("type"), attrs.get("data-gui-component"))
+        )
+        if label and not self_labelled:
+            label_node: Dict[str, Any] = {"tagName": "label", "components": [{"type": "textnode", "content": label}]}
+            field_id = attrs.get("id")
+            if field_id:
+                label_node["attributes"] = {"for": field_id}
+            children.append(label_node)
+        children.append(serialized)
+    submit_attributes = {"type": "submit"}
+    submit_classes = (form.custom_attributes or {}).get("data-submit-class")
+    if submit_classes:
+        submit_attributes["class"] = submit_classes
+    children.append({
+        "tagName": "button",
+        "attributes": submit_attributes,
+        "components": [{"type": "textnode", "content": getattr(form, "submit_label", None) or "Submit"}],
+    })
+    return children
 # ---------------------------------------------------------------------------
 # Attribute builders
 # ---------------------------------------------------------------------------
@@ -351,6 +439,8 @@ def _apply_component_specific_attributes(element: ViewComponent, attrs: Dict[str
         _apply_table_attributes(element, attrs)
     elif isinstance(element, MetricCard):
         _apply_metric_card_attributes(element, attrs)
+    elif isinstance(element, Map):
+        _apply_map_attributes(element, attrs)
     elif isinstance(element, AgentComponent):
         _apply_agent_component_attributes(element, attrs)
     elif isinstance(element, Alert):
@@ -368,22 +458,129 @@ def _apply_component_specific_attributes(element: ViewComponent, attrs: Dict[str
 def _apply_chart_data_binding_attributes(component: ViewComponent, attrs: Dict[str, Any]) -> None:
     binding = getattr(component, "data_binding", None)
     if not binding:
+        # The model is the source of truth for the endpoint: an endpoint stored
+        # in the editor's attributes must not outlive the binding.
+        attrs.pop("data-endpoint", None)
         return
     domain = getattr(binding, "domain_concept", None)
     if domain and getattr(domain, "name", None):
-        attrs.setdefault("data-source", domain.name)
+        attrs.setdefault("data-source", _element_ref(domain))
     label_name = (
-        getattr(getattr(binding, "label_field", None), "name", None)
+        _element_ref(getattr(binding, "label_field", None))
         or getattr(binding, "label_field_name", None)
     )
     data_name = (
-        getattr(getattr(binding, "data_field", None), "name", None)
+        _element_ref(getattr(binding, "data_field", None))
         or getattr(binding, "data_field_name", None)
     )
     if label_name:
         attrs.setdefault("label-field", label_name)
     if data_name:
         attrs.setdefault("data-field", data_name)
+    aggregation = getattr(binding, "aggregation", None)
+    if aggregation is not None:
+        attrs.setdefault("aggregation", aggregation.value)
+    # Nested paths have no class-diagram element to point at, so they travel as
+    # their own attributes (read back by chart_parsers).
+    if binding.label_field_path and not label_name:
+        attrs.setdefault("label-field-path", binding.label_field_path)
+    if binding.data_field_path and not data_name:
+        attrs.setdefault("data-field-path", binding.data_field_path)
+    if binding.filter_expression:
+        attrs.setdefault("filter", str(binding.filter_expression))
+    # Assigned, not defaulted: editing or clearing ``endpoint=`` in B-UML must win
+    # over the value stored when the component was last saved in the editor.
+    if binding.endpoint:
+        attrs["data-endpoint"] = binding.endpoint
+    else:
+        attrs.pop("data-endpoint", None)
+
+
+# The series keys the model owns (written from its Series and their bindings);
+# any other key of a stored series (``data``: the editor's sample values,
+# ``_expanded``, ...) is editor-only and kept.
+_SERIES_MODEL_KEYS = frozenset({
+    "name", "data-source", "label-field", "data-field", "label-field-path", "data-field-path",
+    "filter", "aggregation", "data-endpoint", "features", "values",
+})
+
+
+def _series_color(series: Any) -> Optional[str]:
+    color = getattr(getattr(series, "styling", None), "color", None)
+    if not color:
+        return None
+    return (getattr(color, "primary_color", None) or getattr(color, "line_color", None)
+            or getattr(color, "bar_color", None) or getattr(color, "background_color", None))
+
+
+def _series_entry(series: Any) -> Dict[str, Any]:
+    """One series as the editor's series manager stores it (read back by chart_parsers)."""
+    entry: Dict[str, Any] = {"name": series.label or series.name}
+    color = _series_color(series)
+    if color:
+        entry["color"] = color
+    _apply_chart_data_binding_attributes(series, entry)
+    return _clean_dict(entry)
+
+
+def _stored_series(raw: Any) -> List[Dict[str, Any]]:
+    """The ``series`` stored in a chart's editor attributes (a JSON string or a list)."""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except ValueError:
+            logger.warning("Ignoring a chart's stored series: not valid JSON")
+            return []
+    return [item for item in raw if isinstance(item, dict)] if isinstance(raw, list) else []
+
+
+def _merge_series_entry(series: Any, entry: Dict[str, Any], stored: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """``entry`` (from the model) over ``stored`` (from the editor), in the stored key order.
+
+    The model's keys win; a model key the entry lacks was removed in B-UML and is
+    dropped, unless the series has no binding at all (its data source did not
+    resolve), in which case the stored binding is kept as the editor had it.
+    """
+    if not stored:
+        return entry
+    merged = dict(stored)
+    if series.data_binding is not None:
+        for key in _SERIES_MODEL_KEYS - entry.keys():
+            merged.pop(key, None)
+    merged.update(entry)
+    return merged
+
+
+def _apply_chart_series_attributes(chart: Any, attrs: Dict[str, Any]) -> None:
+    """Write the chart's series as the editor's ``series`` attribute.
+
+    The model is the source of truth for the series list, as for a map's layers
+    (``_apply_map_attributes``): a series added in B-UML is exported, one deleted
+    there does not come back. Editor-only keys of a stored series (its sample
+    ``data``) are kept on the series it matches: the one at the same position when
+    the counts are equal, else the first unused one with the same name.
+    """
+    series_list = list(chart.series or [])
+    raw = attrs.get("series")
+    stored = _stored_series(raw)
+    if not series_list and not stored:
+        return
+    if len(stored) == len(series_list):
+        matches = stored
+    else:
+        unused = list(stored)
+        matches = []
+        for series in series_list:
+            name = series.label or series.name
+            match = next((item for item in unused if item.get("name") in (name, series.name)), None)
+            if match is not None:
+                unused.remove(match)
+            matches.append(match)
+    entries = [_merge_series_entry(series, _series_entry(series), match)
+               for series, match in zip(series_list, matches)]
+    attrs["series"] = entries if isinstance(raw, list) else json.dumps(entries)
+
+
 def _apply_button_attributes(button: Button, attrs: Dict[str, Any]) -> None:
     attrs.setdefault("button-label", button.label or button.name or "Button")
     action_type = attrs.get("action-type")
@@ -443,6 +640,7 @@ def _apply_data_list_attributes(data_list: DataList, attrs: Dict[str, Any]) -> N
         attrs.setdefault("data-field", value_field)
 def _apply_line_chart_attributes(chart: LineChart, attrs: Dict[str, Any]) -> None:
     _apply_chart_data_binding_attributes(chart, attrs)
+    _apply_chart_series_attributes(chart, attrs)
     attrs.setdefault("chart-title", chart.title or chart.name)
     if chart.primary_color:
         attrs.setdefault("chart-color", chart.primary_color)
@@ -454,6 +652,7 @@ def _apply_line_chart_attributes(chart: LineChart, attrs: Dict[str, Any]) -> Non
     attrs.setdefault("animate", chart.animate)
 def _apply_bar_chart_attributes(chart: BarChart, attrs: Dict[str, Any]) -> None:
     _apply_chart_data_binding_attributes(chart, attrs)
+    _apply_chart_series_attributes(chart, attrs)
     attrs.setdefault("chart-title", chart.title or chart.name)
     if chart.primary_color:
         attrs.setdefault("chart-color", chart.primary_color)
@@ -464,6 +663,7 @@ def _apply_bar_chart_attributes(chart: BarChart, attrs: Dict[str, Any]) -> None:
     attrs.setdefault("stacked", chart.stacked)
 def _apply_pie_chart_attributes(chart: PieChart, attrs: Dict[str, Any]) -> None:
     _apply_chart_data_binding_attributes(chart, attrs)
+    _apply_chart_series_attributes(chart, attrs)
     attrs.setdefault("chart-title", chart.title or chart.name)
     attrs.setdefault("show-legend", chart.show_legend)
     attrs.setdefault("show-labels", chart.show_labels)
@@ -472,6 +672,7 @@ def _apply_pie_chart_attributes(chart: PieChart, attrs: Dict[str, Any]) -> None:
     attrs.setdefault("padding-angle", chart.padding_angle)
 def _apply_radar_chart_attributes(chart: RadarChart, attrs: Dict[str, Any]) -> None:
     _apply_chart_data_binding_attributes(chart, attrs)
+    _apply_chart_series_attributes(chart, attrs)
     attrs.setdefault("chart-title", chart.title or chart.name)
     attrs.setdefault("chart-color", chart.primary_color or "#8884d8")
     attrs.setdefault("show-grid", chart.show_grid)
@@ -479,6 +680,7 @@ def _apply_radar_chart_attributes(chart: RadarChart, attrs: Dict[str, Any]) -> N
     attrs.setdefault("show-radius-axis", chart.show_radius_axis)
 def _apply_radial_bar_chart_attributes(chart: RadialBarChart, attrs: Dict[str, Any]) -> None:
     _apply_chart_data_binding_attributes(chart, attrs)
+    _apply_chart_series_attributes(chart, attrs)
     attrs.setdefault("chart-title", chart.title or chart.name)
     attrs.setdefault("start-angle", chart.start_angle)
     attrs.setdefault("end-angle", chart.end_angle)
@@ -504,11 +706,14 @@ def _apply_table_attributes(chart: Table, attrs: Dict[str, Any]) -> None:
 
         elif isinstance(col, LookupColumn):
             column_dict["columnType"] = "lookup"
-            # Store the relationship end name as lookupPath
-            column_dict["lookupPath"] = col.path.name if hasattr(col.path, "name") else str(col.path)
-            # Store the target class ID as lookupEntity
+            # The relationship end name. ``field`` is the key the editor and
+            # parse_columns read; ``lookupPath`` stays for compatibility.
+            path_name = col.path.name if hasattr(col.path, "name") else str(col.path)
+            column_dict["field"] = path_name
+            column_dict["lookupPath"] = path_name
+            # The target class, by id when it has one (the editor keys it by id)
             if hasattr(col.path, "type") and hasattr(col.path.type, "name"):
-                column_dict["lookupEntity"] = col.path.type.name
+                column_dict["lookupEntity"] = _element_ref(col.path.type)
             # Store the attribute name as lookupField
             column_dict["lookupField"] = col.field.name if hasattr(col.field, "name") else str(col.field)
 
@@ -525,13 +730,64 @@ def _apply_table_attributes(chart: Table, attrs: Dict[str, Any]) -> None:
         attrs["columns"] = columns_list
 def _apply_metric_card_attributes(card: MetricCard, attrs: Dict[str, Any]) -> None:
     _apply_chart_data_binding_attributes(card, attrs)
-    attrs.setdefault("metric-title", card.title or card.name)
+    # metric_title defaults to "Metric Title"; a card titled only via ``title`` keeps it.
+    metric_title = card.metric_title if card.metric_title != "Metric Title" else None
+    attrs.setdefault("metric-title", metric_title or card.title or card.metric_title or card.name)
     attrs.setdefault("format", getattr(card, "format", None) or "number")
     attrs.setdefault("value-color", getattr(card, "value_color", "#2c3e50"))
     attrs.setdefault("value-size", getattr(card, "value_size", 32))
     attrs.setdefault("show-trend", getattr(card, "show_trend", True))
     attrs.setdefault("positive-color", getattr(card, "positive_color", "#27ae60"))
     attrs.setdefault("negative-color", getattr(card, "negative_color", "#e74c3c"))
+def _apply_map_attributes(map_comp: Map, attrs: Dict[str, Any]) -> None:
+    """Expose Map traits for the GrapesJS round-trip.
+
+    Emits ``map-title``, ``map-latitude``, ``map-longitude``, ``map-zoom``, and
+    ``map-layers`` (a JSON string).  The ``map-layers`` array uses class and field
+    **names** rather than UUIDs so that the value survives the backend's
+    BUML→JSON→BUML round-trip even when GrapesJS element IDs are unavailable
+    (e.g. when the map was created programmatically rather than via the editor).
+    The JSON→BUML parser accepts both names and UUIDs; the editor's layer-manager
+    trait likewise resolves either form when populating its selects.
+    """
+    attrs.setdefault("map-title", getattr(map_comp, "title", None) or map_comp.name)
+    attrs.setdefault("map-latitude", getattr(map_comp, "center_latitude", 0.0))
+    attrs.setdefault("map-longitude", getattr(map_comp, "center_longitude", 0.0))
+    attrs.setdefault("map-zoom", getattr(map_comp, "zoom", 10))
+
+    layers = getattr(map_comp, "layers", None) or []
+    layer_entries = []
+    for layer in layers:
+        binding = getattr(layer, "data_binding", None)
+        domain = getattr(binding, "domain_concept", None)
+        domain_name = getattr(domain, "name", None) or ""
+
+        def _field_name(attr):
+            return getattr(attr, "name", None) or ""
+
+        layer_entries.append({
+            "name": getattr(layer, "name", "layer"),
+            "type": (
+                layer.layer_type.value
+                if getattr(layer, "layer_type", None) is not None
+                else ""
+            ),
+            "dataSource": domain_name,
+            "latitudeField": _field_name(getattr(layer, "latitude_field", None)),
+            "longitudeField": _field_name(getattr(layer, "longitude_field", None)),
+            "labelField": _field_name(getattr(layer, "label_field", None)),
+            "weightField": _field_name(getattr(layer, "weight_field", None)),
+            "geojsonField": _field_name(getattr(layer, "geojson_field", None)),
+            "valueField": _field_name(getattr(layer, "value_field", None)),
+        })
+
+    # The BUML model is the source of truth for the layer list: assign
+    # unconditionally (setdefault would let a stale editor payload in
+    # custom_attributes resurrect deleted layers), and emit "[]" so a map
+    # whose layers were all removed is representable.
+    attrs["map-layers"] = json.dumps(layer_entries)
+
+
 def _apply_agent_component_attributes(agent: AgentComponent, attrs: Dict[str, Any]) -> None:
     attrs.setdefault("agent-name", getattr(agent, "agent_name", None) or "")
     attrs.setdefault("agent-title", getattr(agent, "agent_title", None) or "BESSER Agent")
@@ -594,6 +850,9 @@ def _apply_input_field_attributes(field: InputField, attrs: Dict[str, Any]) -> N
         attrs.setdefault("data-step", field.step)
     if getattr(field, "multiple", False):
         attrs.setdefault("data-multiple", "true")
+    bound_attribute = getattr(getattr(field, "data_binding", None), "data_field", None)
+    if bound_attribute is not None:
+        attrs.setdefault("data-field-name", bound_attribute.name)
 def _apply_form_attributes(form: Form, attrs: Dict[str, Any]) -> None:
     """Expose Form traits in the exported JSON.
 
@@ -615,6 +874,9 @@ def _apply_form_attributes(form: Form, attrs: Dict[str, Any]) -> None:
         attrs.setdefault("data-cancel-label", form.cancel_label)
     if getattr(form, "columns", None) is not None:
         attrs.setdefault("data-columns", form.columns)
+    domain = getattr(getattr(form, "data_binding", None), "domain_concept", None)
+    if domain is not None:
+        attrs.setdefault("data-source", _element_ref(domain))
 def _apply_image_attributes(image: Image, attrs: Dict[str, Any]) -> None:
     if getattr(image, "source", None):
         attrs.setdefault("src", image.source)
@@ -729,14 +991,106 @@ def _denormalize_styles(entries: Sequence[Dict[str, Any]]) -> List[Dict[str, Any
             normalized_entry["selectorsAdd"] = entry["selectorsAdd"]
         denormalized.append(normalized_entry)
     return denormalized
+_SIMPLE_SELECTOR = re.compile(r"^((?:\.[A-Za-z_][\w-]*)+|#[A-Za-z_][\w-]*)(?::([A-Za-z-]+))?$")
+
+
+def _scan_outside_quotes(text: str, start: int):
+    """Yield (index, char) of ``text`` from ``start``, skipping quoted strings."""
+    quote = None
+    i = start
+    while i < len(text):
+        ch = text[i]
+        if quote:
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+        elif ch in "'\"":
+            quote = ch
+        else:
+            yield i, ch
+        i += 1
+
+
+def _split_declarations(body: str) -> Dict[str, Any]:
+    """Parse ``prop:value;...`` into a dict, ignoring ``;`` inside parentheses."""
+    parts, depth, last = [], 0, 0
+    for i, ch in _scan_outside_quotes(body, 0):
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        elif ch == ";" and depth == 0:
+            parts.append(body[last:i])
+            last = i + 1
+    parts.append(body[last:])
+    style: Dict[str, Any] = {}
+    for part in parts:
+        prop, sep, value = part.partition(":")
+        if sep and prop.strip() and value.strip():
+            style[prop.strip()] = value.strip()
+    return style
+
+
+def _stylesheet_to_styles(
+    css: str, at_rule_type: Optional[str] = None, media_text: str = ""
+) -> List[Dict[str, Any]]:
+    """Convert a GUIModel stylesheet back into GrapesJS rule objects.
+
+    Inverse of ``build_stylesheet`` in the json_to_buml GUI processor: a plain
+    class/id selector (optionally with one state) becomes ``selectors``, any
+    other selector ``selectorsAdd``; at-rule blocks set ``atRuleType`` and
+    ``mediaText``.
+    """
+    css = re.sub(r"/\*.*?\*/", "", css or "", flags=re.S)
+    rules: List[Dict[str, Any]] = []
+    start, depth, open_idx = 0, 0, -1
+    for i, ch in _scan_outside_quotes(css, 0):
+        if ch == "{":
+            if depth == 0:
+                open_idx = i
+            depth += 1
+        elif ch == "}" and depth:
+            depth -= 1
+            if depth:
+                continue
+            prelude, body = css[start:open_idx].strip(), css[open_idx + 1:i]
+            start = i + 1
+            if prelude.startswith("@"):
+                name, _, condition = prelude[1:].partition(" ")
+                if "{" in body:
+                    rules.extend(_stylesheet_to_styles(body, name, condition.strip()))
+                else:
+                    rules.append({"selectors": [], "selectorsAdd": "", "atRuleType": name,
+                                  "singleAtRule": True, "style": _split_declarations(body)})
+                continue
+            rule: Dict[str, Any] = {"selectors": [], "style": _split_declarations(body)}
+            match = _SIMPLE_SELECTOR.match(prelude)
+            if match:
+                rule["selectors"] = [
+                    name if name.startswith("#") else name[1:]
+                    for name in re.findall(r"[.#][\w-]+", match.group(1))
+                ]
+                if match.group(2):
+                    rule["state"] = match.group(2)
+            else:
+                rule["selectorsAdd"] = prelude
+            if at_rule_type:
+                rule["atRuleType"] = at_rule_type
+                rule["mediaText"] = media_text
+            rules.append(rule)
+    return rules
+
+
 def _sorted_elements(elements: Iterable[ViewComponent]) -> List[ViewComponent]:
-    return sorted(
-        elements or [],
-        key=lambda elem: (
-            getattr(elem, "display_order", 0),
-            getattr(elem, "name", ""),
-        ),
-    )
+    # An element built without a display_order (None) sorts after the ordered
+    # ones; comparing None with a number raised and emptied the whole import.
+    def _key(elem):
+        order = getattr(elem, "display_order", None)
+        return (order is None, order if order is not None else 0, getattr(elem, "name", "") or "")
+
+    return sorted(elements or [], key=_key)
 def _sorted_screens(screens: Iterable[Screen]) -> List[Screen]:
     return sorted(
         screens or [],
@@ -776,6 +1130,12 @@ def _slugify(name: Optional[str]) -> str:
         return ""
     cleaned = re.sub(r"[^a-zA-Z0-9]+", "-", name.strip())
     return cleaned.strip("-").lower()
+def _element_ref(element: Any) -> Optional[str]:
+    """How the editor refers to a domain element: its id when it has one, else its name."""
+    element_id = getattr(element, "id", None)
+    if isinstance(element_id, str) and element_id:
+        return element_id
+    return getattr(element, "name", None)
 def _generate_id(prefix: str) -> str:
     return f"{prefix}-{uuid.uuid4().hex[:10]}"
 def _enum_value(value: Any) -> Optional[str]:
@@ -809,6 +1169,7 @@ def _infer_component_type(element: ViewComponent) -> Optional[str]:
         RadialBarChart: "radial-bar-chart",
         Table: "table",
         MetricCard: "metric-card",
+        Map: "map",
         AgentComponent: "agent-component",
     }
     for cls, comp_type in mapping.items():

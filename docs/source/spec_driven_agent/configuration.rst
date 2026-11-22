@@ -1,0 +1,332 @@
+Configuration reference
+=======================
+
+Everything the Spec-Driven Agent reads from the environment. All of it is
+optional — the agent runs without any of it, minus the keyless tiers. These
+variables are read by the :doc:`web editor backend <../web_editor_backend>`
+and by ``besser/spec_driven_agent/``; the live values of the caps and feature
+flags are reported by ``GET /besser_api/spec-driven/config``, which is what a
+client should read rather than hardcoding the figures below.
+
+Each variable is declared once, with its type, default and description: the
+agent's own (models, keyless tiers, provider calls, context budgets, shell
+sessions) on ``AgentSettings`` in ``besser/spec_driven_agent/settings.py``,
+and the backend's (the caps, run lifecycle and feature flags, the demo token,
+telemetry and incidents) on ``BackendSettings`` in
+``besser/utilities/web_modeling_editor/backend/settings.py`` (see
+:ref:`the backend's environment variables <web-editor-backend-env>`). Values
+the agent keeps in module constants (the context budgets, history eviction, the output-token
+ceilings, the SDK timeout, the rolling cache) are read when the module is
+imported; a malformed number there fails the import with an error naming the
+variable. The others are read at each use; a shell-session number that is not
+an integer logs a warning and uses its default. A backend number that does not
+parse, or is not positive, falls back to its default, and a backend flag is on
+only for ``1``, ``true``, ``yes`` or ``on`` (any other value, empty included,
+turns it off). The agent's own switches each name the values they accept below.
+
+Models
+------
+
+- ``BESSER_MODEL_CATALOG`` -- Path to the deployment's model catalog, a JSON
+  file merged over the public default: the providers and models the key dialog
+  offers, gateway endpoints (such as ``pia``) and gateway rates. Set it on the
+  backend, the Spec-Driven worker and the modeling agent, with the same file
+  mounted in each. Read once at startup; a missing or malformed file stops the
+  service. See :doc:`models`.
+- ``ANTHROPIC_BASE_URL``, ``OPENAI_BASE_URL``, ``MISTRAL_BASE_URL``,
+  ``NEBIUS_BASE_URL`` -- Endpoint of that provider's client when the request
+  carries no ``base_url``, read when the client is built. On the backend they
+  redirect every bring-your-own-key run of that provider, so leave them unset
+  unless that is the intent; the keyless tiers and the catalog's gateways set
+  their own endpoint and ignore them.
+- ``ANTHROPIC_API_KEY`` (or ``ANTHROPIC_AUTH_TOKEN``), ``OPENAI_API_KEY``,
+  ``MISTRAL_API_KEY``, ``NEBIUS_API_KEY`` -- The key a :doc:`Python library run
+  <usage>` uses when it passes none. The web backend never reads them for a
+  run: it requires the key in the request.
+
+Keyless tiers
+-------------
+
+The free tier is what makes the agent usable without an API key. It is off
+unless configured, in which case the editor offers it as the default and the
+config endpoint reports ``free_tier.available``. See :doc:`models`.
+
+- ``BESSER_FREE_LLM_BASE_URL`` / ``BESSER_FREE_LLM_MODEL`` / ``BESSER_FREE_LLM_TOKEN``
+  -- The keyless free tier's primary endpoint. Both the URL and the model must
+  be set for the tier to be offered.
+- ``BESSER_FREE_LLM_ALT_MODELS`` -- Comma-separated extra model ids served by
+  that *same* endpoint and token. They are offered as alternative free choices
+  and used as the first step of the fallback chain.
+- ``BESSER_FREE_LLM_SECONDARY_BASE_URL`` / ``BESSER_FREE_LLM_SECONDARY_MODELS`` /
+  ``BESSER_FREE_LLM_SECONDARY_TOKEN`` -- A second cloud endpoint with its own
+  token (e.g. a Mistral deployment) and a comma-separated list of its models.
+  They are offered as free choices and tried after the alt models, before the
+  last-resort endpoint.
+- ``BESSER_FREE_LLM_FALLBACK_BASE_URL`` / ``BESSER_FREE_LLM_FALLBACK_MODEL`` /
+  ``BESSER_FREE_LLM_FALLBACK_TOKEN`` -- A second,
+  independently credentialed endpoint used as the last resort in the fallback
+  chain. A run moves along the chain when its endpoint is unavailable, out of
+  quota or credits, or rejects the server's token (an expired
+  ``BESSER_FREE_LLM_TOKEN``); a rejected token skips the alternative models
+  on the same endpoint, which share it. A refusal of one model while the
+  token is accepted (a model outside the plan, or a free period that ended)
+  moves to the next model on the same endpoint. A user's own key has no fallback: a
+  rejected key fails the run with ``INVALID_KEY``.
+- ``BESSER_SPONSORED_LLM_BASE_URL`` / ``BESSER_SPONSORED_LLM_TOKEN`` /
+  ``BESSER_SPONSORED_LLM_MODEL`` -- An additional server-funded keyless tier,
+  served through an OpenAI-compatible endpoint. The URL and token are
+  required; the model is the default, and a request may name another model
+  from that endpoint's catalog in ``llm_model``. With neither a default nor a
+  request model the run is refused. Its only fallback is the free tier's
+  ``BESSER_FREE_LLM_FALLBACK_*`` endpoint. The repository import's AI reading
+  (``/spec-driven/import-github-run``) uses this tier only when all three are
+  set.
+- ``BESSER_DEMO_TOKEN`` -- Shared secret authorising the ``sponsored`` tier.
+  A request for that tier must carry the same value in ``demo_token`` or the
+  server answers 403; the web editor sends it for tabs opened through a
+  ``?demo=<token>`` link. The check **fails closed**: leaving this unset
+  refuses every sponsored run, so the tier cannot be left open by a
+  half-finished configuration. Because the tier spends the deployment's own
+  credits, pair it with a hard spend cap on the provider account — that limit
+  holds even if the link is shared further than intended.
+- ``BESSER_PILOT_LLM_MODEL`` -- Keyless model that sessions opened with a
+  research-study link start on. It must be one of the free-tier models the
+  server offers, or it is ignored; unset, those sessions get the ordinary
+  default. The study-mode variables (``BESSER_TELEMETRY_ENABLED``,
+  ``BESSER_TELEMETRY_DIR``, ``BESSER_TELEMETRY_ADMIN_TOKEN``) are listed in
+  :doc:`../web_editor_backend`.
+- ``BESSER_LLM_PLANNING_MODEL`` -- Override the small model used for the
+  planning calls (a new run's generator selection, gap analysis, requirement
+  extraction and judging, a modify run's model sync), on every provider, the free tier included. Set it to ``primary`` (any
+  case) to plan on the main model instead — necessary behind a gateway that
+  does not serve the cheap sibling. Read at each call.
+- ``BESSER_LLM_ALLOW_CUSTOM_BASE_URL`` (**off**) -- Permit a request to carry
+  its own OpenAI-compatible ``base_url``. Having the server open a
+  user-supplied URL is an SSRF surface, so this is meant for local or
+  single-tenant deployments. The local ``docker-compose.yml`` turns it on so
+  the editor's Local (e.g. Ollama) provider works; it stays off in code and in
+  ``docker-compose.prod.yml``. For a backend started without Docker, set
+  ``BESSER_LLM_ALLOW_CUSTOM_BASE_URL=true`` yourself. A gateway from the model
+  catalog (``BESSER_MODEL_CATALOG``) does not need it: its endpoint is the
+  operator's, not the request's.
+
+Caps and limits
+---------------
+
+See :doc:`runs` for how the caps are enforced.
+
+- ``BESSER_LLM_MAX_COST_USD_HARD_CAP`` (5.0), ``BESSER_LLM_MAX_RUNTIME_SECONDS_HARD_CAP``
+  (2400), ``BESSER_LLM_MAX_TURNS_HARD_CAP`` (150) -- Server-side ceilings a
+  client request can never exceed.
+- ``BESSER_LLM_DEFAULT_MAX_COST_USD`` (5.0), ``BESSER_LLM_DEFAULT_MAX_RUNTIME_SECONDS``
+  (2400), ``BESSER_LLM_DEFAULT_MAX_TURNS`` (120) -- Defaults when the request
+  omits a cap. Each is clamped to its hard cap.
+- ``BESSER_LLM_MAX_CONCURRENT_RUNS`` (10) -- Runs in flight before new requests
+  get a ``429``. Starting or resuming a run that is already in flight answers
+  ``409``.
+- ``BESSER_LLM_CALL_TIMEOUT_SECONDS`` (300) -- Per-request SDK timeout, so a
+  stalled provider call cannot hang a turn indefinitely.
+- ``BESSER_LLM_WATCHDOG_GRACE_SECONDS`` (120) -- Extra time allowed on top of
+  the request's ``max_runtime_seconds`` before the runner-level watchdog
+  force-cancels a run. It covers Phase 3 and packaging, which happen after the
+  Phase 2 loop has already hit its own runtime check.
+
+Feature flags
+-------------
+
+- ``BESSER_LLM_ENABLE_SHELL_TOOLS`` (**off**) -- Give the LLM
+  ``run_command`` / ``install_dependencies``. Arbitrary shell next to server
+  secrets is an RCE and secret-exfiltration surface, so this stays off on any
+  service that holds them. In production only the isolated
+  ``besser-wme-smartgen`` worker sets it, in its own ``environment:`` block,
+  never through the shared ``.env`` (see :doc:`production_deployment`); a
+  local or on-prem install -- one machine, one tenant -- is exactly where to
+  turn it on, and it is what lets the agent run its own tests and builds. It
+  also gates Phase 3's ``pip install --dry-run`` dependency check. There is no
+  request field for it: it is read from the environment at start-up, and the
+  config endpoint reports the resulting value as ``features.shell_tools_enabled``
+  so a deploy can be verified from outside the process. Read
+  :ref:`spec-driven-shell-tools` before enabling it. On Linux every command
+  runs in the run's bubblewrap sandbox; on Windows and macOS, or with
+  ``BESSER_LLM_SHELL_SANDBOX=off``, commands run unconfined as the backend user.
+- ``BESSER_LLM_SHELL_SANDBOX`` (**auto**) -- ``auto`` confines shell commands
+  and the checks that execute generated code wherever the platform provides
+  bubblewrap; when the sandbox cannot start, commands are refused and checks are
+  reported as unverified. ``off`` runs them
+  unconfined; use it only on a single-tenant Linux host whose kernel forbids
+  unprivileged user namespaces. Any other value logs a warning and means
+  ``auto``.
+- ``BESSER_LLM_SHELL_RUNBOOK`` (**on**) -- With shell tools enabled, add the
+  boot-and-verify procedure and its ``.besser_probe.py`` helper to the prompt.
+  ``0``, ``false`` or ``no`` keeps the shell without the procedure.
+- ``BESSER_LLM_SHELL_SESSION_IDLE_SECONDS`` (**900**) -- Close a run's shell
+  session after this many seconds without a command; its processes stop and
+  the next command starts a new session. ``0`` never closes it early; it
+  still ends with the run.
+- ``BESSER_LLM_SHELL_SESSION_MAX`` (**10**) -- Live shell sessions per worker
+  process. Past the cap a command runs in a one-off sandbox, so what it
+  starts in the background stops when it returns; ``0`` gives every command
+  its own sandbox. See :ref:`spec-driven-shell-tools`.
+- ``BESSER_LLM_SHELL_NETWORK`` (**auto**) -- The network of a run's shell
+  session. ``private``: a network namespace per session through ``pasta``
+  (passt), with outbound access only, so ``localhost`` is the run's own and
+  the worker's ports and other runs are unreachable; when ``pasta`` or
+  ``/dev/net/tun`` is missing, every command is refused. ``shared``: the
+  worker's own network namespace. ``auto``: ``private`` when a start-up
+  selftest passes, otherwise ``shared`` with one logged warning. Any other
+  value logs a warning and means ``auto``.
+  ``docker-compose.prod.yml`` sets ``private`` (see :doc:`production_deployment`).
+- ``BESSER_LLM_ENABLE_TOOLCHAIN_VALIDATION`` (**off**) -- Run ``tsc`` /
+  ``cargo`` / ``kotlinc`` in Phase 3. Costly on non-Python stacks. The cheap
+  in-process checks (syntax, Dockerfile references, contracts, ``ruff``) run
+  regardless; the ``pip install --dry-run`` dependency check is gated on
+  ``BESSER_LLM_ENABLE_SHELL_TOOLS`` instead. See :doc:`validation`.
+- ``BESSER_LLM_ENABLE_AUTO_FIX`` (on) -- Let Phase 3 spend LLM turns repairing
+  blocker-severity findings.
+- ``BESSER_LLM_ENABLE_IMPORT_SMOKE_CHECK`` (on) -- Let Phase 3 execute the
+  generated backend: import the ORM module in a subprocess and run
+  SQLAlchemy's ``configure_mappers()``, boot the app in isolation for the
+  create-request probes, and replay ``test_api`` workflows. This is the only
+  check that catches a ``relationship()`` pointing at nothing, which passes
+  every static check and then fails every database request. The generated
+  code runs in the bubblewrap sandbox with no network, a stripped environment
+  and a timeout. On Linux, when the sandbox cannot start, the check is skipped
+  and reported as unverified, unless ``BESSER_LLM_SHELL_SANDBOX=off``; on
+  Windows and macOS, which have no such sandbox, it runs unsandboxed and a
+  warning is logged. It is kept separate from
+  ``BESSER_LLM_ENABLE_SHELL_TOOLS`` so hosted deployments keep it. Set it to ``0`` (or ``false``) to turn it off;
+  a generated FastAPI backend is then reported as ``runtime unverified``
+  rather than as passing. See :doc:`validation`.
+- ``BESSER_LLM_ENABLE_REQUIREMENTS_LEDGER`` (on) -- Turn the user's verbatim
+  request into a numbered list of atomic requirements once per run (only
+  behaviour the request states; a vague request yields few or none), show that
+  list to Phase 2, and have every Phase 3 pass judge each requirement against
+  the generated code (a pass whose execution checks found a defect, such as
+  an app that does not start or a create that fails, skips the judgment
+  until it is fixed; a create the probe could not verify, such as one
+  refused by a login, does not). A
+  requirement the code does not implement becomes a
+  ``requirement:`` blocker for the auto-fix loop, and every verdict is written
+  to the recipe. It costs extra calls to the planning model: one to extract
+  the list, and one for each Phase 3 pass on which the application source
+  the judge reads (or the request) changed, plus at most one focused
+  re-judgment of unverified citations per revision; an edit to a README, a
+  dependency pin or a test reuses the last judgment, and a verified
+  requirement is not judged again while every file its citation names is
+  byte-identical; an edit to a cited file re-judges it, but an edit elsewhere
+  that stops the cited code from running (for example ``main.py`` no longer
+  including the cited router) does not. A judge that returns
+  nothing is not asked again for the same source, and after failing on two
+  revisions not again in that run. Set it to ``0`` (or ``false``) to
+  turn it off; coverage of the request is then reported as
+  ``validation unverified`` instead of being checked.
+- ``BESSER_LLM_ENABLE_TRACING`` (on) -- Append the run's phases, turns, tool
+  calls and findings to ``.besser_trace.jsonl`` in the workspace.
+- ``BESSER_LLM_ENABLE_CHECKPOINTING`` (on, required for resume) -- Write
+  ``.besser_checkpoint.json`` after every tool-use turn.
+- ``BESSER_LLM_PER_WRITE_DIAGNOSTICS`` (on) -- Parse every file the LLM writes
+  immediately and feed findings back in the same tool result.
+- ``BESSER_LLM_INLINE_SCAFFOLD`` (**off**; ``1`` or ``true`` enables it) -- Inline
+  the small Phase-1 scaffold files into the Phase-2 prompt to save the first
+  ``read_file`` turns. Off by default: the inlined copy never changes during
+  the run, so once the model has edited a file the copy is stale and quoting
+  from it makes ``modify_file`` miss. With it off, file text reaches the model
+  only through ``read_file`` (always current; several reads batch in one turn).
+- ``BESSER_LLM_ROLLING_CACHE`` (**on** while unset; set, it is on only for
+  exactly ``1``, so ``0`` or any other value disables it) -- Add a
+  rolling prompt-cache breakpoint on the growing conversation, so the prior
+  prefix is served from cache instead of re-billed each turn. Anthropic path
+  only — the OpenAI-compatible path caches by prefix automatically.
+
+Context and token budgets
+-------------------------
+
+- ``BESSER_LLM_COMPACT_THRESHOLD`` (``80000``) -- Estimated-token threshold at
+  which the Phase 2 conversation is compacted, for models whose context
+  window is unknown. Models with a known window (from the model catalogs of
+  the free and sponsored tiers, or the built-in table of hosted frontier
+  models) get an
+  adaptive threshold derived from that window instead: 80% of what is left
+  of the window after a reserve for the reply (the run's output-token
+  ceiling, at least 16,000). Setting this variable
+  also caps the adaptive value, so lowering it to cut cost applies to every
+  model, not only unknown ones. Floored at 8,000.
+- ``BESSER_LLM_MAX_COMPACT_THRESHOLD`` (``200000``) -- Ceiling on the adaptive
+  threshold for models with a known window, so a million-token model does
+  not send prompts of that size every turn. A blank value is 200000. Models
+  measured to serve a smaller window than they advertise (self-hosted
+  ``qwen3``, ``devstral``, ``mistral-small``, ``mistral-7b`` tags) are
+  clamped to that window minus the reserve, below both values regardless.
+- ``TIKTOKEN_CACHE_DIR`` -- Where ``tiktoken`` keeps the ``cl100k_base`` file
+  the compaction threshold counts tokens with. The Docker images fetch it at
+  build time into ``/opt/tiktoken-cache``. Elsewhere it is downloaded on first
+  use with no timeout, so on a host without internet access pre-fetch it
+  (``python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')"`` with
+  the variable set); without it tokens are estimated as characters/4, which
+  compacts earlier than needed, and a warning is logged.
+- ``BESSER_LLM_HISTORY_EVICTION`` (**off**; exactly ``1`` enables it) -- Opt into the lossless
+  alternative to compaction: large file bodies in older messages are replaced
+  by stubs pointing back to disk, instead of whole messages being summarised.
+- ``BESSER_LLM_FROM_SCRATCH_MAX_TOKENS`` (``32768``) -- Output-token ceiling
+  for from-scratch generation (no Phase-1 scaffold to build on). Raising it
+  costs nothing unless the extra output is actually produced; the truncation
+  guard in :doc:`how_it_works` is what keeps a cut-off turn from landing
+  half-written.
+- ``BESSER_LLM_MODIFY_MAX_TOKENS`` (defaults to the from-scratch value) --
+  The same ceiling for modify and fix runs, which routinely rewrite a whole
+  existing file in one turn.
+
+Both ceilings apply to the main model's turns. A planning-model call keeps to
+the planning model's own output ceiling (16384 by default), since a cheaper
+sibling such as ``gpt-4o-mini`` rejects a larger request. If a modify run's
+model-sync call still fails, the run goes on without it, and the reason is
+logged as a warning and recorded as ``model_sync_error`` in the trace's
+``run_start`` event and in the recipe.
+
+Storage and lifecycle
+---------------------
+
+- ``BESSER_LLM_RUN_STORE_PATH`` -- Path of the SQLite durable-run store
+  (default: ``besser_spec_driven_runs.sqlite3`` in the system temp directory).
+  Point it at a persistent volume so runs survive a container restart.
+- ``BESSER_LLM_RUN_WORKSPACE_ROOT`` -- Persistent parent directory for run
+  workspaces and checkpoints (default: the OS temp directory).
+- ``BESSER_LLM_DOWNLOAD_TTL_SECONDS`` (10800, 3 hours) -- How long a finished
+  run's workspace stays: the window in which a modify run can edit it, a push
+  can send it to GitHub and its events stay replayable. The editor reads it as
+  ``download_ttl_seconds`` from ``GET /spec-driven/config``. Once a packaged
+  run has freed its concurrency slot, what it installed and built (the folders
+  the download leaves out: ``node_modules``, virtual environments, ``dist``,
+  ``build``, ``target``, ``.next``, ...) and its sandbox ``$HOME`` are removed,
+  so what stays is the source tree and the run's own files, a few MB. This
+  includes a run that kept its checkpoint: its checkpoint records the removal,
+  and if it is resumed (``POST /spec-driven/resume``, which the editor does not
+  call for a finished run) the worker logs a warning and the agent is told to
+  install them again with ``install_dependencies`` before validating. A run
+  interrupted before packaging keeps them. The run's status record is kept for
+  24 hours, as long as its workspace can be resumed.
+- ``BESSER_LLM_ARCHIVE_TTL_SECONDS`` (86400, 24 hours) -- How long the
+  output stays downloadable (``archive_ttl_seconds`` in the config). The
+  archive is small, so it outlives the workspace; it is never shorter than
+  ``BESSER_LLM_DOWNLOAD_TTL_SECONDS`` and never longer than 24 hours, the age at
+  which the hourly cleanup of BESSER temp folders removes run folders (a larger
+  value is lowered to it, and the config reports the value in force).
+- ``BESSER_LLM_CANCEL_ABANDONED_RUNS`` (on) and
+  ``BESSER_LLM_DISCONNECTED_GRACE_SECONDS`` (``300``) -- How long a run with no
+  subscribers keeps going before it is cooperatively cancelled through the
+  checkpoint-aware path.
+- ``BESSER_LLM_COST_EMITTER_INTERVAL_SECONDS`` (``2.0``) -- Cadence of the
+  ``cost`` SSE tick.
+- ``BESSER_INCIDENT_LOG_DIR`` (``/app/incidents``) -- Where provider-incident
+  records (a failed endpoint, a fallback-chain switch) are written, with
+  credentials redacted from their message, traceback and instructions. When it is
+  set explicitly, every run's trace is also copied to its ``traces/``
+  folder; when it is unset, only the traces of research-study runs are kept,
+  in ``BESSER_TELEMETRY_DIR``. Study mode is described alongside the
+  telemetry endpoints in :doc:`../web_editor_backend`.
+
+.. note::
+   A run driven from Python rather than from the backend does not read most of
+   these: ``LLMOrchestrator`` takes the flags as constructor arguments, and its
+   own defaults differ from the web backend's. See
+   :doc:`usage`.

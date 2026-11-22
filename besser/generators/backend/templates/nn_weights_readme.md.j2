@@ -1,0 +1,21 @@
+# Neural network weights
+
+Methods implemented by a neural network load their trained weights from this folder.
+Until a network's file exists, its method endpoint answers `503`.
+
+Expected files:
+
+{% for module in modules %}
+- `{{ module }}.pt` for `{{ package }}/{{ module }}.py`
+{% endfor %}
+
+Train the network defined in `{{ package }}/<module>.py` (for example with the code the
+BESSER PyTorch generator produces for the same NN model), then save its `state_dict`:
+
+```python
+torch.save(model.state_dict(), "{{ package }}/weights/<module>.pt")
+```
+
+Calling the method runs the network on its parameters, in their declared order, as one
+input sample. A method with a single list parameter uses that list as the whole sample
+(e.g. an image as nested lists). The response carries the network output under `output`.

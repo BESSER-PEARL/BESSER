@@ -1,11 +1,17 @@
+import functools
+import logging
 import os
+
 from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.structural import DomainModel
 from besser.BUML.notations.action_language.ActionLanguageASTBuilder import parse_bal
 from besser.generators import GeneratorInterface
-from besser.generators.structural_utils import get_foreign_keys
+from besser.generators.structural_utils import normalize_method_code
 from besser.generators.action_language.RESTGenerator import bal_to_rest
 from besser.generators.pydantic_classes import PydanticGenerator
+
+logger = logging.getLogger(__name__)
+
 
 class RESTAPIGenerator(GeneratorInterface):
     """
@@ -26,6 +32,8 @@ class RESTAPIGenerator(GeneratorInterface):
                                             The default value is False.
         output_dir (str, optional): The output directory where the generated code will be saved. Defaults to None.
     """
+    regenerable = True
+
     def __init__(self, model: DomainModel, http_methods: list = None, nested_creations: bool = False, backend: bool = False, port: int = None, output_dir: str = None):
         super().__init__(model, output_dir)
         allowed_methods = ["GET", "POST", "PUT", "PATCH", "DELETE"]
@@ -34,8 +42,8 @@ class RESTAPIGenerator(GeneratorInterface):
         else:
             invalid_methods = [method for method in http_methods if method not in allowed_methods]
             if invalid_methods:
-                import logging
-                logging.warning(f"Invalid HTTP methods ignored: {invalid_methods}. Allowed methods are: {allowed_methods}")
+                logger.warning("Invalid HTTP methods ignored: %s. Allowed methods are: %s",
+                               invalid_methods, allowed_methods)
             http_methods = [method for method in http_methods if method in allowed_methods]
         self.http_methods = http_methods
         self.backend = backend
@@ -80,37 +88,37 @@ class RESTAPIGenerator(GeneratorInterface):
             return str(name).strip()
 
         if self.backend:
-            file_path = self.build_generation_path(file_name="main_api.py")
-            templates_path = os.path.join(os.path.dirname(
-            os.path.abspath(__file__)), "templates")
-            env = Environment(loader=FileSystemLoader(templates_path),
-                          trim_blocks=True, lstrip_blocks=True, extensions=['jinja2.ext.do'])
-            env.filters['clean_method_name'] = clean_method_name
-            env.globals.update(parse_bal=parse_bal, bal_to_rest=bal_to_rest)
-            template = env.get_template('backend_fast_api_template.py.j2')
-            with open(file_path, mode="w", encoding="utf-8") as f:
-                generated_code = template.render(
-                    name=self.model.name,
-                    model=self.model,
-                    classes=self.model.classes_sorted_by_inheritance(),
-                    http_methods=self.http_methods,
-                    nested_creations=self.nested_creations,
-                    port=self.port,
-                    fkeys=get_foreign_keys(self.model)
-                )
-                f.write(generated_code)
-            print("Code generated in the location: " + file_path)
+            # The FastAPI application layer comes from the modular per-file
+            # renderer shared with BackendGenerator (main_api.py +
+            # routers/<class>.py + database.py + bal_stdlib.py), so the
+            # association-class / OCL / method-normalization logic cannot drift
+            # between the two generators. Only the API layer is rendered here:
+            # sql_alchemy.py and pydantic_classes.py stay the caller's
+            # responsibility, so nothing here overwrites a file it does not own.
+            # Imported lazily to avoid a circular import.
+            from besser.generators.backend.api_generator import generate_modular_api
+            api_output_dir = os.path.dirname(self.build_generation_path(file_name="main_api.py"))
+            generate_modular_api(
+                model=self.model,
+                http_methods=self.http_methods,
+                nested_creations=self.nested_creations,
+                port=self.port,
+                output_dir=api_output_dir,
+                write=functools.partial(self._write_traced, output_dir=api_output_dir),
+            )
 
         else:
             pydantic_model = PydanticGenerator(model=self.model, backend=self.backend, nested_creations=self.nested_creations, output_dir=self.output_dir)
             pydantic_model.generate()
+            self._merge_traced_files(pydantic_model)
 
             file_path = self.build_generation_path(file_name="rest_api.py")
             templates_path = os.path.join(os.path.dirname(
             os.path.abspath(__file__)), "templates")
             env = Environment(loader=FileSystemLoader(templates_path),
                           trim_blocks=True, lstrip_blocks=True, extensions=['jinja2.ext.do'])
-            env.globals.update(parse_bal=parse_bal, bal_to_rest=bal_to_rest)
+            env.globals.update(parse_bal=parse_bal, bal_to_rest=bal_to_rest,
+                               normalize_code=normalize_method_code)
             template = env.get_template('fast_api_template.py.j2')
             with open(file_path, mode="w", encoding="utf-8") as f:
                 generated_code = template.render(
@@ -119,4 +127,4 @@ class RESTAPIGenerator(GeneratorInterface):
                     model=self.model
                 )
                 f.write(generated_code)
-            print("Code generated in the location: " + file_path)
+            logger.info("Code generated in the location: %s", file_path)

@@ -11,7 +11,7 @@ import pytest
 
 from besser.BUML.metamodel.structural import (
     BinaryAssociation, Class, DomainModel, Enumeration, EnumerationLiteral,
-    Multiplicity, Property, StringType,
+    IntegerType, Multiplicity, Property, StringType,
 )
 from besser.generators.supabase import SupabaseGenerator
 
@@ -126,6 +126,35 @@ def test_is_id_yields_uuid_pk_with_gen_random_uuid(user_rooted_model, tmp_path):
     ).generate()
     sql = _read_generated_sql(str(out))
     assert "UUID PRIMARY KEY DEFAULT gen_random_uuid()" in sql
+
+
+def _single_class_sql(cls, tmp_path) -> str:
+    model = DomainModel(name="Demo", types={cls}, associations=set())
+    out = tmp_path / "out"
+    out.mkdir()
+    SupabaseGenerator(model=model, output_dir=str(out), user_root=None).generate()
+    return _read_generated_sql(str(out))
+
+
+def test_plain_id_attribute_becomes_the_key_without_duplicate_column(tmp_path):
+    """An ``id`` attribute without is_id is the key, not a second "id" column."""
+    item = Class(name="Item", attributes={
+        Property(name="id", type=IntegerType),
+        Property(name="label", type=StringType),
+    })
+    sql = _single_class_sql(item, tmp_path)
+    assert sql.count('"id" ') == 1
+    assert '"id" UUID PRIMARY KEY DEFAULT gen_random_uuid()' in sql
+    assert '"id" INTEGER' not in sql
+    assert '"label" TEXT NOT NULL' in sql
+
+
+def test_class_without_id_attribute_gets_uuid_key(tmp_path):
+    """A class with no is_id and no ``id`` attribute gets the surrogate key FKs reference."""
+    item = Class(name="Item", attributes={Property(name="label", type=StringType)})
+    sql = _single_class_sql(item, tmp_path)
+    assert sql.count('"id" ') == 1
+    assert '"id" UUID PRIMARY KEY DEFAULT gen_random_uuid()' in sql
 
 
 # ---------------------------------------------------------------------------

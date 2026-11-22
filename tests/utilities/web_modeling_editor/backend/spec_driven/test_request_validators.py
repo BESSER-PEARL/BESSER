@@ -1,0 +1,229 @@
+"""Tests for SmartGenerateRequest Pydantic validators."""
+
+import pytest
+from pydantic import ValidationError
+
+from besser.spec_driven_agent.planning.specification import MAX_SPECIFICATION_CHARS, validate_specification
+from besser.utilities.web_modeling_editor.backend.models.spec_driven import (
+    SmartGenerateRequest,
+    SmartPreviewRequest,
+)
+from besser.utilities.web_modeling_editor.backend.settings import get_settings
+from tests.utilities.web_modeling_editor.backend.spec_driven.test_runner import (
+    _build_request,
+)
+
+
+class TestRequestValidators:
+    def test_empty_api_key_rejected(self):
+        with pytest.raises(ValidationError, match="api_key"):
+            _build_request(api_key="")
+
+    def test_whitespace_api_key_rejected(self):
+        with pytest.raises(ValidationError, match="api_key"):
+            _build_request(api_key="   ")
+
+    def test_instruction_size_bound_preserves_long_specs_without_truncation(self):
+        request = _build_request()
+        # Exact boundary, including non-ASCII and meaningful content at the tail.
+        suffix = "\nThe booking must refuse a second payment.\n  "
+        instructions = "  " + "é" * (MAX_SPECIFICATION_CHARS - len(suffix) - 2) + suffix
+        assert validate_specification(instructions) == instructions
+        for model in (SmartGenerateRequest, SmartPreviewRequest):
+            payload = {"project": request.project, "instructions": instructions}
+            if model is SmartGenerateRequest:
+                payload["api_key"] = request.api_key
+            accepted = model(**payload)
+            assert accepted.instructions == instructions
+            assert model.model_json_schema()["properties"]["instructions"]["maxLength"] == MAX_SPECIFICATION_CHARS
+            with pytest.raises(ValidationError, match="instructions"):
+                model(**{**payload, "instructions": instructions + "!"})
+            with pytest.raises(ValidationError, match="instructions"):
+                model(**{**payload, "instructions": "   \n\t  "})
+        with pytest.raises(ValueError, match="not truncated"):
+            validate_specification(instructions + "!")
+
+    def test_nan_max_cost_rejected(self):
+        # Pydantic's `gt=0` constraint rejects NaN before our custom
+        # validator runs (NaN compares as neither > 0 nor ≤ 0, which
+        # Pydantic treats as a `greater_than` failure).
+        with pytest.raises(ValidationError):
+            _build_request(max_cost_usd=float("nan"))
+
+    def test_inf_max_cost_rejected(self):
+        # Positive infinity passes `gt=0` but should be caught by our
+        # custom validator as "not finite". If a future pydantic update
+        # rejects inf earlier, that's also acceptable.
+        with pytest.raises(ValidationError):
+            _build_request(max_cost_usd=float("inf"))
+
+    def test_negative_max_cost_rejected(self):
+        with pytest.raises(ValidationError):
+            _build_request(max_cost_usd=-1.0)
+
+    def test_max_cost_clamped_to_hard_cap(self):
+        """Values above the hard cap are silently clamped."""
+        req = _build_request(max_cost_usd=9999.0)
+        assert req.max_cost_usd == get_settings().llm_max_cost_usd_hard_cap
+
+    def test_max_runtime_clamped_to_hard_cap(self):
+        req = _build_request(max_runtime_seconds=999_999)
+        assert req.max_runtime_seconds == get_settings().llm_max_runtime_seconds_hard_cap
+
+    def test_max_turns_clamped_to_hard_cap(self):
+        req = _build_request(max_turns=999_999)
+        assert req.max_turns == get_settings().llm_max_turns_hard_cap
+
+    def test_valid_llm_model_format_accepted(self):
+        req = _build_request(llm_model="claude-sonnet-4-6")
+        assert req.llm_model == "claude-sonnet-4-6"
+
+    def test_target_generator_override_accepts_registered_name(self):
+        req = _build_request(target_generator_override="generate_fastapi_backend")
+        assert req.target_generator_override == "generate_fastapi_backend"
+
+    def test_target_generator_override_rejects_unknown_name(self):
+        with pytest.raises(ValidationError, match="target_generator_override"):
+            _build_request(target_generator_override="generate_made_up")
+
+    def test_target_generator_override_blank_normalizes_to_none(self):
+        req = _build_request(target_generator_override="  ")
+        assert req.target_generator_override is None
+
+    def test_explicit_generator_skip_is_accepted(self):
+        req = _build_request(skip_deterministic_generator=True)
+        assert req.skip_deterministic_generator is True
+
+    def test_generator_skip_rejects_contradictory_override(self):
+        with pytest.raises(ValidationError, match="cannot be combined"):
+            _build_request(
+                skip_deterministic_generator=True,
+                target_generator_override="generate_fastapi_backend",
+            )
+
+    @pytest.mark.parametrize("primary_kind", ["bpmn", "nn"])
+    def test_new_primary_kind_overrides_are_accepted(self, primary_kind):
+        req = _build_request(primary_kind_override=primary_kind)
+        assert req.primary_kind_override == primary_kind
+
+    def test_llm_model_with_slashes_accepted(self):
+        """Some Anthropic model IDs use vendor/model format."""
+        req = _build_request(llm_model="anthropic/claude-3-5-sonnet")
+        assert req.llm_model == "anthropic/claude-3-5-sonnet"
+
+    def test_llm_model_with_injection_attempt_rejected(self):
+        """A model name with whitespace / quotes / control chars is rejected."""
+        with pytest.raises(ValidationError, match="llm_model"):
+            _build_request(llm_model="claude-sonnet\"; rm -rf /")
+
+    def test_llm_model_with_newline_rejected(self):
+        with pytest.raises(ValidationError, match="llm_model"):
+            _build_request(llm_model="claude\nsonnet")
+
+    def test_empty_llm_model_normalised_to_none(self):
+        req = _build_request(llm_model="")
+        assert req.llm_model is None
+
+    def test_api_key_repr_is_masked(self):
+        """repr(request) must not leak the API key value."""
+        req = _build_request(api_key="sk-ant-MASK-CANARY-0123456789")
+        assert "MASK-CANARY" not in repr(req)
+        assert "**********" in repr(req.api_key)
+
+
+class TestFilenameSanitization:
+    """Test the router's _safe_attachment_filename helper directly."""
+
+    def test_plain_filename_passes_through(self):
+        from besser.utilities.web_modeling_editor.backend.routers.spec_driven_router import (
+            _safe_attachment_filename,
+        )
+        assert _safe_attachment_filename("output.zip", "fallback.zip") == "output.zip"
+
+    def test_quotes_and_crlf_stripped(self):
+        from besser.utilities.web_modeling_editor.backend.routers.spec_driven_router import (
+            _safe_attachment_filename,
+        )
+        injected = 'evil.txt"\r\nX-Injected: header'
+        safe = _safe_attachment_filename(injected, "fallback.zip")
+        assert '"' not in safe
+        assert "\r" not in safe
+        assert "\n" not in safe
+
+    def test_empty_after_sanitization_uses_fallback(self):
+        from besser.utilities.web_modeling_editor.backend.routers.spec_driven_router import (
+            _safe_attachment_filename,
+        )
+        # Only control chars + quotes → nothing left
+        result = _safe_attachment_filename('\r\n"""', "fallback.zip")
+        assert result == "fallback.zip"
+
+    def test_very_long_filename_truncated(self):
+        from besser.utilities.web_modeling_editor.backend.routers.spec_driven_router import (
+            _safe_attachment_filename,
+        )
+        huge = "a" * 500 + ".zip"
+        safe = _safe_attachment_filename(huge, "fallback.zip")
+        assert len(safe) <= 120
+
+    def test_null_byte_stripped(self):
+        from besser.utilities.web_modeling_editor.backend.routers.spec_driven_router import (
+            _safe_attachment_filename,
+        )
+        safe = _safe_attachment_filename("out\x00put.zip", "fallback.zip")
+        assert "\x00" not in safe
+
+
+class TestValidationErrorsDoNotEchoSecrets:
+    """A failing model validator puts the whole request body in pydantic's
+    ``input``; the 422 must not send the API key or demo secret back."""
+
+    API_KEY = "sk-ant-api03-REAL-KEY-0123456789abcdefghijklmnopqrstuvwxyz"
+    DEMO = "the-demo-secret-value"
+
+    def _post(self, path: str, body: dict):
+        import asyncio
+
+        import httpx
+        from httpx._transports.asgi import ASGITransport
+
+        from besser.utilities.web_modeling_editor.backend.backend import app
+
+        async def go():
+            async with httpx.AsyncClient(
+                transport=ASGITransport(app=app), base_url="http://testserver"
+            ) as ac:
+                return await ac.post(path, json=body)
+
+        return asyncio.run(go())
+
+    def _body(self, **overrides) -> dict:
+        from tests.utilities.web_modeling_editor.backend.spec_driven.test_spec_driven_router import (
+            _build_project_body,
+        )
+
+        body = _build_project_body()
+        body.update(api_key=self.API_KEY, provider="anthropic", demo_token=self.DEMO, **overrides)
+        return body
+
+    @pytest.mark.parametrize(
+        "path", ["/besser_api/spec-driven/generate", "/besser_api/spec-driven/resume/" + "a" * 32]
+    )
+    def test_model_validator_422_does_not_echo_secrets(self, path):
+        response = self._post(path, self._body(
+            skip_deterministic_generator=True,
+            target_generator_override="generate_fastapi_backend",
+        ))
+        assert response.status_code == 422
+        assert self.API_KEY not in response.text
+        assert self.DEMO not in response.text
+        detail = response.json()["detail"]
+        assert detail and {"type", "loc", "msg"} <= set(detail[0])
+        assert "cannot be combined" in detail[0]["msg"]
+
+    def test_field_error_still_names_the_field(self):
+        response = self._post("/besser_api/spec-driven/generate", self._body(max_turns="many"))
+        assert response.status_code == 422
+        assert self.API_KEY not in response.text
+        locs = [tuple(err["loc"]) for err in response.json()["detail"]]
+        assert ("body", "max_turns") in locs

@@ -31,7 +31,7 @@ For a full cross-repo checklist (editor package + webapp + backend), see
 4. Integrate with the Web Modeling Editor
 -----------------------------------------
 
-The Web Modeling Editor (WME) frontend lives in the separate ``BESSER-WEB-MODELING-EDITOR`` repository and is vendored
+The Web Modeling Editor (WME) frontend lives in the separate ``BESSER-Web-Modeling-Editor`` repository and is vendored
 here as a git submodule at ``besser/utilities/web_modeling_editor/frontend``. Frontend changes should be committed in
 that repository, then the submodule pointer updated in BESSER.
 
@@ -46,7 +46,8 @@ that repository, then the submodule pointer updated in BESSER.
   existing React/TypeScript patterns and add Storybook demos if available.
 * Backend (BESSER): add or update endpoints in the appropriate router under
   ``besser/utilities/web_modeling_editor/backend/routers/`` (e.g., ``generation_router.py`` for
-  code generation, ``conversion_router.py`` for import/export). Use the
+  code generation, ``conversion_router.py`` for import/export), and put the work in a service
+  under ``backend/services/`` (generator dispatch is ``services/generation/dispatch.py``). Use the
   ``@handle_endpoint_errors`` decorator for consistent error handling. Align Pydantic schemas
   with the BUML definitions.
 * Sync contracts: keep JSON element/relationship types, OpenAPI schemas, and TypeScript types consistent across the two

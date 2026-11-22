@@ -1,0 +1,15 @@
+package {{ package }};
+
+{% for import in imports %}
+import {{ import }};
+{% endfor %}
+
+public interface I{{ cls }}Service {
+
+{% for method in methods %}
+{% trace method.element, "finder" %}
+    {{ method.return_value }} {{ method.name }}({{ method.parameter }});
+{% endtrace %}
+{% endfor %}
+
+}

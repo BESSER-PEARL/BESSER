@@ -1,13 +1,11 @@
 import os
-import requests
-import retrying
+from besser.BUML.notations.mockup_to_structural.utilities.openai_request import request_completion
 from besser.BUML.notations.mockup_to_structural.utilities import *
 from besser.BUML.notations.mockup_to_structural.utilities import *
 from besser.BUML.notations.mockup_to_buml.config import *
 
 
 # Function to facilitate self-improvement of a Python code representing GUI elements using the GPT-4o model
-@retrying.retry(stop_max_attempt_number=3, wait_fixed=2000)
 def gpt4_self_improvement(api_key, mockup_image_path, base64_metamodel, base64_mockup, metamodel_text_path, python_code, structural_model_path):
 
     # Encode the images
@@ -16,11 +14,6 @@ def gpt4_self_improvement(api_key, mockup_image_path, base64_metamodel, base64_m
     metamodel_text_contents = read_file_contents(metamodel_text_path)
     structural_model_contents = read_file_contents(structural_model_path)
 
-
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}"
-    }
 
     ## revision_prompt
     revision_prompt = ""
@@ -109,19 +102,10 @@ def gpt4_self_improvement(api_key, mockup_image_path, base64_metamodel, base64_m
         "temperature": 0.0
     }
 
-    response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
-
-    response_json = response.json()
-
-    try:
-        improved_code = response_json['choices'][0]['message']['content']
-        return improved_code
-    except KeyError:
-        return None
+    return request_completion(api_key, payload)
 
 
 # Function to call GPT-4o with the direct prompt method
-@retrying.retry(stop_max_attempt_number=3, wait_fixed=2000)
 def gpt4o_call(api_key, mockup_image_path, base64_metamodel, base64_mockup, prompt, first_example_code_path, second_example_code_path, metamodel_text_path, structural_model_path):
 
     # Encode the images
@@ -131,11 +115,6 @@ def gpt4o_call(api_key, mockup_image_path, base64_metamodel, base64_mockup, prom
     first_example_code_contents = read_file_contents(first_example_code_path)
     second_example_code_contents = read_file_contents(second_example_code_path)
     structural_model_contents = read_file_contents(structural_model_path)
-
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}"
-    }
 
     messages = [
         {
@@ -247,15 +226,7 @@ def gpt4o_call(api_key, mockup_image_path, base64_metamodel, base64_mockup, prom
         "temperature": 0.0
     }
 
-    response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
-
-    response_json = response.json()
-
-    try:
-        python_code = response_json['choices'][0]['message']['content']
-        return python_code
-    except KeyError:
-        return None
+    return request_completion(api_key, payload)
 
 
 # Function to send a direct prompt to GPT-4o for generating Python code

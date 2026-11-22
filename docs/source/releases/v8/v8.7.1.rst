@@ -1,0 +1,35 @@
+Version 8.7.1
+=============
+
+Patch release: **BUML files written by other tools import**. A model that a
+third-party converter wrote in plain Python (here, one converted from Ecore)
+opened as a blank canvas with no error. It now imports, the editor says what
+it had to repair, and a file that still cannot be read says why. No metamodel
+or generator changes.
+
+Highlights
+----------
+
+* **Import Project no longer opens a blank canvas for an unreadable file.** A
+  project file that declares ``models=[...]`` without the
+  ``# STRUCTURAL MODEL #`` section headers falls back to single-diagram
+  detection. When the detected model failed to parse, that failure was caught
+  as if no model had been found, so ``POST /besser_api/get-project-json-model``
+  answered 200 with an empty project. It now answers 400 with the reason, and
+  ``POST /besser_api/get-json-model`` includes the reason instead of a generic
+  "format not recognized".
+* **Set unions and import aliases are accepted.** The safe BUML loader allows
+  ``|`` (``types={...} | {...}``) next to ``+``. It now skips top-level
+  imports itself instead of each converter deleting import lines first, so an
+  alias such as ``from besser.BUML.metamodel.project import Project as
+  BUMLProject`` binds ``BUMLProject`` to the allowed ``Project``. Imports are
+  never executed, and an alias of a name outside the allowlist binds nothing.
+* **A composition whose owner end is not navigable is repaired, not refused.**
+  Ecore containment usually has no opposite reference, so converted models
+  write the composition's non-composite end with ``is_navigable=False``, which
+  B-UML rejects. The class-diagram import makes that end navigable, as the
+  JSON import already did, and reports it.
+* **The editor shows what an import repaired.** Both import endpoints return
+  the repairs in ``warnings`` (``{code, message}``), and the editor shows each
+  one as a warning toast after a BUML import (Project Hub, GitHub import and
+  single-diagram import).

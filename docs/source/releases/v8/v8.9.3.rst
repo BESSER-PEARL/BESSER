@@ -1,0 +1,233 @@
+Version 8.9.3
+=============
+
+Patch release: **the modeling assistant keeps your conversation, sticks to
+modeling and draws compositions the right way round; the editor asks before
+generating a model with warnings; a generated SQL file can be saved to
+GitHub; validation catches model mistakes that break the generated code;
+and the GUI editor maps how its pages link**. Fixes for issues
+`#742 <https://github.com/BESSER-PEARL/BESSER/issues/742>`_ to
+`#752 <https://github.com/BESSER-PEARL/BESSER/issues/752>`_. One new endpoint
+(``POST /besser_api/spec-driven/import-generated-code``), new design checks in
+``DomainModel.validate()``, a tidier SQL generator output, and generated
+backends that delete a whole's parts with it; no existing request or response
+shape changes.
+
+Highlights
+----------
+
+* **The assistant no longer forgets a specification while you wait.** The
+  modeling agent dropped a conversation's memory an hour after its last
+  message, even while the tab was still open, and a restart lost it too. The
+  agent now keeps the memory while the tab is connected, and the editor sends
+  the latest turns with the first message after each reconnect, so an agent
+  that lost the memory rebuilds it. The editor also sends the stored API key
+  again on each reconnect, so the chosen model is kept. Reported in
+  `#745 <https://github.com/BESSER-PEARL/BESSER/issues/745>`_.
+* **The conversation is kept with the project.** Every tab or window that
+  opens a project shows its assistant conversation, run cards included, and
+  continues it after the tab is closed. Tabs open on the same project show
+  each other's turns as they happen, and a new chat in one clears the others.
+  The browser keeps the full conversations of the 20 most recently used
+  projects, within about 2 MB; when a project save finds the browser's storage
+  full, these are dropped first. The editor also stores the latest 50 turns
+  on the project: they are written to ``buml/diagrams.json`` on a GitHub save
+  and restored when this browser has no conversation for the project. The key
+  stored in the tab is removed from both copies, and provider tokens are
+  redacted in the project like the rest of the model. Generation requests
+  leave the conversation out. When two people each chatted since the last
+  commit, the save keeps the saver's conversation instead of reporting a
+  conflict
+  (`BESSER-Web-Modeling-Editor#272 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/272>`_).
+* **Compositions point the right way.** The editor draws a composition's
+  diamond at the target end, the whole. The modeling agent stated and read
+  compositions the other way round, and the assistant's *extract class* and
+  *promote attribute* linked the original class as the source, which put the
+  diamond on the new part. Both now make the whole the target, so "a Brand has
+  many BrandURLs" puts the diamond on Brand, and the summary the agent reads
+  names the whole in words. Reported in
+  `#746 <https://github.com/BESSER-PEARL/BESSER/issues/746>`_.
+* **The modeling assistant sticks to modeling.** It no longer ends a model or
+  an edit with an offer to generate the application, and its welcome text and
+  suggestions are about creating and changing models (the *Generate Django
+  code* chip is now *Create a state machine for an order*). Asking it for
+  generation still works. Reported in
+  `#747 <https://github.com/BESSER-PEARL/BESSER/issues/747>`_.
+* **Save to GitHub for a deterministic generator's result.** When the
+  assistant hands a request to a deterministic generator (for example the SQL
+  generator after you answer "sqlite"), the result card now offers **Save to
+  GitHub**, like a Spec-Driven run. The editor uploads the file it received to
+  the new ``POST /besser_api/spec-driven/import-generated-code``, which stores
+  it as a run, and pushes it with the existing ``/spec-driven/push-to-github``.
+  The upload needs a GitHub session, takes a run slot (429 when none is free)
+  and is capped at the backend's 50 MB request limit. A file named ``*.zip``
+  is unpacked (no links or ``.besser_*`` files, at most 50,000 files and
+  500 MB, members outside the run refused); any other file is the run's only
+  file. Reported in
+  `#748 <https://github.com/BESSER-PEARL/BESSER/issues/748>`_.
+* **The editor asks before generating a model with warnings.** When
+  validation passes with warnings, generating code or deploying locally now
+  asks *Generate anyway* or *Fix the model first*, and names the first
+  warnings. Declining sends no request. Project-level generation (web app,
+  Qiskit, neural network, Docker Compose), GitHub and Render deploys and
+  Spec-Driven runs do not validate first, so they do not ask. Validating a
+  user diagram no longer reports the warnings of BESSER's own user reference
+  model, which the user cannot fix, so generating from a user diagram does not
+  ask about them. Reported in
+  `#752 <https://github.com/BESSER-PEARL/BESSER/issues/752>`_.
+* **Validation catches models whose generated code breaks.** See
+  :ref:`v8.9.3-design-checks` below
+  (`#756 <https://github.com/BESSER-PEARL/BESSER/pull/756>`_).
+* **Clearer messages during a long generation.** After four minutes without a
+  reply the assistant used to say the request failed and to try again, though
+  the request kept running and its result still arrived. It now says the
+  request is still running. The auto-fix outcome lists the issues it fixed, a
+  partial class diagram says why it is partial, and modification replies name
+  the member and its owner (``Updated attribute aliases in Brand.``). Reported
+  in `#744 <https://github.com/BESSER-PEARL/BESSER/issues/744>`_.
+* **A model change in the API key dialog can be saved.** Save stayed disabled
+  until the key was typed again, because the stored key is never shown in the
+  field. Leaving the field empty now keeps the stored key for its provider.
+  Reported in `#743 <https://github.com/BESSER-PEARL/BESSER/issues/743>`_.
+  The issue's other half, the short Command Code model list, is not in this
+  release: the list comes from the deployment's model catalog
+  (``BESSER_MODEL_CATALOG``), which has to list the models.
+* **A map of the GUI's pages and links.** **Map** in the GUI editor's Pages
+  panel shows the pages and the links and navigate buttons between them,
+  resolved the way the GUI processor and the generated app resolve them: a
+  navigate button by its target page, a link by the route the app gives a
+  page (``/`` and the page name in lower case, spaces as hyphens; ``/`` is the
+  first page). The navigation bar is one entry instead of a link per page. It
+  lists the pages no link reaches and the links to a page that does not
+  exist. The map is read-only:
+  clicking a page opens it, and clicking a broken link selects it
+  (`BESSER-Web-Modeling-Editor#271 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/271>`_).
+* **The welcome dialog is translated.** Its text was written in English; it is
+  now available in all six editor languages. Reported in
+  `#742 <https://github.com/BESSER-PEARL/BESSER/issues/742>`_.
+
+.. _v8.9.3-design-checks:
+
+Design checks before generation
+-------------------------------
+
+``DomainModel.validate()``, and with it the editor's ``/validate-diagram``,
+now reports model mistakes that construct fine but break the generated code
+(`#756 <https://github.com/BESSER-PEARL/BESSER/pull/756>`_). Each message
+says what is wrong, which generators it breaks and how to fix it.
+
+* **Two new errors**, for code that does not parse or compile whatever is
+  generated: a name that is not a valid identifier (``2nd``, ``price$``) on a
+  class, attribute, method, parameter, enumeration, literal, association end
+  or join-table association; and an attribute typed by a class or
+  enumeration that is not in the model.
+* **New warnings**, each with a stable prefix: ``Python keyword name:``,
+  ``Class names differ only in case:``, ``Attribute names differ only in
+  case:``, ``Join table name clash:``, ``Foreign key column clash:``,
+  ``Subclass declares 'id':``, ``Attribute 'id' is not the identifier:``,
+  ``Empty enumeration:``, ``Class-typed attribute:``, ``Attribute and
+  association end share a name:``, ``Isolated class:``, ``Abstract class
+  without concrete subclass:`` and ``Part with several mandatory owners:``.
+* **The Spec-Driven Agent** promotes every validation error, and the warnings
+  that break the chosen stack, to ``model contract:`` blockers. Its Phase 0
+  runs the checks again once Phase 1 has picked the generator, so a
+  stack-specific warning (for example ``Attribute 'id' is not the
+  identifier:`` for Django) blocks only that scaffold. See
+  :doc:`../../spec_driven_agent/validation`.
+
+What it means for you: a diagram that used one of these names, or an attribute
+typed by a missing class, is now invalid, and a Spec-Driven run on a model
+with any validation error ends incomplete. Because the editor now asks before
+generating a model with warnings (#752), a model that trips a new warning
+asks *Generate anyway* on generation.
+
+Other changes
+-------------
+
+* **Deleting a whole deletes its parts.** The FastAPI backend and the
+  SQLAlchemy models ignored composition: deleting a whole answered ``409``
+  while it had parts ("OrderLine … requires at least 1 order"), so an Order
+  with lines could never be deleted. The whole's relationship now cascades
+  (``cascade="all, delete-orphan"``), nested parts included, and the delete
+  guard is kept only for plain mandatory associations. A new
+  ``Part with several wholes:`` warning flags a composition whose whole end
+  allows more than one whole, which usually means the diamond is at the part
+  (`#761 <https://github.com/BESSER-PEARL/BESSER/pull/761>`_).
+* **Fewer false "no frontend create path" warnings.** The Spec-Driven Agent's
+  acceptance matrix now sees a create made through a shared list component
+  even when a comment in it names an entity, and no longer credits an entity
+  with a POST that goes to another class's resource
+  (`#763 <https://github.com/BESSER-PEARL/BESSER/pull/763>`_).
+* **A project's README says what it is.** A repository created from the
+  GitHub panel, a deployed web app or chatbot, and a new repository that a
+  Spec-Driven or generator result is pushed to (when the run has no README of
+  its own) now get a README with the project's description (left out when
+  blank) and the date BESSER created or generated it. Reported in
+  `#750 <https://github.com/BESSER-PEARL/BESSER/issues/750>`_. A description
+  edited later does not update the README of an existing repository.
+* **Tidier SQL.** Each ``CREATE TABLE`` statement now ends with ``);`` instead
+  of a blank line before the ``;``, statements are separated by one blank
+  line, and no line ends with a space (all dialects). The SQLite DDL quotes
+  only reserved words (``"order"``) and names with special characters, not
+  every mixed-case name (``createdAt``); PostgreSQL and Oracle still quote
+  mixed-case names, which they need. Reported in
+  `#751 <https://github.com/BESSER-PEARL/BESSER/issues/751>`_.
+* **Preview Project and Share as Gist are removed** from the editor's File
+  menu: the preview showed the same content as Export, and the GitHub
+  integration supersedes gists. A project file from an old gist still
+  imports. Reported in
+  `#749 <https://github.com/BESSER-PEARL/BESSER/issues/749>`_. The backend's
+  ``POST /besser_api/github/gist/create`` is still served, though the editor
+  no longer calls it.
+* **The NexaCRM template marks its ``id`` attributes as identifiers.** Its
+  Django code failed ``manage.py check`` (``models.E004``), and the new
+  ``Attribute 'id' is not the identifier:`` warning made every generation from
+  the untouched template ask first.
+* **Projects saved by an older editor open again.** A v1 project in the
+  browser, saved without ``currentDiagramIndices``, failed to load and did not
+  open.
+
+Web Modeling Editor
+-------------------
+
+The editor half of these fixes is editor version ``8.9.3``: its release PR
+`BESSER-Web-Modeling-Editor#268 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/268>`_
+folds in #262 to #267, and
+`#269 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/269>`_
+releases ``develop`` to ``main``;
+`#270 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/270>`_
+adds the v1 project and NexaCRM template fixes,
+`#271 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/271>`_
+adds the GUI navigation map, and
+`#272 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/272>`_
+keeps the assistant conversation with the project in every tab. The
+``frontend`` submodule points at #272's merge. The editor's version, shown in its About dialog and
+stamped into JSON exports, is now ``8.9.3``. Its own notes are ``docs/source/releases/v8.9.3.rst`` in the
+editor repository.
+
+Modeling agent
+--------------
+
+Deploy the modeling agent ``v8.1.1`` alongside
+(`modeling-agent#66 <https://github.com/BESSER-PEARL/modeling-agent/pull/66>`_):
+the conversation memory kept while connected and rebuilt from the editor's new
+``recentHistory`` field, the clearer partial and modification replies, the
+composition direction and the modeling-only replies (modeling-agent #64, #67
+and #68). The editor works with an older agent, which ignores
+``recentHistory``, but the memory, composition and modeling-scope fixes need
+both.
+
+Upgrade notes
+-------------
+
+* Deploy the backend, the editor and the agent together: the editor's
+  **Save to GitHub** on a generator's result needs this backend's new
+  endpoint, and the editor's OpenAPI types match this backend.
+* A GitHub save now commits the user's assistant conversation in
+  ``buml/diagrams.json``.
+* The assistant conversation moves from per-tab to per-project storage in the
+  browser. The first project each open tab shows after the upgrade takes that
+  tab's conversation once, if it belongs to that project; a tab closed before
+  the upgrade has no conversation left to move.
+* To offer the full Command Code model list (#743), add the models to the
+  deployment's model catalog (``BESSER_MODEL_CATALOG``).

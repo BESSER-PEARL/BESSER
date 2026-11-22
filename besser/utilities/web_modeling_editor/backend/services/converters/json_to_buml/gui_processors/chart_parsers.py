@@ -4,50 +4,153 @@ Chart component parsers for GUI diagrams.
 
 import logging
 import json
+import re
 
 logger = logging.getLogger(__name__)
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from besser.BUML.metamodel.gui import (
     Alignment, BarChart, DataBinding, LineChart,
     PieChart, RadarChart, RadialBarChart, Table,
     Color, Position, Size, Styling, MetricCard
 )
 from besser.BUML.metamodel.gui.dashboard import (
-    AgentComponent, Column, FieldColumn, LookupColumn, ExpressionColumn
+    AgentComponent, Column, FieldColumn, LookupColumn, ExpressionColumn,
+    Map, MapLayer, MapLayerType,
 )
 from besser.BUML.metamodel.gui.dashboard import Series
+from besser.BUML.metamodel.gui.binding import DataAggregation, is_valid_endpoint
+from besser.generators.structural_utils import display_attribute
+from besser.utilities import sort_by_timestamp
 from .styling import ensure_styling_parts
-from .utils import clean_attribute_name, get_element_by_id, parse_bool, sanitize_name
+from .utils import clean_attribute_name, css_class_names, get_element_by_id, html_attributes, parse_bool, sanitize_name
 
-# TODO: Uncomment when backend aggregation is ready
-# def _parse_aggregation(aggregation_str: str) -> DataAggregation:
-#     """
-#     Parse aggregation string from JSON attributes to DataAggregation enum.
+def _parse_aggregation(*sources: Dict[str, Any]):
+    """The ``aggregation`` (sum, avg, count, min, max, ...) of the first source
+    that names a known one, e.g. a series and then its chart."""
+    for source in sources:
+        if isinstance(source, dict):
+            parsed = DataAggregation.parse(source.get('aggregation') or source.get('data-aggregation'))
+            if parsed is not None:
+                return parsed
+    return None
 
-#     Args:
-#         aggregation_str: String value like "sum", "average", "count", etc.
 
-#     Returns:
-#         DataAggregation enum value or None if invalid
-#     """
-#     if not aggregation_str or not isinstance(aggregation_str, str):
-#         return None
+def _parse_endpoint(attrs: Dict[str, Any], owner: str = "component") -> Optional[str]:
+    """The ``data-endpoint`` a series, chart or metric card reads its records from, if any.
 
-#     aggregation_map = {
-#         'sum': DataAggregation.SUM,
-#         'avg': DataAggregation.AVG,
-#         'average': DataAggregation.AVG,
-#         'count': DataAggregation.COUNT,
-#         'min': DataAggregation.MIN,
-#         'minimum': DataAggregation.MIN,
-#         'max': DataAggregation.MAX,
-#         'maximum': DataAggregation.MAX,
-#         'median': DataAggregation.MEDIAN,
-#         'first': DataAggregation.FIRST,
-#         'last': DataAggregation.LAST,
-#     }
+    A path typed without its leading ``/`` (``stats/exports``) gets one, as the
+    generated app's charts would add it. A value ``DataBinding.endpoint`` would
+    refuse (a space, a control character) is dropped with a warning naming
+    ``owner``, so one bad field does not fail the whole GUI import.
+    """
+    value = attrs.get('data-endpoint') if isinstance(attrs, dict) else None
+    if not isinstance(value, str) or not value.strip():
+        return None
+    value = value.strip()
+    if not value.startswith('/') and not re.match(r'^https?://', value, re.IGNORECASE):
+        value = '/' + value
+    if not is_valid_endpoint(value):
+        logger.warning("Ignoring the invalid data endpoint %r of %s: expected a path starting with '/' "
+                       "or an http(s):// URL, without spaces", value, owner)
+        return None
+    return value
 
-#     return aggregation_map.get(aggregation_str.lower())
+
+def _series_styling(s_attrs: Dict[str, Any], color_role: Optional[str]) -> Optional[Styling]:
+    """A series' styling: its ``color`` (as ``primary_color``, ``background_color``
+    and the chart's own ``color_role``, e.g. ``line_color``), else its CSS ``styling``."""
+    series_color = s_attrs.get('color')
+    if isinstance(series_color, str) and series_color.strip():
+        roles = {'primary_color': series_color, 'background_color': series_color}
+        if color_role:
+            roles[color_role] = series_color
+        return Styling(color=Color(**roles))
+    if 'styling' in s_attrs:
+        from .styling import styling_from_css
+        return styling_from_css(s_attrs['styling'])
+    return None
+
+
+def _parse_series(view_comp: Dict[str, Any], attrs: Dict[str, Any], class_model, domain_model,
+                  color_role: Optional[str] = None, field_aliases: Optional[Dict[str, str]] = None) -> List[Series]:
+    """The chart's ``series`` attribute (a JSON list) as ``Series`` objects.
+
+    ``field_aliases`` maps a binding key to the series key a chart type uses for it
+    (radial bar charts name their fields ``features`` / ``values``).
+    """
+    series_json = attrs.get('series') or view_comp.get('series')
+    if isinstance(series_json, str):
+        try:
+            series_json = json.loads(series_json)
+        except ValueError:
+            logger.warning("Could not parse the series JSON of chart %r", attrs.get('chart-title'))
+            series_json = []
+    if not isinstance(series_json, list):
+        return []
+    series_objs = []
+    for s in series_json:
+        s_attrs = s if isinstance(s, dict) else {}
+        s_raw_name = s_attrs.get('name', 'Series')
+        s_name = s_raw_name.replace(' ', '_') if isinstance(s_raw_name, str) else 'Series'
+        binding_attrs = s_attrs
+        if field_aliases:
+            binding_attrs = {**s_attrs, **{key: s_attrs.get(alias) or s_attrs.get(key)
+                                           for key, alias in field_aliases.items()}}
+        data_binding = _build_data_binding(binding_attrs, class_model, domain_model, attrs,
+                                           owner=f"series {s_raw_name!r}")
+        series_objs.append(Series(name=s_name, label=s_raw_name, data_binding=data_binding,
+                                  styling=_series_styling(s_attrs, color_role)))
+    return series_objs
+
+
+def _apply_chart_level_binding(chart, attrs: Dict[str, Any], class_model, domain_model) -> None:
+    """Rebuild a chart's own ``data_binding`` (as opposed to its series' bindings).
+
+    ``buml_to_json`` writes a chart-level binding as ``data-source`` / ``label-field`` /
+    ``data-field`` attributes; without this the binding was dropped on re-import
+    whenever the chart had no series.
+    """
+    if chart.data_binding is not None or not attrs.get('data-source'):
+        return
+    data_binding = _build_data_binding(attrs, class_model, domain_model,
+                                       owner=f"chart {attrs.get('chart-title')!r}")
+    if data_binding is not None:
+        chart.data_binding = data_binding
+
+
+def _build_data_binding(binding_attrs: Dict[str, Any], class_model, domain_model,
+                        *aggregation_fallbacks: Dict[str, Any], owner: str = "component",
+                        reads_endpoint: bool = True) -> Optional[DataBinding]:
+    """Build the ``DataBinding`` described by a series' (or a chart's own) attributes.
+
+    Returns ``None`` when the data source does not resolve to a domain class. The
+    aggregation falls back to ``aggregation_fallbacks`` (the chart's attributes for
+    a series) when ``binding_attrs`` has none; the endpoint (``data-endpoint``) is
+    the binding's own only. A component that does not read from an endpoint
+    (``reads_endpoint=False``, e.g. a table, whose rows are also edited through
+    the CRUD routes) gets none, with a warning when one was set.
+    """
+    endpoint = _parse_endpoint(binding_attrs, owner)
+    if endpoint and not reads_endpoint:
+        logger.warning("Ignoring the data endpoint %r of %s: only charts and metric cards read from one",
+                       endpoint, owner)
+        endpoint = None
+    domain_class, label_field, data_field, label_field_path, data_field_path = _parse_chart_data_binding(
+        binding_attrs, class_model, domain_model)
+    if not domain_class:
+        return None
+    raw_filter = binding_attrs.get('filter')
+    data_filter = raw_filter.strip() if isinstance(raw_filter, str) and raw_filter.strip() else None
+    return DataBinding(
+        domain_concept=domain_class,
+        label_field=label_field,
+        data_field=data_field,
+        label_field_path=label_field_path,
+        data_field_path=data_field_path,
+        filter_expression=data_filter,
+        aggregation=_parse_aggregation(binding_attrs, *aggregation_fallbacks),
+        endpoint=endpoint,
+    )
 
 
 def _parse_chart_data_binding(attrs: Dict[str, Any], class_model, domain_model) -> tuple:
@@ -103,12 +206,20 @@ def _parse_chart_data_binding(attrs: Dict[str, Any], class_model, domain_model) 
                             return field_obj, None
                     # Return None for object if not found, but we can use the name as path
                     return None, field_name
+            elif domain_class:
+                # Exported B-UML models (buml_to_json) name the attribute instead of its element id.
+                field_obj = next((a for a in domain_class.all_attributes() if a.name == field_value), None)
+                if field_obj:
+                    return field_obj, None
             return None, None
 
     # Resolve data source
     data_source_el = get_element_by_id(class_model, attrs.get('data-source'))
     data_source_name = data_source_el.get('name') if data_source_el else None
-    domain_class = domain_model.get_class_by_name(data_source_name) if data_source_name else None
+    if not data_source_name and isinstance(attrs.get('data-source'), str):
+        # Exported B-UML models (buml_to_json) name the class instead of its element id.
+        data_source_name = attrs.get('data-source')
+    domain_class = domain_model.get_class_by_name(data_source_name) if (data_source_name and domain_model) else None
 
     # Parse label and data fields
     label_field_raw = attrs.get('label-field')
@@ -116,6 +227,8 @@ def _parse_chart_data_binding(attrs: Dict[str, Any], class_model, domain_model) 
 
     label_field, label_field_path = parse_field_value(label_field_raw, domain_class)
     data_field, data_field_path = parse_field_value(data_field_raw, domain_class)
+    label_field_path = label_field_path or attrs.get('label-field-path') or None
+    data_field_path = data_field_path or attrs.get('data-field-path') or None
 
     return domain_class, label_field, data_field, label_field_path, data_field_path
 
@@ -133,8 +246,8 @@ def _attach_chart_metadata(chart, component: Dict[str, Any]) -> None:
 
     chart.component_type = component.get("type")
     chart.tag_name = component.get("tagName")
-    chart.css_classes = [cls if isinstance(cls, str) else cls.get("name", "") for cls in (component.get("classes") or [])]
-    chart.custom_attributes = dict(attributes) if isinstance(attributes, dict) else {}
+    chart.css_classes = css_class_names(component)
+    chart.custom_attributes = html_attributes(attributes)
 
 
 def parse_line_chart(view_comp: Dict[str, Any], class_model, domain_model) -> LineChart:
@@ -164,52 +277,7 @@ def parse_line_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Li
     if not isinstance(primary_color, str) or not primary_color.strip():
         primary_color = None
 
-    # Parse series list
-    series_objs = []
-    series_json = attrs.get('series') or view_comp.get('series')
-    if isinstance(series_json, str):
-        try:
-            series_json = json.loads(series_json)
-        except Exception:
-            logger.debug("Failed to parse chart series JSON string", exc_info=True)
-            series_json = []
-    if isinstance(series_json, list):
-        for s in series_json:
-            s_attrs = s if isinstance(s, dict) else {}
-            s_raw_name = s_attrs.get('name', 'Series')
-            s_name = s_raw_name.replace(' ', '_') if isinstance(s_raw_name, str) else 'Series'
-            domain_class, label_field, data_field, label_field_path, data_field_path = _parse_chart_data_binding(s_attrs, class_model, domain_model)
-
-            # Extract filter from series attributes
-            series_filter = s_attrs.get('filter')
-            if series_filter and isinstance(series_filter, str) and series_filter.strip():
-                data_filter = series_filter.strip()
-            else:
-                data_filter = None
-
-            data_binding = None
-            if domain_class:
-                data_binding = DataBinding(
-                    domain_concept=domain_class,
-                    label_field=label_field,
-                    data_field=data_field,
-                    label_field_path=label_field_path,
-                    data_field_path=data_field_path,
-                    filter_expression=data_filter
-                )
-
-            # Extract color from series attributes and create styling
-            styling = None
-            series_color = s_attrs.get('color')
-            if series_color and isinstance(series_color, str) and series_color.strip():
-                # Create styling with color - use line_color for line charts
-                color_obj = Color(line_color=series_color, background_color=series_color, primary_color=series_color)
-                styling = Styling(color=color_obj)
-            elif 'styling' in s_attrs:
-                from .styling import styling_from_css
-                styling = styling_from_css(s_attrs['styling'])
-
-            series_objs.append(Series(name=s_name, label=s_raw_name, data_binding=data_binding, styling=styling))
+    series_objs = _parse_series(view_comp, attrs, class_model, domain_model, color_role='line_color')
 
     line_chart = LineChart(
         name=chart_title,
@@ -226,6 +294,7 @@ def parse_line_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Li
         title=title_value,
         primary_color=primary_color
     )
+    _apply_chart_level_binding(line_chart, attrs, class_model, domain_model)
     _attach_chart_metadata(line_chart, view_comp)
     return line_chart
 
@@ -257,52 +326,7 @@ def parse_bar_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Bar
     if not isinstance(primary_color, str) or not primary_color.strip():
         primary_color = None
 
-    # Parse series list
-    series_objs = []
-    series_json = attrs.get('series') or view_comp.get('series')
-    if isinstance(series_json, str):
-        try:
-            series_json = json.loads(series_json)
-        except Exception:
-            logger.debug("Failed to parse chart series JSON string", exc_info=True)
-            series_json = []
-    if isinstance(series_json, list):
-        for s in series_json:
-            s_attrs = s if isinstance(s, dict) else {}
-            s_raw_name = s_attrs.get('name', 'Series')
-            s_name = s_raw_name.replace(' ', '_') if isinstance(s_raw_name, str) else 'Series'
-            domain_class, label_field, data_field, label_field_path, data_field_path = _parse_chart_data_binding(s_attrs, class_model, domain_model)
-
-            # Extract filter from series attributes
-            series_filter = s_attrs.get('filter')
-            if series_filter and isinstance(series_filter, str) and series_filter.strip():
-                data_filter = series_filter.strip()
-            else:
-                data_filter = None
-
-            data_binding = None
-            if domain_class:
-                data_binding = DataBinding(
-                    domain_concept=domain_class,
-                    label_field=label_field,
-                    data_field=data_field,
-                    label_field_path=label_field_path,
-                    data_field_path=data_field_path,
-                    filter_expression=data_filter
-                )
-
-            # Extract color from series attributes and create styling
-            styling = None
-            series_color = s_attrs.get('color')
-            if series_color and isinstance(series_color, str) and series_color.strip():
-                # Create styling with color - use bar_color for bar charts
-                color_obj = Color(bar_color=series_color, background_color=series_color, primary_color=series_color)
-                styling = Styling(color=color_obj)
-            elif 'styling' in s_attrs:
-                from .styling import styling_from_css
-                styling = styling_from_css(s_attrs['styling'])
-
-            series_objs.append(Series(name=s_name, label=s_raw_name, data_binding=data_binding, styling=styling))
+    series_objs = _parse_series(view_comp, attrs, class_model, domain_model, color_role='bar_color')
 
     bar_chart = BarChart(
         name=chart_title,
@@ -320,6 +344,7 @@ def parse_bar_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Bar
         title=title_value,
         primary_color=primary_color
     )
+    _apply_chart_level_binding(bar_chart, attrs, class_model, domain_model)
     _attach_chart_metadata(bar_chart, view_comp)
     return bar_chart
 
@@ -351,44 +376,7 @@ def parse_pie_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Pie
     if not isinstance(primary_color, str) or not primary_color.strip():
         primary_color = None
 
-    # Parse series list
-    series_objs = []
-    series_json = attrs.get('series') or view_comp.get('series')
-    if isinstance(series_json, str):
-        try:
-            series_json = json.loads(series_json)
-        except Exception:
-            logger.debug("Failed to parse chart series JSON string", exc_info=True)
-            series_json = []
-    if isinstance(series_json, list):
-        for s in series_json:
-            s_attrs = s if isinstance(s, dict) else {}
-            s_raw_name = s_attrs.get('name', 'Series')
-            s_name = s_raw_name.replace(' ', '_') if isinstance(s_raw_name, str) else 'Series'
-            domain_class, label_field, data_field, label_field_path, data_field_path = _parse_chart_data_binding(s_attrs, class_model, domain_model)
-
-            # Extract filter from series attributes
-            series_filter = s_attrs.get('filter')
-            if series_filter and isinstance(series_filter, str) and series_filter.strip():
-                data_filter = series_filter.strip()
-            else:
-                data_filter = None
-
-            data_binding = None
-            if domain_class:
-                data_binding = DataBinding(
-                    domain_concept=domain_class,
-                    label_field=label_field,
-                    data_field=data_field,
-                    label_field_path=label_field_path,
-                    data_field_path=data_field_path,
-                    filter_expression=data_filter
-                )
-            styling = None
-            if 'styling' in s_attrs:
-                from .styling import styling_from_css
-                styling = styling_from_css(s_attrs['styling'])
-            series_objs.append(Series(name=s_name, label=s_raw_name, data_binding=data_binding, styling=styling))
+    series_objs = _parse_series(view_comp, attrs, class_model, domain_model)
 
     show_legend = parse_bool(attrs.get('show-legend'), True)
     show_labels = parse_bool(attrs.get('show-labels'), True)
@@ -425,6 +413,7 @@ def parse_pie_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Pie
         title=title_value,
         primary_color=primary_color
     )
+    _apply_chart_level_binding(pie_chart, attrs, class_model, domain_model)
     _attach_chart_metadata(pie_chart, view_comp)
     return pie_chart
 
@@ -456,44 +445,7 @@ def parse_radar_chart(view_comp: Dict[str, Any], class_model, domain_model) -> R
     if not isinstance(primary_color, str) or not primary_color.strip():
         primary_color = None
 
-    # Parse series list
-    series_objs = []
-    series_json = attrs.get('series') or view_comp.get('series')
-    if isinstance(series_json, str):
-        try:
-            series_json = json.loads(series_json)
-        except Exception:
-            logger.debug("Failed to parse chart series JSON string", exc_info=True)
-            series_json = []
-    if isinstance(series_json, list):
-        for s in series_json:
-            s_attrs = s if isinstance(s, dict) else {}
-            s_raw_name = s_attrs.get('name', 'Series')
-            s_name = s_raw_name.replace(' ', '_') if isinstance(s_raw_name, str) else 'Series'
-            domain_class, label_field, data_field, label_field_path, data_field_path = _parse_chart_data_binding(s_attrs, class_model, domain_model)
-
-            # Extract filter from series attributes
-            series_filter = s_attrs.get('filter')
-            if series_filter and isinstance(series_filter, str) and series_filter.strip():
-                data_filter = series_filter.strip()
-            else:
-                data_filter = None
-
-            data_binding = None
-            if domain_class:
-                data_binding = DataBinding(
-                    domain_concept=domain_class,
-                    label_field=label_field,
-                    data_field=data_field,
-                    label_field_path=label_field_path,
-                    data_field_path=data_field_path,
-                    filter_expression=data_filter
-                )
-            styling = None
-            if 'styling' in s_attrs:
-                from .styling import styling_from_css
-                styling = styling_from_css(s_attrs['styling'])
-            series_objs.append(Series(name=s_name, label=s_raw_name, data_binding=data_binding, styling=styling))
+    series_objs = _parse_series(view_comp, attrs, class_model, domain_model, color_role='line_color')
 
     radar_chart = RadarChart(
         name=chart_title,
@@ -509,6 +461,7 @@ def parse_radar_chart(view_comp: Dict[str, Any], class_model, domain_model) -> R
         title=title_value,
         primary_color=primary_color
     )
+    _apply_chart_level_binding(radar_chart, attrs, class_model, domain_model)
     _attach_chart_metadata(radar_chart, view_comp)
     return radar_chart
 
@@ -540,59 +493,9 @@ def parse_radial_bar_chart(view_comp: Dict[str, Any], class_model, domain_model)
     if not isinstance(primary_color, str) or not primary_color.strip():
         primary_color = None
 
-    # Parse series list
-    series_objs = []
-    series_json = attrs.get('series') or view_comp.get('series')
-    if isinstance(series_json, str):
-        try:
-            series_json = json.loads(series_json)
-        except Exception:
-            logger.debug("Failed to parse chart series JSON string", exc_info=True)
-            series_json = []
-    if isinstance(series_json, list):
-        for s in series_json:
-            s_attrs = s if isinstance(s, dict) else {}
-            s_raw_name = s_attrs.get('name', 'Series')
-            s_name = s_raw_name.replace(' ', '_') if isinstance(s_raw_name, str) else 'Series'
-            data_source_el = get_element_by_id(class_model, s_attrs.get('data-source'))
-            features_el = get_element_by_id(class_model, s_attrs.get('features')) or get_element_by_id(class_model, s_attrs.get('label-field'))
-            values_el = get_element_by_id(class_model, s_attrs.get('values')) or get_element_by_id(class_model, s_attrs.get('data-field'))
-            data_source_name = data_source_el.get('name') if data_source_el else None
-            features_name = features_el.get('name') if features_el else None
-            values_name = values_el.get('name') if values_el else None
-            if features_name:
-                features_name = clean_attribute_name(features_name)
-            if values_name:
-                values_name = clean_attribute_name(values_name)
-            domain_class = domain_model.get_class_by_name(data_source_name) if data_source_name else None
-            label_field = None
-            data_field = None
-            if domain_class:
-                if features_name:
-                    label_field = next((a for a in domain_class.attributes if a.name == features_name), None)
-                if values_name:
-                    data_field = next((a for a in domain_class.attributes if a.name == values_name), None)
-
-            # Extract filter from series attributes
-            series_filter = s_attrs.get('filter')
-            if series_filter and isinstance(series_filter, str) and series_filter.strip():
-                data_filter = series_filter.strip()
-            else:
-                data_filter = None
-
-            data_binding = None
-            if domain_class:
-                data_binding = DataBinding(
-                    domain_concept=domain_class,
-                    label_field=label_field,
-                    data_field=data_field,
-                    filter_expression=data_filter
-                )
-            styling = None
-            if 'styling' in s_attrs:
-                from .styling import styling_from_css
-                styling = styling_from_css(s_attrs['styling'])
-            series_objs.append(Series(name=s_name, label=s_raw_name, data_binding=data_binding, styling=styling))
+    # Radial bar series name their fields ``features`` / ``values``.
+    series_objs = _parse_series(view_comp, attrs, class_model, domain_model, color_role='bar_color',
+                                field_aliases={'label-field': 'features', 'data-field': 'values'})
 
     radial_bar_chart = RadialBarChart(
         name=chart_title,
@@ -607,6 +510,7 @@ def parse_radial_bar_chart(view_comp: Dict[str, Any], class_model, domain_model)
         title=title_value,
         primary_color=primary_color
     )
+    _apply_chart_level_binding(radial_bar_chart, attrs, class_model, domain_model)
     _attach_chart_metadata(radial_bar_chart, view_comp)
     return radial_bar_chart
 
@@ -676,11 +580,30 @@ def _parse_table_columns(columns_json, domain_class, class_model) -> List[Column
 
             if domain_class and lookup_path:
                 # Find the relationship end (path) - including inherited associations
-                path_end = None
-                for end in domain_class.all_association_ends():
-                    if end.name == lookup_path:
-                        path_end = end
-                        break
+                ends = domain_class.all_association_ends()
+                path_end = next((end for end in ends if end.name == lookup_path), None)
+                if path_end is None:
+                    # For an end without a role the editor writes the target class
+                    # name in 'field'; lookupEntity (the target class id) picks the end.
+                    entity = col_data.get('lookupEntity')
+                    target = get_element_by_id(class_model, entity)
+                    target_name = target.get('name') if target else (entity or lookup_path)
+                    matches = sorted(
+                        (end for end in ends if getattr(end.type, 'name', None) == target_name),
+                        key=lambda end: end.name,
+                    )
+                    # Of several, the end the column's label names ("Origin", "Destination airport")
+                    named = [end for end in matches if _names_end(label, end.name)]
+                    if len(named) == 1:
+                        matches = named
+                    if matches:
+                        path_end = matches[0]
+                    if len(matches) > 1:
+                        logger.warning(
+                            "Lookup column %r names the class %s, which %s reaches through %d associations: "
+                            "using %r. Name the association end in the column's label or 'path' to choose another.",
+                            label or lookup_path, target_name, domain_class.name, len(matches), path_end.name,
+                        )
 
                 if path_end and path_end.type:
                     target_class = path_end.type
@@ -692,9 +615,9 @@ def _parse_table_columns(columns_json, domain_class, class_model) -> List[Column
                                 lookup_field_attr = attr
                                 break
 
-                    # If no lookup field specified, use first attribute
-                    if not lookup_field_attr and target_class.all_attributes():
-                        lookup_field_attr = list(target_class.all_attributes())[0]
+                    # If no lookup field specified, the attribute that labels a record
+                    if not lookup_field_attr:
+                        lookup_field_attr = display_attribute(sort_by_timestamp(target_class.all_attributes()))
 
                     if lookup_field_attr:
                         column = LookupColumn(
@@ -714,16 +637,23 @@ def _parse_table_columns(columns_json, domain_class, class_model) -> List[Column
     return columns_list
 
 
+def _names_end(label: str, end_name: str) -> bool:
+    """Whether a column label names an association end: the end's name is the
+    label or one of its words, case and separators aside."""
+    words = re.findall(r"[a-z0-9]+", (label or "").lower())
+    end_key = re.sub(r"[^a-z0-9]", "", end_name.lower())
+    return bool(end_key) and (end_key == "".join(words) or end_key in words)
+
+
 def parse_table(view_comp: Dict[str, Any], class_model, domain_model) -> Table:
     """
     Parses a table component, resolving data binding, columns, and presentation options.
     """
     attrs = view_comp.get('attributes', {})
 
-    # Parse common data binding fields
-    domain_class, label_field, data_field, label_field_path, data_field_path = _parse_chart_data_binding(
-        attrs, class_model, domain_model
-    )
+    data_binding = _build_data_binding(attrs, class_model, domain_model,
+                                       owner=f"table {attrs.get('chart-title')!r}", reads_endpoint=False)
+    domain_class = data_binding.domain_concept if data_binding else None
 
     raw_title = attrs.get('chart-title')
     title_value = raw_title.strip() if isinstance(raw_title, str) else None
@@ -737,16 +667,6 @@ def parse_table(view_comp: Dict[str, Any], class_model, domain_model) -> Table:
     primary_color = attrs.get('chart-color')
     if not isinstance(primary_color, str) or not primary_color.strip():
         primary_color = None
-
-    data_binding = None
-    if domain_class:
-        data_binding = DataBinding(
-            domain_concept=domain_class,
-            label_field=label_field,
-            data_field=data_field,
-            label_field_path=label_field_path,
-            data_field_path=data_field_path
-        )
 
     def _bool_attr(key: str, default: bool) -> bool:
         return parse_bool(attrs.get(key), default)
@@ -833,21 +753,9 @@ def parse_metric_card(view_comp: Dict[str, Any], class_model, domain_model) -> M
     positive_color = attrs.get('positive-color', '#27ae60')
     negative_color = attrs.get('negative-color', '#e74c3c')
 
-    # Parse data binding
-    domain_class, _, data_field, _, data_field_path = _parse_chart_data_binding(attrs, class_model, domain_model)
-
-    # Create data binding if we have a domain class
-    data_binding = None
-    if domain_class:
-        # Use sanitized name for the DataBinding
-        binding_name = sanitize_name(f"{metric_title}_binding")
-        data_binding = DataBinding(
-            name=binding_name,
-            domain_concept=domain_class,
-            label_field=None,  # Metric cards don't need label field
-            data_field=data_field,
-            data_field_path=data_field_path
-        )
+    data_binding = _build_data_binding(attrs, class_model, domain_model, owner=f"metric card {metric_title!r}")
+    if data_binding is not None:
+        data_binding.name = sanitize_name(f"{metric_title}_binding")
 
     # Create metric card
     metric_card = MetricCard(
@@ -867,6 +775,134 @@ def parse_metric_card(view_comp: Dict[str, Any], class_model, domain_model) -> M
     _attach_chart_metadata(metric_card, view_comp)
 
     return metric_card
+
+
+def _parse_map_layer(layer_entry: Dict[str, Any], class_model, domain_model) -> MapLayer:
+    """Parse a single layer dict (from the editor's layer-manager trait) into a MapLayer.
+
+    Args:
+        layer_entry: Dict with keys ``name``, ``type``, ``dataSource``,
+            ``latitudeField``, ``longitudeField``, ``labelField``,
+            ``weightField``, ``geojsonField``, ``valueField``.
+        class_model: Class diagram model for element-by-ID lookups.
+        domain_model: Domain model containing structural classes.
+
+    Returns:
+        :class:`~besser.BUML.metamodel.gui.dashboard.MapLayer` instance.
+    """
+    layer_name = sanitize_name(layer_entry.get("name", "layer")) or "layer"
+
+    # --- layer type ---
+    _type_map = {t.value: t for t in MapLayerType}
+    raw_type = layer_entry.get("type", "")
+    layer_type = _type_map.get(raw_type)  # None → auto-detect via effective_layer_type()
+
+    # --- resolve domain class from dataSource (UUID from editor, or name from BUML→JSON) ---
+    data_source_el = get_element_by_id(class_model, layer_entry.get("dataSource", ""))
+    if data_source_el:
+        data_source_name = data_source_el.get("name")
+    else:
+        # Fallback: value may already be a class name (written by _apply_map_attributes)
+        data_source_name = layer_entry.get("dataSource") or None
+    domain_class = domain_model.get_class_by_name(data_source_name) if data_source_name else None
+
+    data_binding = None
+    if domain_class:
+        binding_name = sanitize_name(f"{layer_name}_binding")
+        data_binding = DataBinding(name=binding_name, domain_concept=domain_class)
+
+    # --- helper: resolve a field (UUID from editor, or name from BUML→JSON) → Property ---
+    def _resolve_field(key: str):
+        raw = layer_entry.get(key, "")
+        if not raw or domain_class is None:
+            return None
+        el = get_element_by_id(class_model, raw)
+        if el:
+            attr_name = clean_attribute_name(el.get("name", raw))
+        else:
+            # Fallback: treat the value as a field name directly
+            attr_name = clean_attribute_name(raw)
+        return next(
+            (a for a in domain_class.attributes if clean_attribute_name(a.name) == attr_name),
+            None,
+        )
+
+    return MapLayer(
+        name=layer_name,
+        layer_type=layer_type,
+        latitude_field=_resolve_field("latitudeField"),
+        longitude_field=_resolve_field("longitudeField"),
+        label_field=_resolve_field("labelField"),
+        weight_field=_resolve_field("weightField"),
+        geojson_field=_resolve_field("geojsonField"),
+        value_field=_resolve_field("valueField"),
+        data_binding=data_binding,
+    )
+
+
+def parse_map(view_comp: Dict[str, Any], class_model, domain_model) -> Map:
+    """Parse a map component from GrapesJS JSON into a BUML Map instance.
+
+    Reads static positioning attributes (``map-title``, ``map-latitude``,
+    ``map-longitude``, ``map-zoom``) from the component's ``attributes`` dict.
+    Parses the ``map-layers`` JSON string (emitted by the editor's layer-manager
+    trait) into a list of :class:`~besser.BUML.metamodel.gui.dashboard.MapLayer`
+    objects — one per element in the array. Each layer resolves its own domain
+    class, :class:`~besser.BUML.metamodel.gui.binding.DataBinding`, and field
+    :class:`~besser.BUML.metamodel.structural.Property` references.
+
+    Args:
+        view_comp: Component dictionary from GrapesJS JSON.
+        class_model: Class diagram model for element-by-ID lookups.
+        domain_model: Domain model containing structural classes.
+
+    Returns:
+        :class:`~besser.BUML.metamodel.gui.dashboard.Map` instance.
+    """
+    attrs = view_comp.get("attributes", {})
+
+    # --- static map properties ---
+    title = attrs.get("map-title", "Location Map")
+    try:
+        center_latitude = float(attrs.get("map-latitude", 0.0))
+    except (TypeError, ValueError):
+        center_latitude = 0.0
+    try:
+        center_longitude = float(attrs.get("map-longitude", 0.0))
+    except (TypeError, ValueError):
+        center_longitude = 0.0
+    try:
+        zoom = int(attrs.get("map-zoom", 10))
+    except (TypeError, ValueError):
+        zoom = 10
+
+    # --- layers (emitted as a JSON string by the layer-manager trait) ---
+    layers: List[MapLayer] = []
+    raw_layers = attrs.get("map-layers")
+    if raw_layers:
+        try:
+            layer_entries = json.loads(raw_layers) if isinstance(raw_layers, str) else raw_layers
+            if isinstance(layer_entries, list):
+                for entry in layer_entries:
+                    if not isinstance(entry, dict):
+                        continue
+                    layers.append(_parse_map_layer(entry, class_model, domain_model))
+        except (json.JSONDecodeError, TypeError) as exc:
+            logger.warning("Could not parse map-layers JSON: %s", exc)
+
+    # --- build the Map ---
+    map_name = sanitize_name(title) or "Map"
+    map_component = Map(
+        name=map_name,
+        title=title,
+        center_latitude=center_latitude,
+        center_longitude=center_longitude,
+        zoom=zoom,
+        layers=layers,
+    )
+
+    _attach_chart_metadata(map_component, view_comp)
+    return map_component
 
 
 def parse_agent_component(view_comp: Dict[str, Any], class_model, domain_model) -> AgentComponent:

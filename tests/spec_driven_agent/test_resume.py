@@ -1,0 +1,822 @@
+"""End-to-end tests for the crash-resume flow.
+
+Drives an orchestrator against a mock LLM until a checkpoint is written,
+simulates a crash, then runs ``resume()`` on a fresh orchestrator and
+verifies it picks up from the saved turn without re-executing completed
+tool calls.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+
+import pytest
+
+from besser.BUML.metamodel.structural import (
+    Class, DomainModel, PrimitiveDataType, Property,
+)
+from besser.spec_driven_agent.state.checkpoint import (
+    CHECKPOINT_FILENAME,
+    compute_fingerprint,
+    load_checkpoint,
+)
+from besser.spec_driven_agent.providers.llm_client import UsageTracker
+from besser.spec_driven_agent.pipeline.orchestrator import DEPENDENCIES_REMOVED_NOTE, LLMOrchestrator, ValidationIssue
+from besser.spec_driven_agent.state.tracing import TRACE_FILENAME
+
+
+@pytest.fixture
+def simple_model():
+    StringType = PrimitiveDataType("str")
+    user = Class(name="User")
+    user.attributes = {Property(name="name", type=StringType)}
+    return DomainModel(name="Blog", types={user})
+
+
+class _MockBlock:
+    def __init__(self, block_type: str, **kwargs) -> None:
+        self.type = block_type
+        for k, v in kwargs.items():
+            setattr(self, k, v)
+
+
+class _ScriptedClient:
+    """Mock client with a pre-scripted sequence of responses.
+
+    Each ``chat`` call consumes one entry. Tests can introspect ``calls``
+    to check how many turns happened on each leg of the run.
+    """
+
+    model = "mock"
+
+    def __init__(self, script: list[dict]):
+        self.script = list(script)
+        self.calls: list[dict] = []
+        self.usage = UsageTracker("mock")
+
+    def chat(self, system, messages, tools):
+        self.calls.append({"messages": list(messages)})
+        if not self.script:
+            return {"stop_reason": "end_turn", "content": [
+                _MockBlock("text", text="Done"),
+            ]}
+        return self.script.pop(0)
+
+
+def _tool_use(tool_id: str, tool_name: str = "list_files", **input_):
+    return {
+        "stop_reason": "tool_use",
+        "content": [
+            _MockBlock("tool_use", id=tool_id, name=tool_name, input=input_),
+        ],
+    }
+
+
+def _end_turn():
+    return {
+        "stop_reason": "end_turn",
+        "content": [_MockBlock("text", text="All done")],
+    }
+
+
+def test_run_writes_checkpoint_per_turn(simple_model, tmp_path):
+    """After each Phase 2 turn with tool use, a checkpoint must exist
+    on disk so a crash can be recovered.
+    """
+    client = _ScriptedClient([
+        _tool_use("c1"),        # turn 1 → uses tool, save ckpt
+        _tool_use("c2"),        # turn 2 → uses tool, save ckpt
+        _end_turn(),            # turn 3 → finish, ckpt deleted on success
+    ])
+    orch = LLMOrchestrator(
+        llm_client=client,
+        domain_model=simple_model,
+        output_dir=str(tmp_path),
+        max_turns=5,
+        use_streaming=False,
+    )
+    orch.run("Build a blog")
+
+    # Successful run deletes its own checkpoint so a later re-run
+    # against the same output dir starts clean.
+    assert not os.path.isfile(tmp_path / CHECKPOINT_FILENAME)
+
+    # But the trace file must survive (it's the audit log).
+    assert os.path.isfile(tmp_path / TRACE_FILENAME)
+
+
+def test_checkpoint_survives_a_crash(simple_model, tmp_path):
+    """Simulate a crash by raising mid-run. The checkpoint file from
+    the last completed turn must remain on disk.
+    """
+    class _CrashingClient(_ScriptedClient):
+        def chat(self, system, messages, tools):
+            result = super().chat(system, messages, tools)
+            if len(self.calls) >= 3:
+                raise RuntimeError("simulated crash on 3rd call")
+            return result
+
+    client = _CrashingClient([
+        _tool_use("c1"),        # turn 1 → ckpt saved
+        _tool_use("c2"),        # turn 2 → ckpt saved
+        _tool_use("c3"),        # turn 3 → crash BEFORE finishing turn
+    ])
+    orch = LLMOrchestrator(
+        llm_client=client,
+        domain_model=simple_model,
+        output_dir=str(tmp_path),
+        max_turns=10,
+        use_streaming=False,
+    )
+    # The orchestrator catches the client exception and breaks — so
+    # .run() returns normally, but the saved checkpoint reflects the
+    # last fully-completed turn.
+    orch.run("Build a blog")
+
+    # Checkpoint must have been written. Either turn 2 (if ckpt was
+    # saved after turn 2 completed) or turn 1 (if crash interrupted
+    # turn-2 save). Either way, the file exists.
+    ckpt = load_checkpoint(str(tmp_path))
+    assert ckpt is not None
+    assert ckpt.turn >= 1
+    assert ckpt.instructions == "Build a blog"
+    assert ckpt.primary_kind == "class"
+    assert len(ckpt.messages) > 0
+
+
+def test_resume_refuses_when_fingerprint_differs(simple_model, tmp_path):
+    """Resuming against a different project / instructions is refused."""
+    # Set up a checkpoint with the original model
+    client = _ScriptedClient([_tool_use("c1"), _tool_use("c2")])
+    orch = LLMOrchestrator(
+        llm_client=client,
+        domain_model=simple_model,
+        output_dir=str(tmp_path),
+        max_turns=2,
+        use_streaming=False,
+    )
+    orch.run("Build a blog")
+    # Manually re-save a checkpoint (run() deletes it on clean exit)
+    # by running again with a crashing client.
+    class _Crasher(_ScriptedClient):
+        def chat(self, *a, **kw):
+            r = super().chat(*a, **kw)
+            if len(self.calls) >= 2:
+                raise RuntimeError("crash")
+            return r
+
+    crasher = _Crasher([_tool_use("c1"), _tool_use("c2")])
+    orch2 = LLMOrchestrator(
+        llm_client=crasher,
+        domain_model=simple_model,
+        output_dir=str(tmp_path),
+        max_turns=10,
+        use_streaming=False,
+    )
+    orch2.run("Build a blog")
+
+    assert os.path.isfile(tmp_path / CHECKPOINT_FILENAME)
+
+    # Now try to resume with different instructions → fingerprint mismatch
+    resume_client = _ScriptedClient([_end_turn()])
+    resumer = LLMOrchestrator(
+        llm_client=resume_client,
+        domain_model=simple_model,
+        output_dir=str(tmp_path),
+        use_streaming=False,
+    )
+    with pytest.raises(ValueError, match="fingerprint"):
+        resumer.resume("Completely different request")
+
+
+def test_resume_picks_up_from_saved_turn(simple_model, tmp_path):
+    """Happy path: crash after turn 2, resume, finish at turn 3.
+
+    The resume orchestrator must not re-execute tool calls from turns
+    1-2 — the LLM call count on the resume leg should start from turn 3.
+    """
+    # --- Leg 1: crash after saving a checkpoint --------------------------
+    class _Crasher(_ScriptedClient):
+        def chat(self, *a, **kw):
+            r = super().chat(*a, **kw)
+            if len(self.calls) >= 3:
+                raise RuntimeError("crash")
+            return r
+
+    leg1 = _Crasher([
+        _tool_use("c1"),   # turn 1
+        _tool_use("c2"),   # turn 2 → ckpt saved
+        _tool_use("c3"),   # turn 3 → crash partway through
+    ])
+    orch1 = LLMOrchestrator(
+        llm_client=leg1,
+        domain_model=simple_model,
+        output_dir=str(tmp_path),
+        max_turns=10,
+        use_streaming=False,
+    )
+    orch1.run("Build a blog")
+
+    ckpt = load_checkpoint(str(tmp_path))
+    assert ckpt is not None
+    saved_turn = ckpt.turn
+    assert saved_turn >= 1
+
+    # --- Leg 2: resume and finish ---------------------------------------
+    leg2 = _ScriptedClient([_end_turn()])
+    orch2 = LLMOrchestrator(
+        llm_client=leg2,
+        domain_model=simple_model,
+        output_dir=str(tmp_path),
+        max_turns=10,
+        use_streaming=False,
+    )
+    orch2.resume("Build a blog")
+
+    # Exactly ONE LLM call was made on the resume leg — it ended with
+    # end_turn so the loop exited immediately.
+    assert len(leg2.calls) == 1
+
+    # Checkpoint is gone after clean completion.
+    assert not os.path.isfile(tmp_path / CHECKPOINT_FILENAME)
+
+
+def test_unclean_resume_keeps_checkpoint_for_a_second_resume(simple_model, tmp_path):
+    """A resume can itself hit a cap; that must not destroy recovery state."""
+    first = _ScriptedClient([_tool_use("c1")])
+    LLMOrchestrator(
+        llm_client=first,
+        domain_model=simple_model,
+        output_dir=str(tmp_path),
+        max_turns=1,
+        use_streaming=False,
+    ).run("Build a blog")
+    assert load_checkpoint(str(tmp_path)) is not None
+
+    second = _ScriptedClient([_tool_use("c2")])
+    second_orchestrator = LLMOrchestrator(
+        llm_client=second,
+        domain_model=simple_model,
+        output_dir=str(tmp_path),
+        max_turns=2,
+        use_streaming=False,
+    )
+    second_orchestrator.resume("Build a blog")
+
+    after_second = load_checkpoint(str(tmp_path))
+    assert second_orchestrator._phase2_exited_cleanly is False
+    assert after_second is not None
+    assert after_second.turn >= 2
+
+    third = _ScriptedClient([_end_turn()])
+    LLMOrchestrator(
+        llm_client=third,
+        domain_model=simple_model,
+        output_dir=str(tmp_path),
+        max_turns=3,
+        use_streaming=False,
+    ).resume("Build a blog")
+    # The editing-turn cap must still permit final validation; it must not
+    # force an extra resume when the last allowed turn finishes the work.
+    assert len(third.calls) == 1
+    assert load_checkpoint(str(tmp_path)) is None
+
+
+def test_phase3_repair_keeps_an_unfinished_phase2_resumable(simple_model, tmp_path, monkeypatch):
+    """Phase 2 dies on a provider error; the Phase 3 fix loop then runs. Its
+    state-only checkpoint must not replace the Phase 2 conversation, or a
+    resume skips the 38 editing turns the run never got."""
+    class _ProviderErrorOnTurn2(_ScriptedClient):
+        def chat(self, system, messages, tools):
+            if len(self.calls) == 1:
+                self.calls.append({"messages": list(messages)})
+                raise RuntimeError("simulated provider 500 after retries")
+            return super().chat(system, messages, tools)
+
+    client = _ProviderErrorOnTurn2([_tool_use("c1")])
+    orch = LLMOrchestrator(
+        llm_client=client, domain_model=simple_model, output_dir=str(tmp_path),
+        max_turns=40, auto_fix_issues=True, use_streaming=False,
+    )
+    blocker = ValidationIssue("blocker", "python contract: app.py line 1: boom")
+    monkeypatch.setattr(orch, "_collect_validation_issues", lambda: [blocker])
+    monkeypatch.setattr(orch, "_apply_runtime_gate", lambda: None)
+    orch.run("Build a blog")
+
+    assert orch._phase2_stop_reason == "api_error"
+    assert len(client.calls) > 2, "the Phase 3 fix loop must have run"
+    saved = load_checkpoint(str(tmp_path))
+    assert saved is not None and saved.phase == "phase2"
+    assert saved.turn == 1 and saved.messages
+
+
+@pytest.mark.parametrize("external_edit", [False, True])
+def test_repair_resume_retains_corrected_state_but_rechecks_results(simple_model, tmp_path, monkeypatch, external_edit):
+    source = tmp_path / "app.py"
+    source.write_text("value = 1\n", encoding="utf-8")
+    corrected_requests = [{"method": "GET", "path": "/items/", "expected_status": 200}]
+    client = _ScriptedClient([{"stop_reason": "tool_use", "content": [
+        _MockBlock("tool_use", id="edit", name="modify_file", input={
+            "path": "app.py", "old_text": "value = 1\n", "new_text": "value = 2\n"}),
+    ]}, {"stop_reason": "tool_use", "content": [
+        _MockBlock("tool_use", id="task", name="task_list", input={"action": "done", "id": 1}),
+        _MockBlock("tool_use", id="scenario", name="test_api", input={
+            "scenario_id": "items", "requests": corrected_requests,
+            "correction_reason": "Listing existing items returns 200, not creation status 201."}),
+    ]}])
+    client.usage.seed_cost(0.25)
+    first = LLMOrchestrator(
+        llm_client=client, domain_model=simple_model, output_dir=str(tmp_path),
+        max_turns=120, auto_fix_issues=True, use_streaming=False,
+        should_continue=lambda: not first._api_scenarios.get("named:items", {}).get("correction_history"),
+    )
+    first._instructions = "Build a blog"
+    first._project_fingerprint = compute_fingerprint(
+        instructions=first._instructions, primary_kind=first.primary_kind, domain_model=simple_model)
+    first.total_turns = 32
+    first._phase2_exited_cleanly = True
+    first._phase2_stop_reason = "completed"
+    tasks = [{"text": "Correct value", "verify": lambda: "value = 2" in source.read_text()}]
+    first.executor.set_tasks(tasks)
+    first._api_scenarios = {"named:items": {
+        "scenario_id": "items", "scenario": {"backend": None, "requests": [
+            {"method": "GET", "path": "/items/", "expected_status": 201}]},
+        "report": {"status": "failed"}, "revision": None,
+    }}
+    blocker = ValidationIssue("blocker", "api scenario: items has an incorrect expectation")
+    monkeypatch.setattr(first, "_collect_validation_issues", lambda: [blocker])
+    monkeypatch.setattr("besser.spec_driven_agent.validation.api_probe.probe_api_scenario",
+                        lambda *args, **kwargs: {"status": "passed", "boot": "passed"})
+    # No rollback target: this test covers what the checkpoint carries. With
+    # one, the stop would discard the unvalidated edit (see
+    # test_phase3_interrupted_repair.py).
+    monkeypatch.setattr(first, "_create_snapshot", lambda: None)
+    first._run_phase3_validation()
+    first._finish_checkpoint()
+
+    saved = load_checkpoint(str(tmp_path))
+    assert saved.phase == "phase3" and saved.turn == saved.total_turns == 34
+    assert saved.messages == [] and saved.estimated_cost_usd == pytest.approx(0.25)
+    assert saved.tasks[0]["done"] is True
+    assert saved.api_scenarios[0]["scenario"]["requests"] == corrected_requests
+    assert saved.api_scenarios[0]["correction_history"][0]["previous_status"] == "failed"
+    assert saved.repair_progress["attempts_run"] == 1
+    assert saved.source_revision == first._workspace_revision()
+    assert source.read_text() == "value = 2\n"
+
+    if external_edit:
+        source.write_text("value = 2\n# changed after interruption\n", encoding="utf-8")
+    fresh_client = _ScriptedClient([])
+    resumed = LLMOrchestrator(
+        llm_client=fresh_client, domain_model=simple_model, output_dir=str(tmp_path),
+        max_turns=120, auto_fix_issues=False, use_streaming=False,
+    )
+    monkeypatch.setattr(resumed, "_deterministic_gap_tasks", lambda: tasks)
+    monkeypatch.setattr(resumed, "_run_phase2", lambda *a, **kw: pytest.fail("replayed Phase 2"))
+
+    def fresh_validation():
+        assert resumed._resume_messages is None
+        assert resumed.executor.task_snapshot()[0]["done"] is True
+        record = resumed._api_scenarios["named:items"]
+        assert record["scenario"]["requests"] == corrected_requests
+        assert record["report"]["status"] == "unverified" and record["revision"] is None
+        assert resumed._repair_progress == ({} if external_edit else saved.repair_progress)
+        return [blocker]
+
+    monkeypatch.setattr(resumed, "_collect_validation_issues", fresh_validation)
+    resumed.resume("Build a blog")
+    assert fresh_client.calls == [] and resumed.total_turns == 34
+    assert fresh_client.usage.estimated_cost == pytest.approx(0.25)
+    assert load_checkpoint(str(tmp_path)).phase == "phase3", "unresolved repair must remain resumable"
+    resumed._validation_issues = []
+    resumed._finish_checkpoint()
+    assert load_checkpoint(str(tmp_path)) is None
+
+
+class _KilledWorker(_ScriptedClient):
+    """Dies like a killed worker on the call after its script: Phase 2 cannot catch it."""
+
+    def chat(self, system, messages, tools):
+        if not self.script:
+            raise KeyboardInterrupt("worker killed")
+        return super().chat(system, messages, tools)
+
+
+def _crash_in_phase2(model, tmp_path, script, instructions="Build a blog") -> LLMOrchestrator:
+    crashed = LLMOrchestrator(
+        llm_client=_KilledWorker(script), domain_model=model,
+        output_dir=str(tmp_path), max_turns=10, use_streaming=False,
+    )
+    with pytest.raises(KeyboardInterrupt):
+        crashed.run(instructions)
+    assert load_checkpoint(str(tmp_path)).phase == "phase2"
+    return crashed
+
+
+def test_resume_keeps_the_generator_file_tags(simple_model, tmp_path):
+    """A create-run checkpoint had no generator-file tags: the resumed run lost
+    the scaffold guardrail and its recipe called every file LLM-written."""
+    crashed = _crash_in_phase2(simple_model, tmp_path, [_tool_use("c1")])
+    assert crashed.executor._generator_files
+
+    resumed = LLMOrchestrator(
+        llm_client=_ScriptedClient([_end_turn()]), domain_model=simple_model,
+        output_dir=str(tmp_path), max_turns=10, use_streaming=False,
+    )
+    resumed.resume("Build a blog")
+
+    assert resumed.executor._generator_files == crashed.executor._generator_files
+    recipe = json.loads((tmp_path / ".besser_recipe.json").read_text(encoding="utf-8"))
+    assert recipe["output_summary"]["from_generator"] == len(crashed.executor._generator_files)
+
+
+def _resume_without_llm(model, tmp_path, monkeypatch, instructions="Build a blog") -> LLMOrchestrator:
+    """``resume()`` with Phase 2 and Phase 3 stubbed out."""
+    resumed = LLMOrchestrator(
+        llm_client=_ScriptedClient([]), domain_model=model, output_dir=str(tmp_path),
+        use_streaming=False, enable_tracing=False,
+    )
+    for name, stub in {
+        "_run_phase2": lambda instructions, extra_issues=None: None,
+        "_create_snapshot": lambda: None,
+        "_run_phase3_validation": lambda: None,
+        "_remove_snapshot": lambda: None,
+        "_save_recipe": lambda instructions, elapsed: None,
+    }.items():
+        monkeypatch.setattr(resumed, name, stub)
+    resumed.resume(instructions)
+    return resumed
+
+
+def test_resume_accepts_evidence_for_an_edit_made_before_the_crash(simple_model, tmp_path, monkeypatch):
+    """The executor's record of successful writes was not checkpointed, so a
+    resumed run's task_list refused evidence for work done before the crash."""
+    crashed = LLMOrchestrator(
+        llm_client=_ScriptedClient([]), domain_model=simple_model, output_dir=str(tmp_path),
+        use_streaming=False, enable_tracing=False,
+    )
+    crashed._project_fingerprint = crashed._compute_project_fingerprint("Build a blog")
+    crashed.executor.execute_typed("task_list", {"action": "add", "text": "Add a slug to posts"})
+    written = crashed.executor.execute_typed(
+        "write_file", {"path": "slug.py", "content": "def slugify(title):\n    return title.lower()\n"})
+    assert "error" not in written.payload, written.payload
+    crashed._save_checkpoint_for_turn(1, [{"role": "user", "content": "Build a blog"}], "Build a blog")
+
+    resumed = _resume_without_llm(simple_model, tmp_path, monkeypatch)
+    result = resumed.executor.execute_typed("task_list", {
+        "action": "done", "id": 1,
+        "evidence": [{"id": 1, "path": "slug.py", "quote": "return title.lower()"}],
+    }).payload
+
+    assert "error" not in result, result
+    assert resumed.executor.task_snapshot()[0]["done"] is True
+
+    # The record names the file's contents, not just its path.
+    (tmp_path / "slug.py").write_text("def slugify(title):\n    return title.upper()\n", encoding="utf-8")
+    resumed.executor.execute_typed("task_list", {"action": "add", "text": "Upper-case slugs"})
+    refused = resumed.executor.execute_typed("task_list", {
+        "action": "done", "id": 2,
+        "evidence": [{"id": 2, "path": "slug.py", "quote": "return title.upper()"}],
+    }).payload
+    assert "no successful write matches" in refused["error"]
+
+
+def test_a_resumed_run_updates_its_history_entry(simple_model, tmp_path):
+    """Each resume appended another entry for the same request, filling the
+    ten-entry history and the next run's "Previous work on this app"."""
+    def leg(client, max_turns):
+        return LLMOrchestrator(
+            llm_client=client, domain_model=simple_model, output_dir=str(tmp_path),
+            max_turns=max_turns, use_streaming=False, run_id="run-1",
+        )
+
+    leg(_ScriptedClient([_tool_use("c1")]), 1).run("Build a blog")  # stops at the turn cap
+    leg(_ScriptedClient([_tool_use("c2", "write_file", path="notes.txt", content="x")]), 2).resume("Build a blog")
+    assert load_checkpoint(str(tmp_path)) is not None
+    leg(_ScriptedClient([_end_turn()]), 3).resume("Build a blog")
+
+    history = json.loads((tmp_path / ".besser_recipe.json").read_text(encoding="utf-8"))["history"]
+    assert [(h["mode"], h["instructions"]) for h in history] == [("create", "Build a blog")]
+    assert history[0]["run_id"] == "run-1"
+    assert "notes.txt" in history[0]["files_touched"]
+
+
+def test_the_resumed_prompt_shows_the_checklist_and_the_scaffold_issues(simple_model, tmp_path, monkeypatch):
+    """The checklist and the Phase 1.5 findings live in the system prompt,
+    which a resume rebuilds; it rebuilt it without them while the end_turn
+    gate still held the model to the restored checklist."""
+    import besser.spec_driven_agent.pipeline.orchestrator as orchestrator_module
+
+    monkeypatch.setattr(orchestrator_module, "analyze_gaps_via_llm", lambda **kwargs: [
+        "Add a JWT login endpoint", "Hash passwords with bcrypt"])
+    monkeypatch.setattr(LLMOrchestrator, "_validate_phase1_output",
+                        lambda self: ["main_api.py imports a module that does not exist"])
+    _crash_in_phase2(simple_model, tmp_path, [_tool_use("c1")])
+    saved = json.loads((tmp_path / CHECKPOINT_FILENAME).read_text(encoding="utf-8"))
+    saved["tasks"][0]["done"] = True
+    (tmp_path / CHECKPOINT_FILENAME).write_text(json.dumps(saved), encoding="utf-8")
+
+    class _Recording(_ScriptedClient):
+        def chat(self, system, messages, tools):
+            self.systems = [*getattr(self, "systems", []), system]
+            return super().chat(system, messages, tools)
+
+    client = _Recording([_end_turn()])
+    LLMOrchestrator(
+        llm_client=client, domain_model=simple_model, output_dir=str(tmp_path),
+        max_turns=10, use_streaming=False,
+    ).resume("Build a blog")
+
+    system = client.systems[0]
+    # Numbered by task id, as task_list(id=N) addresses them.
+    assert "1. Add a JWT login endpoint (done)" in system
+    assert "2. Hash passwords with bcrypt\n" in system
+    assert "main_api.py imports a module that does not exist" in system
+
+
+def test_a_resumed_phase2_still_warns_on_a_framework_switch(simple_model, tmp_path, monkeypatch):
+    """Phase 1 tells the executor the scaffold's framework; a resumed Phase 2
+    never did, so a Flask rewrite of the FastAPI scaffold went unwarned."""
+    crashed = _crash_in_phase2(simple_model, tmp_path, [_tool_use("c1")])
+    assert crashed.executor._framework_switch_warning("app.py", "import flask\n")
+
+    warnings = []
+    resumed = LLMOrchestrator(
+        llm_client=_ScriptedClient([]), domain_model=simple_model, output_dir=str(tmp_path),
+        use_streaming=False, enable_tracing=False,
+    )
+    monkeypatch.setattr(resumed, "_run_phase2", lambda instructions, extra_issues=None: warnings.append(
+        resumed.executor._framework_switch_warning("app.py", "import flask\n")))
+    for name in ("_create_snapshot", "_run_phase3_validation", "_remove_snapshot"):
+        monkeypatch.setattr(resumed, name, lambda: None)
+    monkeypatch.setattr(resumed, "_save_recipe", lambda instructions, elapsed: None)
+    resumed.resume("Build a blog")
+
+    assert warnings and warnings[0] and "FRAMEWORK SWITCH" in warnings[0]
+
+
+def test_resume_keeps_the_extracted_requirements(simple_model, tmp_path, monkeypatch):
+    """The requirements ledger was not checkpointed: the resumed Phase 2 prompt
+    had no requirements and Phase 3 paid for a second extraction, which may
+    return a different list to judge against."""
+    import besser.spec_driven_agent.pipeline.orchestrator as orchestrator_module
+
+    extractions = []
+
+    def extract(instructions, client, **_):
+        extractions.append(instructions)
+        return [{"id": 1, "kind": "action", "text": "A user can publish a post"}]
+
+    monkeypatch.setattr(orchestrator_module._requirements_ledger, "extract_requirements", extract)
+    _crash_in_phase2(simple_model, tmp_path, [_tool_use("c1")])
+    assert len(extractions) == 1
+
+    class _Recording(_ScriptedClient):
+        def chat(self, system, messages, tools):
+            self.systems = [*getattr(self, "systems", []), system]
+            return super().chat(system, messages, tools)
+
+    client = _Recording([_end_turn()])
+    resumed = LLMOrchestrator(
+        llm_client=client, domain_model=simple_model, output_dir=str(tmp_path),
+        max_turns=10, use_streaming=False,
+    )
+    resumed.resume("Build a blog")
+
+    assert "R1. A user can publish a post" in client.systems[0]
+    assert len(extractions) == 1
+
+
+def test_resume_keeps_the_routed_stack(simple_model, tmp_path, monkeypatch):
+    """The routing answer decides which stack's idioms the prompt teaches; a
+    resumed prompt fell back to keywords and taught Rust for "rust-proof paint"."""
+    request = "Build an online shop for rust-proof paint"
+    crashed = LLMOrchestrator(
+        llm_client=_ScriptedClient([]), domain_model=simple_model, output_dir=str(tmp_path),
+        use_streaming=False, enable_tracing=False,
+    )
+    crashed._project_fingerprint = crashed._compute_project_fingerprint(request)
+    crashed._routed, crashed._unsupported_stack = True, ""  # a stack BESSER generates
+    assert "Idiomatic conventions" not in crashed._build_system_prompt(request)
+    crashed._save_checkpoint_for_turn(1, [{"role": "user", "content": request}], request)
+
+    prompts = []
+    resumed = LLMOrchestrator(
+        llm_client=_ScriptedClient([]), domain_model=simple_model, output_dir=str(tmp_path),
+        use_streaming=False, enable_tracing=False,
+    )
+    monkeypatch.setattr(resumed, "_run_phase2", lambda instructions, extra_issues=None: prompts.append(
+        resumed._build_system_prompt(instructions)))
+    for name in ("_create_snapshot", "_run_phase3_validation", "_remove_snapshot"):
+        monkeypatch.setattr(resumed, name, lambda: None)
+    monkeypatch.setattr(resumed, "_save_recipe", lambda instructions, elapsed: None)
+    resumed.resume(request)
+
+    assert "Idiomatic conventions" not in prompts[0]
+
+
+def test_resume_fails_when_no_checkpoint(simple_model, tmp_path):
+    """Calling ``resume()`` with no saved checkpoint is an explicit error."""
+    client = _ScriptedClient([_end_turn()])
+    orch = LLMOrchestrator(
+        llm_client=client,
+        domain_model=simple_model,
+        output_dir=str(tmp_path),
+        use_streaming=False,
+    )
+    with pytest.raises(FileNotFoundError):
+        orch.resume("Anything")
+
+
+def test_trace_file_is_populated_during_run(simple_model, tmp_path):
+    """The structured trace must capture phase boundaries + per-turn
+    events so post-run tooling can replay what happened."""
+    client = _ScriptedClient([_tool_use("c1"), _end_turn()])
+    orch = LLMOrchestrator(
+        llm_client=client,
+        domain_model=simple_model,
+        output_dir=str(tmp_path),
+        max_turns=3,
+        use_streaming=False,
+    )
+    orch.run("Build a blog")
+
+    trace_path = tmp_path / TRACE_FILENAME
+    assert trace_path.is_file()
+
+    events: list[dict] = []
+    with open(trace_path, "r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if line:
+                events.append(json.loads(line))
+
+    event_names = [e["event"] for e in events]
+    # Canonical run shape: start → phase enters/exits → end
+    assert event_names[0] == "run_start"
+    assert event_names[-1] == "run_end"
+    assert "phase_enter" in event_names
+    assert "turn_start" in event_names
+    # The tool call we scripted must appear
+    tool_events = [e for e in events if e["event"] == "tool_call"]
+    assert len(tool_events) == 1
+    assert tool_events[0]["payload"]["tool"] == "list_files"
+
+
+class TestAFailedCheckpointWriteIsVisible:
+    """A checkpoint that could not be written must not look like a clean exit.
+
+    The contract is that the file's ABSENCE means the run finished cleanly and
+    is therefore not resumable -- delete_checkpoint runs only on the happy path.
+    A write that fails leaves no file either, so a crashed run whose checkpoint
+    write failed is byte-identical on disk to a successful one. save_checkpoint
+    logs at debug and returns None; the caller traced nothing, so the run
+    silently stopped being resumable with no record anywhere.
+
+    The trace is the documented surface for reading a finished run back, so the
+    loss is recorded there. This does NOT make the run resumable -- the state is
+    genuinely gone -- it makes the difference legible.
+    """
+
+    @staticmethod
+    def _trace_events(tmp_path):
+        path = tmp_path / TRACE_FILENAME
+        if not os.path.isfile(path):
+            return []
+        with open(path, encoding="utf-8") as fh:
+            return [json.loads(line) for line in fh if line.strip()]
+
+    def _run_with_failing_saves(self, simple_model, tmp_path, monkeypatch, failure):
+        from besser.spec_driven_agent.pipeline import orchestrator as orch_mod
+
+        monkeypatch.setattr(orch_mod, "save_checkpoint", failure)
+        client = _ScriptedClient([_tool_use("c1"), _tool_use("c2"), _end_turn()])
+        orch = LLMOrchestrator(
+            llm_client=client, domain_model=simple_model,
+            output_dir=str(tmp_path), max_turns=5, use_streaming=False,
+        )
+        orch.run("Build a blog")
+        return self._trace_events(tmp_path)
+
+    @pytest.mark.parametrize("failure, why", [
+        (lambda *a, **k: None, "save_checkpoint returned None"),
+        (lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")), "it raised"),
+    ])
+    def test_the_loss_is_recorded_in_the_trace(
+        self, simple_model, tmp_path, monkeypatch, failure, why
+    ):
+        """The regression: neither arm left any record at all."""
+        events = self._run_with_failing_saves(
+            simple_model, tmp_path, monkeypatch, failure)
+
+        losses = [e for e in events
+                  if "not resumable" in json.dumps(e.get("payload", {}))]
+        assert losses, f"{why}: the run stopped being resumable with no record"
+        assert all(e["event"] == "error" for e in losses), losses
+
+    def test_the_run_still_finishes(self, simple_model, tmp_path, monkeypatch):
+        """Instrumentation must not break a run: that is why it swallowed before."""
+        from besser.spec_driven_agent.pipeline import orchestrator as orch_mod
+
+        monkeypatch.setattr(
+            orch_mod, "save_checkpoint",
+            lambda *a, **k: (_ for _ in ()).throw(OSError("disk full")))
+        client = _ScriptedClient([_tool_use("c1"), _end_turn()])
+        orch = LLMOrchestrator(
+            llm_client=client, domain_model=simple_model,
+            output_dir=str(tmp_path), max_turns=5, use_streaming=False,
+        )
+
+        orch.run("Build a blog")   # must not raise
+
+    def test_a_healthy_run_records_no_loss(self, simple_model, tmp_path):
+        """The check must not fire on the path it is meant to distinguish from."""
+        client = _ScriptedClient([_tool_use("c1"), _end_turn()])
+        orch = LLMOrchestrator(
+            llm_client=client, domain_model=simple_model,
+            output_dir=str(tmp_path), max_turns=5, use_streaming=False,
+        )
+        orch.run("Build a blog")
+
+        events = self._trace_events(tmp_path)
+        assert any(e["event"] == "checkpoint" for e in events), "no checkpoint traced"
+        assert not [e for e in events
+                    if "not resumable" in json.dumps(e.get("payload", {}))]
+
+
+def test_resume_does_not_replay_the_checkpoints_thinking_blocks(simple_model, tmp_path):
+    """A resumed prompt is rebuilt from the workspace as it is now, so the
+    checkpoint's thinking blocks belong to a conversation that no longer
+    exists. Current Claude models answer a replayed one with HTTP 400 ("bound
+    to a different conversation"), which made such a run impossible to resume.
+    """
+    def _thinking_then_tool(tool_id):
+        response = _tool_use(tool_id)
+        response["content"].insert(
+            0, _MockBlock("thinking", thinking="plan", signature="sig"))
+        return response
+
+    class _Crasher(_ScriptedClient):
+        def chat(self, *a, **kw):
+            r = super().chat(*a, **kw)
+            if len(self.calls) >= 3:
+                raise RuntimeError("crash")
+            return r
+
+    leg1 = _Crasher([_thinking_then_tool("c1"), _thinking_then_tool("c2"),
+                     _thinking_then_tool("c3")])
+    LLMOrchestrator(
+        llm_client=leg1, domain_model=simple_model, output_dir=str(tmp_path),
+        max_turns=10, use_streaming=False,
+    ).run("Build a blog")
+    saved = json.dumps(load_checkpoint(str(tmp_path)).messages)
+    assert '"thinking"' in saved  # the checkpoint itself keeps the full record
+
+    leg2 = _ScriptedClient([_end_turn()])
+    LLMOrchestrator(
+        llm_client=leg2, domain_model=simple_model, output_dir=str(tmp_path),
+        max_turns=10, use_streaming=False,
+    ).resume("Build a blog")
+
+    sent = [block for message in leg2.calls[0]["messages"]
+            if isinstance(message["content"], list) for block in message["content"]]
+    assert [b["type"] for b in sent if b["type"] == "tool_use"]  # the calls are replayed
+    assert not [b for b in sent if b["type"] == "thinking"]
+
+
+def _resume_recording_the_prompt(model, tmp_path):
+    class _Recording(_ScriptedClient):
+        def chat(self, system, messages, tools):
+            self.systems = [*getattr(self, "systems", []), system]
+            return super().chat(system, messages, tools)
+
+    client = _Recording([_end_turn()])
+    LLMOrchestrator(
+        llm_client=client, domain_model=model, output_dir=str(tmp_path), max_turns=10, use_streaming=False,
+    ).resume("Build a blog")
+    return client.systems[0]
+
+
+def test_a_resume_after_packaging_says_the_dependencies_must_be_installed_again(simple_model, tmp_path, caplog):
+    """Packaging removes what the run installed; a resume must not find out from a failing check."""
+    from besser.spec_driven_agent.state.checkpoint import mark_dependencies_removed
+
+    _crash_in_phase2(simple_model, tmp_path, [_tool_use("c1")])
+    assert mark_dependencies_removed(str(tmp_path))
+    caplog.set_level("WARNING")
+
+    system = _resume_recording_the_prompt(simple_model, tmp_path)
+
+    assert DEPENDENCIES_REMOVED_NOTE in system and "install_dependencies" in DEPENDENCIES_REMOVED_NOTE
+    assert [r for r in caplog.records if "dependencies were removed" in r.getMessage()]
+
+
+def test_a_resume_of_an_interrupted_run_says_nothing_about_dependencies(simple_model, tmp_path, caplog):
+    _crash_in_phase2(simple_model, tmp_path, [_tool_use("c1")])
+    caplog.set_level("WARNING")
+
+    system = _resume_recording_the_prompt(simple_model, tmp_path)
+
+    assert DEPENDENCIES_REMOVED_NOTE not in system
+    assert not [r for r in caplog.records if "dependencies were removed" in r.getMessage()]

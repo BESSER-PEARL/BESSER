@@ -1,173 +1,176 @@
 Web Modeling Editor
 ===================
 
-One of the practical ways to use BESSER is through the Web Modeling Editor, where you can rapidly 
-design :doc:`B-UML <../buml_language>` models and use the :doc:`BESSER code generators <../generators>`.
+The editor lets you draw B-UML models, describe changes to an assistant, and
+download generated code. Open `editor.besser-pearl.org
+<https://editor.besser-pearl.org>`_ to use the hosted version.
 
-.. note::
-   The BESSER Web Modeling Editor is now live and available at
-   `editor.besser-pearl.org <https://editor.besser-pearl.org>`_.
-   You can access and use it directly in your browser without installing anything locally.
-
-The full Web Modeling Editor documentation is published as a separate subproject:
-`BESSER Web Modeling Editor documentation <https://besser.readthedocs.io/projects/besser-web-modeling-editor/en/latest/>`_.
-For contributor workflows like adding a new diagram type, see
-`Adding a New Diagram Type <https://besser.readthedocs.io/projects/besser-web-modeling-editor/en/latest/contributing/new-diagram-guide/index.html>`_.
-
-.. image:: ./img/besser_new.gif
-   :width: 900
-   :alt: BESSER Web Modeling Editor interface
-   :align: center
-
-The editor's source code is available in the
-`BESSER-WEB-MODELING-EDITOR GitHub repository <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR>`_.
-The frontend is vendored into this repository as a git submodule at
-``besser/utilities/web_modeling_editor/frontend``, while the backend services live here under
-``besser/utilities/web_modeling_editor/backend``.
-
-Class Diagram Notation
+Start using the editor
 ----------------------
 
-Class diagrams can be rendered in two equivalent notations, chosen from
-**Project Settings → Display → Class Diagram Notation**. The underlying B-UML
-model is identical in both cases — the notation only affects how the diagram is
-drawn, so switching is lossless.
+* :doc:`start/browser`: create a project and download your first code.
+* `Editor user guide <https://besser.readthedocs.io/projects/besser-web-modeling-editor/en/latest/>`_:
+  diagram tools, project backups, display settings, and AI features.
+* :doc:`guides/choose-generator`: choose an output for your model.
+* :doc:`guides/build-with-ai`: review a model and generate an application.
 
-**UML** (default) — standard UML class notation with visibility prefixes,
-``{id}`` markers on identifier attributes, and ``min..max`` multiplicities.
+The editor guide is the reference for interface instructions and screenshots.
+This site covers the underlying model language, generators, and services.
 
-.. image:: ./img/class_diagram_uml.png
-   :width: 800
-   :alt: Library model rendered in UML notation
-   :align: center
+Models and services
+-------------------
 
-**ER** (Chen-style) — entity/relationship flavor aimed at users with a database
-modeling background. Identifier attributes (``is_id``) are underlined, the
-methods compartment is hidden, associations are drawn as named diamonds, and
-multiplicities are shown as ``(min,max)`` cardinality pairs (with ``*`` rendered
-as ``N``). Inheritance relationships keep their UML rendering since there is no
-direct ER equivalent.
+Use class diagrams for data, GUI diagrams for screens, state machines and
+agent diagrams for behaviour, BPMN for processes, neural-network diagrams
+for training architectures, and knowledge-graph diagrams for ontologies. See :doc:`buml_language` for the model catalogue.
+Available generation actions depend on the selected diagram and deployment.
+The *Quality Check* menu's *Semantic check* searches for an instance of a class
+diagram and its OCL constraints with the Alloy Analyzer, and the object diagram's
+*Semantic generation* fills it with one; see :doc:`examples/semantic_check_example`.
 
-.. image:: ./img/class_diagram_er.png
-   :width: 800
-   :alt: Library model rendered in Chen-style ER notation
-   :align: center
+The assistant service creates and edits diagrams. The :doc:`Spec-Driven Agent
+<spec_driven_agent/index>` handles application files. Agent chat simulation
+uses a separate :doc:`simulator service <utilities/agent_simulator>`.
 
-Agent Personalization
----------------------
+Knowledge-graph diagrams
+------------------------
 
-The editor exposes the full :doc:`agent personalization <generators/agent_personalization>`
-workflow under the *Agent* diagram type:
+A knowledge-graph diagram models an ontology as a graph of classes, properties,
+individuals and literals, plus OWL axioms and SHACL/OWL constraints. It is a
+diagram type of its own (``KnowledgeGraphDiagram``) and needs no other diagram.
+The metamodel is described in :doc:`buml_language/model_types/knowledge_graph`.
 
-- **User diagrams** (see :doc:`buml_language/model_types/user_diagram`) describe
-  an end-user — age, languages, skills, education, disabilities. They can be
-  created alongside the agent diagram in the same project.
-- The **Agent Configuration** panel lets you edit the structured configuration
-  (language, style, readability, modality, platform, LLM…) directly, or ask the
-  backend for a recommendation based on one of the saved user profiles.
+* **Edit.** The graph is drawn on a canvas rather than with the class-diagram
+  editor: drag node types from the palette, draw relations by dragging from a
+  source node to a target node, edit labels and constraints in the inspector,
+  and undo or redo changes. Large ontologies show only the highest-priority
+  nodes; the limit is set on the *KG Settings* page.
+* **Import.** Load an OWL/RDF ontology (``.owl``, ``.ttl``, ``.rdf``, ``.xml``,
+  ``.nt``, ``.n3``, up to 5 MB). Anything the importer had to skip is reported
+  as a warning.
+* **Export.** Download the graph as Turtle or RDF/XML, choosing whether
+  constraints are written as OWL restrictions, SHACL shapes or both, as a
+  standalone interactive HTML file, or as B-UML Python code.
+* **Refine and convert.** *Refine KG* checks the graph before it becomes a class
+  diagram. Its *Automatic* tab lists the elements that have no clean 1-to-1
+  B-UML mapping, each with a recommended and a skip action. Its *Consistency*
+  tab runs the OWL/SHACL consistency check, and its *AI* tab asks an LLM for
+  suggestions using your own provider key, which is sent with the request and
+  never logged by the backend. Converting then produces a class diagram with
+  OCL constraints; see :doc:`buml_language/model_building/kg_to_buml`.
 
-  - *Deterministic mapping* produces a configuration from a literature-backed
-    rule table — no OpenAI key needed.
-  - *LLM recommendation* calls the configured OpenAI model. An API key must be
-    set either in the panel or as the ``OPENAI_API_KEY`` environment variable
-    on the backend.
-- When generating or deploying, three variant mechanisms can run in parallel:
-  multi-language output, configuration variants, and per-profile
-  **personalization mappings** that bundle one agent variant per mapped user.
+The endpoints behind these actions are listed under *Knowledge Graph* in
+:doc:`web_editor_backend`.
 
-The *Deploy chatbot* action reuses the same pipeline to push a standalone,
-Streamlit-based agent to a GitHub repository with a ready-to-use Render
-blueprint. See :doc:`web_editor_backend` for the underlying endpoints.
-
-Neural Network Diagram
-----------------------
-
-The editor supports neural network architecture modeling through the *NN*
-diagram type. The underlying B-UML model captures layers, tensor operations,
-and training metadata in a form that the code generators use to produce
-runnable training code.
-
-- **Layers** cover the standard catalog (Conv1D/2D/3D, Pooling,
-  SimpleRNN/LSTM/GRU, Linear, Flatten, Embedding, Dropout, LayerNorm,
-  BatchNorm). Each layer carries the parameters needed to define it, such
-  as ``kernel_dim``, ``hidden_size`` or ``return_type``.
-- **Tensor operations** (``concatenate``, ``multiply``, ``matmultiply``,
-  ``reshape``, ``transpose``, ``permute``) compose layer outputs and are
-  placed inline with layers in the same container.
-- **NNContainer** holds the modules of a neural network. A diagram has one
-  top-level container and may include additional containers used as
-  sub-networks, linked into the main one via **NNReference** elements.
-- **NNNext** relationships order modules within a container, defining the
-  flow of data through the network.
-- **Training Dataset** and **Test Dataset** elements describe the data
-  feeding into the model: name, path, task type
-  (``binary``/``multi_class``/``regression``), and input format
-  (``csv``/``images``). When the input format is ``images``, an **Image**
-  element is attached to the dataset, holding the shape and an optional
-  normalization flag.
-- A **Configuration** element captures training hyperparameters: batch size,
-  epochs, learning rate, optimizer, loss function, metrics, plus optional
-  weight decay and momentum.
-
-The *Generate* menu offers four output variants: **PyTorch** or
-**TensorFlow**, each in **Subclassing** or **Sequential** form. Diagrams are
-checked against a set of metamodel rules (cross-reference integrity,
-identifier safety, numerical bounds, dataset consistency) and the
-**Validate** action surfaces any violations before code is generated. See
-:doc:`buml_language/model_types/nn` for the metamodel reference and
-:doc:`generators/pytorch` / :doc:`generators/tensorflow` for the generator
-details.
-
-BPMN Diagram
+Traceability
 ------------
 
-The editor supports BPMN 2.0 process modelling through the *BPMN* diagram
-type. The underlying B-UML model (see :doc:`buml_language/model_types/bpmn`)
-covers the WME palette one-to-one and follows the OMG BPMN 2.0.2 abstract
-syntax.
+The *Traceability* page (in the project section of the sidebar, next to *Settings*)
+records and shows what happened to the project's models and the code generated from
+them, for every diagram type. Recording is opt-in: it is off for a new project, and
+*Record traces for this project* on that page turns it on or off.
 
-- **Flow nodes** cover the standard catalog: ``BPMNTask`` (with
-  ``taskType`` user / service / send / receive / manual / business-rule /
-  script / default and an optional ``marker`` for loops or multi-instance),
-  ``BPMNSubprocess``, ``BPMNTransaction``, ``BPMNCallActivity``,
-  ``BPMNStartEvent`` / ``BPMNIntermediateEvent`` / ``BPMNEndEvent`` (with
-  a flat ``eventType`` enum the backend splits into the spec's orthogonal
-  direction × event-definition pair), and ``BPMNGateway``
-  (``exclusive`` / ``inclusive`` / ``parallel`` / ``complex`` /
-  ``event-based``).
-- **Data and artifacts** are ``BPMNDataObject``, ``BPMNDataStore``,
-  ``BPMNAnnotation``, ``BPMNGroup``.
-- **Containment** is expressed via ``BPMNPool`` (a participant) holding
-  ``BPMNSwimlane``\ s and flow nodes; sub-processes can nest flow nodes.
-  Pool-less diagrams (one bare process) are valid.
-- **Flows** all use the single ``BPMNFlow`` relationship type; the
-  ``flowType`` field (``sequence`` / ``message`` / ``association`` /
-  ``data association``) and ``isDefault`` flag select the four metamodel
-  edge classes on the backend side.
+* **Recorded.** Class-diagram edits (creating, renaming, retyping or deleting a
+  class, attribute, method, enumeration, association, generalization or OCL
+  constraint) become modeling sessions, attributed to the project owner (or
+  ``anonymous``) and, for assistant edits, to the assistant. Layout changes are not
+  recorded, and quick successive edits of one element are merged. GUI-diagram edits are
+  recorded the same way for pages and the components that show, edit or act on data
+  (tables, charts, metric cards, maps, agent components, forms, inputs, buttons, menus;
+  not text, images or layout containers), each linked from the class-diagram elements it
+  is bound to (a table from its class, a button from its method). A table's columns are
+  recorded as its parts, known by the field they show: a field column linked from its
+  attribute, a lookup column from the association it follows and the attribute it displays.
+  The editor gives each of those components a persistent id to know it from one
+  save to the next. A GUI the editor generates from the class diagram (*Auto-generate*) is
+  one modeling session of the *BESSER GUI generator*, recorded once the generator is done:
+  every page it replaced and every element it made, each page linked from the class it was
+  generated for. Its links stay current until the GUI is edited again. A GUI the assistant
+  writes is its edit, linked from the request. Edits of the other diagrams (object, user,
+  state machine, agent, BPMN, neural network, quantum circuit, component, deployment,
+  knowledge graph) are recorded element by element the same way, layout aside. A
+  generation with any generator records which files each diagram it read produced and,
+  for the generators that trace elements, which lines each element produced (a class
+  and its attributes, a page and its components, an agent state, a BPMN task, a network
+  layer, a quantum gate, ...; see :ref:`traceable-generator-coverage`). A file the
+  agent personalization's LLM rewrote is recorded as the LLM's work. A chat
+  with the modeling assistant is a conversation: each request is a turn holding the
+  request, the assistant's progress messages and its answer or error (a message is
+  kept up to 10,000 characters). The assistant does not report the model it answers
+  with, so the editor records the modeling agent's default, ``gpt-6-luna`` (OpenAI);
+  a deployment or a user's own key can change it. The
+  elements an assistant edit created or changed are linked from the request that
+  asked for it, kept then as a prompt, so the lineage reads request -> element ->
+  code. A conversation ends with *New chat* or after ten idle minutes. Before it
+  builds a whole class diagram from a request of 250 characters or more, the
+  assistant extracts the requirements the request states. The editor records that
+  extraction as an operation of its own, a call to the model the assistant reports,
+  writing one requirement per statement (its words, the quote of the request that
+  states it and its kind) linked from the prompt that states them, and links each
+  requirement to the elements the assistant says realize it: request -> requirement
+  -> element -> code. Such an element is linked from its requirement only; an element
+  no requirement covers (an identifier, a helper enumeration) stays linked from the
+  request directly, which shows what the assistant added on its own. When the
+  assistant builds from an earlier request (after you confirm a replace, or choose
+  *Update model + generate*), the requirements and the elements are linked from that
+  earlier request, not from your reply; that needs the requirements to find it, so a
+  request too short for them keeps the link from your reply. A Spec-Driven *Generate the code*
+  run is judged against the newest requirements whose model still stands, whatever
+  their kinds: once the elements the assistant built with them are deleted (the model
+  rebuilt from another request, a file or by hand), the run extracts its own.
+* **Shown.** A *Timeline* of sessions, requirement extractions, generation runs and conversations, each naming the models
+  (diagrams) it changed or read; *Diagrams*, a tree of the project's diagrams, their
+  elements and the elements' members, where a diagram shows the whole files generated
+  from it, an element its lines, and both their history; and a *Coverage* matrix of
+  generation runs against each diagram (its whole files) and its elements, where
+  anything changed after a run is marked *out of date* (its generated code may no longer match);
+  and a *Lineage* graph of the whole project, or of one diagram or element: what was
+  derived from what, following trace links in both directions, column by column. It
+  starts with the diagrams, prompts, requirements and generation runs, the links between them
+  bundled (a pill counts them); clicking one shows its parts that take part in links
+  (a diagram's elements, an element's attributes, methods and constraints, a run's
+  files, a file's fragments), and the links then reach them. *Expand all*, zoom and
+  *Full screen* help with large projects. Selecting a part highlights its links and
+  lists them. Links are coloured by their evidence (a generator rule, an AI step),
+  thicker with higher confidence, which a pill shows when below certain. A link is
+  *out of date* (solid amber) when its source changed since it was made, or its target
+  was edited since (a class the assistant made, then changed by hand), and *upstream
+  changed* (dashed amber) when neither end changed but something its source was
+  derived from did. Selecting a link shows its evidence, the operation, actor and tool
+  that made it, and each reason it is out of date with the changes behind it. The lineage
+  shows the project as it is: older generation runs, and deleted elements with their links,
+  show only with *Show history* (a deleted element struck through). The *Diagrams* tab keeps
+  deleted elements, struck through, with their history.
+* **Stored.** In the browser (IndexedDB), apart from the project. Deleting the
+  project deletes its trace, and *Clear* on the page deletes it alone. The newest five
+  runs of each generator keep their trace links; older runs keep only their files and
+  hashes, so the trace stops growing with every generation.
+* **Exported with the project.** Once a trace has been recorded, the *Export
+  Project* dialog lists *Traceability* next to the diagrams. Ticked (it is off by
+  default), the trace goes into the JSON export as ``trace`` beside ``project``, or
+  into the B-UML export as a ``TRACEABILITY`` section. The JSON export keeps the
+  generated files' contents; the B-UML one keeps their hashes, paths and line ranges
+  only, so the file stays small, and leaves the trace out (saying so) when the file
+  would still be over the 2 MB a B-UML import accepts. Importing either file restores
+  the trace under the new project. Importing a B-UML file with a trace also turns
+  recording on, because a B-UML file carries no project settings. A trace that cannot
+  be read is skipped with a warning, and the project imports without it.
 
-The editor round-trips ``.bpmn`` files entirely in the browser (BPMN 2.0
-XML import / export). The backend converters
-(``process_bpmn_diagram`` / ``bpmn_object_to_json``) handle the
-JSON ↔ B-UML side, and ``bpmn_model_to_code`` / ``bpmn_buml_to_json`` close the
-round-trip through executable BUML ``.py`` files.
+The trace format is the :doc:`traceability metamodel <buml_language/model_types/traceability>`.
 
-.. note::
-   The frontend BPMN editor is being integrated into the
-   `BESSER-WEB-MODELING-EDITOR <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR>`_
-   repository; check there for the latest availability.
+Run or extend the editor
+------------------------
 
-Backend API Reference
----------------------
+The frontend is a Git submodule at
+``besser/utilities/web_modeling_editor/frontend``. Backend services live at
+``besser/utilities/web_modeling_editor/backend``.
 
-The backend services that power code generation, validation, and deployment are
-documented separately. If you are integrating with the backend API or extending it,
-see:
+* `Run locally <https://besser.readthedocs.io/projects/besser-web-modeling-editor/en/latest/user-guide/deploy_locally.html>`_.
+* `Add a diagram type <https://besser.readthedocs.io/projects/besser-web-modeling-editor/en/latest/contributing/new-diagram-guide/index.html>`_.
+* `Frontend source <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor>`_.
 
 .. toctree::
    :maxdepth: 1
 
    web_editor_backend
-
-.. note::
-   The BESSER Web Modeling Editor is based on a fork of the
-   `Apollon project <https://apollon-library.readthedocs.io/en/latest/>`_, a UML modeling editor.
+   web_editor_github

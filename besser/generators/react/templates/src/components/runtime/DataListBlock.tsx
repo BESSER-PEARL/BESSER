@@ -1,5 +1,7 @@
 import React, { CSSProperties, useEffect, useState } from "react";
 import axios from "axios";
+import { backendUrl } from "./bindingData";
+import { useDataVersion } from "./dataVersion";
 
 export interface DataSourceConfig {
   name?: string;
@@ -19,6 +21,7 @@ export interface DataListBlockProps {
 
 export const DataListBlock: React.FC<DataListBlockProps> = ({ id, dataSources, style, className }) => {
   const [listData, setListData] = useState<any[]>([]);
+  const dataVersion = useDataVersion();
 
   useEffect(() => {
     if (!dataSources || dataSources.length === 0) return;
@@ -26,8 +29,7 @@ export const DataListBlock: React.FC<DataListBlockProps> = ({ id, dataSources, s
     const endpoint = source.endpoint || (source.domain ? `/${source.domain.toLowerCase()}/` : "");
     if (!endpoint) return;
 
-    const backendBase = import.meta.env.VITE_API_URL || "http://localhost:8000";
-    const url = endpoint.startsWith("/") ? backendBase + endpoint : endpoint;
+    const url = backendUrl(endpoint);
     axios
       .get(url)
       .then((res) => {
@@ -35,7 +37,7 @@ export const DataListBlock: React.FC<DataListBlockProps> = ({ id, dataSources, s
         setListData(data);
       })
       .catch(() => setListData([]));
-  }, [JSON.stringify(dataSources || [])]);
+  }, [JSON.stringify(dataSources || []), dataVersion]);
 
   return (
     <div id={id} style={style} className={className}>

@@ -1,13 +1,19 @@
+import logging
 import os
 import json
 import re
-from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.structural import (
     DomainModel, IntegerType, StringType, Class,
     BooleanType, FloatType, DateType,
     DateTimeType, TimeType,
 )
 from besser.generators import GeneratorInterface
+from besser.generators.json.json_trace import JsonTraceBuilder, write_json_traced
+from besser.utilities import sort_by_timestamp
+from besser.utilities.generation_trace import trace_source, traced_environment
+
+logger = logging.getLogger(__name__)
+
 
 class JSONSchemaGenerator(GeneratorInterface):
     """
@@ -19,6 +25,12 @@ class JSONSchemaGenerator(GeneratorInterface):
         output_dir (str, optional): The output directory where the generated code will be saved. Defaults to None.
         mode (str, optional): The generation mode, either 'regular' or 'smart_data'. Defaults to 'regular'.
     """
+
+    # B-UML primitive name -> JSON Schema type (regular mode)
+    TYPES = {"str": "string", "int": "integer", "float": "number", "bool": "boolean",
+             "date": "string", "datetime": "string"}
+
+    regenerable = True
 
     def __init__(self, model: DomainModel, output_dir: str = None, mode: str = 'regular'):
         super().__init__(model, output_dir)
@@ -84,18 +96,21 @@ class JSONSchemaGenerator(GeneratorInterface):
         else:
             return f"Property. Model:'{model_url}'. {attr.name} value"
 
-    def _prepare_smart_data_schema_for_class(self, class_def):
+    def _prepare_smart_data_schema_for_class(self, class_def, trace: JsonTraceBuilder = None):
         """
         Prepares schema data for Smart Data format for a specific class.
 
         Args:
             class_def: The class to prepare the schema for.
+            trace: Optional collector that is told which part of the schema each attribute and
+                association end is rendered into.
 
         Returns:
             dict: A dictionary containing the schema data.
         """
         # Build class-specific properties
         class_properties = {}
+        properties_path = ("allOf", 2, "properties")  # where class_properties ends up in the schema
 
         # Add the mandatory type property
         class_properties["type"] = {
@@ -105,7 +120,7 @@ class JSONSchemaGenerator(GeneratorInterface):
         }
 
         # Process class attributes
-        for attr in class_def.attributes:
+        for attr in sort_by_timestamp(class_def.attributes):
             prop_type, prop_format = self._get_property_type(attr.type)
             prop_def = {"type": prop_type}
 
@@ -116,7 +131,7 @@ class JSONSchemaGenerator(GeneratorInterface):
             prop_def["description"] = self._get_property_description(attr, prop_type)
 
             if hasattr(attr.type, '__class__') and attr.type.__class__.__name__ == 'Enumeration':
-                prop_def["enum"] = [lit.name for lit in attr.type.literals]
+                prop_def["enum"] = [lit.name for lit in sort_by_timestamp(attr.type.literals)]
                 prop_def["type"] = "string"
 
             if hasattr(attr, 'multiplicity') and attr.multiplicity.max > 1:
@@ -126,10 +141,12 @@ class JSONSchemaGenerator(GeneratorInterface):
                 }
 
             class_properties[attr.name] = prop_def
+            if trace:
+                trace.add(attr, "attribute", properties_path + (attr.name,))
 
         # Process association ends for this class
-        for association in self.model.associations:
-            class_ends = [end for end in association.ends if end.type == class_def]
+        for association in sort_by_timestamp(self.model.associations):
+            class_ends = [end for end in sort_by_timestamp(association.ends) if end.type == class_def]
 
             if not class_ends:
                 continue
@@ -144,6 +161,13 @@ class JSONSchemaGenerator(GeneratorInterface):
 
                 if not prop_name:
                     continue
+
+                if trace:
+                    # The end replaces an attribute of the same name, and the association is what it is rendered from.
+                    path = properties_path + (prop_name,)
+                    trace.drop_path(path)
+                    trace.add(association, "association", path)
+                    trace.add(other_end, "association_end", path)
 
                 relationship_description = (
                     f"Relationship. Model:'https://schema.org/URL'. Reference to {other_end.type.name}"
@@ -199,6 +223,83 @@ class JSONSchemaGenerator(GeneratorInterface):
 
         return schema_data
 
+    def _prepare_schema(self, trace: JsonTraceBuilder = None):
+        """Builds the regular-mode schema: one entry per class under both
+        ``properties`` and ``definitions``, plus the enumerations.
+
+        ``trace`` optionally collects which part of the schema each element is rendered into."""
+        enumerations = sorted(self.model.get_enumerations(), key=lambda e: e.name)
+        enum_names = {enum.name for enum in enumerations}
+
+        def ref(name):
+            return {"$ref": f"#/definitions/{name}"}
+
+        def class_schema(class_def):
+            properties = {}
+            local = []  # (element, label, path inside the class schema), traced at each place the class is dumped
+            parents = sorted(class_def.parents(), key=lambda c: c.name)
+            properties_path = ("allOf", len(parents), "properties")  # the object block follows the parent refs
+
+            def claim(path, *elements):
+                # A property replaces an earlier one of the same name: only the last is in the document.
+                local[:] = [entry for entry in local if entry[2] != path]
+                local.extend((element, label, path) for element, label in elements)
+
+            for parent in parents:
+                generalization = next((g for g in class_def.generalizations if g.general is parent), None)
+                if generalization is not None:
+                    local.append((generalization, "generalization", ("allOf", parents.index(parent))))
+            for attr in sort_by_timestamp(class_def.attributes):
+                if attr.type.name in enum_names:
+                    prop_def = ref(attr.type.name)
+                else:
+                    prop_def = {"type": self.TYPES.get(attr.type.name, attr.type.name)}
+                if attr.multiplicity.max > 1:
+                    prop_def = {"type": "array", "items": prop_def}
+                properties[attr.name] = prop_def
+                claim(properties_path + (attr.name,), (attr, "attribute"))
+            for end in sort_by_timestamp(class_def.association_ends()):
+                if end.is_navigable:
+                    end_def = ref(end.type.name)
+                    properties[end.name] = (
+                        {"type": "array", "items": end_def} if end.multiplicity.max > 1 else end_def
+                    )
+                    claim(properties_path + (end.name,), (end.owner, "association"), (end, "association_end"))
+            for child in sorted(class_def.specializations(), key=lambda c: c.name):
+                properties[child.name] = ref(child.name)
+                claim(properties_path + (child.name,))
+            if trace is not None:
+                trace_by_class[class_def.name] = local
+            return {"allOf": [ref(parent.name) for parent in parents]
+                    + [{"type": "object", "properties": properties, "required": []}]}
+
+        trace_by_class = {}
+        classes = {c.name: class_schema(c) for c in self.model.classes_sorted_by_inheritance()}
+        definitions = {enum.name: {"type": "string",
+                                   "enum": [lit.name for lit in sort_by_timestamp(enum.literals)]}
+                       for enum in enumerations}
+        definitions.update(classes)
+        if trace is not None:
+            for class_def in self.model.classes_sorted_by_inheritance():
+                for root in (("properties",), ("definitions",)):
+                    class_path = root + (class_def.name,)
+                    trace.add(class_def, "class", class_path)
+                    for element, label, path in trace_by_class[class_def.name]:
+                        trace.add(element, label, class_path + path)
+            for enum in enumerations:
+                if enum.name in classes:
+                    continue  # a class of the same name replaced the enumeration's definition
+                trace.add(enum, "enumeration", ("definitions", enum.name))
+                for position, literal in enumerate(sort_by_timestamp(enum.literals)):
+                    trace.add(literal, "literal", ("definitions", enum.name, "enum", position))
+        return {
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "title": "Generated JSON Schema",
+            "type": "object",
+            "properties": classes,
+            "definitions": definitions,
+        }
+
     def generate(self):
         """
         Generates JSONSchema code based on the provided B-UML model and saves it to the specified output directory.
@@ -210,7 +311,7 @@ class JSONSchemaGenerator(GeneratorInterface):
         """
         templates_path = os.path.join(os.path.dirname(
             os.path.abspath(__file__)), "templates")
-        env = Environment(loader=FileSystemLoader(templates_path))
+        env = traced_environment(templates_path)
 
         env.filters['tojson_ordered'] = self.tojson_ordered
 
@@ -231,39 +332,38 @@ class JSONSchemaGenerator(GeneratorInterface):
                 os.makedirs(examples_dir, exist_ok=True)
 
                 # Prepare schema data for this class
-                schema_data = self._prepare_smart_data_schema_for_class(class_def)
+                schema_trace = JsonTraceBuilder("smart_data_schema.json.j2")
+                schema_data = self._prepare_smart_data_schema_for_class(class_def, schema_trace)
 
                 # Generate schema.json file
                 file_path = os.path.join(class_dir, "schema.json")
-                with open(file_path, mode="w", encoding='utf-8') as f:
-                    generated_code = template.render(schema=schema_data)
-                    f.write(generated_code)
+                generated_code = template.render(schema=schema_data)
+                write_json_traced(self, f"{class_def.name}/schema.json", generated_code, schema_data, schema_trace,
+                                  trace_source(class_def, "smart_data_schema.json.j2#schema"),
+                                  output_dir=self.output_dir)
 
-                # Generate all required example files
-                base_example = self.generate_base_example(class_def)
+                # Generate all required example files; each is generated from the class as a whole, and its
+                # keys from the class's attributes and association ends.
+                example_trace = JsonTraceBuilder("example.json")
+                base_example = self.generate_base_example(class_def, example_trace)
+                example_source = trace_source(class_def, "example.json#example")
+
+                def write_example(file_name, document):
+                    write_json_traced(self, f"{class_def.name}/examples/{file_name}", json.dumps(document, indent=2),
+                                      document, example_trace, example_source, output_dir=self.output_dir)
 
                 # example.json (key-value format)
-                example_path = os.path.join(examples_dir, "example.json")
-                with open(example_path, mode="w", encoding='utf-8') as f:
-                    f.write(json.dumps(base_example, indent=2))
+                write_example("example.json", base_example)
 
                 # example-normalized.json (NGSI v2 normalized format)
-                normalized_example = self.generate_normalized_example(base_example)
-                normalized_path = os.path.join(examples_dir, "example-normalized.json")
-                with open(normalized_path, mode="w", encoding='utf-8') as f:
-                    f.write(json.dumps(normalized_example, indent=2))
+                write_example("example-normalized.json", self.generate_normalized_example(base_example))
 
                 # example.jsonld (JSON-LD format)
-                jsonld_example = self.generate_jsonld_example(base_example)
-                jsonld_path = os.path.join(examples_dir, "example.jsonld")
-                with open(jsonld_path, mode="w", encoding='utf-8') as f:
-                    f.write(json.dumps(jsonld_example, indent=2))
+                write_example("example.jsonld", self.generate_jsonld_example(base_example))
 
                 # example-normalized.jsonld (NGSI-LD normalized format)
-                normalized_jsonld_example = self.generate_normalized_jsonld_example(base_example)
-                normalized_jsonld_path = os.path.join(examples_dir, "example-normalized.jsonld")
-                with open(normalized_jsonld_path, mode="w", encoding='utf-8') as f:
-                    f.write(json.dumps(normalized_jsonld_example, indent=2))
+                write_example("example-normalized.jsonld",
+                              self.generate_normalized_jsonld_example(base_example))
 
                 # Create ADOPTERS.yaml and notes.yaml in each class directory
                 adopters_file_path = os.path.join(class_dir, "ADOPTERS.yaml")
@@ -275,19 +375,17 @@ class JSONSchemaGenerator(GeneratorInterface):
                 with open(notes_file_path, mode="w", encoding='utf-8') as f:
                     f.write("# Notes about the data model\n")
 
-                print(f"Smart Data schema for {class_def.name} generated in: {file_path}")
+                logger.info("Smart Data schema for %s generated in: %s", class_def.name, file_path)
         else:
             # Regular JSON Schema mode
             template = env.get_template('json_schema.json.j2')
             file_path = self.build_generation_path(file_name="json_schema.json")
 
-            with open(file_path, mode="w") as f:
-                generated_code = template.render(
-                    classes=self.model.classes_sorted_by_inheritance(),
-                    enumerations = self.model.get_enumerations(),
-                )
-                f.write(generated_code)
-                print("Code generated in the location: " + file_path)
+            schema_trace = JsonTraceBuilder("json_schema.json.j2")
+            schema = self._prepare_schema(schema_trace)
+            generated_code = template.render(schema=schema)
+            write_json_traced(self, "json_schema.json", generated_code, schema, schema_trace)
+            logger.info("Code generated in the location: %s", file_path)
 
     def generate_example(self, schema_str):
         """Generates an example JSON based on the rendered schema string."""
@@ -321,8 +419,10 @@ class JSONSchemaGenerator(GeneratorInterface):
 
         return json.dumps(example_obj, indent=4)
 
-    def generate_base_example(self, class_def):
-        """Generate a base example in key-value format."""
+    def generate_base_example(self, class_def, trace: JsonTraceBuilder = None):
+        """Generate a base example in key-value format.
+
+        ``trace`` optionally collects which key each attribute and association end is rendered into."""
         example = {
             "id": f"urn:ngsi-ld:{class_def.name}:{class_def.name}-001",
             "type": class_def.name
@@ -338,12 +438,15 @@ class JSONSchemaGenerator(GeneratorInterface):
         })
 
         # Add class attributes
-        for attr in class_def.attributes:
+        for attr in sort_by_timestamp(class_def.attributes):
             example[attr.name] = self._get_example_value_for_attribute(attr)
+            if trace:
+                trace.drop_path((attr.name,))
+                trace.add(attr, "attribute", (attr.name,))
 
         # Add association relationships
-        for association in self.model.associations:
-            class_ends = [end for end in association.ends if end.type == class_def]
+        for association in sort_by_timestamp(self.model.associations):
+            class_ends = [end for end in sort_by_timestamp(association.ends) if end.type == class_def]
             if not class_ends:
                 continue
 
@@ -355,6 +458,10 @@ class JSONSchemaGenerator(GeneratorInterface):
                 other_end = other_ends[0]
                 if other_end.name:
                     example[other_end.name] = f"urn:ngsi-ld:{other_end.name}:{other_end.name}-01"
+                    if trace:
+                        trace.drop_path((other_end.name,))
+                        trace.add(association, "association", (other_end.name,))
+                        trace.add(other_end, "association_end", (other_end.name,))
 
         return example
 
@@ -440,7 +547,7 @@ class JSONSchemaGenerator(GeneratorInterface):
     def _get_example_value_for_attribute(self, attr):
         """Get example value for a specific attribute."""
         if hasattr(attr.type, '__class__') and attr.type.__class__.__name__ == 'Enumeration':
-            return next(iter(attr.type.literals)).name if attr.type.literals else "enum-value"
+            return sort_by_timestamp(attr.type.literals)[0].name if attr.type.literals else "enum-value"
         elif attr.type == IntegerType or (hasattr(attr.type, '__name__') and attr.type.__name__ == 'IntegerType'):
             return 10
         elif attr.type == FloatType or (hasattr(attr.type, '__name__') and attr.type.__name__ == 'FloatType'):

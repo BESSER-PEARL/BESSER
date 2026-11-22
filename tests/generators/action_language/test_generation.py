@@ -76,7 +76,7 @@ def test_REST_API_Generation():
     # oracle
     signature = "async def rename(self, new_name: str) -> None :"
     instance_save = "inst_to_update = _library_object"
-    update_call = "await update_library(inst_to_update.id, LibraryCreate(name = new_name, books = inst_to_update.books), database)"
+    update_call = "await update_library(inst_to_update.id, LibraryCreate(name = new_name, books = [x.id for x in inst_to_update.books]), database)"
 
     # checks
     assert signature in code

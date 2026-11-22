@@ -1,9 +1,34 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from typing import Any, Dict, List, Optional, Set
+
+from jinja2 import DictLoader
+
+from besser.utilities.generation_trace import trace_source, traced_environment
+
+from .routes import page_route
+
+logger = logging.getLogger(__name__)
+
+# Inline SVG elements, by lowercase name, with the casing React needs.
+_SVG_TAGS = {name.lower(): name for name in (
+    "svg", "g", "defs", "symbol", "use", "image", "path", "rect", "circle", "ellipse",
+    "line", "polyline", "polygon", "text", "tspan", "textPath", "desc",
+    "linearGradient", "radialGradient", "stop", "pattern", "clipPath", "mask", "marker",
+    "filter", "feGaussianBlur", "feOffset", "feDropShadow", "feFlood", "feComposite",
+    "feColorMatrix", "feBlend", "feMerge", "feMergeNode",
+)}
+
+
+# Wraps text built in Python in the trace markers of the element it renders: the pages are built from strings
+# rather than templates, but their regions are recorded by the same tag.
+_TRACED_TEXT = traced_environment(
+    DictLoader({"page_builder.py": "{% trace element, label %}{{ text }}{% endtrace %}"})
+).get_template("page_builder.py")
 
 
 class _PageRenderContext:
@@ -79,12 +104,12 @@ class PageBuilderMixin:
                 + f"export default {component_name};\n"
             )
 
-            file_path = os.path.join(pages_dir, f"{component_name}.tsx")
-            with open(file_path, "w", encoding="utf-8") as f:
-                f.write(file_contents)
+            self._write_traced(f"src/pages/{component_name}.tsx", file_contents,
+                               trace_source(self._element_of(page), "page_builder.py#screen"))
 
             page_infos.append(
                 {
+                    "element": self._element_of(page),
                     "component_name": component_name,
                     "file_name": f"./pages/{component_name}",
                     "route_path": page.get("route_path") or "/",
@@ -123,12 +148,20 @@ class PageBuilderMixin:
             imports.append("import { TableBlock } from \"../components/runtime/TableBlock\";")
         if "MetricCardBlock" in context.imports:
             imports.append("import { MetricCardBlock } from \"../components/runtime/MetricCardBlock\";")
+        if "MapBlock" in context.imports:
+            imports.append("import { MapBlock } from \"../components/runtime/MapBlock\";")
         if "DataListBlock" in context.imports:
             imports.append("import { DataListBlock } from \"../components/runtime/DataListBlock\";")
         if "AgentComponent" in context.imports:
             imports.append("import { AgentComponent } from \"../components/AgentComponent\";")
         if "MethodButton" in context.imports:
             imports.append("import { MethodButton } from \"../components/MethodButton\";")
+        if "FormBlock" in context.imports:
+            imports.append("import { FormBlock } from \"../components/runtime/FormBlock\";")
+        if "CrudButton" in context.imports:
+            imports.append("import { CrudButton } from \"../components/runtime/CrudButton\";")
+        if "LookupSelect" in context.imports:
+            imports.append("import { LookupSelect } from \"../components/runtime/LookupSelect\";")
 
         # Specialized input / alert components
         all_input_components: List[str] = sorted(context.input_components)
@@ -189,9 +222,18 @@ class PageBuilderMixin:
         rendered = []
         for component in components:
             rendered.append(
-                self._render_component(component, selector_style_map, context, indent)
+                self._traced_component(
+                    component, self._render_component(component, selector_style_map, context, indent)
+                )
             )
         return "\n".join([line for line in rendered if line])
+
+    def _traced_component(self, node: Dict[str, Any], jsx: str) -> str:
+        """``jsx`` inside the trace markers of the GUI element ``node`` was serialized from, if it has an id."""
+        element = self._element_of(node)
+        if element is None or not jsx:
+            return jsx
+        return _TRACED_TEXT.render(element=element, label="component", text=jsx)
 
     def _render_component(
         self,
@@ -204,6 +246,8 @@ class PageBuilderMixin:
         component_id = node.get("id") or ""
         class_list = node.get("class_list") or []
         attributes = dict(node.get("attributes") or {})
+        if (node.get("tag") or "").lower() in _SVG_TAGS:
+            attributes = self._react_svg_attributes(attributes)
         children = node.get("children") or []
 
         style = self._compute_style(
@@ -214,6 +258,8 @@ class PageBuilderMixin:
         )
 
         indent_str = " " * indent
+        # Continuation lines of a multi-line prop align under this component.
+        self._prop_indent = indent
 
         # Containers
         if comp_type in {"container", "wrapper", "component"}:
@@ -267,12 +313,12 @@ class PageBuilderMixin:
         if comp_type in {"link", "link-button"}:
             url = node.get("url") or ""
             target_path = self._resolve_target_path(node)
+            if not target_path and node.get("target") != "_blank":
+                target_path = self._page_route(url)
             on_click_expr = None
             if target_path and (not url or url == "#" or not str(url).startswith("http")):
                 context.needs_navigate = True
-                on_click_expr = (
-                    f"(e) => {{ e.preventDefault(); navigate({json.dumps(target_path)}); }}"
-                )
+                on_click_expr = self._router_click(target_path)
                 url = target_path
             if not url or url == "#":
                 url = target_path or "/"
@@ -323,18 +369,49 @@ class PageBuilderMixin:
 
         # Form
         if comp_type == "form":
+            inputs = node.get("inputs") or []
+            submit_label = node.get("submit_label") or "Submit"
+            binding = node.get("data_binding") or {}
+            # A form bound to a class posts the inputs bound to its attributes
+            fields = [
+                {"name": field["id"], "field": field["field"], "type": field.get("field_type") or "str"}
+                for field in inputs
+                if field.get("field") and field.get("id")
+            ]
+            bound = bool(binding.get("endpoint") and fields)
+            input_lines = []
+            for field in inputs:
+                input_lines.append(self._render_form_field(field, indent_str + "  ", named=bound, context=context))
+            inner = "\n".join(input_lines) if input_lines else ""
+            if bound:
+                context.imports.add("FormBlock")
+                props = self._build_component_props(
+                    component_id=component_id,
+                    class_list=class_list,
+                    style=style,
+                    extra_props={
+                        "endpoint": binding.get("endpoint"),
+                        "entity": binding.get("entity"),
+                        "fields": fields,
+                        "submitLabel": submit_label,
+                        "submitClassName": node.get("submit_class"),
+                    },
+                )
+                return (
+                    f"{indent_str}<FormBlock{props}>\n"
+                    + inner
+                    + f"\n{indent_str}</FormBlock>"
+                )
             on_submit_expr = "(e) => { e.preventDefault(); }"
             props = self._build_element_props(component_id, class_list, style, attributes, None)
             props += " onSubmit={" + on_submit_expr + "}"
-            inputs = node.get("inputs") or []
-            input_lines = []
-            for field in inputs:
-                input_lines.append(self._render_form_field(field, indent_str + "  "))
-            inner = "\n".join(input_lines) if input_lines else ""
+            submit_expr = f"{{{json.dumps(submit_label, ensure_ascii=False)}}}"
+            submit_class = node.get("submit_class")
+            submit_props = f" className={json.dumps(submit_class)}" if submit_class else ""
             return (
                 f"{indent_str}<form{props}>\n"
                 + inner
-                + f"\n{indent_str}  <button type=\"submit\">Submit</button>\n"
+                + f"\n{indent_str}  <button type=\"submit\"{submit_props}>{submit_expr}</button>\n"
                 + f"{indent_str}</form>"
             )
 
@@ -358,10 +435,15 @@ class PageBuilderMixin:
                     url = self._page_path_map.get(label) or "/"
                 target = item.get("target")
                 rel = item.get("rel")
+                on_click = ""
+                if target != "_blank" and self._page_route(url):
+                    context.needs_navigate = True
+                    on_click = f" onClick={{{self._router_click(url)}}}"
                 label_expr = f"{{{json.dumps(label, ensure_ascii=False)}}}"
                 item_lines.append(
                     f"{indent_str}    <li {list_item_style}>"
                     f"<a href={json.dumps(url)}"
+                    + on_click
                     + (f" target={json.dumps(target)}" if target else "")
                     + (f" rel={json.dumps(rel)}" if rel else "")
                     + f">{label_expr}</a></li>"
@@ -421,7 +503,6 @@ class PageBuilderMixin:
                     "dataBinding": node.get("data_binding"),
                 },
                 style_prop_name="styles",
-                include_class_name=False,
             )
             return f"{indent_str}<ChartBlock{props} />"
 
@@ -438,7 +519,6 @@ class PageBuilderMixin:
                     "dataBinding": node.get("data_binding"),
                 },
                 style_prop_name="styles",
-                include_class_name=False,
             )
             return f"{indent_str}<TableBlock{props} />"
 
@@ -454,9 +534,25 @@ class PageBuilderMixin:
                     "dataBinding": node.get("data_binding"),
                 },
                 style_prop_name="styles",
-                include_class_name=False,
             )
             return f"{indent_str}<MetricCardBlock{props} />"
+
+        # Map component (Leaflet / OpenStreetMap)
+        if comp_type == "map":
+            context.imports.add("MapBlock")
+            props = self._build_component_props(
+                component_id=component_id,
+                class_list=class_list,
+                style=style,
+                extra_props={
+                    "title": node.get("title"),
+                    "mapConfig": node.get("map_config"),
+                    "layers": node.get("layers"),
+                },
+                style_prop_name="styles",
+                include_class_name=False,
+            )
+            return f"{indent_str}<MapBlock{props} />"
 
         # Agent component
         if comp_type == "agent-component":
@@ -517,6 +613,13 @@ class PageBuilderMixin:
         )
         return f"{indent_str}<AlertBlock{props} />"
 
+    # Look of a generated text input or select
+    _FORM_CONTROL_STYLE = {
+        "padding": "6px 10px", "border": "1px solid #cbd5e1",
+        "borderRadius": "4px", "fontFamily": "inherit",
+        "width": "100%", "boxSizing": "border-box",
+    }
+
     def _render_input(
         self,
         node: Dict[str, Any],
@@ -545,12 +648,7 @@ class PageBuilderMixin:
         def ep(**kw: Any) -> Dict[str, Any]:
             return {k: v for k, v in kw.items() if v is not None and v is not False and v != ""}
 
-        input_style: Dict[str, Any] = {
-            "padding": "6px 10px", "border": "1px solid #cbd5e1",
-            "borderRadius": "4px", "fontFamily": "inherit",
-            "width": "100%", "boxSizing": "border-box",
-            **style,
-        }
+        input_style: Dict[str, Any] = {**self._FORM_CONTROL_STYLE, **style}
 
         def with_label(inner_jsx: str) -> str:
             """Wrap input in label+div when a label is present."""
@@ -741,9 +839,15 @@ class PageBuilderMixin:
                 req_sty = self._format_prop("style", {"color": "#ef4444", "marginLeft": 2})
                 req_span = f'<span {req_sty}>*</span>'
             lbl_text = f"{{{json.dumps(label)}}}{req_span}" if label else ""
+            # One `name` only: a second one from the attributes spread is TS2783
+            checkbox_attrs = {k: v for k, v in base_attrs.items() if k != "name"}
             inner_props = self._build_element_props(
-                component_id, class_list, {}, base_attrs, None,
-                extra_props=ep(name=component_id or None, required=required or None, defaultChecked=checked or None),
+                component_id, class_list, {}, checkbox_attrs, None,
+                extra_props=ep(
+                    name=base_attrs.get("name") or component_id or None,
+                    required=required or None,
+                    defaultChecked=checked or None,
+                ),
             )
             return (
                 f'{indent_str}<div>\n'
@@ -834,7 +938,8 @@ class PageBuilderMixin:
         inner = f'{indent_str}<input type={json.dumps(html_type)}{props} />'
         return with_label(inner) if label else inner
 
-    def _render_form_field(self, field: Dict[str, Any], indent_str: str) -> str:
+    def _render_form_field(self, field: Dict[str, Any], indent_str: str, named: bool = False,
+                           context: Optional[_PageRenderContext] = None) -> str:
         field_id = field.get("id") or ""
         label = field.get("label") or field_id
         field_type = field.get("type") or "Text"
@@ -868,7 +973,21 @@ class PageBuilderMixin:
             "multiple": multiple,
             "default_value": default_value,
         }
-        input_jsx = self._render_input(field_node, field_id, [], {}, {}, indent_str)
+        lookup = field.get("lookup")
+        if lookup and named and context is not None:
+            # A related record is chosen from the records of its class
+            context.imports.add("LookupSelect")
+            props = self._build_component_props(
+                component_id=field_id,
+                class_list=[],
+                style=self._FORM_CONTROL_STYLE,
+                extra_props={"name": field_id, **lookup, "required": required or None},
+            )
+            input_jsx = f"{indent_str}<LookupSelect{props} />"
+        else:
+            # A submitting form reads each control by its name (the field id)
+            field_attrs = {"name": field_id} if named and field_id else {}
+            input_jsx = self._render_input(field_node, field_id, [], {}, field_attrs, indent_str)
 
         return (
             f"{indent_str}<div {wrapper_style}>\n"
@@ -888,6 +1007,25 @@ class PageBuilderMixin:
         indent_str: str,
     ) -> str:
         action_type = node.get("action_type")
+        crud = node.get("crud")
+        if crud:
+            # Create/update/delete: run through the bound table's dialog/endpoint
+            context.imports.add("CrudButton")
+            props = self._build_component_props(
+                component_id=component_id,
+                class_list=class_list,
+                style=style,
+                extra_props={
+                    "label": attributes.get("button-label") or node.get("label") or node.get("name"),
+                    "action": crud.get("action"),
+                    "tableId": crud.get("tableId"),
+                    "entity": crud.get("entity"),
+                    "targetPath": crud.get("targetPath"),
+                    "confirmMessage": crud.get("confirmMessage"),
+                },
+            )
+            return f"{indent_str}<CrudButton{props} />"
+
         if action_type == "run-method" or "endpoint" in attributes:
             context.imports.add("MethodButton")
             endpoint = attributes.get("endpoint")
@@ -963,6 +1101,11 @@ class PageBuilderMixin:
 
         props = self._build_element_props(component_id, class_list, style, attributes, on_click_expr)
         label = node.get("label") or node.get("name") or "Button"
+        if not target_path:
+            logger.warning(
+                "Button %r (%s) has no action, method or target page: it is generated as a button "
+                "that does nothing.", label, component_id,
+            )
         content_expr = f"{{{json.dumps(label, ensure_ascii=False)}}}"
         return f"{indent_str}<button{props}>{content_expr}</button>"
 
@@ -993,7 +1136,8 @@ class PageBuilderMixin:
             props.append(" onClick={" + on_click_expr + "}")
 
         cleaned_attrs = dict(attributes or {})
-        for key in ("id", "class", "className", "style"):
+        # React props, not HTML attributes: dangerouslySetInnerHTML would inject markup from the GUI JSON.
+        for key in ("id", "class", "className", "style", "dangerouslySetInnerHTML", "ref", "key"):
             cleaned_attrs.pop(key, None)
 
         if extra_props:
@@ -1034,14 +1178,26 @@ class PageBuilderMixin:
 
         return "".join(props)
 
-    @staticmethod
-    def _format_prop(name: str, value: Any) -> str:
+    # A structured prop longer than this is written across lines. A single
+    # multi-thousand-character line (e.g. a whole table options dict) cannot
+    # be edited reliably by the agent; one key per line can. The contract
+    # checker scans braces and uses json.raw_decode, both newline-tolerant,
+    # so it reads either form.
+    _MAX_INLINE_PROP_CHARS = 160
+
+    def _format_prop(self, name: str, value: Any) -> str:
         if isinstance(value, bool):
             return f"{name}={{{str(value).lower()}}}"
         if isinstance(value, (int, float)):
             return f"{name}={{{value}}}"
         if isinstance(value, (list, dict)):
-            return f"{name}={{{json.dumps(value, ensure_ascii=False)}}}"
+            compact = json.dumps(value, ensure_ascii=False)
+            if len(compact) <= self._MAX_INLINE_PROP_CHARS:
+                return f"{name}={{{compact}}}"
+            pad = " " * (getattr(self, "_prop_indent", 0) + 2)
+            body = ("\n" + pad).join(
+                json.dumps(value, ensure_ascii=False, indent=2).splitlines())
+            return f"{name}={{{body}}}"
         return f"{name}={json.dumps(value, ensure_ascii=False)}"
 
     # ------------------------------------------------------------------ #
@@ -1111,10 +1267,23 @@ class PageBuilderMixin:
         return None
 
     @staticmethod
+    def _router_click(path: str) -> str:
+        """The click handler of an anchor that opens ``path`` through the router; a
+        modified or middle click is left to the browser (new tab or window)."""
+        return (
+            "(e) => { if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return; "
+            f"e.preventDefault(); navigate({json.dumps(path)}); }}"
+        )
+
+    def _page_route(self, url: Optional[str]) -> Optional[str]:
+        """``url`` when it is the route of one of the app's own pages."""
+        return url if url and url in getattr(self, "_page_path_map", {}).values() else None
+
+    @staticmethod
     def _path_from_name(name: Optional[str]) -> Optional[str]:
         if not name:
             return None
-        return "/" + str(name).strip().lower().replace(" ", "-")
+        return page_route(name)
 
     # ------------------------------------------------------------------ #
     # Tag helpers
@@ -1136,13 +1305,37 @@ class PageBuilderMixin:
             "span",
         }
         tag_value = (tag or "").lower()
-        return tag_value if tag_value in valid_tags else "div"
+        if tag_value in valid_tags:
+            return tag_value
+        return _SVG_TAGS.get(tag_value, "div")
+
+    # Tags a text element keeps (``label`` stays a ``p``: its ``for`` is not a React prop)
+    _TEXT_ELEMENT_TAGS = {
+        "h1", "h2", "h3", "h4", "h5", "h6", "p", "span", "div", "li", "text", "tspan",
+        "strong", "em", "b", "i", "u", "s", "strike", "small", "mark", "del", "ins", "sub", "sup",
+        "code", "kbd", "samp", "var", "abbr", "cite", "q", "dfn", "time",
+        "blockquote", "pre", "figcaption", "summary", "dt", "dd", "address",
+    }
+
+    @classmethod
+    def _select_text_tag(cls, tag: Optional[str]) -> str:
+        """The tag of a text element: its own, else the one a container of that tag
+        gets (``nav`` stays, ``td`` becomes ``div``); ``p`` when it has none."""
+        tag_value = (tag or "").lower()
+        if not tag_value or tag_value == "label":
+            return "p"
+        if tag_value in cls._TEXT_ELEMENT_TAGS:
+            return tag_value
+        return cls._select_container_tag(tag_value)
 
     @staticmethod
-    def _select_text_tag(tag: Optional[str]) -> str:
-        valid_tags = {"h1", "h2", "h3", "h4", "h5", "h6", "p", "span", "div", "strong", "em", "li"}
-        tag_value = (tag or "").lower()
-        return tag_value if tag_value in valid_tags else "p"
+    def _react_svg_attributes(attributes: Dict[str, Any]) -> Dict[str, Any]:
+        """SVG attribute names as React expects them: ``stroke-width`` -> ``strokeWidth``."""
+        return {
+            key if key.startswith(("aria-", "data-"))
+            else re.sub(r"[-:](\w)", lambda m: m.group(1).upper(), key): value
+            for key, value in attributes.items()
+        }
 
     # ------------------------------------------------------------------ #
     # Utility helpers for pages
@@ -1184,13 +1377,19 @@ class PageBuilderMixin:
         import_lines = []
         for page in page_infos:
             import_lines.append(
-                f"import {page['component_name']} from \"{page['file_name']}\";"
+                _TRACED_TEXT.render(
+                    element=page.get("element"), label="import",
+                    text=f"import {page['component_name']} from \"{page['file_name']}\";",
+                )
             )
         imports = "\n".join(import_lines)
 
         routes = "\n".join(
             [
-                f"            <Route path={json.dumps(p['route_path'])} element={{<{p['component_name']} />}} />"
+                _TRACED_TEXT.render(
+                    element=p.get("element"), label="route",
+                    text=f"            <Route path={json.dumps(p['route_path'])} element={{<{p['component_name']} />}} />",
+                )
                 for p in page_infos
             ]
         )
@@ -1220,9 +1419,7 @@ class PageBuilderMixin:
             "export default App;\n"
         )
 
-        app_path = self.build_generation_path("src/App.tsx")
-        with open(app_path, "w", encoding="utf-8") as f:
-            f.write(app_contents)
+        self._write_traced("src/App.tsx", app_contents)
     # --------------------------------------------------------------------- #
     # Context builders
     # --------------------------------------------------------------------- #

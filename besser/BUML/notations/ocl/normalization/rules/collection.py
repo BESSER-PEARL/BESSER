@@ -1,10 +1,10 @@
 """Paper §2.1 Table 2 — trivial collection sugar.
 
-``X->isEmpty()`` becomes ``X->size() = 0``. ``X->reject(p)`` becomes
-``X->select(not p)``.
+``X->isEmpty()`` becomes ``X->size() = 0`` and ``X->notEmpty()`` becomes
+``X->size() > 0``. ``X->reject(p)`` becomes ``X->select(not p)``.
 """
 
-from besser.BUML.metamodel.ocl import clone, is_isempty, is_loop
+from besser.BUML.metamodel.ocl import clone, is_isempty, is_loop, is_op
 from besser.BUML.metamodel.ocl.ocl import LoopExp, OperationCallExpression
 from besser.BUML.notations.ocl.normalization.rules._helpers import (
     make_comparison, make_int, make_not,
@@ -26,6 +26,21 @@ class IsEmptyToSize:
         return make_comparison(size, "=", make_int(0))
 
 
+class NotEmptyToSize:
+    name = "NotEmptyToSize"
+
+    def applies(self, node, ctx):
+        return is_op(node, "NotEmpty")
+
+    def rewrite(self, node, ctx):
+        # X->notEmpty()  →  X->size() > 0
+        size = OperationCallExpression(
+            name="Size", operation="Size", arguments=[],
+        )
+        size.source = clone(node.source)
+        return make_comparison(size, ">", make_int(0))
+
+
 class RejectToSelect:
     name = "RejectToSelect"
 
@@ -43,4 +58,4 @@ class RejectToSelect:
         return new_loop
 
 
-COLLECTION_RULES = [IsEmptyToSize(), RejectToSelect()]
+COLLECTION_RULES = [IsEmptyToSize(), NotEmptyToSize(), RejectToSelect()]

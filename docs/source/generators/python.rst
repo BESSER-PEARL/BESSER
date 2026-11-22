@@ -21,3 +21,27 @@ folder and it will look as follows.
 .. literalinclude:: ../../../tests/BUML/metamodel/structural/library/output/classes.py
    :language: python
    :linenos:
+
+Trace Links
+-----------
+
+The generator records which lines of ``classes.py`` come from which model element: after ``generate()``,
+``generator.traced_files["classes.py"].regions`` lists, for every enumeration, enumeration literal, class,
+attribute, association end (and its association) and method that has an ``id`` (as every element drawn in the web
+editor does), the line ranges rendered from it and the template block that rendered them (``enumeration``,
+``literal``, ``class``, ``attribute``, ``association_end``, ``association``, ``method``). An attribute's or method's
+lines lie within its class's. Recording them does not change the generated file. ``build_generation_trace`` in
+``besser.utilities.generation_trace`` turns them into a :doc:`traceability model
+<../buml_language/model_types/traceability>`; the web editor shows them on its *Traceability* page.
+
+.. versionchanged:: 8.0.0
+   A ``default_value`` is coerced to the attribute's type and emitted as a
+   literal. A default that cannot be coerced (for example ``"abc"`` for an
+   ``int``), an empty default for a non-string type, or an enumeration default
+   that names none of its literals raises ``InvalidDefaultValueError`` at
+   generation time.
+
+   A method without an implementation gets a body only when one can be
+   inferred from the class (getters, setters, boolean predicates,
+   ``__str__``); any other such method is generated with a body that raises
+   ``NotImplementedError`` instead of silently doing nothing. See the :doc:`release notes </releases/v8/v8.0.0>`.

@@ -13,7 +13,10 @@ from besser.BUML.metamodel.quantum.quantum import (
     SwapGate, SGate, TGate, RXGate, RYGate, RZGate, PhaseGate,
     ControlState, RXXGate, RZZGate, RZXGate, RYYGate, BellGate, iSwapGate, SqrtSwapGate,
     CXGate, CYGate, CZGate, CHGate, CRXGate, CRYGate, CRZGate, CPhaseGate,
-    FunctionGate
+    FunctionGate, CNOT,
+)
+from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._safe_buml_loader import (
+    safe_load_buml,
 )
 
 
@@ -149,7 +152,8 @@ def _get_gate_symbol(op: QuantumOperation) -> str:
         return "Bell"
 
     # === Controlled Gates (Map to base symbol) ===
-    if isinstance(op, CXGate):
+    # A CNOT is an X with a control, as the editor draws it (• and X); "CNOT" would read back as a custom gate.
+    if isinstance(op, (CXGate, CNOT)):
         return "X"
     if isinstance(op, CYGate):
         return "Y"
@@ -472,49 +476,22 @@ def quantum_buml_to_json(content: str) -> Dict[str, Any]:
     """
     import besser.BUML.metamodel.quantum.quantum as quantum_module
 
-    safe_globals: dict = {
-        "__builtins__": {
-            "set": set,
-            "list": list,
-            "dict": dict,
-            "tuple": tuple,
-            "str": str,
-            "int": int,
-            "float": float,
-            "bool": bool,
-            "len": len,
-            "range": range,
-            "True": True,
-            "False": False,
-            "None": None,
-            "print": lambda *a, **kw: None,  # no-op to prevent info leakage
-        },
+    allowed_names: dict = {
+        "set": set,
+        "list": list,
+        "dict": dict,
+        "tuple": tuple,
     }
-    # Expose all quantum module members for exec
+    # Expose all public quantum module members so the BUML file can reference
+    # any of the gate classes it constructed (safe_load_buml drops any module
+    # among them).
     for name in dir(quantum_module):
         if not name.startswith("_"):
-            safe_globals[name] = getattr(quantum_module, name)
+            allowed_names[name] = getattr(quantum_module, name)
 
-    # Strip import lines -- all required types are in safe_globals already.
-    # Handle multi-line imports (e.g. from ... import (\n    ...\n))
-    cleaned_lines = []
-    in_import_block = False
-    for line in content.splitlines():
-        stripped = line.lstrip()
-        if in_import_block:
-            if ")" in line:
-                in_import_block = False
-            continue
-        if stripped.startswith(("import ", "from ")):
-            if "(" in line and ")" not in line:
-                in_import_block = True
-            continue
-        cleaned_lines.append(line)
-    cleaned_content = "\n".join(cleaned_lines)
-
-    local_vars = {}
     try:
-        exec(cleaned_content, safe_globals, local_vars)
+        # Imports are stripped: all required types are in allowed_names already.
+        local_vars = safe_load_buml(content, allowed_names)
     except Exception as exc:
         raise ValueError(f"Failed to execute quantum BUML content: {exc}") from exc
 

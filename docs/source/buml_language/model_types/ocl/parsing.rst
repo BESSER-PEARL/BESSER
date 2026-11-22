@@ -81,6 +81,10 @@ does not return a partial AST — failures are surfaced upfront.
       for err in e.errors:
           print(err)
 
+When a navigation names a property its receiver does not have (``self.pages``
+on a ``Book`` without ``pages``), the error's ``missing_element`` attribute
+holds ``"Book.pages"``; it is ``None`` for other errors.
+
 If the supplied ``context_class`` is missing or cannot be resolved against
 ``model.types``, ``parse_ocl`` raises ``ValueError``.
 

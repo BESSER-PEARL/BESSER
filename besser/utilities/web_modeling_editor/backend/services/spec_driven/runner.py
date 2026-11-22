@@ -1,0 +1,3124 @@
+"""Runner that bridges ``LLMOrchestrator`` to an SSE event stream.
+
+The orchestrator runs synchronously in a worker thread (the app's
+``SpecDrivenRuntime`` pool) and fires ``on_text`` / ``on_progress`` callbacks
+from that thread. The runner uses ``loop.call_soon_threadsafe`` to push
+pydantic event objects onto an ``asyncio.Queue`` owned by the main
+event loop, then drains the queue from the async generator body and
+yields SSE-framed bytes to the FastAPI ``StreamingResponse``.
+
+A sibling task emits periodic ``CostEvent``s by reading
+``client.usage.estimated_cost`` every ``BESSER_LLM_COST_EMITTER_INTERVAL_SECONDS``.
+
+On successful completion the output directory is walked, zipped if it
+contains more than one user file, and registered with
+the runtime's ``SmartRunRegistry`` for the sibling download endpoint to serve.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import copy
+import json
+import logging
+import os
+import re
+import shutil
+import tempfile
+import time
+import uuid
+import zipfile
+from dataclasses import dataclass, replace as dataclass_replace
+from itertools import chain, zip_longest
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Iterable, Optional
+
+from pydantic import ValidationError as PydanticValidationError
+
+from besser.spec_driven_agent.errors import (
+    CheckpointMismatchError,
+    EmptyInstructionsError,
+    InvalidApiKeyError,
+    UpstreamLLMError,
+)
+from besser.spec_driven_agent.execution.sandbox import sandbox_home
+from besser.spec_driven_agent.execution.shell_session import close_sessions_for
+from besser.utilities.workspace_fs import (
+    copy_plain_file, copytree_plain, is_plain_entry, is_plain_file, open_plain, open_plain_write, walk_plain,
+    write_atomic_plain,
+)
+from besser.spec_driven_agent.providers.llm_client import (
+    DEFAULT_MODELS,
+    create_llm_client,
+    default_model,
+    free_alt_choice,
+    free_secondary_choice,
+    free_tier_model,
+    is_free_fallback_choice,
+)
+from besser.llm.catalog import load_model_catalog
+from besser.spec_driven_agent.pipeline.constants import (
+    EXCLUDED_OUTPUT_NAMES,
+    INSTALLED_AND_BUILT_DIRS,
+    is_excluded_output_file as _is_excluded_output_file,
+)
+from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
+from besser.spec_driven_agent.planning.model_rules import DROPPED, is_dropped_by_model_change
+from besser.spec_driven_agent.planning.requirements_ledger import render_evidence
+from besser.spec_driven_agent.repair.scaffold_repair import ensure_frontend_scaffold
+from besser.spec_driven_agent.agent.tools import get_available_generator_names
+from besser.spec_driven_agent.run_recap import NO_RULES_STATED
+from besser.spec_driven_agent.run_report import RECIPE_FILENAME
+from besser.spec_driven_agent.state import agent_trace
+from besser.spec_driven_agent.state.generator_output import GENERATOR_OUTPUT_FILENAME, attach_model, stored_model
+from besser.spec_driven_agent.state.trace_model import (
+    TRACE_MODEL_FILENAME,
+    RunModel,
+    build_run_trace_model,
+    traced_requirement_id,
+)
+from besser.BUML.metamodel.traceability import ExecutionStatus
+from besser.utilities.generation_trace import ElementRef, InputModel, input_model
+from besser.spec_driven_agent.state.recipe_size import MAX_RECIPE_BYTES
+from besser.utilities.provenance import (
+    PROVENANCE_FILENAME,
+    get_besser_version,
+    inline_code,
+    remove_agents_block,
+    remove_readme_block,
+    write_generation_provenance,
+)
+from besser.spec_driven_agent.validation.user_wording import (
+    Finding, plain_check, plain_reason, summary_lines, user_finding, user_sentence,
+)
+from besser.spec_driven_agent.validation.issues import (
+    is_completion_issue,
+    required_check_unverified,
+    unresolved_defects,
+)
+from besser.utilities.web_modeling_editor.backend.constants.constants import (
+    LLM_TEMP_DIR_PREFIX,
+    TRACE_MAX_STORED_CONTENT_BYTES,
+    TRACE_MAX_TOTAL_CONTENT_BYTES,
+)
+from besser.utilities.web_modeling_editor.backend.services.converters import trace_buml_to_json
+from besser.utilities.web_modeling_editor.backend.models.spec_driven import (
+    SmartGenerateRequest,
+)
+from besser.utilities.web_modeling_editor.backend.services.exceptions import (
+    ConversionError,
+    ValidationError,
+)
+from besser.utilities.web_modeling_editor.backend.services.spec_driven.model_assembly import (
+    assemble_models_from_project,
+    class_diagram_model,
+    generation_class_diagram,
+)
+from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
+    telemetry,
+)
+from besser.utilities.web_modeling_editor.backend.services.spec_driven.workspace_tree import read_run_json
+from besser.utilities.web_modeling_editor.backend.services.spec_driven import run_record
+from besser.utilities.web_modeling_editor.backend.services.spec_driven.sse_events import (
+    BaseSseEvent,
+    CostEvent,
+    DoneEvent,
+    ErrorEvent,
+    FindingsEvent,
+    ModelUpdateEvent,
+    PhaseEvent,
+    PhaseUpdateEvent,
+    StartEvent,
+    TextDeltaEvent,
+    ToolCallEvent,
+    VerificationCounts,
+    VerificationItem,
+    VerificationReport,
+    format_sse,
+)
+from besser.utilities.secret_redaction import (
+    redact_data,
+    redact_text,
+    scrub_secret_files,
+)
+from besser.utilities.web_modeling_editor.backend.settings import get_settings
+
+if TYPE_CHECKING:
+    from besser.utilities.web_modeling_editor.backend.services.spec_driven.runtime import (
+        SpecDrivenRuntime,
+    )
+
+logger = logging.getLogger(__name__)
+
+
+# Provider default models — single source in llm_client.DEFAULT_MODELS
+# (kept under the old module-local name so existing imports keep working).
+_DEFAULT_MODELS = DEFAULT_MODELS
+
+_REGISTRY_SWEEP_INTERVAL_SECONDS = 60
+# A run's download (the served file and its manifest) lives in ``<run dir>.download``,
+# outside the tree the run's shell can write, so neither can be swapped for a link.
+# Its ``besser_llm_`` prefix puts it under the run-root cleanup.
+_DOWNLOAD_DIR_SUFFIX = ".download"
+_DOWNLOAD_MANIFEST_NAME = "manifest.json"
+_DOWNLOAD_ARTIFACT_NAME = "artifact"
+_DOWNLOAD_DIR_RE = re.compile(
+    re.escape(LLM_TEMP_DIR_PREFIX) + r"(?P<run_id>[a-f0-9]{32})_[a-z0-9_]+" + re.escape(_DOWNLOAD_DIR_SUFFIX)
+)
+# Written into a run imported from GitHub: where it came from. Its ``.besser_``
+# prefix keeps it out of every push and download.
+GITHUB_SOURCE_FILENAME = ".besser_github_source.json"
+# BESSER's own files a later run reads back, so they ride in the ZIP and the
+# GitHub push: the recipe (generator, history), the line attribution, and the
+# generator's stored output (the base a model change is merged against).
+CARRIED_RUN_FILES = (RECIPE_FILENAME, agent_trace.ATTRIBUTION_FILENAME, GENERATOR_OUTPUT_FILENAME)
+_MAX_DOWNLOAD_MANIFEST_BYTES = 16 * 1024
+
+# Error codes a run that goes on to deliver output is shown as warnings.
+_WARNING_CODES = frozenset({"INCOMPLETE", "COST_CAP", "TIMEOUT"})
+
+# Upper bound on queued SSE events so a runaway worker can't exhaust
+# memory. 2048 is comfortably above the steady-state queue depth (one
+# event every ~50ms for a very chatty run × a drain loop that handles
+# each event in well under that), while still capping worst-case
+# memory at a few MB.
+_EVENT_QUEUE_MAXSIZE = 2048
+
+# Build-output dirs + runtime/artifact FILE globs that must never reach the
+# download zip OR a GitHub push. Fed to shutil.ignore_patterns (used by both
+# the modify/continue-from-repo SEED copy and the push copy), which fnmatches
+# base names, so file globs work alongside the directory names. The engine
+# owns the list: its recipe manifest leaves out the same names.
+_EXCLUDED_OUTPUT_DIRS = EXCLUDED_OUTPUT_NAMES
+
+
+def run_download_dir(workspace: str) -> str:
+    """Where the run's download and its manifest are kept: beside its workspace."""
+    return workspace.rstrip("/\\") + _DOWNLOAD_DIR_SUFFIX
+
+
+def _remove_run_workspace(path: str) -> None:
+    """Delete a run's workspace and the sandbox ``$HOME`` beside it, keeping its download,
+    ending the run's shell session first so none of its processes outlive the folder."""
+    close_sessions_for(path)
+    shutil.rmtree(path, ignore_errors=True)
+    shutil.rmtree(sandbox_home(path), ignore_errors=True)
+
+
+def _remove_run_dir(path: str) -> None:
+    """Delete a run's workspace, its sandbox ``$HOME`` and its download."""
+    _remove_run_workspace(path)
+    shutil.rmtree(run_download_dir(path), ignore_errors=True)
+
+
+def drop_installed_dependencies(workspace: str) -> None:
+    """Remove what a finished run installed and built: those folders and its sandbox ``$HOME``.
+
+    Hundreds of MB that nothing reads once the run is packaged: the download, a
+    push and a modify run's seed leave them out.
+    """
+    close_sessions_for(workspace)
+    shutil.rmtree(sandbox_home(workspace), ignore_errors=True)
+    for root, dirs, _files in walk_plain(workspace):
+        for name in [d for d in dirs if d in INSTALLED_AND_BUILT_DIRS]:
+            dirs.remove(name)
+            shutil.rmtree(os.path.join(root, name), ignore_errors=True)
+
+
+def _expire_run(path: str, age: float) -> bool:
+    """Apply a finished run's two lifetimes; True when its download is gone too.
+
+    The workspace (what a modify run, a push and resume read) goes after
+    ``BESSER_LLM_DOWNLOAD_TTL_SECONDS``; the download, a small archive, stays
+    for ``BESSER_LLM_ARCHIVE_TTL_SECONDS``.
+    """
+    settings = get_settings()
+    if age > settings.llm_archive_ttl_seconds:
+        _remove_run_dir(path)
+        return True
+    if age > settings.llm_download_ttl_seconds and os.path.isdir(path):
+        _remove_run_workspace(path)
+    return False
+
+
+
+# The range of a ZIP entry's DOS timestamp.
+_ZIP_FIRST_STAMP = (1980, 1, 1, 0, 0, 0)
+_ZIP_LAST_STAMP = (2107, 12, 31, 23, 59, 58)
+
+
+def _zip_plain_file(zf: zipfile.ZipFile, path: str, arcname: str, root: str) -> None:
+    """Add ``path`` to ``zf`` through a link-refusing open, so a file the run's
+    shell swaps for a link after the walk is left out, not read through."""
+    try:
+        with open_plain(path, "rb", root=root) as src:
+            info = os.fstat(src.fileno())
+            # ZIP stores years 1980-2107 only; a file touched outside them must not fail the packaging.
+            stamp = min(max(time.localtime(info.st_mtime)[:6], _ZIP_FIRST_STAMP), _ZIP_LAST_STAMP)
+            entry = zipfile.ZipInfo(arcname.replace(os.sep, "/"), stamp)
+            entry.external_attr = (info.st_mode & 0xFFFF) << 16  # keeps the executable bit, as zf.write does
+            entry.compress_type = zipfile.ZIP_DEFLATED
+            entry.file_size = info.st_size
+            with zf.open(entry, "w") as dst:
+                shutil.copyfileobj(src, dst)
+    except OSError:
+        logger.warning("Left %s out of the download: no longer a plain file", arcname)
+
+
+async def _stop_helper_task(task: asyncio.Task, run_id: str) -> None:
+    """Cancel one of a run's helper tasks; its own error is logged, not raised,
+    so it cannot skip stopping the worker and releasing the run."""
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    except Exception:
+        logger.exception("Run %s: helper task %s failed", run_id, task.get_name())
+
+
+def _dir_has_user_output(path: Optional[str]) -> bool:
+    """True when *path* holds at least one generated USER file.
+
+    Mirrors ``_package_result``'s selection: excluded build/dependency dirs and
+    internal ``.besser_*`` artefacts don't count. Used to salvage output when a
+    run hit a late error — surface the (partial) app instead of a hard failure.
+    """
+    if not path or not os.path.isdir(path):
+        return False
+    for root, dirs, files in os.walk(path):
+        dirs[:] = [d for d in dirs if d not in _EXCLUDED_OUTPUT_DIRS]
+        for fn in files:
+            if not fn.startswith(".besser_") and not _is_excluded_output_file(fn):
+                return True
+    return False
+
+
+# ----------------------------------------------------------------------
+# What the run verified, could not verify, and shipped unenforced
+# ----------------------------------------------------------------------
+# Per list, so a large model can't push the recipe past MAX_RECIPE_BYTES on
+# the next run that reads it back. counts carries the true totals.
+_MAX_VERIFICATION_ITEMS = 25
+
+# Per-field limits sized from real run recipes. The client renders these in
+# full, so a cut here is the last one in the chain.
+#   why  — the irreplaceable half ("why this rule is not enforced"); a rejected
+#          OCL constraint renders up to ~750 characters, so 1200 cuts none.
+#   what — validator messages; 1300 sits just over the observed p99.
+#   how  — a request list or an evidence citation, which degrades gracefully,
+#          so it keeps a tighter p90 bound.
+_MAX_WHAT = 1300
+_MAX_WHY = 1200
+_MAX_HOW = 320
+_TRUNCATION_MARK = " …[truncated]"
+# A findings event lists this many blockers, each clipped: enough to read which
+# checks failed, while a 300-error tsc run stays a small frame.
+_MAX_FINDINGS_LISTED = 20
+_MAX_FINDING_CHARS = 300
+
+# ``_check_did_not_run`` / ``required_check_unverified`` wording. Follow the
+# convention rather than re-deriving which checks were skipped.
+_SKIPPED_CHECK_RE = re.compile(
+    r"^validation(?: unverified)?: (?P<check>.+?) did not run"
+    r"(?: completely)?(?: \((?P<reason>.*?)\))?"
+)
+
+# Validator prefixes from _classify_issue, split by which of the three states
+# they report. A modeled operation left as an HTTP 501 placeholder is the spec
+# stating something the delivered code does not implement; a task whose
+# verification never concluded is the opposite — unknown, not absent. Other
+# prefixes (ruff, frontend/data contract, create contract) describe code that
+# was built and is defective, which is a different question.
+_UNENFORCED_PREFIXES = ("action contract:", "model contract:")
+# The ``why`` of a requirement the check could not confirm, and of a workflow that failed. A workflow
+# is a test the agent wrote for its own code, not a rule the user stated: when it fails, the test or the
+# app may be wrong, so it is a result to look at, not a rule shipped unenforced.
+_UNCONFIRMED = "the check could not confirm it in the delivered code"
+_WORKFLOW_FAILED = ("a test the agent wrote ran against the app and failed; it is not a rule from your "
+                    "request, and the test or the app may be wrong")
+# A judge note's citation annotation: a file path and a remark for the agent.
+_CITATION_NOTE_RE = re.compile(r"\s*\[citation [^\]]*\]")
+_UNCHECKED_PREFIXES = ("task unverified:", "runtime unverified:")
+
+
+def _user_facing_cost(usage: Any, cost_usd: float) -> float:
+    """The cost shown to the user: 0 when the run is not billed to them.
+
+    The keyless tier's estimate is real spend on org credits and still drives
+    the cost cap, but the user pays nothing, so the card's "No cost" is right.
+    """
+    return round(cost_usd, 4) if getattr(usage, "billed_to_user", True) else 0.0
+
+
+def _clip(text: Any, limit: int) -> str:
+    """Collapse whitespace; cut on a word boundary and say when it cut.
+
+    A silent mid-word cut turns "why this rule is not enforced" into a
+    fragment the reader cannot tell is incomplete.
+    """
+    text = " ".join(str(text or "").split())
+    if len(text) <= limit:
+        return text
+    return (text[:limit].rsplit(" ", 1)[0] or text[:limit]) + _TRUNCATION_MARK
+
+
+def _item(kind: str, ident: Any, what: str, *, how: str = "", why: str = "") -> VerificationItem:
+    return VerificationItem(
+        kind=kind,
+        id=str(ident or ""),
+        what=_clip(what, _MAX_WHAT),
+        how=_clip(how, _MAX_HOW) or None,
+        why=_clip(why, _MAX_WHY) or None,
+    )
+
+
+def _capped(items: list[VerificationItem]) -> list[VerificationItem]:
+    """Truncate round-robin across kinds.
+
+    86 unverified requirement verdicts would otherwise push the "no workflow
+    was ever run" note out of the list — the same hiding this report exists
+    to stop, one level down.
+    """
+    if len(items) <= _MAX_VERIFICATION_ITEMS:
+        return items
+    by_kind: dict[str, list[VerificationItem]] = {}
+    for item in items:
+        by_kind.setdefault(item.kind, []).append(item)
+    interleaved = zip_longest(*by_kind.values())
+    return [i for i in chain.from_iterable(interleaved) if i][:_MAX_VERIFICATION_ITEMS]
+
+
+def _conversion_label(issue: dict) -> str:
+    """The label ``_requirements_for_validation`` names the rule by."""
+    return issue.get("name") or issue.get("context") or issue.get("id") or "unnamed rule"
+
+
+# Agent tools that change a file; shell commands are not tracked.
+_FILE_CHANGE_TOOLS = frozenset({"write_file", "modify_file", "replace_file_lines", "delete_file"})
+# The card lists this many paths; the count covers the rest.
+_MAX_CHANGED_FILES = 50
+
+
+def _run_status(exited_cleanly: bool, stop_reason: Optional[str]) -> ExecutionStatus:
+    """How the run's operation ended, for its trace: a run cut short before its loop finished
+    did not succeed, whatever it delivered (its findings are in the trace's log records)."""
+    if exited_cleanly:
+        return ExecutionStatus.SUCCEEDED
+    return {"cancelled": ExecutionStatus.CANCELLED,
+            "timeout": ExecutionStatus.TIMED_OUT}.get(stop_reason or "", ExecutionStatus.FAILED)
+
+
+def run_changes(recipe: dict) -> dict:
+    """The ``DoneEvent`` fields that say what a run changed, read from its recipe."""
+    history = recipe.get("history") or []
+    mode = (history[-1] if history and isinstance(history[-1], dict) else {}).get("mode")
+    changed = sorted({
+        (call.get("input") or {}).get("path")
+        for call in recipe.get("tool_calls") or []
+        if isinstance(call, dict) and call.get("tool") in _FILE_CHANGE_TOOLS
+        and isinstance((call.get("input") or {}).get("path"), str)
+    })
+    model_change = recipe.get("model_change") or {}
+    return {
+        "mode": "modify" if mode == "modify" else "create",
+        "changedFiles": changed[:_MAX_CHANGED_FILES],
+        "changedFileCount": len(changed),
+        "modelChanges": [c for c in model_change.get("changes") or [] if isinstance(c, str)],
+    }
+
+
+# Items listed per verification state; the counts give the totals.
+_SUMMARY_ITEMS_PER_STATE = 8
+
+
+def redact_recipe_models(recipe: dict, provider: str) -> None:
+    """Replace the recipe's model ids with the public label: the recipe goes into GitHub pushes."""
+    usage = recipe.get("usage")
+    for holder, key in ((recipe, "llm_model"), (usage if isinstance(usage, dict) else {}, "model")):
+        if key in holder:
+            holder[key] = agent_trace.normalize_model_id(provider, holder[key])
+
+
+def run_summary_markdown(
+    recipe: dict, verification: VerificationReport, secrets: Iterable[str] = (), *, readme: bool = False,
+) -> list[str]:
+    """The run section of ``BESSER_GENERATION.md``: target and verification.
+
+    The recipe stays out of the download, so without this a downloaded run
+    says nothing about what was checked. This file also goes into GitHub
+    pushes, public ones included: the request text is left out, and the
+    model-written values (which restate parts of it) are redacted and shown
+    as code, never as links or markup.
+    """
+    def one_line(text: object) -> str:
+        cleaned, _ = redact_text(" ".join(str(text).split()), env_style=False, secrets=secrets)
+        return inline_code(cleaned)
+
+    target = recipe.get("target") if isinstance(recipe.get("target"), dict) else None
+    counts = verification.counts
+    lines = ["## This run", ""]
+    if target:
+        lines.append(f"- Built as: {one_line(target.get('description') or target.get('kind'))}")
+    generator = recipe.get("generator_used")
+    lines.append(f"- Base generator: {one_line(generator) if generator else 'none, written from scratch'}")
+    run = recipe.get("run") if isinstance(recipe.get("run"), dict) else None
+    if run:
+        lines.append(f"- Run: {run.get('mode')}, {run.get('mode_reason')}; ended: {run.get('stopped_by')}")
+        if run.get("models"):
+            lines.append(f"- Model: {', '.join(map(one_line, run['models']))} ({run.get('key_tier')})")
+    if readme:
+        lines.append("- How to run it: see `README.md`")
+    lines.append(
+        f"- Verification: {counts.verified} checked and working, {counts.notVerified} not checked, "
+        f"{counts.shippedUnenforced} checked and missing in the code")
+    removed, kept = (recipe.get(key) if type(recipe.get(key)) is int else 0
+                     for key in ("runtime_files_removed_count", "runtime_files_not_removed_count"))
+    note = recipe.get("runtime_files_note")
+    if removed or kept or note:
+        lines.append(
+            f"- Left out: {removed} file(s) the app wrote while it was test-run"
+            + (f"; {kept} more could not be removed and are still in the output" if kept else "")
+            + (f" ({one_line(note)})" if note else ""))
+    findings = {finding.sentence: finding for finding in map(user_finding, _issue_messages(recipe))}
+    for title, items, total in (("Missing in the code", verification.shippedUnenforced, counts.shippedUnenforced),
+                                ("Not checked", verification.notVerified, counts.notVerified)):
+        if items:
+            entries = [(_summary_finding(item, findings),
+                        one_line(item.what) + (f": {one_line(item.why)}" if item.why else "")) for item in items]
+            shown, covered = summary_lines(entries, _SUMMARY_ITEMS_PER_STATE, quote=one_line)
+            lines += ["", f"### {title}", ""]
+            lines += [f"- {line}" for line in shown]
+            if max(total, len(items)) > covered:
+                lines.append(f"- and {max(total, len(items)) - covered} more")
+    return lines
+
+
+def _issue_messages(recipe: dict) -> list[str]:
+    return [str(issue.get("message") or "") for issue in recipe.get("validation_issues") or []
+            if isinstance(issue, dict)]
+
+
+def _summary_finding(item: VerificationItem, findings: dict) -> Finding:
+    """The group a report item merges into in the summary: by its sentence, else by its kind."""
+    if item.what in findings:
+        return findings[item.what]
+    if item.kind == "requirement" and item.id and item.why == _UNCONFIRMED:
+        return Finding(item.what, "requirement_unconfirmed", item.id)
+    if item.kind == "api_workflow" and item.why == _WORKFLOW_FAILED:
+        return Finding(item.what, "workflow_failed", item.id)
+    return Finding(item.what)
+
+
+def build_verification_report(recipe: dict, run_id: Optional[str] = None) -> VerificationReport:
+    """Split the recipe's own evidence into the three states a count hides.
+
+    "we checked and it works", "we could not check" and "we checked and it is
+    missing" are different results. A run that scored 11/11 and passed its
+    booking workflow still double-sold rooms because two OCL constraints
+    failed conversion; the evidence was in the recipe, flattened into
+    "21 blockers".
+
+    With ``run_id``, a requirement item carries its ``traceRef``: the id of
+    its RequirementArtifact in the run's trace.
+    """
+    verified: list[VerificationItem] = []
+    not_verified: list[VerificationItem] = []
+    unenforced: list[VerificationItem] = []
+
+    if recipe.get("warning") and not any(
+        recipe.get(key) for key in
+        ("requirements", "api_scenarios", "model_conversion_issues", "validation_issues")
+    ):
+        # _read_recipe could not read the recipe. Empty lists here would read
+        # as "there was nothing to verify".
+        not_verified.append(_item(
+            "check", "", "the results of this run's checks",
+            why=f"the run's record could not be read ({recipe['warning']}), so they cannot be shown; "
+                "the record is kept unchanged",
+        ))
+
+    verdicts = [v for v in (recipe.get("requirements") or []) if isinstance(v, dict)]
+    consumed: set[int] = set()
+
+    # 1. OCL constraints the converter rejected. These never reached the
+    #    generated code. The orchestrator re-raises each as a synthetic
+    #    "Recover model constraint '<label>'" requirement, so its verdict says
+    #    whether the agent actually put the rule back — absent that evidence
+    #    the rule ships unenforced, which is the double-booking case.
+    for issue in recipe.get("model_conversion_issues") or []:
+        if not isinstance(issue, dict):
+            continue
+        label = _conversion_label(issue)
+        verdict = next(
+            (v for v in verdicts
+             if f"Recover model constraint '{label}'" in str(v.get("text", ""))),
+            None,
+        )
+        if verdict is not None:
+            consumed.add(id(verdict))
+        what = (
+            f"OCL {issue.get('kind') or 'constraint'} '{label}' on "
+            f"{issue.get('context') or 'an unknown context'}: "
+            f"{issue.get('expression') or issue.get('original_text') or ''}"
+        )
+        if verdict is not None and verdict.get("status") == "implemented":
+            verified.append(_item(
+                "ocl_constraint", label, what,
+                how="rejected by the OCL converter, then recovered in code: "
+                    + (render_evidence(verdict.get("evidence")) or "no citation"),
+            ))
+            continue
+        if is_dropped_by_model_change(issue):
+            unenforced.append(_item(
+                "ocl_constraint", label, what,
+                why="dropped by your model change: it uses "
+                    + ", ".join(map(str, issue[DROPPED]))
+                    + ", which the current model no longer has",
+            ))
+            continue
+        why = (
+            f"the OCL converter rejected it ({issue.get('reason') or 'no reason recorded'}), "
+            "so it never reached the generated code"
+        )
+        if verdict is None:
+            why += "; nothing checked whether it was re-implemented"
+        else:
+            why += f"; recovery verdict '{verdict.get('status')}'"
+            if verdict.get("note"):
+                why += f" ({verdict['note']})"
+        unenforced.append(_item("ocl_constraint", label, what, why=why))
+
+    # 2. Requirements the spec states, with Phase 3's last verdict. An
+    #    "implemented" verdict has had its citation re-checked against the
+    #    delivered tree by verify_evidence; "unverified" means the check did
+    #    not conclude, NOT that the behaviour is absent.
+    for verdict in verdicts:
+        if id(verdict) in consumed:
+            continue
+        status = verdict.get("status")
+        ident = f"R{verdict.get('id')}"
+        what = str(verdict.get("text") or "")
+        note = str(verdict.get("note") or "")
+        if status == "implemented":
+            how = ("implementation cited and re-checked against the delivered "
+                   f"source: {render_evidence(verdict.get('evidence')) or 'no citation'}")
+            # api_verified: the API half ran, the screens did not; the note says which.
+            level = (str(verdict.get("verification_note") or "")
+                     if verdict.get("verification") in ("unverified", "api_verified") else "")
+            if level:
+                # Clip the citation, not the note: a bare "implemented" would read as checked.
+                how = f"{_clip(how, _MAX_HOW - len(_TRUNCATION_MARK) - len(level) - 2)}; {level}"
+            item = _item("requirement", ident, what, how=how)
+            verified.append(item)
+        elif status in ("missing", "partial"):
+            reason = ("the delivered code does not implement it" if status == "missing"
+                      else "the delivered code implements it only partly")
+            note = _CITATION_NOTE_RE.sub("", note).strip()
+            item = _item("requirement", ident, what, why=f"{reason}{f'; {note}' if note else ''}")
+            unenforced.append(item)
+        else:
+            # The judge's note argues about citations with the agent; the user needs the outcome.
+            item = _item("requirement", ident, what, why=_UNCONFIRMED)
+            not_verified.append(item)
+        if run_id:
+            item.traceRef = traced_requirement_id(run_id, verdict)
+
+    # 2b. An empty ledger is not a clean one: the request stated no rule to check.
+    if recipe.get("business_rules_stated") is False:
+        not_verified.append(_item("check", "", NO_RULES_STATED))
+
+    # 3. API workflows — the only evidence in the recipe that something was
+    #    actually RUN against the app rather than read.
+    for scenario in recipe.get("api_scenarios") or []:
+        if not isinstance(scenario, dict):
+            continue
+        report = scenario.get("report") or {}
+        requests = (scenario.get("scenario") or {}).get("requests") or []
+        ident = str(scenario.get("scenario_id") or "")
+        what = f"Test workflow '{ident}'"
+        ran = ", ".join(
+            f"{r.get('method', '?')} {r.get('path', '?')}"
+            for r in requests if isinstance(r, dict)
+        )
+        status = report.get("status")
+        if status == "passed":
+            verified.append(_item(
+                "api_workflow", ident, what,
+                how=f"{len(requests)} request(s) run against the app: {ran}",
+            ))
+        elif status == "failed":
+            not_verified.append(_item("api_workflow", ident, what, why=_WORKFLOW_FAILED))
+        else:
+            not_verified.append(_item("api_workflow", ident, what, why="it could not be run against the app"))
+    # Workflows the agent retired as replaced by another: not run at the end, so not evidence either way.
+    for retired in recipe.get("api_scenarios_retired") or []:
+        if isinstance(retired, dict):
+            ident = str(retired.get("scenario_id") or "")
+            not_verified.append(_item("api_workflow", ident, f"Test workflow '{ident}'",
+                                      why=f"the agent retired it: {retired.get('reason') or 'no reason given'}"))
+
+    # 3b. A run that judged its requirements but never ran the app has no
+    #     runtime evidence at all. Silence here reads as "it works".
+    if verdicts and not (recipe.get("api_scenarios") or []):
+        not_verified.append(_item(
+            "check", "", "runtime behaviour of the delivered app",
+            why="no API workflow was run against it, so nothing here shows the "
+                "app behaves as specified when it runs",
+        ))
+
+    # 4. Checks that were SKIPPED. A collector returning [] on a timeout is
+    #    indistinguishable from a clean result, so these must not read as
+    #    passes.
+    for issue in recipe.get("validation_issues") or []:
+        if not isinstance(issue, dict):
+            continue
+        message = str(issue.get("message") or "")
+        # The message is written for the agent; the report says it in the user's words.
+        skipped = _SKIPPED_CHECK_RE.match(message)
+        if skipped:
+            not_verified.append(_item(
+                "check", "", plain_check(skipped.group("check")),
+                why=f"the check did not run ({plain_reason(skipped.group('reason') or 'no reason recorded')}), "
+                    "so this result does not cover it",
+            ))
+        elif message.startswith(_UNCHECKED_PREFIXES):
+            not_verified.append(_item("check", "", user_sentence(message)))
+        elif message.startswith(_UNENFORCED_PREFIXES):
+            unenforced.append(_item("requirement", "", user_sentence(message)))
+
+    # 5. The requirements ledger can fail before producing a single verdict
+    #    (extraction failed, verification budget exhausted). Its finding then
+    #    lives only in validation_issues, and an empty requirements list would
+    #    otherwise read as "there was nothing to check".
+    if not verdicts:
+        for issue in recipe.get("validation_issues") or []:
+            message = str((issue or {}).get("message") or "")
+            if message.startswith(("requirement unverified:", "requirement:")):
+                not_verified.append(_item(
+                    "check", "", "original-specification coverage", why=user_sentence(message),
+                ))
+                break
+
+    return VerificationReport(
+        verified=_capped(verified),
+        notVerified=_capped(not_verified),
+        shippedUnenforced=_capped(unenforced),
+        counts=VerificationCounts(
+            verified=len(verified),
+            notVerified=len(not_verified),
+            shippedUnenforced=len(unenforced),
+        ),
+    )
+
+
+class _EmptyGenerationError(Exception):
+    """Raised when the orchestrator returned but produced no output files.
+
+    Not a user-facing error — mapped to the ``INTERNAL`` SSE code so
+    the client knows something is wrong on our side, distinct from an
+    upstream LLM failure (``UPSTREAM_LLM``) or an invalid key
+    (``INVALID_KEY``).
+    """
+
+
+# ---------------------------------------------------------------------
+# Registry of completed runs awaiting download
+# ---------------------------------------------------------------------
+
+
+@dataclass
+class SmartRunEntry:
+    """One entry in the download registry."""
+
+    file_path: str
+    file_name: str
+    is_zip: bool
+    temp_dir: str
+    created_at: float
+    # Set only by a MODIFY run whose instruction implied new domain
+    # entities: the run's project export with the active ClassDiagram's
+    # model replaced by the re-serialised, model-synced diagram. The push
+    # endpoint prefers this over the request's projectExport so the pushed
+    # buml/ stays in sync with the code. ``None`` for every other run.
+    updated_project_export: Optional[dict] = None
+
+
+class SmartRunRegistry:
+    """In-memory, TTL-bounded map of ``run_id → SmartRunEntry``.
+
+    The sibling ``GET /spec-driven/download/{run_id}`` endpoint reads entries
+    non-destructively (``get``) so a failed blob fetch can be retried.
+    Cleanup is owned by the periodic sweep started from the backend's
+    lifespan: a run's workspace goes after ``BESSER_LLM_DOWNLOAD_TTL_SECONDS``,
+    its entry and download after ``BESSER_LLM_ARCHIVE_TTL_SECONDS``.
+    """
+
+    def __init__(self) -> None:
+        self._entries: dict[str, SmartRunEntry] = {}
+        self._lock = asyncio.Lock()
+
+    async def put(self, run_id: str, entry: SmartRunEntry) -> None:
+        """Register ``entry``, keeping its file and manifest in the run's download dir.
+
+        The file is copied there unless it is already there (a packaged ZIP), so
+        the download no longer depends on the workspace the run's shell can
+        still change. When it cannot be kept the run is still registered (push
+        and modify read its workspace) but its download answers 404.
+        """
+        try:
+            # Copying the artifact (tens of MB) is blocking file IO: keep it off the event loop.
+            entry = await asyncio.to_thread(self._store_download, run_id, entry)
+        except OSError:
+            logger.warning("Run %s: its download could not be kept; /download will answer 404",
+                           run_id, exc_info=True)
+        async with self._lock:
+            self._entries[run_id] = entry
+
+    @staticmethod
+    def _store_download(run_id: str, entry: SmartRunEntry) -> SmartRunEntry:
+        download_dir = run_download_dir(entry.temp_dir)
+        os.makedirs(download_dir, exist_ok=True)
+        artifact = os.path.join(download_dir, _DOWNLOAD_ARTIFACT_NAME)
+        if os.path.abspath(entry.file_path) != os.path.abspath(artifact):
+            copy_plain_file(entry.file_path, artifact, root=entry.temp_dir, dst_root=download_dir)
+        write_atomic_plain(os.path.join(download_dir, _DOWNLOAD_MANIFEST_NAME), json.dumps({
+            "version": 2,
+            "runId": run_id,
+            "fileName": entry.file_name,
+            "isZip": entry.is_zip,
+            "createdAt": entry.created_at,
+        }, separators=(",", ":")), root=download_dir)
+        return dataclass_replace(entry, file_path=artifact)
+
+    async def restore_persisted(self) -> int:
+        """Rehydrate downloadable artifacts from the run root's download dirs."""
+        root = _run_workspace_root()
+        now = time.time()
+        restored: dict[str, SmartRunEntry] = {}
+        try:
+            names = os.listdir(root)
+        except OSError:
+            logger.warning("Could not scan run workspace root %s", root)
+            return 0
+
+        for name in names:
+            entry = self._entry_from_download_dir(root, name, now)
+            if entry is not None:
+                restored[entry[0]] = entry[1]
+
+        async with self._lock:
+            self._entries.update(restored)
+        if restored:
+            logger.info(
+                "SmartRunRegistry: restored %d persisted artifact(s)",
+                len(restored),
+            )
+        return len(restored)
+
+    def _entry_from_download_dir(
+        self,
+        root: str,
+        name: str,
+        now: float,
+    ) -> Optional[tuple[str, "SmartRunEntry"]]:
+        """Parse one ``<run dir>.download`` into a registry entry.
+
+        Shared by ``restore_persisted`` (boot-time sweep of everything) and
+        ``get`` (targeted lookup for a single run). Returns ``None`` for
+        anything unusable -- not a download dir, no manifest, expired, or a
+        manifest that does not agree with its directory name. A manifest in a
+        run workspace or its sandbox ``$HOME`` (where releases before this one
+        kept it, and where the run's shell can write one) is never read.
+
+        Pure disk IO: the caller takes the lock.
+        """
+        match = _DOWNLOAD_DIR_RE.fullmatch(name)
+        if match is None:
+            return None
+        download_dir = os.path.join(root, name)
+        manifest_path = os.path.join(download_dir, _DOWNLOAD_MANIFEST_NAME)
+        data = read_run_json(manifest_path, _MAX_DOWNLOAD_MANIFEST_BYTES)
+        run_id = match["run_id"]
+        if not isinstance(data, dict) or data.get("runId") != run_id:
+            return None
+        workspace = download_dir[: -len(_DOWNLOAD_DIR_SUFFIX)]
+        try:
+            created_at = float(data["createdAt"])
+            if _expire_run(workspace, max(0.0, now - created_at)):
+                return None
+            artifact = os.path.join(download_dir, _DOWNLOAD_ARTIFACT_NAME)
+            if not is_plain_file(artifact, root=download_dir):
+                return None
+            return run_id, SmartRunEntry(
+                file_path=artifact,
+                file_name=str(data["fileName"]),
+                is_zip=bool(data["isZip"]),
+                temp_dir=workspace,
+                created_at=created_at,
+            )
+        except (KeyError, TypeError, ValueError):
+            logger.warning("Ignoring invalid download metadata at %s", manifest_path, exc_info=True)
+            return None
+
+    async def pop(self, run_id: str) -> Optional[SmartRunEntry]:
+        async with self._lock:
+            return self._entries.pop(run_id, None)
+
+    async def get(self, run_id: str) -> Optional[SmartRunEntry]:
+        """Non-destructive lookup — the entry stays re-downloadable
+        until the TTL sweep removes it.
+
+        On a miss, rescan the shared workspace for this one run before giving
+        up. ``restore_persisted`` only runs at boot, and since generation moved
+        to its own container the process that WRITES a run is no longer the one
+        that serves push-to-github / import-github-run — so every worker run
+        lands after this process's one-shot scan and would otherwise 404.
+        """
+        async with self._lock:
+            entry = self._entries.get(run_id)
+        if entry is not None:
+            return entry
+
+        if not re.fullmatch(r"[a-f0-9]{32}", run_id or ""):
+            return None
+
+        # Targeted: only this run's download dirs, not a full sweep.
+        root = _run_workspace_root()
+        now = time.time()
+        prefix = f"{LLM_TEMP_DIR_PREFIX}{run_id}_"
+        try:
+            names = [n for n in os.listdir(root) if n.startswith(prefix)]
+        except OSError:
+            return None
+
+        for name in names:
+            found = self._entry_from_download_dir(root, name, now)
+            if found is None:
+                continue
+            found_id, found_entry = found
+            async with self._lock:
+                # Another coroutine may have rehydrated it meanwhile.
+                self._entries.setdefault(found_id, found_entry)
+                return self._entries.get(run_id)
+        return None
+
+    async def periodic_sweep(
+        self,
+        interval_seconds: int = _REGISTRY_SWEEP_INTERVAL_SECONDS,
+    ) -> None:
+        """Loop forever, sweeping expired entries every ``interval_seconds``.
+
+        Caller is expected to start this as an ``asyncio.Task`` in the
+        FastAPI lifespan and cancel it on shutdown.
+        """
+        while True:
+            try:
+                await asyncio.sleep(interval_seconds)
+            except asyncio.CancelledError:
+                raise
+
+            now = time.time()
+            workspace_ttl = get_settings().llm_download_ttl_seconds
+            aged: list[tuple[str, SmartRunEntry, float]] = []
+            async with self._lock:
+                for run_id, entry in list(self._entries.items()):
+                    # Clamp against backwards clock movements: if the
+                    # stored ``created_at`` is in the future (system
+                    # clock was adjusted after the entry was put), age
+                    # is treated as 0 rather than a negative value that
+                    # would let the entry live forever.
+                    age = max(0.0, now - entry.created_at)
+                    if age > workspace_ttl:
+                        aged.append((run_id, entry, age))
+
+            swept = 0
+            for run_id, entry, age in aged:
+                try:
+                    # Off the loop: a large workspace or a busy shell session
+                    # takes seconds to remove and would stall every stream.
+                    gone = await asyncio.to_thread(_expire_run, entry.temp_dir, age)
+                except Exception:
+                    logger.exception(
+                        "Failed to remove temp dir for expired run %s", run_id
+                    )
+                    continue
+                if gone:
+                    swept += 1
+                    async with self._lock:
+                        self._entries.pop(run_id, None)
+            if swept:
+                logger.info(
+                    "SmartRunRegistry: swept %d expired spec-driven run(s)",
+                    swept,
+                )
+
+
+# ---------------------------------------------------------------------
+# Crash-recovery helpers
+# ---------------------------------------------------------------------
+
+
+def _run_workspace_root() -> str:
+    root = get_settings().llm_run_workspace_root or tempfile.gettempdir()
+    os.makedirs(root, exist_ok=True)
+    return root
+
+
+def create_run_workspace(run_id: str) -> str:
+    """A fresh directory for ``run_id`` in the shared run workspace.
+
+    The name is the one ``SmartRunRegistry.get`` rescans for, so a run the
+    backend registers (a repo imported from GitHub) is found by the
+    Spec-Driven worker when it seeds a modify run from it, and vice versa.
+    """
+    return tempfile.mkdtemp(prefix=f"{LLM_TEMP_DIR_PREFIX}{run_id}_", dir=_run_workspace_root())
+
+
+def _locate_run_temp_dir(run_id: str) -> str | None:
+    """Locate a spec-driven temp directory by ``run_id``.
+
+    ``mkdtemp`` names temp dirs as ``{prefix}{run_id}_{suffix}`` so we
+    can recover them after a process restart by scanning the system
+    temp dir. Returns ``None`` when no matching directory exists — the
+    caller surfaces that as "no run to resume".
+
+    Only directories carrying a ``.besser_checkpoint.json`` are
+    considered valid resume candidates; a lingering temp dir from a
+    crashed mkdtemp-but-never-checkpointed run is ignored.
+    """
+    if not run_id:
+        return None
+    from besser.spec_driven_agent.state.checkpoint import CHECKPOINT_FILENAME
+
+    tempdir = _run_workspace_root()
+    prefix = f"{LLM_TEMP_DIR_PREFIX}{run_id}_"
+    try:
+        # A dot marks a sibling (``.sandbox-home``, ``.download``), never a
+        # workspace: mkdtemp names have none, and the run's shell writes the home.
+        candidates = [
+            entry for entry in os.listdir(tempdir)
+            if entry.startswith(prefix) and "." not in entry
+        ]
+    except OSError:
+        return None
+
+    for name in candidates:
+        full = os.path.join(tempdir, name)
+        if os.path.isdir(full) and os.path.isfile(
+            os.path.join(full, CHECKPOINT_FILENAME),
+        ):
+            return full
+    return None
+
+
+# ---------------------------------------------------------------------
+# Incremental modify: seed a new workspace from a previous run
+# ---------------------------------------------------------------------
+
+
+def _seed_workspace_from_base(base_dir: str, dest_dir: str) -> None:
+    """Copy a previous run's files into a fresh workspace for editing.
+
+    Copies ``base_dir`` into ``dest_dir`` (which already exists — the new
+    run's own ``mkdtemp``), skipping build / dependency directories so a
+    prior ``npm install`` / ``cargo build`` doesn't drag thousands of
+    files along. The base is left untouched so it stays downloadable.
+
+    Then strips the seed's crash-recovery internals — the copied
+    ``.besser_checkpoint.json`` and ``.besser_snapshot/`` belong to the
+    OLD run and would make ``modify()`` look resumable / mis-snapshotted —
+    while deliberately KEEPING ``.besser_recipe.json`` so the orchestrator
+    can replay the previous run's generator-file tags.
+    """
+    from besser.spec_driven_agent.state.checkpoint import CHECKPOINT_FILENAME
+
+    copytree_plain(base_dir, dest_dir, _EXCLUDED_OUTPUT_DIRS, dirs_exist_ok=True)
+
+    # Drop the copied checkpoint (old run's mid-flight state).
+    checkpoint = os.path.join(dest_dir, CHECKPOINT_FILENAME)
+    try:
+        if os.path.isfile(checkpoint):
+            os.remove(checkpoint)
+    except OSError:
+        logger.debug("Failed to strip seed checkpoint at %s", checkpoint, exc_info=True)
+
+    # Drop the copied snapshot dir (old run's pre-Phase-3 rollback point).
+    snapshot = os.path.join(dest_dir, ".besser_snapshot")
+    try:
+        if os.path.isdir(snapshot):
+            shutil.rmtree(snapshot, ignore_errors=True)
+    except OSError:
+        logger.debug("Failed to strip seed snapshot at %s", snapshot, exc_info=True)
+
+    # The old provenance file is not user code; packaging writes a fresh one.
+    with contextlib.suppress(OSError):
+        os.remove(os.path.join(dest_dir, PROVENANCE_FILENAME))
+    # Nor are the BESSER blocks of the README and AGENTS.md: the push renders them again.
+    try:
+        remove_readme_block(dest_dir)
+        remove_agents_block(dest_dir)
+    except OSError:
+        logger.warning("Could not strip the BESSER blocks from the seed in %s", dest_dir, exc_info=True)
+
+
+# ---------------------------------------------------------------------
+# Runner
+# ---------------------------------------------------------------------
+
+
+class SmartGenerationRunner:
+    """Drive one spec-driven generation run and yield SSE events."""
+
+    def __init__(
+        self,
+        request: SmartGenerateRequest,
+        *,
+        runtime: SpecDrivenRuntime,
+        run_id: Optional[str] = None,
+        resume_run_id: Optional[str] = None,
+        reserved_cancel_event: Optional[asyncio.Event] = None,
+        base_run_id: Optional[str] = None,
+        mode: str = "generate",
+    ) -> None:
+        self.request = request
+        # The app's registry and thread pool (``app.state.spec_driven``).
+        self._runtime = runtime
+        # Resuming a prior run reuses its run_id so the client can keep
+        # the same identifier across the crash. Fresh runs (including a
+        # modify run seeded from a previous run) get a new UUID.
+        # Either way the id is hex[32] so the path regex in the cancel /
+        # download / resume routes accepts it.
+        if run_id and resume_run_id and run_id != resume_run_id:
+            raise ValueError("run_id and resume_run_id must identify the same run")
+        self.run_id = resume_run_id or run_id or uuid.uuid4().hex
+        self._resume_run_id = resume_run_id
+        self._reserved_cancel_event = reserved_cancel_event
+        # Incremental modify. When ``mode == "modify"`` and
+        # ``base_run_id`` still resolves to a live registry entry, this
+        # run is SEEDED from that entry's files and edits them in place.
+        # ``_seeded`` is flipped True once the copy succeeds; if the base
+        # has expired we warn and fall back to a from-scratch ``run()``,
+        # so ``_seeded`` stays False and ``run_orchestrator`` picks the
+        # right entry point.
+        self._base_run_id = base_run_id
+        self._mode = mode
+        self._seeded = False
+        self.temp_dir: Optional[str] = None
+        self._started_at: Optional[float] = None
+        # ---- Study telemetry (run_summary) state ----
+        # The request model already sanitized these (invalid values are
+        # nulled, never rejected); a summary is recorded only when both
+        # labels survived AND the server master switch is on.
+        self._telemetry_session = getattr(request, "telemetry_session", None)
+        self._telemetry_participant = getattr(request, "telemetry_participant", None)
+        self._summary_recorded = False
+        self._t_orchestrator: Any = None
+        self._t_client: Any = None
+        self._t_done_payload: Optional[dict] = None
+        self._t_last_error_code: Optional[str] = None
+        self._t_model_requested: Optional[str] = None
+        self._t_model_switched_to: Optional[str] = None
+        # The model shown on the start event; the Agent Trace record's model_id.
+        self._llm_model: Optional[str] = None
+        # False once seeding the line attribution failed: the run then ships
+        # no Agent Trace record (a person's edits would read as the AI's).
+        self._attribution_ok = True
+        # The diagrams the run reads (model assembly) and how it ended, for its trace.
+        self._trace_diagrams: list = []
+        self._trace_status = ExecutionStatus.SUCCEEDED
+        self._t_blockers_found: Optional[int] = None
+        self._t_stream_aborted: Optional[str] = None
+        # Set once the run is packaged: what ``release_disk`` may clear.
+        self._packaged_workspace: Optional[str] = None
+        # What the run's recipe section and log lines report; see run_record.
+        self._facts = run_record.RunFacts(
+            mode=mode, base_run_id=base_run_id,
+            mode_reason=run_record.RESUMED if resume_run_id else run_record.FRESH,
+        )
+
+    async def generate_and_stream(
+        self,
+        http_request: Any | None = None,
+    ) -> AsyncGenerator[bytes, None]:
+        """Run the pipeline and yield SSE frames.
+
+        Thin wrapper around ``_generate_and_stream_impl``. When the request
+        carries valid study-telemetry labels and telemetry is enabled, the
+        terminal frames are observed as they stream by and exactly one
+        ``run_summary`` telemetry event is recorded once the stream ends —
+        for successful AND failed runs (failures are the friction data).
+        Recording is best-effort and can never affect the stream itself.
+        """
+        # aclosing: closing this stream closes the run, which stops its worker.
+        inner = contextlib.aclosing(self._generate_and_stream_impl(http_request=http_request))
+        if not self._is_study_run():
+            try:
+                async with inner as frames:
+                    async for frame in frames:
+                        yield frame
+            finally:
+                run_record.run_log.info(run_record.end_line(
+                    self.run_id, self._facts, usage=getattr(self._t_client, "usage", None)))
+            return
+        try:
+            async with inner as frames:
+                async for frame in frames:
+                    self._telemetry_observe_frame(frame)
+                    yield frame
+        except GeneratorExit:
+            # The consumer closed the stream (client disconnect) before a
+            # terminal frame was delivered.
+            self._t_stream_aborted = "DISCONNECTED"
+            raise
+        except BaseException:
+            self._t_stream_aborted = "STREAM_CRASH"
+            raise
+        finally:
+            run_record.run_log.info(run_record.end_line(
+                self.run_id, self._facts, usage=getattr(self._t_client, "usage", None)))
+            self._record_run_summary()
+
+    async def release_disk(self) -> None:
+        """Drop what a packaged run installed and built; called once its slot is free.
+
+        A run that kept its checkpoint loses them too (nothing in the editor
+        resumes a packaged run): its checkpoint records it, and a resume tells
+        the agent to install them again.
+        """
+        from besser.spec_driven_agent.state.checkpoint import mark_dependencies_removed
+
+        workspace = self._packaged_workspace
+        if not workspace:
+            return
+        try:
+            await self._runtime.run_blocking(drop_installed_dependencies, workspace)
+            await self._runtime.run_blocking(mark_dependencies_removed, workspace)
+        except OSError:
+            logger.warning("Run %s: its installed dependencies could not be removed", self.run_id, exc_info=True)
+
+    def _is_study_run(self) -> bool:
+        """True when this run is recorded for a research study: it carries
+        both study labels AND the server's collection switch is on."""
+        return bool(
+            self._telemetry_session
+            and self._telemetry_participant
+            and telemetry.telemetry_enabled()
+        )
+
+    def _requested_llm_model(self) -> Optional[str]:
+        """The model this run asks for, honouring a study session's default.
+
+        A study session (``?study=<label>``, or the older ``?pilot=``) should start on
+        ``BESSER_PILOT_LLM_MODEL``. The client cannot be relied on to send it
+        (the free tier is the no-popup default, so the request often carries
+        no ``llm_model``), so it is resolved here, server-side.
+
+        An explicit ``llm_model`` always wins.
+        """
+        if self.request.llm_model or self.request.provider != "free":
+            return self.request.llm_model
+        # A sanitized-non-null participant label IS the study signal: the
+        # validator nulls anything not matching the collection pattern.
+        if not self.request.telemetry_participant:
+            return self.request.llm_model
+        from besser.spec_driven_agent.providers.llm_client import free_pilot_model
+
+        return free_pilot_model() or self.request.llm_model
+
+    def _sse(self, event) -> bytes:
+        """``format_sse`` that also redacts this run's own key, whatever its shape.
+
+        Every frame passes here, so this is also where the run's facts see its
+        phases, the warnings the user was shown, and how it ended.
+        """
+        if isinstance(event, StartEvent):
+            run_record.run_log.info(run_record.start_line(
+                self.run_id, self._facts, provider=self.request.provider, model=event.llmModel,
+                generator=getattr(self.request, "target_generator_override", None)))
+        elif isinstance(event, PhaseEvent):
+            self._facts.saw_phase(event.phase)
+            if event.elapsedSeconds is None:  # yielded directly, not through the worker queue
+                event = event.model_copy(update=self._run_totals())
+        elif isinstance(event, ErrorEvent):
+            if event.code in _WARNING_CODES:
+                self._facts.saw_warning(event.message)
+            if event.code in ("COST_CAP", "TIMEOUT"):
+                self._facts.outcome = "budget_stop"
+            elif event.code == "CANCELLED":
+                self._facts.outcome = "cancelled"
+            elif event.code not in _WARNING_CODES:
+                self._facts.outcome = "failed"
+        return format_sse(event, secrets=(self.request.resolved_api_key(),))
+
+    def _run_totals(self) -> dict[str, Any]:
+        """The run's cost, turns and elapsed seconds so far, as the ``cost`` event reports them."""
+        usage = getattr(self._t_client, "usage", None)
+        try:
+            cost_usd = float(usage.estimated_cost) if usage is not None else 0.0
+        except Exception:
+            cost_usd = 0.0
+        return {
+            "usd": _user_facing_cost(usage, cost_usd) if usage is not None else 0.0,
+            "turns": getattr(self._t_orchestrator, "total_turns", 0) or 0,
+            "elapsedSeconds": round(time.monotonic() - (self._started_at or time.monotonic()), 2),
+        }
+
+    async def _generate_and_stream_impl(
+        self,
+        http_request: Any | None = None,
+    ) -> AsyncGenerator[bytes, None]:
+        """Run the pipeline and yield SSE frames.
+
+        The generator always emits at least a ``start`` event first so
+        the client can confirm the connection is live even if the run
+        fails immediately afterwards.
+
+        If ``http_request`` (a Starlette/FastAPI ``Request``) is provided
+        a watcher task polls ``is_disconnected()`` every second and
+        triggers cancellation when the client drops the connection —
+        otherwise the worker thread would keep calling the user's
+        provider until natural completion, burning their BYOK budget
+        after the browser tab is already closed.
+        """
+        loop = asyncio.get_running_loop()
+        self._started_at = time.monotonic()
+        if self.request.provider == "free":
+            # Free tier is pinned to the server's hosted model unless the request
+            # named another id the factory honors (the FALLBACK model, or an alt
+            # on the primary endpoint). Mirror the factory's decision in the same
+            # order, so the run card shows the model actually serving the run.
+            requested = self._requested_llm_model()
+            if is_free_fallback_choice(requested):
+                llm_model = (requested or "").strip()
+            else:
+                llm_model = (
+                    free_secondary_choice(requested)
+                    or free_alt_choice(requested)
+                    or free_tier_model()
+                    or "free"
+                )
+        elif self.request.provider == "sponsored":
+            from besser.spec_driven_agent.providers.llm_client import sponsored_tier_model
+            llm_model = self.request.llm_model or sponsored_tier_model() or "sponsored"
+        else:
+            llm_model = (
+                self.request.llm_model
+                or default_model(self.request.provider)
+                or load_model_catalog().default_model(self.request.provider)
+                or ""
+            )
+
+        self._llm_model = llm_model
+        # ---- 1. Emit start (no api_key anywhere in the payload) --------
+        yield self._sse(StartEvent(
+            runId=self.run_id,
+            provider=self.request.provider,
+            llmModel=llm_model,
+            maxCost=self.request.max_cost_usd,
+            maxRuntime=self.request.max_runtime_seconds,
+        ))
+
+        # ---- 1b. SSRF gate for the 'local' provider -------------------
+        # It sends a custom OpenAI-compatible base_url. Having the server
+        # open an arbitrary user URL is an SSRF surface on a shared box, so it
+        # is opt-in per deploy (local / on-prem set the flag). Fail fast
+        # with a clear, actionable message.
+        if self.request.base_url and not get_settings().llm_allow_custom_base_url:
+            yield self._sse(ErrorEvent(
+                code="BAD_REQUEST",
+                message=(
+                    "Custom LLM endpoints (local) are disabled on this "
+                    "deployment. Run the WME locally with "
+                    "BESSER_LLM_ALLOW_CUSTOM_BASE_URL=true "
+                    "to use your own gateway or model server."
+                ),
+            ))
+            return
+
+        # ---- 2. Create (or recover) the temp dir -----------------------
+        # When resuming, we reattach to the temp dir from the crashed run
+        # so the orchestrator sees its existing output + checkpoint. The
+        # caller is expected to have verified (via the resume endpoint)
+        # that the dir is still there; we double-check and surface a
+        # clear BAD_REQUEST if it isn't — the user should start fresh.
+        if self._resume_run_id:
+            existing = _locate_run_temp_dir(self._resume_run_id)
+            if existing is None:
+                yield self._sse(ErrorEvent(
+                    code="BAD_REQUEST",
+                    message=(
+                        "No recoverable workspace for this run_id — the "
+                        "crashed run's temp directory has been swept. "
+                        "Start a fresh run."
+                    ),
+                ))
+                return
+            self.temp_dir = existing
+        else:
+            # Every non-resume run allocates its OWN fresh workspace first.
+            # For a modify run that own workspace is then seeded from
+            # the base run's files — the base itself is never touched, so it
+            # stays downloadable.
+            try:
+                self.temp_dir = tempfile.mkdtemp(
+                    prefix=f"{LLM_TEMP_DIR_PREFIX}{self.run_id}_",
+                    dir=_run_workspace_root(),
+                )
+            except OSError as exc:
+                yield self._sse(ErrorEvent(
+                    code="INTERNAL",
+                    message="Failed to allocate a workspace for this run",
+                ))
+                logger.exception("mkdtemp failed for spec-driven generate run %s: %s", self.run_id, exc)
+                return
+
+            # ---- Incremental modify: seed from the base run --------
+            if self._mode == "modify" and self._base_run_id:
+                base_entry = await self._runtime.registry.get(self._base_run_id)
+                if (
+                    base_entry is None
+                    or not base_entry.temp_dir
+                    or not os.path.isdir(base_entry.temp_dir)
+                ):
+                    # Base-expired fallback: the previous run was swept past
+                    # its TTL (or never existed). Warn — non-terminally —
+                    # and fall through to a normal from-scratch run() so the
+                    # user still gets output instead of a hard failure.
+                    yield self._sse(ErrorEvent(
+                        code="INCOMPLETE",
+                        message=(
+                            "The previous generation has expired, so there is "
+                            "nothing to edit — rebuilding from scratch instead. "
+                            "Re-run to seed a fresh base for future edits."
+                        ),
+                    ))
+                    logger.info(
+                        "smart-modify base %s expired for run %s; "
+                        "falling back to from-scratch generation",
+                        self._base_run_id, self.run_id,
+                    )
+                    self._facts.mode, self._facts.mode_reason = "generate", run_record.BASE_EXPIRED
+                    # ``_seeded`` stays False → run_orchestrator uses run().
+                else:
+                    try:
+                        await self._runtime.run_blocking(
+                            _seed_workspace_from_base,
+                            base_entry.temp_dir,
+                            self.temp_dir,
+                        )
+                        self._seeded = True
+                        self._facts.mode_reason = run_record.EDIT
+                        # Lines that changed since the base run (a person
+                        # editing the pushed repo) are attributed to a human.
+                        self._attribution_ok = await self._runtime.run_blocking(
+                            agent_trace.seed_attribution,
+                            self.temp_dir,
+                            _EXCLUDED_OUTPUT_DIRS,
+                        )
+                        logger.info(
+                            "smart-modify run %s seeded from base %s",
+                            self.run_id, self._base_run_id,
+                        )
+                    except Exception:
+                        # A failed copy must not corrupt the run — warn and
+                        # continue from-scratch against the (now partially
+                        # populated) fresh temp dir. Clear it first so we
+                        # don't edit a half-copied tree.
+                        logger.exception(
+                            "Failed to seed workspace for smart-modify run %s "
+                            "from base %s; falling back to from-scratch",
+                            self.run_id, self._base_run_id,
+                        )
+                        self._reset_temp_dir_after_failed_seed()
+                        self._facts.mode, self._facts.mode_reason = "generate", run_record.BASE_NOT_COPIED
+                        yield self._sse(ErrorEvent(
+                            code="INCOMPLETE",
+                            message=(
+                                "Could not copy the previous generation — "
+                                "rebuilding from scratch instead."
+                            ),
+                        ))
+                        if self.temp_dir is None:
+                            yield self._sse(ErrorEvent(
+                                code="INTERNAL",
+                                message="Failed to allocate a workspace for this run",
+                            ))
+                            return
+
+        # ---- 3. Assemble BUML models from the project ------------------
+        try:
+            assembled = await self._runtime.run_blocking(
+                assemble_models_from_project,
+                self.request.project,
+                getattr(self.request, "primary_kind_override", None),
+            )
+        except (
+            ConversionError,
+            ValidationError,
+            ValueError,
+            PydanticValidationError,
+        ) as exc:
+            # All four map to "the user sent us a malformed project" and
+            # should surface as a 400-equivalent BAD_REQUEST event. We
+            # explicitly include pydantic.ValidationError so a malformed
+            # ProjectInput doesn't fall through to the INTERNAL branch.
+            yield self._sse(ErrorEvent(code="BAD_REQUEST", message=str(exc)))
+            self._cleanup_temp_dir()
+            return
+        except Exception:
+            logger.exception(
+                "Unexpected error while assembling models for spec-driven generate run %s",
+                self.run_id,
+            )
+            yield self._sse(ErrorEvent(
+                code="INTERNAL",
+                message="Internal server error",
+            ))
+            self._cleanup_temp_dir()
+            return
+
+        assembly_issues = getattr(assembled, "assembly_issues", []) or []
+        self._trace_diagrams = list(getattr(assembled, "diagrams", None) or [])
+        assembly_warnings = [
+            required_check_unverified(
+                "model assembly",
+                f"{issue['diagram_type']} [{issue['diagram_id']}]: {issue['diagnostic']}; "
+                "correct the project input and regenerate",
+            ) for issue in assembly_issues
+        ]
+        bound_target = getattr(self.request, "target_generator_override", None)
+        will_generate = not self._resume_run_id and not (self._mode == "modify" and self._seeded)
+        if bound_target and will_generate:
+            available_generators = get_available_generator_names(
+                has_domain_model=assembled.domain_model is not None,
+                has_gui_model=assembled.gui_model is not None,
+                has_agent_model=assembled.agent_model is not None,
+                has_state_machines=bool(assembled.state_machines),
+                has_quantum_circuit=assembled.quantum_circuit is not None,
+                has_object_model=assembled.object_model is not None,
+                has_bpmn_model=assembled.bpmn_model is not None,
+                has_nn_model=assembled.nn_model is not None,
+            )
+            if bound_target not in available_generators:
+                details = "; ".join(
+                    f"{item['diagram_type']} [{item['diagram_id']}]: {item['diagnostic']}"
+                    for item in assembly_issues[:5])
+                yield self._sse(ErrorEvent(
+                    code="BAD_REQUEST",
+                    message=(f"The selected generator {bound_target} requires a model that "
+                             "is missing or could not be converted. Correct the project input "
+                             "or choose a compatible generator before starting generation."
+                             + (f" Assembly losses: {details}" if details else "")),
+                ))
+                self._cleanup_temp_dir()
+                return
+
+        # A seeded modify/fix run skips Phase 1 (no generator selection) —
+        # it loads the previous app and edits it in place. Emitting
+        # "Selecting generator" there is untrue, so use truthful copy while
+        # keeping the valid "select" phase key. First-generation and
+        # base-expired fallback (_seeded is False → run() from scratch) keep
+        # "Selecting generator".
+        if self._mode == "modify" and self._seeded:
+            yield self._sse(PhaseEvent(phase="select", message="Loading your app"))
+        else:
+            yield self._sse(PhaseEvent(phase="select", message="Selecting generator"))
+        if assembly_issues:
+            yield self._sse(PhaseUpdateEvent(
+                phase="select", details=json.dumps(assembled.summary(), ensure_ascii=True),
+            ))
+            yield self._sse(ErrorEvent(
+                code="INCOMPLETE",
+                message=(f"{len(assembly_issues)} project diagram(s) could not be converted. "
+                         "Generation will preserve the usable models, but the result cannot "
+                         "be verified complete until those project inputs are corrected. "
+                         + assembly_warnings[0]),
+            ))
+
+        # ---- 4. Build the LLM client (may raise on invalid key) --------
+        try:
+            client = await self._runtime.run_blocking(
+                create_llm_client,
+                provider=self.request.provider,
+                api_key=self.request.resolved_api_key(),
+                model=self._requested_llm_model(),
+                base_url=self.request.base_url,
+            )
+        except ValueError as exc:
+            yield self._sse(ErrorEvent(code="INVALID_KEY", message=str(exc)))
+            self._cleanup_temp_dir()
+            return
+        except Exception as exc:
+            logger.exception("Failed to build LLM client: %s", exc)
+            yield self._sse(ErrorEvent(
+                code="INTERNAL",
+                message="Internal server error",
+            ))
+            self._cleanup_temp_dir()
+            return
+        self._t_client = client
+
+        # ---- 5. Build the orchestrator with thread-safe callbacks ------
+        # Bounded queue so a runaway orchestrator can't pile up events
+        # faster than the SSE consumer drains them. On full, events are
+        # dropped rather than blocking the worker thread — with a log
+        # line so we can detect the condition.
+        queue: asyncio.Queue[Optional[BaseSseEvent]] = asyncio.Queue(
+            maxsize=_EVENT_QUEUE_MAXSIZE,
+        )
+        # Flag — mutated from the worker thread inside ``on_progress``.
+        # Python assignments to dict entries are atomic with respect to
+        # the GIL, so we don't need a lock for a one-shot toggle.
+        phase_state: dict[str, bool] = {"customize_sent": False}
+        # The model the run is currently served by, seeded from the start
+        # event. Updated when the orchestrator reports a mid-run switch
+        # (``__model_switch__`` sentinel — the provider's outage fallback)
+        # so the ``model_update`` event can carry the previous name too.
+        model_state: dict[str, str] = {"current": llm_model}
+
+        def _put(event: BaseSseEvent) -> None:
+            if isinstance(event, PhaseEvent):
+                # Stamped as the phase starts, not when the consumer gets to it.
+                event = event.model_copy(update=self._run_totals())
+            try:
+                loop.call_soon_threadsafe(_put_in_loop, event)
+            except RuntimeError:
+                # Event loop is closed (e.g. client aborted). Drop
+                # silently — the consumer is already gone.
+                pass
+
+        def _put_in_loop(event: BaseSseEvent) -> None:
+            """Runs on the main event loop; safe to call put_nowait here."""
+            try:
+                queue.put_nowait(event)
+            except asyncio.QueueFull:
+                # Drop the oldest event and retry once. Losing a cost
+                # tick or a tool_call is fine; what matters is that
+                # the worker keeps making progress and the consumer
+                # doesn't see the queue stall.
+                try:
+                    queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    return
+                try:
+                    queue.put_nowait(event)
+                except asyncio.QueueFull:
+                    logger.warning(
+                        "spec-driven event queue full even after drop; "
+                        "event of type %s was dropped",
+                        type(event).__name__,
+                    )
+
+        # Text-flow state: each LLM turn is a separate message, and the
+        # model's next message starts with no whitespace ("...create the
+        # router:Now let me..."). Track when tool activity ended a turn's
+        # text so the next turn's first delta gets a paragraph break.
+        text_state: dict[str, bool] = {"emitted": False, "break_pending": False}
+
+        def on_text(delta: str) -> None:
+            if delta:
+                if text_state["break_pending"]:
+                    text_state["break_pending"] = False
+                    if not delta.startswith(("\n", " ")):
+                        delta = "\n\n" + delta
+                text_state["emitted"] = True
+            _put(TextDeltaEvent(delta=delta))
+
+        def on_phase_details(phase: str, details: str) -> None:
+            """Attach details (e.g. gap task list) to an existing phase row.
+
+            Currently only emitted for the gap phase by gap_analyzer
+            after the planning LLM call returns. The frontend renders
+            this behind a chevron on the spec-driven card.
+            """
+            if not details:
+                return
+            try:
+                _put(PhaseUpdateEvent(phase=phase, details=details))
+            except Exception:
+                logger.debug(
+                    "PhaseUpdateEvent emission failed (phase=%s)", phase, exc_info=True
+                )
+
+        def on_findings(attempt: int, issues: list, restored: bool = False) -> None:
+            """One Phase 3 validation round, for the run card's findings and repairs."""
+            # The done event's definition, so the last round and the run's blocker count agree.
+            blockers = [i.message for i in issues if is_completion_issue(i)]
+            _put(FindingsEvent(
+                attempt=attempt,
+                blockers=[_clip(m, _MAX_FINDING_CHARS) for m in blockers[:_MAX_FINDINGS_LISTED]],
+                blockerCount=len(blockers),
+                issueCount=len(issues),
+                restored=restored,
+            ))
+
+        def on_progress(turn: int, tool: str, status: str,
+                        detail: str | None = None) -> None:
+            # Any tool/phase activity ends the current turn's prose; the
+            # next text delta should open a new paragraph.
+            if text_state["emitted"]:
+                text_state["emitted"] = False
+                text_state["break_pending"] = True
+            if tool == "__model_switch__":
+                # The provider's outage fallback switched the run to a
+                # different model (sticky for the rest of the run).
+                # ``status`` carries the new model name. Surface it so
+                # the run card can update its header and show a note —
+                # without this, a run started on the primary model keeps
+                # displaying it even though every remaining turn is
+                # served by the fallback.
+                previous = model_state["current"]
+                model_state["current"] = status
+                _put(ModelUpdateEvent(
+                    model=status,
+                    previousModel=previous or None,
+                    reason=(
+                        "quota_exhausted"
+                        if getattr(client, "fallback_reason", None) == "quota_exhausted"
+                        else "primary_unavailable"
+                    ),
+                ))
+                return
+            if tool == "__validating__":
+                # Phase 3 started. Fix-loop tool calls belong to this row:
+                # never open a customize row after it (a run that skipped Phase 2).
+                phase_state["customize_sent"] = True
+                _put(PhaseEvent(phase="validate", message="Validating"))
+                return
+            if tool == "validation":
+                # The first check's result, on the row announced above.
+                self._note_validation_counts(status)
+                _put(PhaseUpdateEvent(phase="validate", details="", message=status))
+                return
+            if tool == "gap_analysis":
+                # Sentinel emitted by gap_analyzer.analyze_gaps_via_llm
+                # right before the planning LLM call. Surfaces the gap
+                # phase in the spec-driven card; without this the user
+                # sees a silent jump from `generate` to `customize`.
+                _put(PhaseEvent(phase="gap", message="Analysing gaps"))
+                return
+            if tool == "__customize_skipped__":
+                # The gap analyser judged the deterministic scaffold
+                # sufficient — Phase 2 was skipped entirely. Surface it
+                # so the run doesn't look like it silently dropped work.
+                _put(PhaseEvent(
+                    phase="customize",
+                    message=f"skipped — {status}" if status else "skipped",
+                ))
+                return
+            if turn == 0:
+                if tool == "__skipped__":
+                    # Phase 1 skipped — surface a clear reason on the
+                    # spec-driven card so users don't think the run jumped
+                    # straight to gap analysis by mistake.
+                    if status == "no_generator":
+                        msg = (
+                            "skipped — no deterministic generator for this "
+                            "stack; the LLM will scaffold from scratch"
+                        )
+                    elif status == "no_model":
+                        msg = (
+                            "skipped — no deterministic scaffold is available "
+                            "for the primary model"
+                        )
+                    else:
+                        msg = "skipped"
+                    _put(PhaseEvent(phase="generate", message=msg))
+                    return
+                if tool == "__metadata__":
+                    # Phase 0.5 wrote minimal build-config files for a
+                    # from-scratch stack. Without this branch the internal
+                    # sentinel leaked into the card as "running __metadata__".
+                    msg = (
+                        f"prepared starter build files — {status}"
+                        if status else "prepared starter build files"
+                    )
+                    _put(PhaseEvent(phase="generate", message=msg))
+                    return
+                if status.startswith("failed:"):
+                    # Generator failure — without this the card shows
+                    # "generating" forever and the user never learns the
+                    # run fell back to from-scratch LLM generation.
+                    _put(PhaseEvent(phase="generate", message=f"{tool} {status}"))
+                    return
+                _put(PhaseEvent(phase="generate", message=f"running {tool}"))
+                return
+            # turn >= 1 means we're inside the LLM customization loop.
+            # Emit the `customize` phase marker once, before the first
+            # tool_call, so the frontend can show the transition.
+            if not phase_state["customize_sent"]:
+                phase_state["customize_sent"] = True
+                _put(
+                    PhaseEvent(
+                        phase="customize",
+                        message="LLM customising generator output",
+                    )
+                )
+            _put(ToolCallEvent(turn=turn, tool=tool, status="executing",
+                               detail=detail or None))
+
+        # Register this run for cancellation NOW that we've cleared all
+        # the early-return paths (mkdtemp / model assembly / LLM client
+        # build). ``POST /spec-driven/cancel/{run_id}`` will set this
+        # event and the orchestrator will stop at the next turn boundary.
+        cancel_event = self._reserved_cancel_event
+        if cancel_event is None:
+            cancel_event = await self._runtime.active_runs.reserve(self.run_id)
+        if cancel_event is None:
+            yield self._sse(ErrorEvent(
+                code="BAD_REQUEST",
+                message=(
+                    "This spec-driven generation run is already active or being resumed."
+                ),
+            ))
+            return
+
+        # Bridge the asyncio.Event into a thread-safe boolean check the
+        # synchronous orchestrator can poll between turns.
+        def should_continue() -> bool:
+            return not cancel_event.is_set()
+
+        target_generator = getattr(
+            self.request, "target_generator_override", None
+        )
+        skip_deterministic_generator = getattr(
+            self.request, "skip_deterministic_generator", False
+        )
+        if self._mode == "modify" and not self._seeded:
+            # The approved incremental plan skipped Phase 1 because it expected
+            # a reusable workspace. If that base expired, rebuild with normal
+            # generator selection instead of forcing an unnecessarily costly
+            # LLM-only run.
+            skip_deterministic_generator = False
+
+        settings = get_settings()
+        orchestrator = LLMOrchestrator(
+            llm_client=client,
+            domain_model=assembled.domain_model,
+            gui_model=assembled.gui_model,
+            agent_model=assembled.agent_model,
+            agent_config=assembled.agent_config,
+            object_model=assembled.object_model,
+            state_machines=assembled.state_machines,
+            quantum_circuit=assembled.quantum_circuit,
+            bpmn_model=assembled.bpmn_model,
+            nn_model=assembled.nn_model,
+            assembly_issues=assembly_issues,
+            output_dir=self.temp_dir,
+            max_cost_usd=self.request.max_cost_usd,
+            max_runtime_seconds=self.request.max_runtime_seconds,
+            max_turns=self.request.max_turns,
+            on_progress=on_progress,
+            on_text=on_text,
+            on_phase_details=on_phase_details,
+            on_findings=on_findings,
+            use_streaming=True,
+            should_continue=should_continue,
+            # Carry through the assembled primary so the orchestrator
+            # doesn't re-detect it. ``assembled.primary_kind`` already
+            # honours the user's override (if any) courtesy of
+            # assemble_models_from_project.
+            primary_kind=assembled.primary_kind,
+            run_id=self.run_id,
+            # Honour the deploy-wide feature flags. The orchestrator
+            # defaults to both on; ops can disable per deploy via the
+            # BESSER_LLM_ENABLE_* env vars without a code change.
+            enable_tracing=settings.llm_enable_tracing,
+            enable_checkpointing=settings.llm_enable_checkpointing,
+            # Heavy per-project compilers (tsc / cargo / kotlinc) are
+            # opt-in for the web deployment — they were the main driver
+            # of the duration/cost regression on non-Python stacks.
+            enable_toolchain_validation=settings.llm_enable_toolchain_validation,
+            # Close the agent's feedback loop: when Phase 3 finds BLOCKER
+            # issues (syntax errors, broken Dockerfile refs, dep conflicts)
+            # run the bounded fix loop instead of shipping the broken app
+            # as a green success. Bounded 3x5 turns with snapshot/rollback;
+            # honours the run's cancel/cost/runtime budget per fix turn.
+            auto_fix_issues=settings.llm_enable_auto_fix,
+            # Disable the arbitrary-shell tools by default — they are
+            # user-steerable RCE / secret-exfil on a shared BYOK host. OFF by
+            # default (BESSER_LLM_ENABLE_SHELL_TOOLS). The agent keeps every
+            # static tool; only arbitrary `run_command`/`install_dependencies`
+            # are withheld.
+            allow_shell_tools=settings.llm_enable_shell_tools,
+            per_write_diagnostics=settings.llm_per_write_diagnostics,
+            enable_import_smoke_check=settings.llm_enable_import_smoke_check,
+            enable_requirements_ledger=settings.llm_enable_requirements_ledger,
+            # The modeling assistant's requirements, when the editor sent
+            # them: the ledger is built from them instead of extracted again.
+            stated_requirements=(
+                [item.model_dump(mode="json") for item in self.request.requirements]
+                if self.request.requirements is not None else None
+            ),
+            # Binding generator choice from an approved preview plan. A
+            # bound None explicitly skips Phase 1; an unbound None auto-selects.
+            target_generator=target_generator,
+            target_generator_bound=(
+                target_generator is not None or skip_deterministic_generator
+            ),
+            # The run's original project export (ProjectInput → JSON-safe
+            # dict). Used ONLY by modify()'s model-sync step to slot an
+            # updated ClassDiagram into the push export; ignored by
+            # run()/resume(). model_dump(mode="json") keeps datetimes as
+            # ISO strings so the push can re-validate it as a ProjectInput.
+            source_project_export=self._source_project_export_dict(),
+            previous_domain_model=self._previous_domain_model(),
+        )
+        self._t_orchestrator = orchestrator
+
+        # ---- 6. Spawn the worker + the cost emitter --------------------
+        async def cost_emitter() -> None:
+            while True:
+                try:
+                    await asyncio.sleep(get_settings().llm_cost_emitter_interval_seconds)
+                except asyncio.CancelledError:
+                    raise
+                try:
+                    queue.put_nowait(CostEvent(
+                        **self._run_totals(),
+                        servedModel=getattr(client.usage, "served_model", None),
+                    ))
+                except Exception:
+                    pass
+
+        async def run_orchestrator() -> str:
+            try:
+                if self._resume_run_id:
+                    return await self._runtime.run_blocking(
+                        orchestrator.resume, self.request.instructions
+                    )
+                if self._mode == "modify" and self._seeded:
+                    # Seeded modify: edit the copied files in place.
+                    # (A base-expired / failed-seed fallback left _seeded
+                    # False and drops through to the from-scratch run().)
+                    return await self._runtime.run_blocking(
+                        orchestrator.modify, self.request.instructions
+                    )
+                return await self._runtime.run_blocking(
+                    orchestrator.run, self.request.instructions
+                )
+            finally:
+                # Sentinel: tells the drain loop to stop waiting for
+                # events. If this ever fails, log loudly — the drain
+                # loop would otherwise hang until the worker_task
+                # completion race path fires, which is less deterministic.
+                try:
+                    queue.put_nowait(None)
+                except asyncio.QueueFull:
+                    # Clear one slot and retry; a single slot is always
+                    # enough for the sentinel even if everything else
+                    # is queued up.
+                    try:
+                        queue.get_nowait()
+                        queue.put_nowait(None)
+                    except Exception:
+                        logger.error(
+                            "Failed to enqueue spec-driven sentinel; "
+                            "drain loop will fall back to worker-done race path"
+                        )
+                except Exception:
+                    logger.exception(
+                        "Unexpected error enqueueing spec-driven sentinel"
+                    )
+
+        emitter_task = asyncio.create_task(cost_emitter(), name="spec-driven-cost-emitter")
+        worker_task = asyncio.create_task(run_orchestrator(), name="spec-driven-worker")
+
+        # Watch for client disconnect. When the browser closes the SSE
+        # stream we flip the cancel_event so the orchestrator stops at
+        # its next turn boundary instead of silently burning the user's
+        # LLM budget. Polling at 1Hz is well under the cost of a single
+        # LLM turn so we don't waste visible wallclock time.
+        async def disconnect_watcher() -> None:
+            if http_request is None:
+                return
+            try:
+                while not cancel_event.is_set():
+                    try:
+                        disconnected = await http_request.is_disconnected()
+                    except Exception:
+                        # If the transport is in a weird state, stop
+                        # watching rather than spamming exceptions.
+                        return
+                    if disconnected:
+                        logger.info(
+                            "spec-driven client disconnected, cancelling run %s",
+                            self.run_id,
+                        )
+                        cancel_event.set()
+                        return
+                    await asyncio.sleep(1.0)
+            except asyncio.CancelledError:
+                raise
+
+        disconnect_task = asyncio.create_task(
+            disconnect_watcher(), name="spec-driven-disconnect-watcher",
+        )
+
+        # Hard runtime watchdog. The orchestrator checks its runtime cap
+        # only at turn boundaries, so a hung provider call (bounded by
+        # the SDK timeout but still minutes) or a runaway Phase 3 could
+        # exceed the cap by a lot. After max_runtime + grace, flip the
+        # cancel event so the worker stops at the next opportunity; the
+        # terminal event is reported as TIMEOUT, not CANCELLED.
+        watchdog_fired = {"value": False}
+
+        async def runtime_watchdog() -> None:
+            # Poll rather than a single sleep so we honour the orchestrator's
+            # ADAPTED runtime cap: _apply_adaptive_budget() raises
+            # ``orchestrator.max_runtime_seconds`` for from-scratch runs AFTER
+            # Phase 1, which is after this task starts. Reading the request cap
+            # up-front (the old behaviour) would kill a legitimately-longer
+            # from-scratch run at the original limit. Fall back to the request
+            # cap until/unless the orchestrator raises its own.
+            grace_seconds = get_settings().llm_watchdog_grace_seconds
+            try:
+                while True:
+                    await asyncio.sleep(min(10.0, grace_seconds))
+                    if cancel_event.is_set():
+                        return
+                    effective_cap = getattr(
+                        orchestrator, "max_runtime_seconds",
+                        self.request.max_runtime_seconds,
+                    )
+                    elapsed = time.monotonic() - (self._started_at or time.monotonic())
+                    if elapsed > effective_cap + grace_seconds:
+                        break
+            except asyncio.CancelledError:
+                raise
+            if not cancel_event.is_set():
+                effective_cap = getattr(
+                    orchestrator, "max_runtime_seconds",
+                    self.request.max_runtime_seconds,
+                )
+                logger.warning(
+                    "spec-driven watchdog fired for run %s (cap %ds + %ds grace)",
+                    self.run_id,
+                    effective_cap,
+                    grace_seconds,
+                )
+                watchdog_fired["value"] = True
+                cancel_event.set()
+
+        watchdog_task = asyncio.create_task(
+            runtime_watchdog(), name="spec-driven-runtime-watchdog",
+        )
+
+        # ---- 7. Drain the queue, yielding events ----------------------
+        worker_exception: Optional[BaseException] = None
+        result_path: Optional[str] = None
+        aborted = False
+
+        try:
+            while True:
+                get_task = asyncio.create_task(queue.get())
+                try:
+                    done, _pending = await asyncio.wait(
+                        {get_task, worker_task},
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                except asyncio.CancelledError:
+                    get_task.cancel()
+                    raise
+
+                if get_task in done:
+                    event = get_task.result()
+                    if event is None:
+                        # Sentinel: worker put it after finishing.
+                        break
+                    yield self._sse(event)
+                else:
+                    # Worker finished (or crashed) without a sentinel.
+                    # Cancel the pending get_task; suppress only the
+                    # expected CancelledError, not every exception.
+                    get_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await get_task
+                    break
+
+            # ---- 8. Collect worker result or exception -----------------
+            # Specific (typed) exceptions first, then the built-in
+            # fallbacks for legacy raise sites. Order matters: the typed
+            # classes subclass ValueError/RuntimeError.
+            try:
+                result_path = await worker_task
+            except (CheckpointMismatchError, EmptyInstructionsError) as exc:
+                worker_exception = exc
+                yield self._sse(ErrorEvent(code="BAD_REQUEST", message=str(exc)))
+            except FileNotFoundError as exc:
+                # resume() with no checkpoint on disk.
+                worker_exception = exc
+                yield self._sse(ErrorEvent(code="BAD_REQUEST", message=str(exc)))
+            except InvalidApiKeyError as exc:
+                worker_exception = exc
+                yield self._sse(ErrorEvent(code="INVALID_KEY", message=str(exc)))
+            except (UpstreamLLMError, RuntimeError) as exc:  # incl. legacy raises
+                # A provider failure after files were written must not delete
+                # the paid-for workspace: package it as INCOMPLETE instead.
+                if _dir_has_user_output(self.temp_dir):
+                    result_path = self.temp_dir
+                    self._facts.late_error = run_record.PROVIDER_ERROR
+                    self._late_internal_error = (
+                        f"The model provider failed after generating files "
+                        f"({str(exc)[:300]}), so the output may be incomplete."
+                    )
+                else:
+                    worker_exception = exc
+                    yield self._sse(ErrorEvent(code="UPSTREAM_LLM", message=str(exc)))
+            except Exception as exc:
+                logger.exception(
+                    "Unexpected error in spec-driven worker %s", self.run_id
+                )
+                # A late internal error must not discard output the run already
+                # produced — surface the (partial) app as an INCOMPLETE result
+                # instead of a hard failure, so the user gets something usable.
+                # Only when files were actually written; otherwise fail as before.
+                if _dir_has_user_output(self.temp_dir):
+                    result_path = self.temp_dir
+                    self._facts.late_error = run_record.INTERNAL_ERROR
+                    self._late_internal_error = (
+                        "The run hit an internal error after generating files, "
+                        "so the output may be incomplete."
+                    )
+                else:
+                    worker_exception = exc
+                    yield self._sse(ErrorEvent(
+                        code="INTERNAL",
+                        message="Internal server error",
+                    ))
+        except BaseException:
+            # The stream was closed (GeneratorExit), cancelled or crashed:
+            # yielding now would swallow that or raise "ignored GeneratorExit".
+            aborted = True
+            raise
+        finally:
+            for helper in (emitter_task, disconnect_task, watchdog_task):
+                await _stop_helper_task(helper, self.run_id)
+
+            if not worker_task.done():
+                # The stream ended before the worker did: stop it and wait, so
+                # the run id and the slot are freed only once it has stopped.
+                logger.warning("Run %s: stream ended before its worker; cancelling the worker", self.run_id)
+                cancel_event.set()
+                await asyncio.wait({worker_task})
+            if aborted and not worker_task.cancelled() and worker_task.exception() is not None:
+                logger.warning("Run %s: worker failed after its stream ended: %r",
+                               self.run_id, worker_task.exception())
+
+            # A caller-supplied reservation is owned by the durable stream
+            # adapter, which releases it only after packaging and the terminal
+            # event have finished.  A directly-consumed runner still owns and
+            # releases the reservation it created itself.
+            if self._reserved_cancel_event is None:
+                await self._runtime.active_runs.release(self.run_id, cancel_event)
+
+            # Drain any events the emitter enqueued between the sentinel
+            # being put and the task being cancelled. These are cost
+            # ticks — not critical — but missing them can make the
+            # final `cost` event stale by up to the emitter interval.
+            while not aborted:
+                try:
+                    leftover = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                if leftover is None:
+                    continue
+                yield self._sse(leftover)
+
+            # Terminal events are mutually exclusive: CANCELLED (or
+            # TIMEOUT when the watchdog fired) is emitted ONLY when the
+            # cancellation actually interrupted the run. A run cancelled
+            # at the very end that still produced output falls through
+            # to the normal `done` path below — emitting both signals
+            # contradicted the documented contract (CANCELLED is
+            # terminal) and confused clients.
+            if not aborted and cancel_event.is_set() and (worker_exception is not None or not result_path):
+                if watchdog_fired["value"]:
+                    yield self._sse(ErrorEvent(
+                        code="TIMEOUT",
+                        message=(
+                            "Runtime cap exceeded — the run was stopped by "
+                            "the server watchdog before completing."
+                        ),
+                    ))
+                else:
+                    yield self._sse(ErrorEvent(
+                        code="CANCELLED",
+                        message="Spec-driven generation cancelled by user request",
+                    ))
+
+        # ---- 9. Surface cost / runtime cap warnings -------------------
+        if worker_exception is None and result_path:
+            elapsed = time.monotonic() - (self._started_at or time.monotonic())
+            try:
+                final_cost = float(client.usage.estimated_cost)
+            except Exception:
+                final_cost = 0.0
+            # Capture the end-of-run token total for the DoneEvent (shown on the
+            # card as "N tokens used" — the LLM counterpart to a deterministic
+            # run's "0 tokens").
+            try:
+                self._final_tokens = int(client.usage.total_tokens)
+            except Exception:
+                self._final_tokens = 0
+
+            # Persist the run trace to a host-mounted dir (best-effort) so
+            # the per-turn detail survives the temp-workspace sweep on
+            # container recreate, so a later "what did this fix run actually
+            # do" stays answerable. No-op unless BESSER_INCIDENT_LOG_DIR is
+            # set, or this is a study run and BESSER_TELEMETRY_DIR is.
+            try:
+                from besser.spec_driven_agent.state.tracing import TRACE_FILENAME
+                from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
+                    incidents,
+                )
+                incidents.persist_run_trace(
+                    self.run_id, os.path.join(result_path, TRACE_FILENAME),
+                    study_run=self._is_study_run(),
+                )
+            except Exception:
+                logger.debug(
+                    "Trace persistence failed for run %s", self.run_id, exc_info=True,
+                )
+
+            # Emit a final cost snapshot so the client always sees the
+            # exact end-of-run usage, not the last periodic tick.
+            yield self._sse(
+                CostEvent(
+                    usd=_user_facing_cost(client.usage, final_cost),
+                    turns=getattr(orchestrator, "total_turns", 0),
+                    elapsedSeconds=round(elapsed, 2),
+                    servedModel=getattr(client.usage, "served_model", None),
+                )
+            )
+
+            # Compare against the orchestrator's EFFECTIVE caps, which
+            # _apply_adaptive_budget() may have raised for from-scratch runs.
+            # Using the original request caps would emit a spurious
+            # COST_CAP/TIMEOUT warning on a run that completed cleanly within
+            # its (adapted) budget.
+            effective_cost_cap = getattr(
+                orchestrator, "max_cost_usd", self.request.max_cost_usd
+            )
+            effective_runtime_cap = getattr(
+                orchestrator, "max_runtime_seconds", self.request.max_runtime_seconds
+            )
+            # Measured on the runner's TOTAL elapsed/spend (Phase 1+2+3+
+            # packaging), not Phase 2 alone, and it must feed the `incomplete`
+            # verdict below: a run whose Phase 2 finished cleanly but whose wall
+            # clock blew the cap must not report `incomplete: False` while this
+            # block tells the user "Output may be incomplete".
+            _cap_breach: Optional[str] = None
+            if final_cost > effective_cost_cap:
+                if getattr(client.usage, "billed_to_user", True):
+                    _cap_breach = (
+                        f"The run reached its cost cap (${final_cost:.4f} > "
+                        f"${effective_cost_cap}) and was stopped before it finished."
+                    )
+                    cap_message = (
+                        f"Cost cap reached (${final_cost:.4f} > "
+                        f"${effective_cost_cap}). "
+                        "Output may be incomplete."
+                    )
+                else:
+                    _cap_breach = (
+                        "The run reached the free tier's per-run usage limit "
+                        "and was stopped before it finished."
+                    )
+                    cap_message = (
+                        "Free tier per-run usage limit reached. "
+                        "Output may be incomplete."
+                    )
+                yield self._sse(ErrorEvent(code="COST_CAP", message=cap_message))
+            if elapsed > effective_runtime_cap:
+                _cap_breach = (
+                    f"The run reached its {effective_runtime_cap}s time cap "
+                    f"(took {elapsed:.0f}s) and was stopped before it finished."
+                )
+                yield self._sse(ErrorEvent(
+                    code="TIMEOUT",
+                    message=(
+                        f"Runtime cap reached ({elapsed:.1f}s > "
+                        f"{effective_runtime_cap}s). "
+                        "Output may be incomplete."
+                    ),
+                ))
+
+            # ---- 9b. Honest "incomplete" signal -----------------------
+            # The orchestrator returns its output dir even when Phase 2
+            # was cut short (a provider rate-limit, the turn cap, a late
+            # cancellation). Without this the run would be reported as an
+            # unqualified success even though requested changes never ran.
+            stop_reason = getattr(orchestrator, "_phase2_stop_reason", "completed")
+            # ``validation_required`` is the normal handoff into Phase 3 and
+            # counts as a clean exit, as it does in the orchestrator.
+            exited_cleanly = (
+                bool(getattr(orchestrator, "_phase2_exited_cleanly", True))
+                or stop_reason == "validation_required"
+            )
+
+            # Blockers include unresolved requirement and verification issues,
+            # not only compile/startup failures.
+            _unfixed_blockers = [
+                getattr(i, "message", str(i))
+                for i in (getattr(orchestrator, "_validation_issues", None) or [])
+                if is_completion_issue(i)
+            ]
+            # Assembly warnings count even if the orchestrator dropped them.
+            _unfixed_blockers = list(dict.fromkeys(_unfixed_blockers + assembly_warnings))
+
+            _late_err = getattr(self, "_late_internal_error", None)
+            # Set only on a fix/modify run whose reported failure could not be
+            # confirmed fixed (already a promoted blocker above); replaces the
+            # generic incomplete wording.
+            _fix_msg = getattr(orchestrator, "_fix_target_message", None)
+            # "Incomplete" means a known defect, not an unverified check:
+            # unverified findings stay in blockerCount but do not set the
+            # verdict. Assembly warnings carry the unverified prefix yet are a
+            # known loss (a diagram never reached the generator), so add them.
+            _real_defects = unresolved_defects(_unfixed_blockers) + assembly_warnings
+            incomplete = (
+                (not exited_cleanly)
+                or bool(_real_defects)
+                or bool(_late_err)
+                or bool(_cap_breach)
+            )
+            incomplete_reason_msg: Optional[str] = None
+            if incomplete and exited_cleanly and _unfixed_blockers:
+                if _fix_msg:
+                    # Reported failure not confirmed fixed: the persisting
+                    # finding may be structural (e.g. a create form still
+                    # not wired). Preserve the target-specific explanation.
+                    incomplete_reason_msg = _fix_msg
+                    yield self._sse(ErrorEvent(
+                        code="INCOMPLETE",
+                        message=(
+                            incomplete_reason_msg
+                            + " The downloaded output may not fully resolve it."
+                        ),
+                    ))
+                else:
+                    # Phase 2 finished cleanly, but Phase 3 left unfixed blockers.
+                    incomplete_reason_msg = (
+                        f"The app was generated, but {len(_unfixed_blockers)} unresolved "
+                        "implementation or verification issue(s) remain. "
+                        "The generated app is not verified complete. First: "
+                        + user_sentence(_unfixed_blockers[0])
+                    )
+                    yield self._sse(ErrorEvent(
+                        code="INCOMPLETE",
+                        message=(
+                            incomplete_reason_msg
+                            + " The download is available for inspection and further work."
+                        ),
+                    ))
+            if not exited_cleanly:
+                api_err = (getattr(orchestrator, "_phase2_api_error", "") or "")[:160]
+                reason_text = {
+                    "api_error": (
+                        "The customization loop was cut short by a provider error"
+                        + (f" ({api_err})" if api_err else "")
+                        + " before all requested changes were applied."
+                    ),
+                    "max_turns": (
+                        "The customization loop reached its step limit before "
+                        "finishing every requested change."
+                    ),
+                    "stuck_edit_loop": (
+                        "The customization loop stopped because repeated edits "
+                        "to the same file were not landing, so it could not "
+                        "finish every requested change."
+                    ),
+                    "validation_required": (
+                        "The customization loop handed off to validation before "
+                        "finishing every requested change."
+                    ),
+                    "cancelled": (
+                        "The run was cancelled before the customization loop finished."
+                    ),
+                    "cost_cap": (
+                        "The run hit its cost cap before finishing every requested change."
+                    ),
+                    "timeout": (
+                        "The run hit its runtime cap before finishing every requested change."
+                    ),
+                }
+                incomplete_reason_msg = reason_text.get(
+                    stop_reason, "The customization loop did not finish cleanly."
+                )
+                # cost_cap / timeout already emit their own dedicated warning
+                # above — avoid a duplicate. Warn here for the other reasons.
+                if stop_reason not in ("cost_cap", "timeout"):
+                    yield self._sse(ErrorEvent(
+                        code="INCOMPLETE",
+                        message=(
+                            incomplete_reason_msg
+                            + " The downloaded output may be incomplete; you can "
+                            "run the generation again to finish the remaining changes."
+                        ),
+                    ))
+
+            # A late internal error that still produced output (salvaged
+            # above) is surfaced as an incomplete result, not a hard failure.
+            if _cap_breach and incomplete_reason_msg is None:
+                # No ErrorEvent here: the COST_CAP / TIMEOUT frame above already
+                # told the client. This only supplies the reason the done event
+                # was previously missing.
+                incomplete_reason_msg = _cap_breach
+
+            if _late_err and incomplete_reason_msg is None:
+                incomplete_reason_msg = _late_err
+                yield self._sse(ErrorEvent(
+                    code="INCOMPLETE",
+                    message=_late_err + " You can run the generation again to continue.",
+                ))
+
+            self._trace_status = _run_status(exited_cleanly, stop_reason)
+            self._facts.stop(
+                stop_reason=stop_reason, cancelled=cancel_event.is_set(), cap_breach=bool(_cap_breach),
+                timed_out=elapsed > effective_runtime_cap, incomplete=incomplete,
+                blocker_count=len(_unfixed_blockers) if exited_cleanly else 0, cost=final_cost,
+            )
+
+            # ---- 10. Package the result and emit `done` ---------------
+            try:
+                done_event, entry = await self._runtime.run_blocking(
+                    self._package_result, result_path
+                )
+                done_event.incomplete = incomplete
+                done_event.incompleteReason = incomplete_reason_msg
+                done_event.cancelled = self._facts.stopped_by == run_record.CANCELLED
+                # Completed-with-blockers vs cut-short need different
+                # client framing: a run whose loop finished but left
+                # completion-blocking issues did NOT "stop early". Only set
+                # when the loop exited cleanly — a genuinely cut-short
+                # run keeps 0 so clients use their cut-short copy.
+                done_event.blockerCount = (
+                    len(_unfixed_blockers) if exited_cleanly else 0
+                )
+                # Best-effort authorship split (generator vs. LLM) over the
+                # final tree — the headline telemetry metric. Never blocks the
+                # done event.
+                try:
+                    done_event.fileSplit = self._compute_file_split(
+                        orchestrator, result_path
+                    )
+                except Exception:
+                    logger.debug(
+                        "File split computation failed for run %s",
+                        self.run_id, exc_info=True,
+                    )
+                # Carry any MODIFY model-sync delta so the GitHub push
+                # writes buml/ from the UPDATED model rather than the stale
+                # request export. None for generate/resume runs (and modify
+                # runs whose instruction implied no new domain entities).
+                entry.updated_project_export = getattr(
+                    orchestrator, "_updated_project_export", None
+                )
+                await self._runtime.registry.put(self.run_id, entry)
+                self._facts.archive_written = is_plain_file(
+                    os.path.join(run_download_dir(entry.temp_dir), _DOWNLOAD_ARTIFACT_NAME),
+                    root=run_download_dir(entry.temp_dir))
+                self._packaged_workspace = entry.temp_dir
+                yield self._sse(done_event)
+            except _EmptyGenerationError as exc:
+                # Raised inside _package_result when the orchestrator
+                # returned but produced zero user files. Surfaced with
+                # its real message (previously swallowed by the generic
+                # packaging branch below).
+                logger.error(
+                    "Spec-driven worker %s produced no output files", self.run_id
+                )
+                yield self._sse(ErrorEvent(code="INTERNAL", message=str(exc)))
+                self._cleanup_temp_dir()
+            except Exception:
+                logger.exception(
+                    "Failed to package spec-driven generate output for run %s", self.run_id
+                )
+                yield self._sse(ErrorEvent(
+                    code="INTERNAL",
+                    message="Failed to package generated output",
+                ))
+                self._cleanup_temp_dir()
+        else:
+            # Worker errored — temp dir is no longer useful.
+            self._cleanup_temp_dir()
+
+    # ------------------------------------------------------------------
+
+    def _package_result(self, result_path: str) -> tuple[DoneEvent, SmartRunEntry]:
+        """Walk the output dir, zip if needed, read the recipe.
+
+        Returns a tuple of ``(DoneEvent, SmartRunEntry)`` so the caller
+        can both yield the event downstream and register the entry in
+        the download registry.
+        """
+        if self.temp_dir is None:
+            raise RuntimeError("Runner has no temp_dir")
+
+        # What the app wrote while the agent test-ran it is not output. The
+        # orchestrator removes it before it writes the recipe; a run that
+        # ended without one still holds it, so remove it here as well.
+        runtime_files: dict = {}
+        remove_runtime_files = getattr(self._t_orchestrator, "remove_app_runtime_files", None)
+        if remove_runtime_files is not None:
+            try:
+                runtime_files = remove_runtime_files()
+            except Exception:
+                logger.exception("Removing the app's runtime files failed for run %s", self.run_id)
+
+        # Every line that differs from the scaffold (or from the seed) was
+        # written by the LLM; attribute it before the deterministic packaging
+        # steps below change anything.
+        attribution_ok = self._attribution_ok and self._reconcile_attribution(
+            result_path, agent_trace.ai_contributor(self._trace_model_id(), self.run_id),
+        )
+        self._attach_generator_model(result_path)
+
+        # An LLM-authored React frontend (the class-diagram path, where no GUI
+        # model means generate_web_app is never offered) ships without a vite
+        # config, so JSX compiles with the classic runtime and the page is
+        # blank on "React is not defined". Write the build configuration
+        # deterministically before anything leaves the workspace — the same
+        # tree feeds the download zip and the GitHub push.
+        try:
+            frontend_repairs = ensure_frontend_scaffold(result_path, app_name=self.request.project.name)
+            if frontend_repairs:
+                logger.info(
+                    "spec-driven run %s frontend scaffold repairs: %s",
+                    self.run_id, "; ".join(frontend_repairs),
+                )
+                if attribution_ok:
+                    attribution_ok = self._reconcile_attribution(
+                        result_path, agent_trace.generator_contributor(
+                            "frontend_scaffold_repair", get_besser_version()),
+                    )
+        except Exception:
+            logger.exception(
+                "Frontend scaffold repair failed for run %s", self.run_id
+            )
+
+        # The download is the primary deliverable and therefore a security
+        # boundary of its own. Scrub before collecting files so a populated
+        # .env is never registered as a single-file download or added to a zip.
+        scrub = scrub_secret_files(
+            result_path,
+            excluded_names=_EXCLUDED_OUTPUT_DIRS,
+            secrets=(self.request.resolved_api_key(),),
+        )
+        if scrub.findings:
+            logger.warning(
+                "spec-driven run %s scrubbed %d secret finding(s); removed=%s redacted=%s",
+                self.run_id,
+                scrub.findings,
+                list(scrub.removed_files),
+                list(scrub.redacted_files),
+            )
+
+        # This run's own record when its orchestrator wrote one; else the file, which is the
+        # base run's when this run failed before writing its own.
+        saved = getattr(self._t_orchestrator, "saved_recipe", None)
+        if isinstance(saved, dict):
+            recipe, rewritable = copy.deepcopy(saved), True
+        else:
+            recipe, rewritable = self._read_recipe(result_path)
+        recipe["secret_findings"] = scrub.findings
+        recipe.update(runtime_files)
+
+        # Agent Trace record (.agent-trace/<run id>.json): who wrote each line
+        # of the delivered files. Built after the scrub, so a redacted line
+        # is attributed to the redaction and the line numbers match the
+        # files that ship. Best-effort: never blocks the download.
+        ai_share = None
+        if attribution_ok:
+            ai_share = self._write_agent_trace(result_path, recipe)
+        if ai_share is None:
+            # No record: drop the state too, so a GitHub push or a modify
+            # seed never carries hashes taken before the scrub, or a state
+            # that misses someone's lines. The next run starts as "unknown".
+            agent_trace.discard_attribution(result_path)
+        try:
+            verification = build_verification_report(
+                recipe, self.run_id if self.request.traceabilityEnabled else None)
+        except Exception:
+            # Never block the download on the report. An empty report would
+            # read as "nothing to verify", so say the report itself failed.
+            logger.exception("Verification report failed for run %s", self.run_id)
+            verification = VerificationReport(notVerified=[VerificationItem(
+                kind="check", what="everything this run did",
+                why="the run's verification report could not be built",
+            )], counts=VerificationCounts(notVerified=1))
+        usage = getattr(self._t_client, "usage", None)
+        if callable(getattr(usage, "summary", None)):
+            # This run's spend: a run that failed before writing its recipe leaves the seeded base's here.
+            recipe["usage"] = usage.summary()
+        recipe["run"] = run_record.run_section(
+            self._facts, self._t_orchestrator, provider=self.request.provider,
+            models=[getattr(self._t_client, "model", None), getattr(usage, "served_model", None)],
+            request_chars=len(self.request.instructions),
+        )
+        redact_recipe_models(recipe, self.request.provider)
+        recipe["verification"] = verification.model_dump(mode="json")
+        recipe["besser_version"] = get_besser_version()
+        recipe_path = os.path.join(result_path, ".besser_recipe.json")
+        if rewritable and is_plain_file(recipe_path, root=result_path):
+            try:
+                write_atomic_plain(recipe_path, json.dumps(recipe, indent=2), root=result_path)
+            except OSError:
+                logger.debug("Could not persist secret finding count", exc_info=True)
+
+        # Rides in the zip and the GitHub push, but is not counted as a user
+        # file, so a single-file run still downloads as that one file.
+        provenance_path = write_generation_provenance(result_path, "spec_driven_agent", {
+            "base_generator": recipe.get("generator_used"),
+            "llm_model": recipe.get("llm_model"),
+        }, run_summary_markdown(recipe, verification, (self.request.resolved_api_key(),),
+                                readme=os.path.isfile(os.path.join(result_path, "README.md"))))
+
+        # The run's trace (a fragment of the project trace), from what the run
+        # persisted; built after the scrub and the attribution, like the Agent
+        # Trace record, and only when the project records traces (opt-in).
+        # Best-effort: never blocks the download.
+        trace = self._write_trace_model(result_path) if self.request.traceabilityEnabled else None
+
+        # Collect every user file. Skips internal artefacts
+        # (.besser_recipe.json etc.) AND build-output directories —
+        # cargo/npm runs during the customise or validate phases would
+        # otherwise put thousands of dependency files (target/,
+        # node_modules/) into the download zip. Symlinks are dropped, never
+        # read through (os.walk does not descend into linked dirs).
+        user_files: list[str] = []
+        trace_files: list[str] = []
+        for root, dirs, files in os.walk(result_path):
+            dirs[:] = [d for d in dirs if d not in _EXCLUDED_OUTPUT_DIRS]
+            if os.path.relpath(root, result_path) == ".":
+                # Agent Trace records ride in the zip (this run's and those
+                # of earlier runs on the same app) but are not user files.
+                trace_root = os.path.join(root, agent_trace.TRACE_DIRNAME)
+                if agent_trace.TRACE_DIRNAME in dirs and is_plain_entry(trace_root):
+                    trace_files = sorted(
+                        os.path.join(trace_root, name)
+                        for name in os.listdir(trace_root)
+                        if name.endswith(".json")
+                        and is_plain_entry(os.path.join(trace_root, name))
+                    )
+                dirs[:] = [d for d in dirs if d != agent_trace.TRACE_DIRNAME]
+            for name in files:
+                # The secret scrub skips these globs, so they must not ship.
+                if name.startswith(".besser_") or _is_excluded_output_file(name):
+                    continue
+                path = os.path.join(root, name)
+                if path != provenance_path and is_plain_entry(path):
+                    user_files.append(path)
+
+        if not user_files:
+            # Distinct from an LLM upstream failure — the orchestrator
+            # returned successfully but produced no files. Raise a
+            # ValueError so the caller maps it to INTERNAL (backend
+            # issue) rather than UPSTREAM_LLM (provider issue).
+            raise _EmptyGenerationError("Generation produced no output files")
+
+        if len(user_files) == 1:
+            single = user_files[0]
+            file_name = os.path.basename(single)
+            entry = SmartRunEntry(
+                file_path=single,
+                file_name=file_name,
+                is_zip=False,
+                temp_dir=self.temp_dir,
+                created_at=time.time(),
+            )
+        else:
+            zip_name = f"besser_smart_{self.run_id}.zip"
+            # Written straight to the download dir, outside the tree the run's shell can write.
+            download_dir = run_download_dir(self.temp_dir)
+            os.makedirs(download_dir, exist_ok=True)
+            zip_path = os.path.join(download_dir, _DOWNLOAD_ARTIFACT_NAME)
+            with open_plain_write(zip_path, "wb", root=download_dir) as handle, \
+                    zipfile.ZipFile(handle, "w", zipfile.ZIP_DEFLATED) as zf:
+                for path in user_files:
+                    _zip_plain_file(zf, path, os.path.relpath(path, result_path), result_path)
+                _zip_plain_file(zf, provenance_path, PROVENANCE_FILENAME, result_path)
+                trace_model_path = os.path.join(result_path, TRACE_MODEL_FILENAME)
+                if trace is not None and is_plain_entry(trace_model_path):
+                    _zip_plain_file(zf, trace_model_path, TRACE_MODEL_FILENAME, result_path)
+                for path in trace_files:
+                    _zip_plain_file(zf, path, os.path.relpath(path, result_path), result_path)
+                for name in CARRIED_RUN_FILES:
+                    path = os.path.join(result_path, name)
+                    if is_plain_entry(path) and os.path.isfile(path):
+                        _zip_plain_file(zf, path, name, result_path)
+            entry = SmartRunEntry(
+                file_path=zip_path,
+                file_name=zip_name,
+                is_zip=True,
+                temp_dir=self.temp_dir,
+                created_at=time.time(),
+            )
+
+        # Lightweight "what was generated" summary for the UI: file count and
+        # the top-level entries (the first path component of each user file,
+        # deduped) — e.g. app/, requirements.txt, Dockerfile. Capped at 12 so a
+        # deep tree can't bloat the event.
+        top_level = sorted({
+            os.path.relpath(p, result_path).replace(os.sep, "/").split("/", 1)[0]
+            for p in user_files
+        })[:12]
+
+        event = DoneEvent(
+            runId=self.run_id,
+            downloadUrl=f"/besser_api/spec-driven/download/{self.run_id}",
+            fileName=entry.file_name,
+            isZip=entry.is_zip,
+            recipe=recipe,
+            fileCount=len(user_files),
+            topLevel=top_level,
+            tokensUsed=int(getattr(self, "_final_tokens", 0) or 0),
+            verification=verification,
+            aiShare=ai_share,
+            trace=trace,
+            **run_changes(recipe),
+        )
+        return event, entry
+
+    def _write_trace_model(self, result_path: str) -> Optional[dict]:
+        """Build the run's trace, write it as ``TRACE_MODEL_FILENAME`` and return its JSON; None
+        (and no file, not even a seed's) when it cannot be built."""
+        path = os.path.join(result_path, TRACE_MODEL_FILENAME)
+        with contextlib.suppress(OSError):
+            os.remove(path)  # a seeded workspace holds the previous run's
+        try:
+            trace = build_run_trace_model(
+                result_path,
+                run_id=self.run_id,
+                models=self._trace_models(),
+                instructions=self.request.instructions,
+                provider=self.request.provider,
+                agent_version=get_besser_version(),
+                actor_name=getattr(self.request, "actorName", None),
+                status=self._trace_status,
+                excluded=_EXCLUDED_OUTPUT_DIRS,
+                max_stored_content_bytes=TRACE_MAX_STORED_CONTENT_BYTES,
+                max_total_content_bytes=TRACE_MAX_TOTAL_CONTENT_BYTES,
+            )
+            if trace is None:
+                return None
+            data, _findings = redact_data(trace_buml_to_json(trace), (self.request.resolved_api_key(),))
+            write_atomic_plain(path, json.dumps(data, ensure_ascii=False), root=result_path)
+            return data
+        except Exception:
+            logger.exception("The trace of run %s could not be built", self.run_id)
+            with contextlib.suppress(OSError):
+                os.remove(path)
+            return None
+
+    def _trace_models(self) -> list[RunModel]:
+        """The models the run read, as its trace records them (a diagram without an id cannot be
+        referenced, so it is left out)."""
+        models = []
+        for read in self._trace_diagrams:
+            if not read.diagram_id:
+                logger.warning("Run %s read a %s diagram without an id; its trace leaves it out",
+                               self.run_id, read.kind)
+                continue
+            try:
+                model = input_model(read.model, read.diagram_id, read.title or None)
+            except Exception:  # a model the trace cannot walk is still recorded by its diagram
+                model = InputModel(ElementRef(read.diagram_id, type(read.model).__name__,
+                                              read.title or read.diagram_id))
+            models.append(RunModel(read.kind, model))
+        return models
+
+    def _trace_model_id(self) -> Optional[str]:
+        """``provider/model`` of the model that served the run (after any switch)."""
+        model = self._t_model_switched_to or self._llm_model or self.request.llm_model
+        return agent_trace.normalize_model_id(self.request.provider, model)
+
+    def _reconcile_attribution(self, result_path: str, contributor: dict) -> bool:
+        """Attribute changed lines to ``contributor``; False if attribution failed."""
+        try:
+            agent_trace.reconcile_workspace(result_path, contributor, _EXCLUDED_OUTPUT_DIRS)
+            return True
+        except Exception:
+            logger.exception("Line attribution failed for run %s", self.run_id)
+            return False
+
+    def _write_agent_trace(self, result_path: str, recipe: dict) -> Optional[dict]:
+        """Write this run's Agent Trace record; returns the AI-written share."""
+        try:
+            state = agent_trace.reconcile_workspace(
+                result_path,
+                agent_trace.generator_contributor("secret_redaction", get_besser_version()),
+                _EXCLUDED_OUTPUT_DIRS,
+            )
+            record = agent_trace.build_trace_record(
+                result_path,
+                state,
+                run_id=self.run_id,
+                besser_version=get_besser_version(),
+                base_generator=recipe.get("generator_used"),
+                model_id=self._trace_model_id(),
+            )
+            path = agent_trace.write_trace_record(result_path, record, self.run_id)
+            share = agent_trace.ai_share(state, self.run_id)
+            by_kind = record["metadata"][agent_trace.METADATA_KEY]["lines"]
+            self._facts.lines = {"total": sum(by_kind.values()), **by_kind, "ai_this_run": share["aiLinesThisRun"]}
+            share["tracePath"] = os.path.relpath(path, result_path).replace(os.sep, "/")
+            return share
+        except Exception:
+            logger.exception("Agent Trace record failed for run %s", self.run_id)
+            return None
+
+    def _read_recipe(self, result_path: str) -> tuple[dict, bool]:
+        """The recipe on disk, and whether packaging may rewrite it.
+
+        A file that cannot be read is kept as it is, so the record it holds is
+        never replaced by the packaging annotations alone.
+        """
+        recipe_path = os.path.join(result_path, ".besser_recipe.json")
+        # Not a plain file (absent, or a link the model planted): never read through.
+        if not is_plain_file(recipe_path, root=result_path):
+            return {}, False
+        try:
+            size = os.path.getsize(recipe_path)
+        except OSError:
+            return {}, False
+        if size > MAX_RECIPE_BYTES:
+            logger.warning(
+                "Skipping .besser_recipe.json for run %s: size %d exceeds %d bytes; the file is kept unchanged",
+                self.run_id, size, MAX_RECIPE_BYTES,
+            )
+            return {"warning": f"it is {size} bytes, over the {MAX_RECIPE_BYTES}-byte limit"}, False
+        data = read_run_json(recipe_path, MAX_RECIPE_BYTES)
+        if isinstance(data, dict):
+            return data, True
+        logger.warning("Ignoring unreadable .besser_recipe.json for run %s; the file is kept unchanged", self.run_id)
+        return {"warning": "it is not a JSON object"}, False
+
+    def _reset_temp_dir_after_failed_seed(self) -> None:
+        """Wipe a partially-seeded temp dir and re-allocate a clean one.
+
+        On a copytree failure the fresh workspace may hold a half-copied
+        tree; editing that would be worse than starting over. Clear it and
+        re-``mkdtemp`` so the from-scratch fallback starts clean. Sets
+        ``self.temp_dir`` to None if re-allocation itself fails (the caller
+        then surfaces INTERNAL and returns).
+        """
+        old = self.temp_dir
+        if old and os.path.isdir(old):
+            _remove_run_dir(old)
+        try:
+            self.temp_dir = tempfile.mkdtemp(
+                prefix=f"{LLM_TEMP_DIR_PREFIX}{self.run_id}_",
+                dir=_run_workspace_root(),
+            )
+        except OSError:
+            logger.exception(
+                "Failed to re-allocate workspace after seed failure for run %s",
+                self.run_id,
+            )
+            self.temp_dir = None
+
+    def _attach_generator_model(self, result_path: str) -> None:
+        """Store the run's class diagram with the generator's stored output, so a later
+        modify run can rebuild its merge base after a BESSER upgrade (#659)."""
+        if not os.path.lexists(os.path.join(result_path, GENERATOR_OUTPUT_FILENAME)):
+            return
+        try:
+            updated = self._t_orchestrator._updated_project_export if self._t_orchestrator is not None else None
+            diagram = generation_class_diagram(self.request.project, updated)
+        except Exception:
+            logger.warning("Run %s: its class diagram was not stored with the generator output",
+                           self.run_id, exc_info=True)
+            return
+        if diagram is not None:
+            attach_model(result_path, diagram)
+
+    def _previous_domain_model(self) -> Optional[Any]:
+        """The model the seed's stored generator output came from (a seeded modify run), or None."""
+        if self._mode != "modify" or not self._seeded or self.temp_dir is None:
+            return None
+        # A resumed run locates its workspace from the request's run id: read only inside the run root.
+        root = os.path.realpath(_run_workspace_root())
+        workspace = os.path.realpath(self.temp_dir)
+        if not workspace.startswith(os.path.join(root, "")):
+            logger.warning("Run %s: its workspace is outside the run root, so the stored model is not read",
+                           self.run_id)
+            return None
+        diagram = stored_model(workspace)
+        if diagram is None:
+            return None
+        try:
+            return class_diagram_model(diagram)
+        except Exception:
+            logger.warning("Run %s: the class diagram stored with the generator output does not convert, "
+                           "so a BESSER upgrade cannot rebuild the merge base", self.run_id, exc_info=True)
+            return None
+
+    def _source_project_export_dict(self) -> Optional[dict]:
+        """JSON-safe dict of the request's project, for modify() model-sync.
+
+        Best-effort: a serialisation failure returns ``None`` (model-sync
+        simply won't be able to build an updated push export) rather than
+        breaking the run.
+        """
+        try:
+            return self.request.project.model_dump(mode="json")
+        except Exception:
+            logger.debug(
+                "Failed to serialise project export for model-sync; "
+                "modify() will skip the push-export update",
+                exc_info=True,
+            )
+            return None
+
+    # ------------------------------------------------------------------
+    # Study telemetry (run_summary)
+    # ------------------------------------------------------------------
+
+    def _compute_file_split(self, orchestrator: Any, result_path: str) -> dict:
+        """Three-way authorship split over the run's final output tree.
+
+        Sources of truth:
+
+        * ``orchestrator.executor._generator_files`` — workspace-relative
+          paths written by the deterministic Phase-1 generator. On a modify
+          run these are re-seeded from the previous run's
+          ``.besser_recipe.json`` tags, so the split stays meaningful for
+          incremental edits (with the caveat that the recipe tag is binary:
+          a file the LLM modified in an EARLIER run counts as
+          generator-untouched again unless this run touches it too).
+        * ``orchestrator.tool_calls_log`` — successful ``write_file`` /
+          ``modify_file`` calls mark the files the LLM edited THIS run.
+        """
+        executor = getattr(orchestrator, "executor", None)
+        generator_files = set(getattr(executor, "_generator_files", None) or ())
+        touched = telemetry.llm_touched_paths(
+            getattr(orchestrator, "tool_calls_log", None)
+        )
+        return telemetry.compute_file_split(
+            result_path, generator_files, touched, _EXCLUDED_OUTPUT_DIRS
+        )
+
+    def _note_validation_counts(self, status: str) -> None:
+        """Capture the initial Phase-3 blocker count for the run summary.
+
+        The orchestrator reports its first validation sweep through
+        ``on_progress("validation", "N blockers / M total")``; only the
+        first occurrence is kept — it is the "blockers found" number
+        before any auto-fix rounds ran.
+        """
+        if self._t_blockers_found is not None:
+            return
+        try:
+            match = re.search(r"(\d+)\s+blocker", status or "")
+            if match:
+                self._t_blockers_found = int(match.group(1))
+        except Exception:
+            logger.debug("Could not parse validation counts", exc_info=True)
+
+    def _telemetry_observe_frame(self, frame: bytes) -> None:
+        """Track the terminal-relevant SSE frames for the run summary."""
+        try:
+            header = frame.split(b"\n", 1)[0]
+            if header not in (
+                b"event: start", b"event: done",
+                b"event: error", b"event: model_update",
+            ):
+                return
+            data_line = next(
+                (ln for ln in frame.split(b"\n") if ln.startswith(b"data:")),
+                None,
+            )
+            if data_line is None:
+                return
+            payload = json.loads(data_line[5:].decode("utf-8"))
+            event = payload.get("event")
+            if event == "start":
+                self._t_model_requested = payload.get("llmModel")
+            elif event == "model_update":
+                self._t_model_switched_to = payload.get("model")
+            elif event == "done":
+                self._t_done_payload = payload
+            elif event == "error":
+                self._t_last_error_code = (
+                    payload.get("code") or self._t_last_error_code
+                )
+        except Exception:
+            logger.debug("Telemetry frame observation failed", exc_info=True)
+
+    def _record_run_summary(self) -> None:
+        """Record one ``run_summary`` telemetry event for this run.
+
+        Called exactly once when the SSE stream ends, for successful AND
+        failed runs. Best-effort throughout: any exception is swallowed
+        and logged at debug — telemetry can never affect a run.
+        """
+        if self._summary_recorded:
+            return
+        self._summary_recorded = True
+        try:
+            done = self._t_done_payload
+            if done is not None:
+                outcome = "incomplete" if done.get("incomplete") else "success"
+            elif self._t_last_error_code:
+                outcome = f"failed:{self._t_last_error_code}"
+            elif self._t_stream_aborted:
+                outcome = f"failed:{self._t_stream_aborted}"
+            else:
+                outcome = "failed:UNKNOWN"
+
+            orchestrator = self._t_orchestrator
+            client = self._t_client
+            elapsed = (
+                time.monotonic() - self._started_at
+                if self._started_at is not None else 0.0
+            )
+
+            tokens = 0
+            cost = 0.0
+            served_model = None
+            # Cache breakdown: `tokens` (total) re-counts the context we re-send
+            # each turn, so on a caching provider most of it is a cheap cache
+            # read, not fresh compute. Recording the split lets the report show
+            # the real cache hit rate instead of leaving the big total unexplained.
+            input_tokens = 0
+            output_tokens = 0
+            cache_read_tokens = 0
+            if client is not None:
+                usage = getattr(client, "usage", None)
+                try:
+                    tokens = int(usage.total_tokens)
+                except Exception:
+                    tokens = 0
+                try:
+                    cost = round(float(usage.estimated_cost), 4)
+                except Exception:
+                    cost = 0.0
+                try:
+                    input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
+                except Exception:
+                    input_tokens = 0
+                try:
+                    output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
+                except Exception:
+                    output_tokens = 0
+                try:
+                    cache_read_tokens = int(getattr(usage, "cache_read_tokens", 0) or 0)
+                except Exception:
+                    cache_read_tokens = 0
+                served_model = getattr(usage, "served_model", None)
+
+            model_requested = (
+                self._t_model_requested or self.request.llm_model or ""
+            )
+            model_final = (
+                self._t_model_switched_to or served_model or model_requested
+            )
+
+            turns = 0
+            blockers_remaining: Optional[int] = None
+            if orchestrator is not None:
+                turns = int(getattr(orchestrator, "total_turns", 0) or 0)
+                try:
+                    blockers_remaining = sum(
+                        1
+                        for issue in (
+                            getattr(orchestrator, "_validation_issues", None) or []
+                        )
+                        if getattr(issue, "severity", None) == "blocker"
+                    )
+                except Exception:
+                    blockers_remaining = None
+
+            # Prefer the split already computed for the done event (same
+            # walk, guaranteed consistent); recompute only when missing.
+            file_split = (done or {}).get("fileSplit")
+            if (
+                not isinstance(file_split, dict)
+                and done is not None
+                and orchestrator is not None
+                and self.temp_dir
+                and os.path.isdir(self.temp_dir)
+            ):
+                file_split = self._compute_file_split(orchestrator, self.temp_dir)
+            if not isinstance(file_split, dict):
+                file_split = telemetry.compute_file_split(
+                    "", None, None, _EXCLUDED_OUTPUT_DIRS
+                )
+
+            payload = {
+                "run_id": self.run_id,
+                "mode": "resume" if self._resume_run_id else self._mode,
+                "provider": self.request.provider,
+                "model_requested": model_requested,
+                "model_final": model_final,
+                "model_switched": bool(self._t_model_switched_to),
+                "duration_seconds": round(elapsed, 1),
+                "turns": turns,
+                "tokens": tokens,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "cache_read_tokens": cache_read_tokens,
+                "estimated_cost_usd": cost,
+                "files_produced": int((done or {}).get("fileCount") or 0),
+                "blockers_found": self._t_blockers_found,
+                "blockers_remaining": blockers_remaining,
+                "outcome": outcome,
+                "file_split": file_split,
+            }
+            telemetry.record_event(
+                self._telemetry_session,
+                self._telemetry_participant,
+                "run_summary",
+                payload,
+            )
+        except Exception:
+            logger.debug(
+                "Failed to record run summary telemetry for run %s",
+                self.run_id, exc_info=True,
+            )
+
+    def _cleanup_temp_dir(self) -> None:
+        """Delete this run's workspace after a failure, unless it can be resumed."""
+        if self._resume_run_id:
+            # The workspace is the interrupted attempt's: its files, checkpoint
+            # and download outlive a failed resume, so the user can retry with
+            # the right input. The 24 h temp cleanup removes it.
+            logger.warning("Run %s: resume failed; keeping its workspace for another resume", self.run_id)
+            self._drop_dependencies_of_kept_workspace()
+            return
+        from besser.spec_driven_agent.state.checkpoint import CHECKPOINT_FILENAME
+
+        if self.temp_dir and os.path.isfile(os.path.join(self.temp_dir, CHECKPOINT_FILENAME)):
+            # A checkpoint makes the run resumable, and an abandoned run has
+            # already told its client so (``resumeAvailable``).
+            logger.warning("Run %s failed after a checkpoint; keeping its workspace for resume", self.run_id)
+            self._drop_dependencies_of_kept_workspace()
+            return
+        if self.temp_dir and os.path.isdir(self.temp_dir):
+            try:
+                _remove_run_dir(self.temp_dir)
+            except Exception:
+                logger.exception(
+                    "Failed to clean up temp dir for run %s", self.run_id
+                )
+        self.temp_dir = None
+
+    def _drop_dependencies_of_kept_workspace(self) -> None:
+        """Keep a failed run's files for a resume, but not what it installed and built.
+
+        Failed runs are not in the registry, so ``release_disk`` never reaches them
+        and the 24 h temp cleanup is all that would remove them; a resume installs
+        the dependencies again (``mark_dependencies_removed``).
+        """
+        from besser.spec_driven_agent.state.checkpoint import mark_dependencies_removed
+
+        if not (self.temp_dir and os.path.isdir(self.temp_dir)):
+            return
+        try:
+            drop_installed_dependencies(self.temp_dir)
+            mark_dependencies_removed(self.temp_dir)
+        except OSError:
+            logger.warning("Run %s: its installed dependencies could not be removed", self.run_id, exc_info=True)

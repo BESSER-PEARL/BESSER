@@ -92,6 +92,21 @@ def test_safe_path_no_prefix_sibling_false_positive():
         assert os.path.realpath(sibling) not in result
 
 
+def test_routers_use_the_canonical_safe_path():
+    """Routers (and the generation service) must not carry their own (weaker) copy of ``safe_path``.
+
+    ``deployment_router`` used to define a local ``_safe_path`` whose
+    ``startswith`` containment check accepts sibling directories that share
+    a prefix with the base directory.
+    """
+    from besser.utilities.web_modeling_editor.backend.routers import deployment_router
+    from besser.utilities.web_modeling_editor.backend.services.generation import dispatch, downloads
+
+    assert deployment_router._safe_path is safe_path
+    assert dispatch._safe_path is safe_path
+    assert downloads._safe_path is safe_path
+
+
 # ---------------------------------------------------------------------------
 # sanitize_object_model_filename
 # ---------------------------------------------------------------------------
@@ -183,6 +198,21 @@ def test_normalize_user_model_output_silent_when_file_missing(tmp_path):
     normalize_user_model_output(object_model, str(tmp_path))
 
 
+def test_multiple_profiles_keep_names_and_criteria(tmp_path):
+    document = _sample_object_document()
+    document['objects'].append({
+        'id': 'u2', 'class': 'User', 'attributes': {'name': 'Bob', 'age': 65}, 'relationships': {},
+    })
+    (tmp_path / 'profile_demo.json').write_text(json.dumps(document), encoding='utf-8')
+    written = normalize_user_model_output(
+        SimpleNamespace(name='profile_demo'), str(tmp_path),
+        {'u2': {'age': '>='}}, {'u1': 'Alice', 'u2': 'Bob'},
+    )
+    assert set(written) == {'Alice.json', 'Bob.json'}
+    assert json.loads((tmp_path / 'Bob.json').read_text(encoding='utf-8'))['model']['age'] == '>= 65'
+    assert not (tmp_path / 'profile_demo.json').exists()
+
+
 # ---------------------------------------------------------------------------
 # generate_user_profile_document — orchestration smoke test
 # ---------------------------------------------------------------------------
@@ -248,11 +278,17 @@ def test_generate_user_profile_document_smoke_uses_user_profile_temp_prefix():
     assert isinstance(result, dict) and result, "expected a non-empty result dict"
     # The hierarchy normalization fired, so we should see "model" not "objects".
     assert "model" in result and "objects" not in result
-    # Temp dir prefix matches the cleanup service's allow-list ("user_profile_").
+    # Temp dir prefix is one the cleanup service sweeps.
+    from besser.utilities.web_modeling_editor.backend.constants.constants import (
+        USER_PROFILE_TEMP_DIR_PREFIX,
+    )
+    from besser.utilities.web_modeling_editor.backend.services.cleanup import _BESSER_TEMP_PREFIXES
+
     assert captured_prefixes, "expected TemporaryDirectory to be called"
     assert any(
-        prefix.startswith("user_profile_") for prefix in captured_prefixes
-    ), f"expected a user_profile_ prefix, got: {captured_prefixes!r}"
+        prefix.startswith(USER_PROFILE_TEMP_DIR_PREFIX) for prefix in captured_prefixes
+    ), f"expected a {USER_PROFILE_TEMP_DIR_PREFIX} prefix, got: {captured_prefixes!r}"
+    assert USER_PROFILE_TEMP_DIR_PREFIX in _BESSER_TEMP_PREFIXES
 
 
 def test_generate_user_profile_document_raises_generation_error_when_generator_not_configured():
@@ -267,3 +303,25 @@ def test_generate_user_profile_document_raises_generation_error_when_generator_n
         # router boundary translates it to HTTP 500.
         with pytest.raises(GenerationError):
             generate_user_profile_document(user_profile_payload)
+
+
+def test_safe_path_rejects_a_symlink_that_leaves_the_base():
+    """The prefix check runs on the resolved path, so a link inside base_dir
+    pointing outside it is refused."""
+    with tempfile.TemporaryDirectory() as base, tempfile.TemporaryDirectory() as outside:
+        link = os.path.join(base, "escape")
+        try:
+            os.symlink(outside, link, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            pytest.skip("symlinks are not available here")
+        with pytest.raises(ValueError, match="Invalid path"):
+            safe_path(base, "escape")
+
+
+
+def test_safe_path_never_returns_the_base_directory_itself():
+    """An empty or ``.`` name resolves to base_dir; callers always need a child."""
+    with tempfile.TemporaryDirectory() as base:
+        for name in ("", ".", "./"):
+            with pytest.raises(ValueError, match="Invalid path"):
+                safe_path(base, name)

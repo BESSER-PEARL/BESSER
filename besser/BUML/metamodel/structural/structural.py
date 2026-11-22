@@ -1,17 +1,37 @@
 from abc import ABC
-from datetime import datetime, timedelta
+from collections import Counter as _Counter  # aliased: `from .structural import *` would re-export it
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Any, Union, List, TYPE_CHECKING, Literal
 import keyword
 import logging
-import time
+import threading
 
 if TYPE_CHECKING:
     from besser.BUML.metamodel.state_machine import StateMachine
     from besser.BUML.metamodel.quantum import QuantumCircuit
+    from besser.BUML.metamodel.nn import NN
 
 # constant
 UNLIMITED_MAX_MULTIPLICITY = 9999
+
+_last_timestamp = datetime.min
+_timestamp_lock = threading.Lock()
+
+
+def _next_timestamp() -> datetime:
+    """Current time, bumped so each call is strictly later than the previous one.
+
+    The clock often returns the same value for objects created back to back, and
+    generators order members by timestamp, so ties made declaration order unstable.
+    """
+    global _last_timestamp
+    with _timestamp_lock:
+        now = datetime.now()
+        if now <= _last_timestamp:
+            now = _last_timestamp + timedelta(microseconds=1)
+        _last_timestamp = now
+        return now
 
 class Element(ABC):
     """Element is the Superclass of all structural model elements.
@@ -20,18 +40,37 @@ class Element(ABC):
         timestamp (datetime): Object creation datetime (default is current time).
         is_derived (bool): Indicates whether the element is derived (False as default).
         uncertainty (float): Indicates the uncertainty level of the element as a probability between 0 and 1 (0.0 as default).
+        id (str): Persistent identifier of the element, such as its editor element id (None as default).
 
     Attributes:
         timestamp (datetime): Object creation datetime (default is current time).
         is_derived (bool): Indicates whether the element is derived (False as default).
         uncertainty (float): Indicates the uncertainty level of the element as a probability between 0 and 1 (0.0 as default).
+        id (str): Persistent identifier of the element, such as its editor element id (None as default).
     """
 
-    def __init__(self, timestamp: datetime = None, is_derived: bool = False, uncertainty: float = 0.0):
-        self.timestamp: datetime = timestamp if timestamp is not None else datetime.now() + \
-                         timedelta(microseconds=(time.perf_counter_ns() % 1_000_000) / 1000)
+    def __init__(self, timestamp: datetime = None, is_derived: bool = False, uncertainty: float = 0.0,
+                 id: str = None):
+        self.timestamp: datetime = timestamp if timestamp is not None else _next_timestamp()
+        # Explicit = passed in (or set later), as opposed to the clock default.
+        self.__timestamp_explicit: bool = timestamp is not None
         self.is_derived: bool = is_derived
         self.uncertainty: float = uncertainty
+        self.id: str = id
+
+    @property
+    def id(self) -> str:
+        """str: Get the persistent identifier of the element (None when it has none).
+
+        The editor converters keep it across a round trip, so it survives a
+        rename. It takes no part in equality or hashing (both stay identity).
+        """
+        return getattr(self, "_Element__id", None)
+
+    @id.setter
+    def id(self, id: str):
+        """str: Set the persistent identifier of the element."""
+        self.__id = id
 
     @property
     def timestamp(self) -> datetime:
@@ -40,8 +79,25 @@ class Element(ABC):
 
     @timestamp.setter
     def timestamp(self, timestamp: datetime):
-        """datetime: Set the timestamp of the element."""
+        """datetime: Set the timestamp of the element (marks it as explicit).
+
+        A timezone-aware value is stored as naive UTC, as ``parse_iso_timestamp``
+        does, since sorting cannot compare it with the naive clock default.
+        """
+        if isinstance(timestamp, datetime) and timestamp.tzinfo is not None:
+            timestamp = timestamp.astimezone(timezone.utc).replace(tzinfo=None)
         self.__timestamp = timestamp
+        self.__timestamp_explicit = True
+
+    @property
+    def has_explicit_timestamp(self) -> bool:
+        """bool: True when the timestamp was given (constructor argument or setter)
+        rather than defaulted to the creation time.
+
+        Serializers (code builder, editor JSON) only write explicit timestamps,
+        so the same input always gives the same output.
+        """
+        return getattr(self, "_Element__timestamp_explicit", False)
 
     @property
     def is_derived(self) -> bool:
@@ -159,8 +215,9 @@ class NamedElement(Element):
     """
 
     def __init__(self, name: str, timestamp: datetime = None, metadata: Metadata = None,
-                 visibility: str = "public", is_derived: bool = False, uncertainty: float = 0.0):
-        super().__init__(timestamp, is_derived, uncertainty)
+                 visibility: str = "public", is_derived: bool = False, uncertainty: float = 0.0,
+                 id: str = None):
+        super().__init__(timestamp, is_derived, uncertainty, id)
         self.name: str = name
         self.metadata: Metadata = metadata
         self.visibility: str = visibility
@@ -236,8 +293,8 @@ class Type(NamedElement):
     """
 
     def __init__(self, name: str, timestamp: datetime = None, metadata: Metadata = None,
-                is_derived: bool = False, uncertainty: float = 0.0):
-        super().__init__(name, timestamp, metadata, is_derived=is_derived, uncertainty=uncertainty)
+                is_derived: bool = False, uncertainty: float = 0.0, id: str = None):
+        super().__init__(name, timestamp, metadata, is_derived=is_derived, uncertainty=uncertainty, id=id)
 
     def __repr__(self):
         return f"Type({self.name}, {self.timestamp}, {self.metadata})"
@@ -318,12 +375,14 @@ class MethodImplementationType(Enum):
         BAL: Implementation provided as BESSER Action Language code string.
         STATE_MACHINE: Implementation defined by a state machine.
         QUANTUM_CIRCUIT: Implementation defined by a quantum circuit.
+        NEURAL_NETWORK: Implementation defined by a neural network.
     """
     NONE = "none"
     CODE = "code"
     BAL = "besser_action_language"
     STATE_MACHINE = "state_machine"
     QUANTUM_CIRCUIT = "quantum_circuit"
+    NEURAL_NETWORK = "neural_network"
 
 
 class EnumerationLiteral(NamedElement):
@@ -345,8 +404,9 @@ class EnumerationLiteral(NamedElement):
         metadata (Metadata): Metadata information for the literal (None as default).
     """
 
-    def __init__(self, name: str, owner: DataType=None, timestamp: datetime = None, metadata: Metadata = None, uncertainty: float = 0.0):
-        super().__init__(name, timestamp, metadata, uncertainty=uncertainty)
+    def __init__(self, name: str, owner: DataType=None, timestamp: datetime = None, metadata: Metadata = None, uncertainty: float = 0.0,
+                 id: str = None):
+        super().__init__(name, timestamp, metadata, uncertainty=uncertainty, id=id)
         self.owner: DataType = owner
 
     @property
@@ -392,8 +452,8 @@ class Enumeration(DataType):
     """
 
     def __init__(self, name: str, literals: set[EnumerationLiteral] = None, timestamp: datetime = None,
-                 metadata: Metadata = None, uncertainty: float = 0.0):
-        super().__init__(name, timestamp, metadata, uncertainty=uncertainty)
+                 metadata: Metadata = None, uncertainty: float = 0.0, id: str = None):
+        super().__init__(name, timestamp, metadata, uncertainty=uncertainty, id=id)
         self.literals: set[EnumerationLiteral] = literals if literals is not None else set()
 
     @property
@@ -479,8 +539,8 @@ class TypedElement(NamedElement):
     }
 
     def __init__(self, name: str, type: Union[Type, str], timestamp: datetime = None, metadata: Metadata = None,
-                 visibility: str="public", is_derived: bool = False, uncertainty: float = 0.0):
-        super().__init__(name, timestamp, metadata, visibility, is_derived, uncertainty)
+                 visibility: str="public", is_derived: bool = False, uncertainty: float = 0.0, id: str = None):
+        super().__init__(name, timestamp, metadata, visibility, is_derived, uncertainty, id)
         self.type = self.type_mapping.get(type, type)
 
     @property
@@ -602,9 +662,9 @@ class Property(TypedElement):
                  is_external_id: bool = False,
                  default_value: Any = None,
                  timestamp: datetime = None, metadata: Metadata = None, is_derived: bool = False,
-                 uncertainty: float = 0.0):
+                 uncertainty: float = 0.0, id: str = None):
 
-        super().__init__(name, type, timestamp, metadata, visibility, is_derived, uncertainty)
+        super().__init__(name, type, timestamp, metadata, visibility, is_derived, uncertainty, id)
         self.owner: Type = owner
         self.multiplicity: Multiplicity = multiplicity
         self.is_composite: bool = is_composite
@@ -735,8 +795,6 @@ class Property(TypedElement):
 
     def opposite_end(self) -> "Property":
         """Property: Get the opposite end of the property if it is an association end."""
-        # Delayed import to avoid circular dependency
-        from besser.BUML.metamodel.structural import BinaryAssociation
         if self.owner and isinstance(self.owner, BinaryAssociation):
             for end in self.owner.ends:
                 if end != self:
@@ -775,8 +833,8 @@ class Parameter(TypedElement):
     """
 
     def __init__(self, name: str, type: Type, default_value: Any = None, timestamp: datetime = None,
-                 metadata: Metadata = None, is_derived: bool = False, uncertainty: float = 0.0):
-        super().__init__(name, type, timestamp, metadata, is_derived=is_derived, uncertainty=uncertainty)
+                 metadata: Metadata = None, is_derived: bool = False, uncertainty: float = 0.0, id: str = None):
+        super().__init__(name, type, timestamp, metadata, is_derived=is_derived, uncertainty=uncertainty, id=id)
         self.default_value: Any = default_value
 
     @property
@@ -804,6 +862,7 @@ class Method(TypedElement):
     - BAL: BESSER Action Language implementation
     - STATE_MACHINE: Behavior defined by a state machine
     - QUANTUM_CIRCUIT: Behavior defined by a quantum circuit
+    - NEURAL_NETWORK: Behavior defined by a neural network (calling the method runs the NN)
 
     Args:
         name (str): The name of the method.
@@ -816,6 +875,7 @@ class Method(TypedElement):
         implementation_type (MethodImplementationType): The type of implementation (auto-detected as default).
         state_machine (StateMachine): Reference to a state machine that defines the method behavior (None as default).
         quantum_circuit (QuantumCircuit): Reference to a quantum circuit that defines the method behavior (None as default).
+        neural_network (NN): Reference to a neural network that defines the method behavior (None as default).
         timestamp (datetime): Object creation datetime (default is current time).
         metadata (Metadata): Metadata information for the method (None as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
@@ -833,6 +893,7 @@ class Method(TypedElement):
         implementation_type (MethodImplementationType): The type of implementation.
         state_machine (StateMachine): Reference to a state machine that defines the method behavior (None as default).
         quantum_circuit (QuantumCircuit): Reference to a quantum circuit that defines the method behavior (None as default).
+        neural_network (NN): Reference to a neural network that defines the method behavior (None as default).
         timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
         metadata (Metadata): Metadata information for the method (None as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
@@ -844,15 +905,17 @@ class Method(TypedElement):
                  parameters: list[Parameter] = None, type: Type = None, owner: Type = None,
                  code: str = "", implementation_type: MethodImplementationType = None,
                  state_machine: "StateMachine" = None, quantum_circuit: "QuantumCircuit" = None,
+                 neural_network: "NN" = None,
                  timestamp: datetime = None, metadata: Metadata = None, is_derived: bool = False, uncertainty: float = 0.0,
-                 pre: list["Constraint"] = None, post: list["Constraint"] = None):
-        super().__init__(name, type, timestamp, metadata, visibility, is_derived, uncertainty)
+                 pre: list["Constraint"] = None, post: list["Constraint"] = None, id: str = None):
+        super().__init__(name, type, timestamp, metadata, visibility, is_derived, uncertainty, id)
         self.is_abstract: bool = is_abstract
         self.parameters: list[Parameter] = parameters if parameters is not None else []
         self.owner: Type = owner
         self.code: str = code
         self.state_machine: "StateMachine" = state_machine
         self.quantum_circuit: "QuantumCircuit" = quantum_circuit
+        self.neural_network: "NN" = neural_network
         self.pre = pre
         self.post = post
         # Auto-detect implementation type if not provided
@@ -862,6 +925,8 @@ class Method(TypedElement):
             self.implementation_type = MethodImplementationType.STATE_MACHINE
         elif quantum_circuit is not None:
             self.implementation_type = MethodImplementationType.QUANTUM_CIRCUIT
+        elif neural_network is not None:
+            self.implementation_type = MethodImplementationType.NEURAL_NETWORK
         elif code:
             self.implementation_type = MethodImplementationType.CODE
         else:
@@ -1050,6 +1115,16 @@ class Method(TypedElement):
         """QuantumCircuit: Set the quantum circuit that defines the method behavior."""
         self.__quantum_circuit = quantum_circuit
 
+    @property
+    def neural_network(self) -> "NN":
+        """NN: Get the neural network that defines the method behavior."""
+        return self.__neural_network
+
+    @neural_network.setter
+    def neural_network(self, neural_network: "NN"):
+        """NN: Set the neural network that defines the method behavior."""
+        self.__neural_network = neural_network
+
     def __repr__(self):
         return (
             f'Method({self.name}, {self.visibility}, is_abstract={self.is_abstract}, {self.parameters}, '
@@ -1119,6 +1194,99 @@ class BehaviorDeclaration(NamedElement):
         return f'BehaviorDeclaration({self.name}, {self.implementations})'
 
 
+def _stem_candidates(role_name: str) -> list[tuple[str, str]]:
+    """All plausible ``(stem, suffix_tag)`` readings of ``role_name``, best guess first.
+
+    ``suffix_tag`` is ``"ies"``, ``"es"`` or ``"s"`` for a plural reading and
+    ``""`` for the name taken as-is (always the last candidate), so that
+    ``houses`` can still match ``House`` and ``status`` can match ``Status``.
+    """
+    if not role_name:
+        return [(role_name, "")]
+    lower = role_name.lower()
+    candidates = []
+    if lower.endswith("ies") and len(lower) > 3:
+        # categories -> category
+        candidates.append((role_name[:-3] + ("Y" if role_name[-3].isupper() else "y"), "ies"))
+    if lower.endswith("es") and len(lower) > 2 and lower[:-2].endswith(("s", "sh", "ch", "x", "z")):
+        candidates.append((role_name[:-2], "es"))
+    if lower.endswith("s") and not lower.endswith("ss") and len(lower) > 1:
+        candidates.append((role_name[:-1], "s"))
+    candidates.append((role_name, ""))
+    return candidates
+
+
+def _stem_role_name(role_name: str) -> tuple[str, str]:
+    """Strip a common English plural suffix from ``role_name``.
+
+    Returns the best-guess ``(stem, suffix_tag)`` from :func:`_stem_candidates`.
+    Only conservative English pluralisation rules are applied so that
+    intentional role names like ``"borrower"`` are not mistaken for plurals.
+    """
+    return _stem_candidates(role_name)[0]
+
+
+def _pluralize(word: str) -> str:
+    """Regular English plural of ``word`` (``box`` -> ``boxes``, ``city`` -> ``cities``)."""
+    lower = word.lower()
+    if lower.endswith("is") and len(word) > 2:
+        return word[:-2] + "es"  # analysis -> analyses
+    if lower.endswith("z") and len(word) > 1 and lower[-2] in "aeiou":
+        return word + "zes"  # quiz -> quizzes
+    if lower.endswith(("ss", "us", "as", "os", "sh", "ch", "x", "z")):
+        return word + "es"
+    if lower.endswith("s"):
+        # Already plural (``Settings``).
+        return word
+    if lower.endswith("y") and len(word) > 1 and lower[-2] not in "aeiou":
+        return word[:-1] + "ies"
+    return word + "s"
+
+
+def _pluralize_for_role(base: str, suffix_tag: str) -> str:
+    """Plural of ``base`` when ``suffix_tag`` marks a plural role, else ``base`` unchanged."""
+    return _pluralize(base) if suffix_tag else base
+
+
+def _match_role_case(template: str, candidate: str) -> str:
+    """Adapt ``candidate`` to mirror the casing convention of ``template``.
+
+    Heuristic:
+
+    - If ``template`` is all lowercase -> return ``candidate.lower()``.
+    - If ``template`` is all uppercase -> return ``candidate.upper()``.
+    - If ``template`` starts with a lowercase letter (camelCase-ish role
+      like ``borrowedBooks``) -> first char lowercase, rest as-is from
+      ``candidate``.
+    - Otherwise return ``candidate`` unchanged (preserves PascalCase).
+    """
+    if not template:
+        return candidate
+    if template.islower():
+        return candidate.lower()
+    if template.isupper():
+        return candidate.upper()
+    if template[0].islower() and candidate:
+        return candidate[0].lower() + candidate[1:]
+    return candidate
+
+
+def _role_name_matches_class(role_name: str, class_name: str) -> tuple[bool, str]:
+    """Return ``(matches, suffix_tag)`` if ``role_name`` is the (possibly
+    pluralised) lowercase form of ``class_name``.
+
+    The match is exact after stripping a recognised plural suffix and
+    case-folding -- intentionally non-fuzzy so that role names like
+    ``"borrower"`` (pointing to a ``Member`` class) are left alone.
+    """
+    for stem, suffix_tag in _stem_candidates(role_name):
+        if stem.lower() == class_name.lower():
+            return True, suffix_tag
+    if role_name.lower() == _pluralize(class_name).lower():
+        return True, "s"  # plurals the stems miss: quizzes, analyses
+    return False, ""
+
+
 class Class(Type):
     """Represents a class in a modeling context.
 
@@ -1151,8 +1319,9 @@ class Class(Type):
 
     def __init__(self, name: str, attributes: set[Property] = None, methods: set[Method] = None,
                  is_abstract: bool= False, is_read_only: bool= False, behaviors: set[BehaviorDeclaration] = None,
-                 timestamp: datetime = None, metadata: Metadata = None, is_derived: bool = False, uncertainty: float = 0.0):
-        super().__init__(name, timestamp, metadata, is_derived=is_derived, uncertainty=uncertainty)
+                 timestamp: datetime = None, metadata: Metadata = None, is_derived: bool = False, uncertainty: float = 0.0,
+                 id: str = None):
+        super().__init__(name, timestamp, metadata, is_derived=is_derived, uncertainty=uncertainty, id=id)
         self.is_abstract: bool = is_abstract
         self.is_read_only: bool = is_read_only
         self.behaviors: set[BehaviorDeclaration] = behaviors if behaviors is not None else set()
@@ -1160,6 +1329,57 @@ class Class(Type):
         self.methods: set[Method] = methods if methods is not None else set()
         self.__associations: set[Association] = set()
         self.__generalizations: set[Generalization] = set()
+
+    @NamedElement.name.setter
+    def name(self, name: str):
+        """str: Set the name of the class.
+
+        Beyond the validation inherited from :class:`NamedElement`, this
+        setter propagates a class rename to any *role-style* association end
+        names that referenced the old class name. Concretely, for every
+        association end whose ``type`` is this class and whose name is the
+        case-insensitive (possibly pluralised) form of the previous class
+        name, the role name is rewritten to the matching form of the new
+        class name. Role names that intentionally differ from the class name
+        (e.g. ``"borrower"`` pointing to a ``Member`` class) are left alone.
+
+        See :func:`_role_name_matches_class` for the matching rule and
+        :func:`_pluralize_for_role` for the pluralisation policy. Renames
+        that would collide with an existing end name on the same class are
+        skipped to preserve metamodel invariants.
+        """
+        # During ``__init__`` neither the name nor the associations exist yet,
+        # so both getters raise AttributeError and getattr yields None.
+        old_name = getattr(self, "name", None)
+        super(Class, Class).name.fset(self, name)
+        if old_name is None or old_name == name:
+            return
+        associations = getattr(self, "associations", None)
+        if not associations:
+            return
+        for association in associations:
+            for end in association.ends:
+                if end.type is not self:
+                    continue
+                matches, suffix_tag = _role_name_matches_class(end.name, old_name)
+                if not matches:
+                    continue
+                new_role = _pluralize_for_role(name, suffix_tag)
+                new_role = _match_role_case(end.name, new_role)
+                if new_role == end.name:
+                    continue
+                # Renaming in place skips the uniqueness check done on ``ends``
+                # assignment: the end belongs to the classes at the other ends,
+                # so it must not collide with any end name they already reach.
+                taken = {e.name for e in association.ends if e is not end}
+                for other in association.ends:
+                    if other is not end and isinstance(other.type, Class):
+                        # Subclasses inherit the end, so their own ends count too.
+                        for cls in {other.type} | other.type.all_specializations():
+                            taken |= {e.name for e in cls.all_association_ends() if e is not end}
+                if new_role in taken:
+                    continue
+                end.name = new_role
 
     @property
     def attributes(self) -> set[Property]:
@@ -1316,31 +1536,55 @@ class Class(Type):
         """Association: Add an association to the set of class associations."""
         self.__associations.add(association)
 
+    def _duplicate_end_names(self, extra_ends=()) -> set[str]:
+        """set[str]: Get the names of more than one association end this class reaches.
+
+        The ends counted are ``all_association_ends()`` -- the class's own and
+        every ancestor's -- plus ``extra_ends``. They are counted by identity: an
+        end reached along two inheritance paths (a diamond) is one end, while two
+        distinct ends of the same name are a duplicate.
+
+        This is the one statement of the end-name rule; construction
+        (``_validate_unique_end_names``) and ``DomainModel.validate()`` both
+        read it.
+        """
+        names = _Counter(end.name for end in self.all_association_ends().union(extra_ends))
+        return {name for name, count in names.items() if count > 1}
+
     def _validate_unique_end_names(self, ends):
-        """Ensure that no association end has a duplicate name in this class or its specializations."""
-        # Check for duplicate end names within the provided ends
-        new_names = [e.name for e in ends]
-        if len(new_names) != len(set(new_names)):
-            raise ValueError(
-                f"The association introduces duplicate end names: {', '.join(n for n in new_names if new_names.count(n) > 1)}"
-            )
+        """Ensure that reaching ``ends`` gives no class two association ends of the same name.
 
-        # Check against current class's ends
-        existing_end_names = {e.name for e in self.all_association_ends()}
-        for end in ends:
-            if end.name in existing_end_names:
+        ``ends`` become reachable from this class and, through inheritance, from
+        every class that specialises it, so each of those is checked against its
+        whole inherited set, including what a specialization inherits from its
+        *other* parents. Only clashes involving a name in ``ends`` are raised;
+        a pre-existing one is reported by ``DomainModel.validate()``.
+
+        Every class that reaches ``ends`` reaches the ends declared on it and
+        its ancestors, so the usual case -- no clash -- is settled with one walk
+        up from all of them at once (any other end of a new name found there is
+        reached by some such class, alongside the new one). Only a clash takes
+        the per-class look that names the class.
+
+        Raises:
+            ValueError: if this class or one of its specializations would reach
+                two distinct association ends with the same name.
+        """
+        ends = set(ends)
+        new_names = {end.name for end in ends}
+        reaching = {self} | self.all_specializations()
+        declaring = reaching | Class._closure(reaching, Class.parents)
+        if len(new_names) == len(ends) and not any(
+            end.name in new_names and end not in ends
+            for cls in declaring for end in cls.association_ends()
+        ):
+            return
+        for cls in [self, *sorted(reaching - {self}, key=lambda c: c.name)]:
+            clashes = sorted(cls._duplicate_end_names(ends) & new_names)
+            if clashes:
                 raise ValueError(
-                    f"The class '{self.name}' cannot have two association ends with the same name: '{end.name}'"
+                    f"The class '{cls.name}' cannot have two association ends with the same name: '{clashes[0]}'"
                 )
-
-        # Check against children/specialized classes' ends
-        for child in self.all_specializations():
-            child_end_names = {e.name for e in child.association_ends()}
-            for end in ends:
-                if end.name in child_end_names:
-                    raise ValueError(
-                        f"The class '{child.name}' cannot have two association ends with the same name: '{end.name}'"
-                    )
 
     def _delete_association(self, association):
         """Association: Remove an association to the set of class associations."""
@@ -1396,12 +1640,12 @@ class Class(Type):
         return parents
 
     def all_parents(self) -> set:
-        """set[Class]: Get the set of direct and indirect parents of the class."""
-        all_parents = set()
-        all_parents.update(self.parents())
-        for parent in self.parents():
-            all_parents.update(parent.all_parents())
-        return all_parents
+        """set[Class]: Get the set of direct and indirect parents of the class.
+
+        Never contains the class itself, even on an inheritance cycle (which
+        ``DomainModel.validate()`` reports). See :meth:`_closure`.
+        """
+        return Class._closure([self], Class.parents) - {self}
 
     def specializations(self) -> set:
         """set[Class]: Get the set of direct specializations (children) of the class."""
@@ -1412,12 +1656,32 @@ class Class(Type):
         return specializations
 
     def all_specializations(self) -> set:
-        """set[Class]: Get the set of direct and indirect specializations (children) of the class."""
-        all_spec = set()
-        all_spec.update(self.specializations())
-        for specialization in self.specializations():
-            all_spec.update(specialization.all_specializations())
-        return all_spec
+        """set[Class]: Get the set of direct and indirect specializations (children) of the class.
+
+        Never contains the class itself, even on an inheritance cycle. See
+        :meth:`_closure`.
+        """
+        return Class._closure([self], Class.specializations) - {self}
+
+    @staticmethod
+    def _closure(classes, step) -> set:
+        """set[Class]: Get every class reached from ``classes`` by applying ``step`` one or more times.
+
+        Iterative with a visited set: an inheritance chain deeper than Python's
+        recursion limit is walked like any other, a class reached along several
+        paths (a diamond, or from several of ``classes``) is expanded once, and
+        a cycle terminates. A class of ``classes`` is in the result only if
+        ``step`` leads back to it.
+        """
+        found = set()
+        pending = [nxt for cls in classes for nxt in step(cls)]
+        while pending:
+            cls = pending.pop()
+            if cls in found:
+                continue
+            found.add(cls)
+            pending.extend(step(cls))
+        return found
 
     def id_attribute(self) -> Property:
         """Property: Get the id attribute of the class."""
@@ -1459,8 +1723,8 @@ class Association(NamedElement):
     """
 
     def __init__(self, name: str, ends: set[Property], timestamp: datetime = None, metadata: Metadata = None,
-                is_derived: bool = False, uncertainty: float = 0.0):
-        super().__init__(name, timestamp, metadata, is_derived=is_derived, uncertainty=uncertainty)
+                is_derived: bool = False, uncertainty: float = 0.0, id: str = None):
+        super().__init__(name, timestamp, metadata, is_derived=is_derived, uncertainty=uncertainty, id=id)
         self.__ends: set[Property] = set()
         self.ends: set[Property] = ends
 
@@ -1528,7 +1792,8 @@ class BinaryAssociation(Association):
 
         Raises:
             ValueError: if the association ends are not exactly two, or if both ends are tagged as aggregation, or
-            if both ends are tagged as composition.
+            if both ends are tagged as composition, or if neither end is navigable, or if the non-composite end of
+            a composition is not navigable.
             TypeError: if any element in ends is not a Property instance.
         """
         # Type checking: ensure all elements are Property instances (before any attribute access)
@@ -1538,9 +1803,45 @@ class BinaryAssociation(Association):
 
         if len(ends) != 2:
             raise ValueError("A binary association must have exactly two ends")
-        if list(ends)[0].is_composite is True and list(ends)[1].is_composite is True:
+        end_a, end_b = list(ends)
+        if end_a.is_composite is True and end_b.is_composite is True:
             raise ValueError("The composition attribute cannot be tagged at both ends")
+        navigability_errors = self._navigability_errors(ends)
+        if navigability_errors:
+            raise ValueError(navigability_errors[0])
         super(BinaryAssociation, BinaryAssociation).ends.fset(self, ends)
+
+    def _navigability_errors(self, ends: set[Property] = None) -> list[str]:
+        """Return the navigability rule violations of a binary association.
+
+        A binary association needs at least one navigable end, and the non-composite (part) end of a
+        composition must be navigable. Used by the ``ends`` setter (construction time) and by
+        ``DomainModel.validate()`` (to report ends made non-navigable after construction).
+
+        Args:
+            ends (set[Property]): The ends to check (defaults to the current ends).
+
+        Returns:
+            list[str]: One message per violated rule; empty when the ends are valid.
+            The ``ends`` setter raises the first one.
+        """
+        ends = self.ends if ends is None else ends
+        if len(ends) != 2:
+            return []
+        errors: list[str] = []
+        end_a, end_b = sorted(ends, key=lambda e: e.name or "")
+        if end_a.is_navigable is False and end_b.is_navigable is False:
+            errors.append(
+                f"Association '{self.name}': at least one end must be navigable, but both "
+                f"'{end_a.name}' ({end_a.type.name}) and '{end_b.name}' ({end_b.type.name}) are non-navigable"
+            )
+        for whole, part in ((end_a, end_b), (end_b, end_a)):
+            if whole.is_composite is True and part.is_navigable is False:
+                errors.append(
+                    f"Association '{self.name}': the non-composite end '{part.name}' ({part.type.name}) "
+                    f"of a composition must be navigable"
+                )
+        return errors
 
     def __repr__(self):
         return f'BinaryAssociation({self.name}, {self.ends}, {self.timestamp}, {self.metadata}, is_derived={self.is_derived})'
@@ -1568,8 +1869,9 @@ class AssociationClass(Class):
     """
 
     def __init__(self, name: str, attributes: set[Property], association: Association, timestamp: datetime = None,
-                 metadata: Metadata = None, is_derived: bool = False, uncertainty: float = 0.0):
-        super().__init__(name, attributes, timestamp, metadata, is_derived=is_derived, uncertainty=uncertainty)
+                 metadata: Metadata = None, is_derived: bool = False, uncertainty: float = 0.0, id: str = None):
+        super().__init__(name, attributes, timestamp=timestamp, metadata=metadata, is_derived=is_derived,
+                         uncertainty=uncertainty, id=id)
         self.association: Association = association
 
     @property
@@ -1604,8 +1906,9 @@ class Generalization(Element):
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
     """
 
-    def __init__(self, general: Class, specific: Class, timestamp: datetime = None, is_derived: bool = False, uncertainty: float = 0.0):
-        super().__init__(timestamp, is_derived, uncertainty)
+    def __init__(self, general: Class, specific: Class, timestamp: datetime = None, is_derived: bool = False, uncertainty: float = 0.0,
+                 id: str = None):
+        super().__init__(timestamp, is_derived, uncertainty, id)
         self.general: Class = general
         self.specific: Class = specific
 
@@ -2218,28 +2521,41 @@ class DomainModel(Model):
             )
 
     def classes_sorted_by_inheritance(self) -> list[Class]:
-        """list[Class]: Get the list of classes ordered by inheritance."""
-        from besser.utilities import sort_by_timestamp
-        classes = sort_by_timestamp(self.get_classes())
+        """list[Class]: Get the list of classes ordered by inheritance (parents first), ties by name.
+
+        Sorted by name, not timestamp: timestamps tie at clock resolution, so
+        ties fell back to set order and the result changed between runs.
+        """
+        classes = sorted(self.get_classes(), key=lambda c: c.name)
         # Set up a dependency graph
         child_map = {cl: set() for cl in classes}
         # Populating the child_map based on generalizations (edges in top-sort graph)
         for cl in classes:
             for generalization in cl.generalizations:
                 child_map[generalization.general].add(cl)
-        # Helper function for DFS
-        def dfs(cl, visited, sorted_list):
-            visited.add(cl)
-            for child in child_map[cl]:
-                if child not in visited:
-                    dfs(child, visited, sorted_list)
-            sorted_list.append(cl)
-        # Perform DFS from each node that hasn't been visited yet
+        def children(cl):
+            return iter(sorted(child_map[cl], key=lambda c: c.name))
+
+        # Reverse post-order of a depth-first walk from each unvisited class.
+        # Iterative, with an explicit stack: a hierarchy can be deeper than
+        # Python's recursion limit.
         visited = set()
         sorted_list = []
         for cl in classes:
-            if cl not in visited:
-                dfs(cl, visited, sorted_list)
+            if cl in visited:
+                continue
+            visited.add(cl)
+            stack = [(cl, children(cl))]
+            while stack:
+                node, pending = stack[-1]
+                for child in pending:
+                    if child not in visited:
+                        visited.add(child)
+                        stack.append((child, children(child)))
+                        break
+                else:                       # every child of `node` is done
+                    stack.pop()
+                    sorted_list.append(node)
         sorted_list.reverse()
         return sorted_list
 
@@ -2262,6 +2578,25 @@ class DomainModel(Model):
         self._validate_constraints(errors)
         self._validate_circular_inheritance(errors)
         self._validate_attribute_shadowing(errors)
+        self._validate_member_name_collisions(errors)
+        self._validate_unique_end_names(errors)
+        self._validate_identifier_names(errors)
+        self._validate_attribute_types(errors)
+        self._validate_mandatory_cycles(warnings)
+        self._validate_duplicate_associations(warnings)
+        self._validate_attribute_end_collisions(warnings)
+        self._validate_python_keyword_names(warnings)
+        self._validate_case_only_class_names(warnings)
+        self._validate_case_only_attribute_names(warnings)
+        self._validate_join_table_names(warnings)
+        self._validate_foreign_key_column_clashes(warnings)
+        self._validate_id_attributes(warnings)
+        self._validate_empty_enumerations(warnings)
+        self._validate_class_typed_attributes(warnings)
+        self._validate_isolated_classes(warnings)
+        self._validate_abstract_classes_without_concrete_subclass(warnings)
+        self._validate_shared_composite_parts(warnings)
+        self._validate_composite_whole_multiplicity(warnings)
 
         result = {"success": len(errors) == 0, "errors": errors, "warnings": warnings}
         if errors and raise_exception:
@@ -2283,7 +2618,8 @@ class DomainModel(Model):
                 )
 
     def _validate_associations(self, errors: list[str]):
-        """Validate that association ends reference types in the model."""
+        """Validate that association ends reference types in the model and that binary associations respect
+        the navigability rules (at least one navigable end; the part end of a composition is navigable)."""
         for association in self.__associations:
             for end in association.ends:
                 if end.type not in self.__types:
@@ -2291,6 +2627,8 @@ class DomainModel(Model):
                         f"Association '{association.name}' has end '{end.name}' "
                         f"referencing type '{end.type.name}' which is not in the domain model '{self.name}'."
                     )
+            if isinstance(association, BinaryAssociation):
+                errors.extend(association._navigability_errors())
 
     def _validate_multiplicities(self, errors: list[str]):
         """Validate that multiplicities on association ends and attributes are well-formed."""
@@ -2311,6 +2649,477 @@ class DomainModel(Model):
                     errors.append(
                         f"Association '{association.name}', end '{end.name}': "
                         f"min multiplicity ({mult.min}) cannot exceed max ({mult.max})."
+                    )
+
+    def _mandatory_dependencies(self) -> dict[str, set[str]]:
+        """``{class: classes it needs to exist before it can be created}``.
+
+        An end with ``min >= 1`` says every instance of the classes at the
+        OTHER ends must already be linked to at least one instance of this
+        end's type — so those classes depend on this one.
+        """
+        needs: dict[str, set[str]] = {}
+        for association in self.__associations:
+            ends = list(association.ends)
+            if len(ends) < 2:
+                continue
+            for end in ends:
+                if end.multiplicity.min < 1:
+                    continue
+                for other in ends:
+                    if other is end:
+                        continue
+                    needs.setdefault(other.type.name, set()).add(end.type.name)
+        return needs
+
+    def _validate_mandatory_cycles(self, warnings: list[str]):
+        """Flag a set of classes that can never be instantiated.
+
+        Example: ``Booking`` requires at least one ``ReservedRoom`` (1..*)
+        while ``ReservedRoom`` requires exactly one ``Booking`` (1..1), through
+        two DIFFERENT associations — so no per-association check sees it, and
+        the generated API cannot create either class. A self-association with
+        a mandatory end is the same defect with a cycle of length one.
+
+        A WARNING, not an error: an association with 1..1 on both ends is
+        legal UML and BESSER's own ``user_reference_domain_model`` ships three
+        of them (Input/Output/Interaction_Modality, Knowledge/Topic), so the
+        general metamodel validator must not reject it. It is fatal only when
+        the model is about to be turned into a CRUD API, which is where the
+        Spec-Driven Agent promotes this to a blocker.
+        """
+        needs = self._mandatory_dependencies()
+        reported: set[frozenset] = set()
+        # Iterative DFS keeping the path, so the message can name the cycle.
+        for start in sorted(needs):
+            stack: list[tuple[str, list[str]]] = [(start, [start])]
+            seen: set[str] = set()
+            while stack:
+                node, path = stack.pop()
+                for nxt in sorted(needs.get(node, ())):
+                    if nxt in path:
+                        cycle = path[path.index(nxt):]
+                        key = frozenset(cycle)
+                        if key in reported:
+                            continue
+                        reported.add(key)
+                        warnings.append(
+                            "Mandatory creation cycle: "
+                            + " -> ".join(cycle + [nxt])
+                            + ". Each class requires an instance of the next "
+                            "before it can be created, so none of them can be "
+                            "created first and the generated API cannot "
+                            "construct any of them. Relax one of the "
+                            "association ends in the cycle to an optional "
+                            "multiplicity (0..1 or 0..*)."
+                        )
+                    elif nxt not in seen:
+                        seen.add(nxt)
+                        stack.append((nxt, path + [nxt]))
+
+    def _validate_duplicate_associations(self, warnings: list[str]):
+        """Warn when one class pair is connected by more than one association.
+
+        Legal UML — ``homeAddress`` / ``workAddress`` are genuinely different
+        relationships — so this is a warning, not an error. More often the
+        pair is one concept drawn twice, which produces a redundant foreign key
+        plus a ``_1``-suffixed role name (the collision marker) in the
+        generated schema.
+        """
+        by_pair: dict[frozenset, list[str]] = {}
+        for association in self.__associations:
+            ends = list(association.ends)
+            if len(ends) != 2:
+                continue
+            pair = frozenset((ends[0].type.name, ends[1].type.name))
+            by_pair.setdefault(pair, []).append(association.name)
+        for pair, names in by_pair.items():
+            if len(names) < 2:
+                continue
+            classes = " and ".join(f"'{n}'" for n in sorted(pair))
+            warnings.append(
+                f"Classes {classes} are connected by {len(names)} "
+                f"associations ({', '.join(sorted(names))}). If these are the "
+                "same relationship drawn twice, the generated code will carry "
+                "duplicate foreign keys and a suffixed role name for one of "
+                "them; keep both only if they are genuinely different roles."
+            )
+
+    def _code_names(self):
+        """Yield ``(label, name)`` for every model name a generator emits as a code identifier.
+
+        Classes, enumerations and their literals, attributes, methods and their
+        parameters, association ends, and the associations stored in a join
+        table (the SQLAlchemy generator names a variable after them; any other
+        association name only appears inside strings), in a stable order so
+        the messages built from it are deterministic.
+        """
+        for cls in sorted(self.get_classes(), key=lambda e: e.name):
+            yield f"Class '{cls.name}'", cls.name
+            for attr in sorted(cls.attributes, key=lambda e: e.name):
+                yield f"Attribute '{attr.name}' of class '{cls.name}'", attr.name
+            for method in sorted(cls.methods, key=lambda e: e.name):
+                yield f"Method '{method.name}' of class '{cls.name}'", method.name
+                for param in method.parameters:
+                    yield f"Parameter '{param.name}' of method '{cls.name}.{method.name}'", param.name
+        for enum in sorted(self.get_enumerations(), key=lambda e: e.name):
+            yield f"Enumeration '{enum.name}'", enum.name
+            for literal in sorted(enum.literals, key=lambda e: e.name):
+                yield f"Literal '{literal.name}' of enumeration '{enum.name}'", literal.name
+        join_tables = self._join_table_associations()
+        for association in sorted(self.__associations, key=lambda e: e.name):
+            if association in join_tables:
+                yield f"Many-to-many association '{association.name}'", association.name
+            for end in sorted(association.ends, key=lambda e: e.name):
+                yield f"Association end '{end.name}' of association '{association.name}'", end.name
+
+    def _join_table_associations(self) -> set:
+        """The associations the SQLAlchemy generator stores in a join table named after them.
+
+        Binary, many-to-many, and not the association of an association class
+        (that class is the join table).
+        """
+        association_class_links = {
+            t.association for t in self.__types if isinstance(t, AssociationClass)
+        }
+        return {
+            association for association in self.__associations
+            if len(association.ends) == 2 and association not in association_class_links
+            and all(end.multiplicity.max > 1 for end in association.ends)
+        }
+
+    def _validate_identifier_names(self, errors: list[str]):
+        """Report a name that is not a valid identifier (``2nd_name``, ``price$``).
+
+        The name setter only rejects spaces and hyphens. Every code generator
+        writes these names verbatim as class, field or variable names, so the
+        generated Python does not parse, and Java and TypeScript do not compile.
+        """
+        errors.extend(self.invalid_identifier_names())
+
+    def invalid_identifier_names(self) -> list[str]:
+        """One message per name a generator emits as code that is not a valid identifier.
+
+        Code generators call this before rendering: the name setter accepts
+        quotes, ``;`` and newlines, and a name written verbatim into generated
+        Python would otherwise become code.
+        """
+        return [
+            f"{label} is not a valid identifier: generated code uses the name as written, "
+            f"so it will not parse. Use letters, digits and '_' only, not starting with a digit."
+            for label, name in self._code_names()
+            if not name.isidentifier()
+        ]
+
+    def _validate_attribute_types(self, errors: list[str]):
+        """Report an attribute typed by a class or enumeration that is not in the model.
+
+        The twin of the association-end check in ``_validate_associations``:
+        generated code refers to a type it never defines. ``TypedElement``
+        keeps a type name it cannot resolve as a plain string, which is the
+        same defect.
+        """
+        for cls in sorted(self.get_classes(), key=lambda c: c.name):
+            for attr in sorted(cls.attributes, key=lambda a: a.name):
+                if isinstance(attr.type, PrimitiveDataType) or attr.type in self.__types:
+                    continue
+                type_name = attr.type.name if isinstance(attr.type, Type) else str(attr.type)
+                errors.append(
+                    f"Attribute '{attr.name}' of class '{cls.name}' has type '{type_name}', "
+                    f"which is not in the domain model '{self.name}'. Generated code would refer to a type "
+                    f"it never defines. Add '{type_name}' to the model or use a primitive type."
+                )
+
+    def _validate_attribute_end_collisions(self, warnings: list[str]):
+        """Warn about a class reaching an attribute and an association end of the same name.
+
+        Generated code gives both the same member name. The Java generator's
+        class does not compile. The SQLAlchemy, Pydantic and FastAPI backend
+        generators keep one of the two: the association end, or the attribute
+        when the end is not navigable from the class. They do not handle an
+        attribute inherited from a parent that does not reach the end. A
+        warning, since generation itself succeeds. A name inherited on both
+        sides is reported once, on the class that declares one of them.
+        """
+        for cls in sorted(self.get_classes(), key=lambda c: c.name):
+            own_names = {attr.name for attr in cls.attributes} | {end.name for end in cls.association_ends()}
+            attributes = {attr.name: attr for attr in cls.all_attributes()}
+            ends = {end.name: end for end in cls.all_association_ends()}
+            for name in sorted((attributes.keys() & ends.keys()) & own_names):
+                if not ends[name].is_navigable:
+                    outcome = ("the SQLAlchemy, Pydantic and FastAPI backend generators keep the attribute, "
+                               "since the association end is not navigable from this class")
+                elif name in {end.name for end in attributes[name].owner.all_association_ends()}:
+                    outcome = ("the SQLAlchemy, Pydantic and FastAPI backend generators keep the association "
+                               "end and leave the attribute out")
+                else:
+                    outcome = (f"the attribute comes from a parent class, where it stays, so in the SQLAlchemy "
+                               f"model of '{cls.name}' the relationship hides the attribute's column and the "
+                               f"generated backend cannot create a '{cls.name}'")
+                warnings.append(
+                    f"Attribute and association end share a name: class '{cls.name}' has an attribute and an "
+                    f"association end both named '{name}'. Generated code gives a class one member per name: "
+                    f"the Java class does not compile, and {outcome}. Rename one; if the "
+                    f"attribute stores the related object, delete it and keep the association."
+                )
+
+    def _validate_python_keyword_names(self, warnings: list[str]):
+        """Warn about a name that is a Python keyword (``from``, ``class``, ``None``).
+
+        Legal for the Java or TypeScript generators, so a warning, but the
+        Python-based generators (SQLAlchemy, FastAPI backend, Django, Pydantic,
+        Python classes) emit it verbatim and the generated module does not parse.
+        """
+        for label, name in self._code_names():
+            if keyword.iskeyword(name):
+                warnings.append(
+                    f"Python keyword name: {label} is the Python keyword '{name}'. The Python generators "
+                    f"(SQLAlchemy, FastAPI backend, Django, Pydantic) emit it verbatim, so the generated "
+                    f"code will not parse. Rename it, e.g. '{name}_' or a more specific name."
+                )
+
+    def _validate_case_only_class_names(self, warnings: list[str]):
+        """Warn about classes whose names differ only in case (``Order`` / ``order``).
+
+        The SQLAlchemy and Django generators derive table and model names in
+        lower case, so the second class redefines the first table and the
+        application does not start.
+        """
+        groups: dict[str, list[str]] = {}
+        for cls in self.get_classes():
+            groups.setdefault(cls.name.lower(), []).append(cls.name)
+        for names in sorted(groups.values()):
+            if len(names) < 2:
+                continue
+            listed = ", ".join(f"'{n}'" for n in sorted(names))
+            warnings.append(
+                f"Class names differ only in case: {listed}. Generated database tables are named in "
+                f"lower case, so these classes map to the same table '{names[0].lower()}' and the "
+                f"application fails at startup. Give the classes distinct names."
+            )
+
+    def _validate_case_only_attribute_names(self, warnings: list[str]):
+        """Warn about attributes of one class whose names differ only in case (``Name`` / ``name``).
+
+        Each becomes a column of the class's table, and SQLite (the generated
+        default) and MySQL compare column names case-insensitively, so the
+        table cannot be created.
+        """
+        for cls in sorted(self.get_classes(), key=lambda c: c.name):
+            groups: dict[str, list[str]] = {}
+            for attr in cls.attributes:
+                groups.setdefault(attr.name.lower(), []).append(attr.name)
+            for names in sorted(groups.values()):
+                if len(names) < 2:
+                    continue
+                listed = ", ".join(f"'{n}'" for n in sorted(names))
+                warnings.append(
+                    f"Attribute names differ only in case: {listed} in class '{cls.name}'. They become "
+                    f"columns of one table, and SQLite and MySQL treat column names case-insensitively, "
+                    f"so the table cannot be created. Rename one of them."
+                )
+
+    def _validate_join_table_names(self, warnings: list[str]):
+        """Warn when a many-to-many association's join table takes the name of another table.
+
+        The SQLAlchemy generator (and with it the FastAPI backend and web app)
+        stores a many-to-many association without an association class in a
+        join table named after the association, in lower case, alongside one
+        table per class (also lower case). Two tables with one name stop the
+        application at startup ("Table 'enrollment' is already defined").
+        """
+        class_tables: dict[str, list[str]] = {}
+        for cls in self.get_classes():
+            class_tables.setdefault(cls.name.lower(), []).append(f"class '{cls.name}'")
+        join_tables: dict[str, list[str]] = {}
+        for association in self._join_table_associations():
+            join_tables.setdefault(association.name.lower(), []).append(
+                f"many-to-many association '{association.name}'")
+        for table, joins in sorted(join_tables.items()):
+            owners = sorted(class_tables.get(table, [])) + sorted(joins)
+            if len(owners) < 2:
+                continue
+            warnings.append(
+                f"Join table name clash: {' and '.join(owners)} map to the same table '{table}' "
+                f"(a many-to-many association gets a join table named after it, in lower case). The "
+                f"application fails at startup because the table is defined twice. Rename the association."
+            )
+
+    def _validate_foreign_key_column_clashes(self, warnings: list[str]):
+        """Warn about an attribute named like the foreign key generated for an association end.
+
+        A to-one end ``author`` is stored as a foreign-key column ``author_id``
+        (SQLAlchemy, FastAPI backend, Django). An attribute with that name is
+        the relational key modeled by hand: the generated FastAPI router passes
+        ``author_id=`` twice and does not compile, and Django reports a field
+        clash (models.E006).
+        """
+        for cls in sorted(self.get_classes(), key=lambda c: c.name):
+            attr_names = {attr.name.lower(): attr.name for attr in cls.attributes}
+            for end in sorted(cls.association_ends(), key=lambda e: e.name):
+                if end.multiplicity.max != 1:
+                    continue
+                column = f"{end.name}_id"
+                if column.lower() not in attr_names:
+                    continue
+                warnings.append(
+                    f"Foreign key column clash: attribute '{attr_names[column.lower()]}' of class "
+                    f"'{cls.name}' has the name of the foreign key generated for association end "
+                    f"'{end.name}' ('{column}'). The generated backend and Django define it twice and "
+                    f"fail to load. Delete the attribute; the association already stores the reference."
+                )
+
+    def _validate_id_attributes(self, warnings: list[str]):
+        """Warn about an attribute named ``id`` that clashes with the generated primary key.
+
+        A subclass inherits its parent's key as ``id`` (a foreign key to the
+        parent table in SQLAlchemy and Django), so its own ``id`` breaks the
+        inheritance mapping in both. On a root class, an ``id`` that is not
+        marked as the identifier is rejected by Django (models.E004), and the
+        SQLAlchemy generator silently makes it the primary key.
+        """
+        for cls in sorted(self.get_classes(), key=lambda c: c.name):
+            for attr in sorted(cls.attributes, key=lambda a: a.name):
+                if attr.name.lower() != "id":
+                    continue
+                if cls.parents():
+                    warnings.append(
+                        f"Subclass declares 'id': class '{cls.name}' defines attribute '{attr.name}', but it "
+                        f"inherits its primary key 'id' from its parent class. The generated SQLAlchemy and "
+                        f"Django models cannot map the inheritance. Delete the attribute or rename it."
+                    )
+                elif attr.name == "id" and not attr.is_id:
+                    warnings.append(
+                        f"Attribute 'id' is not the identifier: class '{cls.name}' has an attribute 'id' that "
+                        f"is not marked as its identifier, while generated models reserve 'id' for the primary "
+                        f"key. Django rejects the model, and SQLAlchemy silently turns it into the key. Mark it "
+                        f"as the identifier (is_id) or rename it."
+                    )
+
+    def _validate_empty_enumerations(self, warnings: list[str]):
+        """Warn about an enumeration without literals.
+
+        No attribute of that type can hold a value, and the SQLAlchemy,
+        Pydantic (with them the FastAPI backend) and Django generators emit an
+        empty ``class Status(Enum):`` body, which does not parse, even when no
+        attribute uses the enumeration.
+        """
+        for enum in sorted(self.get_enumerations(), key=lambda e: e.name):
+            if not enum.literals:
+                warnings.append(
+                    f"Empty enumeration: '{enum.name}' has no literals, so no attribute of that type can hold "
+                    f"a value, and the SQLAlchemy, Pydantic and Django generators emit an empty class body that does "
+                    f"not parse. Add its literals, or delete it."
+                )
+
+    def _validate_class_typed_attributes(self, warnings: list[str]):
+        """Warn about an attribute whose type is a class of the model.
+
+        Legal UML, but a relationship drawn as an attribute: the persistence
+        generators only map primitive and enumeration types to columns (the
+        SQLAlchemy generator and the FastAPI backend refuse to generate), and
+        the relationship gets no foreign key or navigation.
+        """
+        for cls in sorted(self.get_classes(), key=lambda c: c.name):
+            for attr in sorted(cls.attributes, key=lambda a: a.name):
+                if isinstance(attr.type, Class) and attr.type in self.__types:
+                    warnings.append(
+                        f"Class-typed attribute: attribute '{attr.name}' of class '{cls.name}' has the class "
+                        f"'{attr.type.name}' as its type. A database column cannot hold an object, so the "
+                        f"SQLAlchemy and FastAPI backend generators stop with an unsupported type. Replace the "
+                        f"attribute with an association from '{cls.name}' to '{attr.type.name}'."
+                    )
+
+    def _validate_isolated_classes(self, warnings: list[str]):
+        """Warn about a class with no attributes, methods, associations or generalizations.
+
+        Generation succeeds, but the class becomes a table with only a key
+        and a form with no fields: nearly always a class left unfinished.
+        """
+        for cls in sorted(self.get_classes(), key=lambda c: c.name):
+            if isinstance(cls, AssociationClass) or cls.methods or cls.all_attributes():
+                continue
+            if cls.all_association_ends() or cls.parents() or cls.specializations():
+                continue
+            warnings.append(
+                f"Isolated class: '{cls.name}' has no attributes, methods, associations or generalizations, "
+                f"so the generated application stores and shows nothing for it. Add its attributes and "
+                f"relationships, or delete it."
+            )
+
+    def _validate_abstract_classes_without_concrete_subclass(self, warnings: list[str]):
+        """Warn about an abstract class that no concrete class specializes.
+
+        No object of the class can exist, so its attributes and associations
+        are unusable, and a mandatory end typed by it can never be satisfied.
+        The Spring generator maps an abstract class to no table at all.
+        """
+        for cls in sorted(self.get_classes(), key=lambda c: c.name):
+            if not cls.is_abstract or any(not sub.is_abstract for sub in cls.all_specializations()):
+                continue
+            # An end typed by `cls` with min >= 1 makes every object at the other end need one.
+            required_by = sorted({
+                other.type.name
+                for association in cls.associations
+                for own in association.ends if own.type is cls and own.multiplicity.min >= 1
+                for other in association.ends if other is not own and other.type is not cls
+            })
+            consequence = (
+                f" Objects of {', '.join(repr(n) for n in required_by)} must each be linked to one through a "
+                f"mandatory association end, so they cannot be created either."
+                if required_by else ""
+            )
+            warnings.append(
+                f"Abstract class without concrete subclass: '{cls.name}' is abstract and no concrete class "
+                f"specializes it, so no '{cls.name}' object can exist.{consequence} Add a concrete subclass, "
+                f"or make '{cls.name}' concrete."
+            )
+
+    def _validate_shared_composite_parts(self, warnings: list[str]):
+        """Warn about a class that must belong to two composites at once.
+
+        A part belongs to at most one whole at a time. Two compositions that
+        each make the owner mandatory (``1`` at the whole's end) ask every part
+        to have two owners, and deleting either whole deletes the part the
+        other still requires.
+        """
+        owners: dict[str, list[str]] = {}
+        for association in self.__associations:
+            ends = list(association.ends)
+            if len(ends) != 2:
+                continue
+            for whole, part in ((ends[0], ends[1]), (ends[1], ends[0])):
+                if whole.is_composite and whole.multiplicity.min >= 1:
+                    owners.setdefault(part.type.name, []).append(f"'{whole.type.name}' ({association.name})")
+        for part, wholes in sorted(owners.items()):
+            if len(wholes) < 2:
+                continue
+            warnings.append(
+                f"Part with several mandatory owners: class '{part}' is a mandatory part of "
+                f"{' and '.join(sorted(wholes))}, but a part belongs to one whole at a time and deleting "
+                f"either whole deletes it. Make all but one of these compositions plain associations, or "
+                f"their owner ends optional (0..1)."
+            )
+
+    def _validate_composite_whole_multiplicity(self, warnings: list[str]):
+        """Warn about a composition whose whole end allows more than one whole.
+
+        A part belongs to one whole, so the whole's end is 1 or 0..1. With a
+        larger upper bound the generated backends cannot delete the parts with
+        their whole. Most often the diamond was drawn at the part's end.
+        """
+        for association in sorted(self.__associations, key=lambda a: a.name):
+            ends = list(association.ends)
+            if len(ends) != 2:
+                continue
+            for whole, part in ((ends[0], ends[1]), (ends[1], ends[0])):
+                if whole.is_composite and whole.multiplicity.max > 1:
+                    warnings.append(
+                        f"Part with several wholes: in composition '{association.name}', each "
+                        f"'{part.type.name}' is a part of many '{whole.type.name}', but a part belongs to one "
+                        f"whole, so generated backends do not delete the parts with their whole. If the "
+                        f"diamond is at the wrong end, move it to '{part.type.name}'; otherwise set the "
+                        f"multiplicity at '{whole.type.name}' to 1 or 0..1."
                     )
 
     def _validate_constraints(self, errors: list[str]):
@@ -2340,28 +3149,38 @@ class DomainModel(Model):
                     _check(post, f"Postcondition on {cls.name}::{method.name}")
 
     def _validate_circular_inheritance(self, errors: list[str]):
-        """Detect circular inheritance in the class hierarchy."""
-        def has_cycle(cls: Class, visited: set, rec_stack: set) -> bool:
-            visited.add(cls)
-            rec_stack.add(cls)
+        """Detect circular inheritance in the class hierarchy.
 
-            for parent in cls.parents():
-                if parent not in visited:
-                    if has_cycle(parent, visited, rec_stack):
+        A depth-first walk up the parents of each class not yet visited; a
+        parent already on the current path closes a cycle. Iterative, with an
+        explicit stack, so a chain deeper than Python's recursion limit is
+        checked like any other.
+        """
+        def has_cycle(start: Class) -> bool:
+            visited.add(start)
+            on_path = {start}
+            stack = [(start, iter(start.parents()))]
+            while stack:
+                cls, parents = stack[-1]
+                for parent in parents:
+                    if parent in on_path:
                         return True
-                elif parent in rec_stack:
-                    return True
-
-            rec_stack.remove(cls)
+                    if parent not in visited:
+                        visited.add(parent)
+                        on_path.add(parent)
+                        stack.append((parent, iter(parent.parents())))
+                        break
+                else:                       # every parent of `cls` is done
+                    stack.pop()
+                    on_path.discard(cls)
             return False
 
         visited = set()
-        for cls in self.get_classes():
-            if cls not in visited:
-                if has_cycle(cls, visited, set()):
-                    errors.append(
-                        f"Circular inheritance detected involving class '{cls.name}'."
-                    )
+        for cls in sorted(self.get_classes(), key=lambda c: c.name):
+            if cls not in visited and has_cycle(cls):
+                errors.append(
+                    f"Circular inheritance detected involving class '{cls.name}'."
+                )
 
     def _validate_attribute_shadowing(self, errors: list[str]):
         """Validate that subclass attributes do not shadow inherited attributes."""
@@ -2373,6 +3192,36 @@ class DomainModel(Model):
                         f"Class '{cls.name}' defines attribute '{attr.name}' "
                         f"which already exists in a parent class."
                     )
+
+    def _validate_member_name_collisions(self, errors: list[str]):
+        """Validate that a method does not share its name with a feature of the class.
+
+        Generated code reaches both through the same name, so one of them wins
+        and the other becomes unreachable: a body reading ``self.check_out -
+        self.check_in`` subtracts two methods instead of two dates.
+        """
+        for cls in self.get_classes():
+            feature_names = {attr.name for attr in cls.all_attributes()}
+            feature_names |= {end.name for end in cls.association_ends()}
+            for method in cls.methods:
+                if method.name in feature_names:
+                    errors.append(
+                        f"Class '{cls.name}' defines method '{method.name}' with the name "
+                        f"of one of its attributes or association ends. A generated object "
+                        f"can only carry one of them under that name."
+                    )
+
+    def _validate_unique_end_names(self, errors: list[str]):
+        """Validate that no class reaches two association ends with the same name.
+
+        Construction checks this, but renaming an end (or a class, which
+        propagates to role names) afterwards does not.
+        """
+        for cls in sorted(self.get_classes(), key=lambda c: c.name):
+            for name in sorted(cls._duplicate_end_names()):
+                errors.append(
+                    f"Class '{cls.name}' has more than one association end named '{name}'."
+                )
 
     def __repr__(self):
         return (

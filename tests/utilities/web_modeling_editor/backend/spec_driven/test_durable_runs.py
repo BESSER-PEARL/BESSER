@@ -1,0 +1,989 @@
+"""Durable spec-driven run ownership and event replay tests."""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import json
+import os
+import sqlite3
+import threading
+import time
+
+from besser.utilities.web_modeling_editor.backend.routers import (
+    spec_driven_router as router_module,
+)
+from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
+    runner as runner_module,
+)
+from besser.utilities.web_modeling_editor.backend.services.spec_driven.run_manager import (
+    DurableRunManager,
+    SqliteRunEventStore,
+)
+from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
+    SmartRunEntry,
+    SmartRunRegistry,
+)
+from besser.utilities.web_modeling_editor.backend.services.spec_driven.sse_events import (
+    DoneEvent,
+    ErrorEvent,
+    PhaseEvent,
+    StartEvent,
+    format_sse,
+)
+from besser.utilities.web_modeling_editor.backend.settings import get_settings
+from tests.utilities.web_modeling_editor.backend._runtime import current_runtime
+from tests.utilities.web_modeling_editor.backend.spec_driven.test_runner import (
+    _build_request,
+    _FakeClient,
+    _FakeOrchestrator,
+)
+
+
+def _payload(frame: bytes) -> dict:
+    data = next(
+        line[5:].strip()
+        for line in frame.decode("utf-8").splitlines()
+        if line.startswith("data:")
+    )
+    return json.loads(data)
+
+
+def _start(run_id: str) -> bytes:
+    return format_sse(
+        StartEvent(
+            runId=run_id,
+            provider="openai",
+            llmModel="test-model",
+            maxCost=1.0,
+            maxRuntime=60,
+        )
+    )
+
+
+def _done(run_id: str, *, incomplete: bool = False, blocker_count: int = 0) -> bytes:
+    return format_sse(
+        DoneEvent(
+            runId=run_id,
+            downloadUrl=f"/download/{run_id}",
+            fileName="result.zip",
+            isZip=True,
+            incomplete=incomplete,
+            blockerCount=blocker_count,
+        )
+    )
+
+
+def test_store_persists_sequenced_events_across_instances(tmp_path):
+    path = str(tmp_path / "runs.sqlite3")
+    run_id = "a" * 32
+
+    first = SqliteRunEventStore(path)
+    first.begin_run(run_id)
+    first.set_status(run_id, "running")
+    event = first.append(run_id, _start(run_id))
+    first.set_status(run_id, "succeeded", terminal_event="done")
+    first.close()
+
+    second = SqliteRunEventStore(path)
+    record = second.get_run(run_id)
+    replay = second.events_after(run_id, 0)
+    second.close()
+
+    assert event.sequence == 1
+    assert b"id: 1\n" in event.frame
+    assert _payload(event.frame)["sequence"] == 1
+    assert record is not None
+    assert record.status == "succeeded"
+    assert [item.sequence for item in replay] == [1]
+
+
+def test_store_marks_orphaned_running_record_interrupted(tmp_path):
+    path = str(tmp_path / "runs.sqlite3")
+    run_id = "b" * 32
+
+    first = SqliteRunEventStore(path)
+    first.begin_run(run_id)
+    first.set_status(run_id, "running")
+    first.append(run_id, _start(run_id))
+    first.close()
+
+    restarted = SqliteRunEventStore(path, has_checkpoint=lambda rid: rid == run_id)
+    record = restarted.get_run(run_id)
+    replay = restarted.events_after(run_id, 0)
+    restarted.close()
+    # A second restart must not add a second terminal frame.
+    again = SqliteRunEventStore(path, has_checkpoint=lambda rid: True)
+    replay_again = again.events_after(run_id, 0)
+    again.close()
+
+    assert record is not None
+    assert record.status == "interrupted"
+    assert record.terminal_event == "interrupted"
+    # A reconnecting client gets a terminal frame, not an empty stream, and is
+    # told the checkpoint on disk can be resumed.
+    assert record.resume_available is True
+    assert [e.event_type for e in replay] == ["start", "error"]
+    assert replay[-1].payload["code"] == "INTERNAL"
+    assert replay[-1].payload["resumeAvailable"] is True
+    assert record.last_sequence == replay[-1].sequence == 2
+    assert len(replay_again) == 2
+
+
+def test_run_stopped_by_a_shutdown_gets_its_terminal_frame_on_restart(tmp_path):
+    """A graceful shutdown cancels the producer, which marks the run
+    ``interrupted`` without a frame; the next start must still add one."""
+    path = str(tmp_path / "runs.sqlite3")
+    run_id = "d" * 32
+
+    first = SqliteRunEventStore(path)
+    first.begin_run(run_id)
+    first.append(run_id, _start(run_id))
+    first.set_status(run_id, "interrupted", terminal_event="interrupted")
+    first.close()
+
+    restarted = SqliteRunEventStore(path)
+    replay = restarted.events_after(run_id, 0)
+    record = restarted.get_run(run_id)
+    restarted.close()
+
+    assert [e.event_type for e in replay] == ["start", "error"]
+    assert replay[-1].payload["resumeAvailable"] is False
+    assert record.resume_available is False
+
+
+def test_subscriber_disconnect_does_not_stop_producer_and_replay_is_exact():
+    async def exercise() -> None:
+        store = SqliteRunEventStore(":memory:")
+        manager = DurableRunManager(store)
+        run_id = "c" * 32
+        continue_producer = asyncio.Event()
+
+        async def source():
+            yield _start(run_id)
+            await continue_producer.wait()
+            yield format_sse(PhaseEvent(phase="generate", message="building"))
+            yield _done(run_id)
+
+        await manager.start(run_id, source())
+
+        first_subscription = manager.subscribe(run_id)
+        first_frame = await anext(first_subscription)
+        await first_subscription.aclose()
+
+        # Closing the only subscriber must not cancel the producer task.
+        assert _payload(first_frame)["sequence"] == 1
+        assert manager.get_run(run_id).status == "running"
+
+        continue_producer.set()
+        await manager.wait(run_id)
+
+        replayed = []
+        async for frame in manager.subscribe(run_id, after_sequence=1):
+            replayed.append(_payload(frame))
+
+        record = manager.get_run(run_id)
+        assert record is not None
+        assert record.status == "succeeded"
+        assert [event["sequence"] for event in replayed] == [2, 3]
+        assert [event["event"] for event in replayed] == ["phase", "done"]
+        store.close()
+
+    asyncio.run(exercise())
+
+
+def test_incomplete_done_maps_to_partial_status():
+    async def exercise() -> None:
+        store = SqliteRunEventStore(":memory:")
+        manager = DurableRunManager(store)
+        run_id = "d" * 32
+
+        async def source():
+            yield _start(run_id)
+            yield _done(run_id, incomplete=True)
+
+        await manager.start(run_id, source())
+        await manager.wait(run_id)
+        assert manager.get_run(run_id).status == "partial"
+        store.close()
+
+    asyncio.run(exercise())
+
+
+def test_unverified_checks_alone_do_not_make_a_run_partial():
+    # blockerCount also counts checks that could not run; the runner's
+    # incomplete=False is authoritative.
+    async def exercise() -> None:
+        store = SqliteRunEventStore(":memory:")
+        manager = DurableRunManager(store)
+        run_id = "e" * 32
+
+        async def source():
+            yield _start(run_id)
+            yield _done(run_id, incomplete=False, blocker_count=2)
+
+        await manager.start(run_id, source())
+        await manager.wait(run_id)
+        assert manager.get_run(run_id).status == "succeeded"
+        store.close()
+
+    asyncio.run(exercise())
+
+
+def test_run_without_subscribers_is_stopped_after_grace_period():
+    async def exercise() -> None:
+        store = SqliteRunEventStore(":memory:")
+        manager = DurableRunManager(store)
+        run_id = "e" * 32
+        cancel_signal = asyncio.Event()
+
+        async def source():
+            yield _start(run_id)
+            await cancel_signal.wait()
+            yield format_sse(
+                ErrorEvent(code="CANCELLED", message="cancelled")
+            )
+
+        await manager.start(
+            run_id,
+            source(),
+            on_abandoned=cancel_signal.set,
+            disconnect_grace_seconds=0.01,
+        )
+        await manager.wait(run_id)
+
+        record = manager.get_run(run_id)
+        replay = store.events_after(run_id, 1)
+        assert record is not None
+        assert record.status == "abandoned"
+        assert record.terminal_event == "ABANDONED"
+        assert record.subscriber_count == 0
+        assert record.disconnected_at is not None
+        assert record.abandonment_requested_at is not None
+        assert len(replay) == 1
+        assert replay[0].payload["code"] == "CANCELLED"
+        assert replay[0].payload["reason"] == "abandoned"
+        assert replay[0].payload["resumeAvailable"] is False
+        assert record.resume_available is False
+        assert "No resumable checkpoint" in replay[0].payload["message"]
+        store.close()
+
+    asyncio.run(exercise())
+
+
+def test_abandonment_only_advertises_a_verified_checkpoint():
+    async def exercise() -> None:
+        store = SqliteRunEventStore(":memory:")
+        manager = DurableRunManager(store)
+        run_id = "1" * 32
+        cancel_signal = asyncio.Event()
+
+        async def source():
+            yield _start(run_id)
+            await cancel_signal.wait()
+            yield format_sse(ErrorEvent(code="CANCELLED", message="cancelled"))
+
+        await manager.start(
+            run_id,
+            source(),
+            on_abandoned=cancel_signal.set,
+            resume_available=lambda: True,
+            disconnect_grace_seconds=0.01,
+        )
+        await manager.wait(run_id)
+
+        record = manager.get_run(run_id)
+        terminal = store.events_after(run_id, 1)[0].payload
+        assert record is not None
+        assert record.resume_available is True
+        assert terminal["resumeAvailable"] is True
+        assert "verified checkpoint was retained" in terminal["message"]
+        store.close()
+
+    asyncio.run(exercise())
+
+
+class _CheckpointsThenFailsOnCancel(_FakeOrchestrator):
+    """A Phase 2 turn left a checkpoint; the call in flight fails once the run is cancelled."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.should_continue = kwargs["should_continue"]
+
+    def run(self, instructions: str) -> str:
+        with open(os.path.join(self.output_dir, ".besser_checkpoint.json"), "w", encoding="utf-8") as fh:
+            fh.write("{}")
+        for _ in range(1000):  # 10 s safety net
+            if not self.should_continue():
+                break
+            time.sleep(0.01)
+        raise RuntimeError("provider connection dropped")
+
+
+def test_abandonment_advertises_a_checkpoint_the_runner_keeps(monkeypatch, tmp_path):
+    """Review E10: the abandoned run's terminal frame said ``resumeAvailable:
+    true``, then the runner deleted the workspace and ``/resume`` answered 404."""
+    monkeypatch.setattr(get_settings(), "llm_run_workspace_root", str(tmp_path))
+    monkeypatch.setattr(runner_module, "LLMOrchestrator", _CheckpointsThenFailsOnCancel)
+    monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _FakeClient())
+    settings = get_settings().model_copy(
+        update={"llm_cancel_abandoned_runs": True, "llm_disconnected_grace_seconds": 0.05},
+    )
+    runtime = current_runtime()
+
+    async def exercise() -> None:
+        response = await router_module.smart_generate(
+            _build_request(), runtime, settings, idempotency_key=None,
+        )
+        run_id = response.headers["X-BESSER-Run-Id"]
+        await asyncio.wait_for(runtime.durable_runs.wait(run_id), 10)
+        terminal = runtime.durable_runs.store.events_after(run_id, 0)[-1].payload
+        assert (terminal["code"], terminal["reason"]) == ("CANCELLED", "abandoned")
+        assert terminal["resumeAvailable"] is True
+        assert runtime.durable_runs.get_run(run_id).resume_available is True
+        assert runner_module._locate_run_temp_dir(run_id) is not None
+
+    asyncio.run(exercise())
+
+
+def test_abandoned_real_runner_shape_keeps_partial_download():
+    """Cooperative runner cancellation emits INCOMPLETE then done, not CANCELLED."""
+
+    async def exercise() -> None:
+        store = SqliteRunEventStore(":memory:")
+        manager = DurableRunManager(store)
+        run_id = "7" * 32
+        cancel_signal = asyncio.Event()
+
+        async def source():
+            yield _start(run_id)
+            await cancel_signal.wait()
+            yield format_sse(
+                ErrorEvent(code="INCOMPLETE", message="run was cancelled")
+            )
+            yield _done(run_id, incomplete=True)
+
+        await manager.start(
+            run_id,
+            source(),
+            on_abandoned=cancel_signal.set,
+            resume_available=lambda: False,
+            disconnect_grace_seconds=0.01,
+        )
+        await manager.wait(run_id)
+
+        record = manager.get_run(run_id)
+        replay = store.events_after(run_id, 0)
+        assert record is not None
+        assert record.status == "abandoned"
+        assert record.terminal_event == "done"
+        assert record.resume_available is False
+        assert [event.event_type for event in replay] == [
+            "start",
+            "error",
+            "done",
+        ]
+        assert replay[-1].payload["downloadUrl"] == f"/download/{run_id}"
+        store.close()
+
+    asyncio.run(exercise())
+
+
+def test_resume_drops_old_frames_and_keeps_numbering():
+    async def exercise() -> None:
+        store = SqliteRunEventStore(":memory:")
+        manager = DurableRunManager(store)
+        run_id = "2" * 32
+
+        async def first_source():
+            yield _start(run_id)
+            yield format_sse(ErrorEvent(code="CANCELLED", message="stopped"))
+
+        async def resumed_source():
+            yield _start(run_id)
+            yield _done(run_id)
+
+        await manager.start(run_id, first_source())
+        await manager.wait(run_id)
+        assert manager.get_run(run_id).last_sequence == 2
+
+        await manager.start(run_id, resumed_source(), resume=True)
+        await manager.wait(run_id)
+        replay = store.events_after(run_id, 0)
+
+        assert [event.sequence for event in replay] == [3, 4]
+        assert [event.event_type for event in replay] == ["start", "done"]
+        assert manager.get_run(run_id).status == "succeeded"
+        store.close()
+
+    asyncio.run(exercise())
+
+
+def test_old_subscriber_finalizer_cannot_touch_resumed_attempt():
+    async def exercise() -> None:
+        store = SqliteRunEventStore(":memory:")
+        manager = DurableRunManager(store)
+        run_id = "3" * 32
+        finish = asyncio.Event()
+        cancel_signal = asyncio.Event()
+
+        async def first_source():
+            yield _start(run_id)
+            yield _done(run_id)
+
+        async def resumed_source():
+            yield _start(run_id)
+            await finish.wait()
+            yield _done(run_id)
+
+        await manager.start(run_id, first_source())
+        old_subscription = manager.subscribe(run_id)
+        await anext(old_subscription)
+        await manager.wait(run_id)
+
+        await manager.start(
+            run_id,
+            resumed_source(),
+            resume=True,
+            on_abandoned=cancel_signal.set,
+            disconnect_grace_seconds=0.02,
+        )
+        new_subscription = manager.subscribe(run_id)
+        await anext(new_subscription)
+        await old_subscription.aclose()
+        await asyncio.sleep(0.04)
+
+        record = manager.get_run(run_id)
+        assert record is not None
+        assert record.subscriber_count == 1
+        assert cancel_signal.is_set() is False
+
+        finish.set()
+        await anext(new_subscription)
+        await new_subscription.aclose()
+        await manager.wait(run_id)
+        store.close()
+
+    asyncio.run(exercise())
+
+
+def test_internal_producer_exception_is_redacted_from_status():
+    async def exercise() -> None:
+        store = SqliteRunEventStore(":memory:")
+        manager = DurableRunManager(store)
+        run_id = "4" * 32
+
+        async def source():
+            yield _start(run_id)
+            raise RuntimeError("secret sentinel")
+
+        await manager.start(run_id, source())
+        await manager.wait(run_id)
+        record = manager.get_run(run_id)
+
+        assert record is not None
+        assert record.status == "failed"
+        assert record.error == "Internal server error"
+        assert "secret sentinel" not in json.dumps(record.to_api_dict())
+        store.close()
+
+    asyncio.run(exercise())
+
+
+def test_download_registry_restores_artifact_after_restart(tmp_path, monkeypatch):
+    async def exercise() -> None:
+        monkeypatch.setattr(get_settings(), "llm_run_workspace_root", str(tmp_path))
+        run_id = "5" * 32
+        workspace = tmp_path / f"besser_llm_{run_id}_test"
+        workspace.mkdir()
+        artifact = workspace / "result.txt"
+        artifact.write_text("result", encoding="utf-8")
+        created_at = time.time()
+
+        first = SmartRunRegistry()
+        await first.put(
+            run_id,
+            SmartRunEntry(
+                file_path=str(artifact),
+                file_name="result.txt",
+                is_zip=False,
+                temp_dir=str(workspace),
+                created_at=created_at,
+            ),
+        )
+
+        restarted = SmartRunRegistry()
+        assert await restarted.restore_persisted() == 1
+        restored = await restarted.get(run_id)
+        assert restored is not None
+        # A copy kept beside the workspace, which the run's shell cannot change.
+        with open(restored.file_path, encoding="utf-8") as fh:
+            assert fh.read() == "result"
+        assert os.path.dirname(restored.file_path) == f"{workspace}.download"
+        assert restored.temp_dir == str(workspace)
+        assert restored.file_name == "result.txt"
+        assert restored.created_at == created_at
+
+    asyncio.run(exercise())
+
+
+def test_cleanup_sweeps_only_stale_smart_runs_from_persistent_root(
+    tmp_path, monkeypatch
+):
+    from besser.utilities.web_modeling_editor.backend.services import cleanup
+
+    system_root = tmp_path / "system"
+    persistent_root = tmp_path / "persistent"
+    system_root.mkdir()
+    persistent_root.mkdir()
+    stale_run = persistent_root / f"besser_llm_{'6' * 32}_old"
+    unrelated = persistent_root / "keep_me"
+    stale_run.mkdir()
+    unrelated.mkdir()
+    old = time.time() - 7200
+    os.utime(stale_run, (old, old))
+    os.utime(unrelated, (old, old))
+
+    monkeypatch.setattr(cleanup.tempfile, "gettempdir", lambda: str(system_root))
+    monkeypatch.setattr(get_settings(), "llm_run_workspace_root", str(persistent_root))
+    cleanup.cleanup_old_temp_files(max_age_hours=1)
+
+    assert stale_run.exists() is False
+    assert unrelated.is_dir()
+
+
+def test_reconnect_within_grace_cancels_abandonment_timer():
+    async def exercise() -> None:
+        store = SqliteRunEventStore(":memory:")
+        manager = DurableRunManager(store)
+        run_id = "f" * 32
+        cancel_signal = asyncio.Event()
+        finish = asyncio.Event()
+
+        async def source():
+            yield _start(run_id)
+            await finish.wait()
+            yield _done(run_id)
+
+        await manager.start(
+            run_id,
+            source(),
+            on_abandoned=cancel_signal.set,
+            disconnect_grace_seconds=0.1,
+        )
+
+        first = manager.subscribe(run_id)
+        await anext(first)
+        connected = manager.get_run(run_id)
+        assert connected is not None
+        assert connected.subscriber_count == 1
+        await first.aclose()
+
+        disconnected = manager.get_run(run_id)
+        assert disconnected is not None
+        assert disconnected.subscriber_count == 0
+        assert disconnected.disconnected_at is not None
+
+        await asyncio.sleep(0.02)
+        second = manager.subscribe(run_id, after_sequence=1)
+        next_frame = asyncio.create_task(anext(second))
+        await asyncio.sleep(0.12)
+        assert not cancel_signal.is_set()
+
+        finish.set()
+        assert _payload(await next_frame)["event"] == "done"
+        await second.aclose()
+        await manager.wait(run_id)
+        assert manager.get_run(run_id).status == "succeeded"
+        store.close()
+
+    asyncio.run(exercise())
+
+
+def test_one_of_two_subscribers_leaving_does_not_start_abandonment():
+    async def exercise() -> None:
+        store = SqliteRunEventStore(":memory:")
+        manager = DurableRunManager(store)
+        run_id = "8" * 32
+        cancel_signal = asyncio.Event()
+        finish = asyncio.Event()
+
+        async def source():
+            yield _start(run_id)
+            await finish.wait()
+            yield _done(run_id)
+
+        await manager.start(
+            run_id,
+            source(),
+            on_abandoned=cancel_signal.set,
+            disconnect_grace_seconds=0.02,
+        )
+        first = manager.subscribe(run_id)
+        second = manager.subscribe(run_id)
+        await anext(first)
+        await anext(second)
+        await first.aclose()
+        await asyncio.sleep(0.04)
+
+        record = manager.get_run(run_id)
+        assert record is not None
+        assert record.subscriber_count == 1
+        assert cancel_signal.is_set() is False
+
+        finish.set()
+        await anext(second)
+        await second.aclose()
+        await manager.wait(run_id)
+        store.close()
+
+    asyncio.run(exercise())
+
+
+def test_a_client_reconnecting_across_a_resume_is_not_left_blank():
+    """The regression this fix exists for.
+
+    A client streaming the first attempt holds ``Last-Event-ID: 2``. The run is
+    resumed, which clears the events and restarts numbering at 1, and the client
+    reconnects with ``?after=2``. Every frame of the new attempt is then at or
+    below that cursor, so it received NOTHING while the status endpoint reported
+    a healthy subscriber and a rising lastSequence -- a live-looking but
+    permanently blank stream.
+
+    Sequences never skip, so a cursor ahead of the high-water mark cannot belong
+    to this attempt; subscribe() treats it as stale and replays from the start.
+    """
+    async def exercise() -> None:
+        store = SqliteRunEventStore(":memory:")
+        manager = DurableRunManager(store)
+        run_id = "7" * 32
+        finish = asyncio.Event()
+
+        async def first_source():
+            yield _start(run_id)
+            yield format_sse(ErrorEvent(code="CANCELLED", message="stopped"))
+
+        async def resumed_source():
+            yield _start(run_id)
+            await finish.wait()
+            yield _done(run_id)
+
+        await manager.start(run_id, first_source())
+        await manager.wait(run_id)
+        stale_cursor = manager.get_run(run_id).last_sequence
+        assert stale_cursor >= 1
+
+        await manager.start(run_id, resumed_source(), resume=True)
+
+        # What the reconnecting client actually sends.
+        subscription = manager.subscribe(run_id, after_sequence=stale_cursor)
+        frame = await asyncio.wait_for(anext(subscription), 3)
+        assert b"start" in frame, "a stale cursor must not strand the client"
+
+        finish.set()
+        await asyncio.wait_for(anext(subscription), 3)
+        await subscription.aclose()
+        await manager.wait(run_id)
+        store.close()
+
+    asyncio.run(exercise())
+
+
+def test_a_current_cursor_still_skips_what_the_client_already_saw():
+    """The stale-cursor rescue must not turn every reconnect into a full replay."""
+    async def exercise() -> None:
+        store = SqliteRunEventStore(":memory:")
+        manager = DurableRunManager(store)
+        run_id = "8" * 32
+
+        async def source():
+            yield _start(run_id)
+            yield _done(run_id)
+
+        await manager.start(run_id, source())
+        await manager.wait(run_id)
+
+        seen = manager.get_run(run_id).last_sequence
+        replay = [f async for f in manager.subscribe(run_id, after_sequence=seen)]
+        assert replay == [], "frames at or below a valid cursor must not repeat"
+
+    asyncio.run(exercise())
+
+
+def test_stale_cursor_within_new_attempt_range_replays_from_start():
+    """Review 2026-10-30 (B9, ``probe_stale_cursor.py``): numbering restarted at
+    1 on a resume, so a cursor of 30 from the first attempt fell inside a
+    longer second attempt's range and silently skipped its first 30 frames,
+    the ``start`` and phase frames among them (30 of 60 delivered)."""
+    async def exercise() -> None:
+        store = SqliteRunEventStore(":memory:")
+        manager = DurableRunManager(store)
+        run_id = "9" * 32
+
+        def frames(count: int, tag: str):
+            async def source():
+                yield _start(run_id)
+                for i in range(count):
+                    yield format_sse(ErrorEvent(code="COST_CAP", message=f"{tag}-{i}"))
+                yield _done(run_id)
+            return source()
+
+        await manager.start(run_id, frames(28, "first"))
+        await manager.wait(run_id)
+        cursor = manager.get_run(run_id).last_sequence
+        assert cursor == 30
+
+        await manager.start(run_id, frames(58, "second"), resume=True)
+        await manager.wait(run_id)
+        got = [_payload(f) async for f in manager.subscribe(run_id, after_sequence=cursor)]
+
+        assert len(got) == 60
+        assert got[0]["event"] == "start" and got[-1]["event"] == "done"
+        store.close()
+
+    asyncio.run(exercise())
+
+
+# ---------------------------------------------------------------------
+# A failing event store must stop the worker before freeing its slot
+# ---------------------------------------------------------------------
+
+# Ends a worker the code under test failed to stop, so a test leaves no thread behind.
+_TEST_OVER = threading.Event()
+
+
+class _SpendsUntilCancelled(_FakeOrchestrator):
+    """Takes one 'LLM turn' every 10 ms until the run's cancel signal is set."""
+
+    running = False
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.should_continue = kwargs["should_continue"]
+
+    def run(self, instructions: str) -> str:
+        type(self).running = True
+        try:
+            while self.should_continue() and not _TEST_OVER.wait(0.01):
+                self.on_progress(1, "write_file", "executing")
+            return self.output_dir
+        finally:
+            type(self).running = False
+
+
+def _use_spending_orchestrator(monkeypatch) -> None:
+    monkeypatch.setattr(runner_module, "LLMOrchestrator", _SpendsUntilCancelled)
+    monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _FakeClient())
+    _TEST_OVER.clear()
+    _SpendsUntilCancelled.running = False
+
+
+def test_a_failing_store_stops_the_worker_before_its_slot_is_freed(monkeypatch):
+    """Review E3: the store failed mid-run (disk full, a lock held past the busy
+    timeout); the run was marked failed and its slot freed while the worker
+    thread kept calling the provider, out of reach of ``/cancel``."""
+    _use_spending_orchestrator(monkeypatch)
+    runtime = current_runtime()
+    store = runtime.durable_runs.store
+    real_append = store.append
+    appended = {"count": 0}
+
+    def append_until_the_disk_is_full(run_id, frame):
+        appended["count"] += 1
+        if appended["count"] >= 4:
+            raise sqlite3.OperationalError("database or disk is full")
+        return real_append(run_id, frame)
+
+    monkeypatch.setattr(store, "append", append_until_the_disk_is_full)
+
+    async def exercise() -> None:
+        response = await router_module.smart_generate(
+            _build_request(), runtime, get_settings().model_copy(), idempotency_key=None,
+        )
+        run_id = response.headers["X-BESSER-Run-Id"]
+        try:
+            await asyncio.wait_for(runtime.durable_runs.wait(run_id), 10)
+            assert _SpendsUntilCancelled.running is False, "the worker outlived its run"
+            assert runtime.slots._held == 0
+            assert runtime.active_runs._events == {}
+            assert runtime.durable_runs.get_run(run_id).status == "failed"
+        finally:
+            _TEST_OVER.set()
+
+    asyncio.run(exercise())
+
+
+def test_a_cancelled_run_task_stops_the_worker_before_its_slot_is_freed(monkeypatch):
+    """Server shutdown cancels the run's task: the worker used to go on until
+    its own caps (the interpreter then waits for the thread at exit)."""
+    _use_spending_orchestrator(monkeypatch)
+    runtime = current_runtime()
+
+    async def exercise() -> None:
+        response = await router_module.smart_generate(
+            _build_request(), runtime, get_settings().model_copy(), idempotency_key=None,
+        )
+        run_id = response.headers["X-BESSER-Run-Id"]
+        try:
+            for _ in range(500):
+                if _SpendsUntilCancelled.running:
+                    break
+                await asyncio.sleep(0.01)
+            task = runtime.durable_runs._tasks[run_id]
+            task.cancel()
+            await asyncio.wait({task}, timeout=10)
+            assert _SpendsUntilCancelled.running is False, "the worker outlived its run"
+            assert runtime.slots._held == 0
+            assert runtime.active_runs._events == {}
+            assert runtime.durable_runs.get_run(run_id).status == "interrupted"
+        finally:
+            _TEST_OVER.set()
+
+    asyncio.run(exercise())
+
+
+def test_a_crashed_helper_task_does_not_skip_stopping_the_worker(monkeypatch):
+    """A helper task's error re-raised from the runner's ``finally`` skipped
+    stopping the worker and still freed the run id."""
+    _use_spending_orchestrator(monkeypatch)
+    # Makes the runtime watchdog raise TypeError on its first sleep.
+    monkeypatch.setattr(get_settings(), "llm_watchdog_grace_seconds", None)
+    runtime = current_runtime()
+
+    async def exercise() -> None:
+        runner = runner_module.SmartGenerationRunner(_build_request(), runtime=runtime)
+        frames = runner.generate_and_stream()
+        try:
+            while not _SpendsUntilCancelled.running:
+                await asyncio.wait_for(anext(frames), 10)
+            with contextlib.suppress(Exception):
+                await frames.aclose()
+            assert _SpendsUntilCancelled.running is False, "the worker outlived its run"
+            assert runtime.active_runs._events == {}
+        finally:
+            _TEST_OVER.set()
+
+    asyncio.run(exercise())
+
+
+def test_a_store_failure_marking_the_run_running_returns_its_slot(monkeypatch):
+    """The first status write ran inside the background task, before the run
+    stream started: a failure there kept the slot and the run id reserved for
+    good, since the stream's ``finally`` never ran."""
+    _use_spending_orchestrator(monkeypatch)
+    runtime = current_runtime()
+    store = runtime.durable_runs.store
+    real_set_status = store.set_status
+
+    def set_status(run_id, status, **kwargs):
+        if status == "running":
+            raise sqlite3.OperationalError("database is locked")
+        return real_set_status(run_id, status, **kwargs)
+
+    monkeypatch.setattr(store, "set_status", set_status)
+
+    async def exercise() -> None:
+        try:
+            with contextlib.suppress(sqlite3.OperationalError):
+                await router_module.smart_generate(
+                    _build_request(), runtime, get_settings().model_copy(), idempotency_key=None,
+                )
+            for task in list(runtime.durable_runs._tasks.values()):
+                await asyncio.wait({task}, timeout=10)
+            assert runtime.slots._held == 0
+            assert runtime.active_runs._events == {}
+        finally:
+            _TEST_OVER.set()
+
+    asyncio.run(exercise())
+
+
+def test_a_store_failure_recording_the_terminal_status_does_not_escape():
+    """A second store error in ``_drive``'s cleanup must neither escape nor skip
+    the in-memory bookkeeping."""
+    async def exercise() -> None:
+        store = SqliteRunEventStore(":memory:")
+        manager = DurableRunManager(store)
+        run_id = "c" * 32
+        real_set_status = store.set_status
+
+        def set_status(rid, status, **kwargs):
+            if status != "running":
+                raise sqlite3.OperationalError("database or disk is full")
+            return real_set_status(rid, status, **kwargs)
+
+        store.set_status = set_status
+
+        async def source():
+            yield _start(run_id)
+            yield _done(run_id)
+
+        await manager.start(run_id, source())
+        await manager.wait(run_id)
+        assert run_id not in manager._tasks
+        store.close()
+
+    asyncio.run(exercise())
+
+
+def _age_run(store: SqliteRunEventStore, run_id: str, seconds: float) -> None:
+    """Move a run's last update ``seconds`` into the past."""
+    with store._conn:
+        store._conn.execute(
+            "UPDATE spec_runs SET updated_at = updated_at - ? WHERE run_id = ?",
+            (seconds, run_id),
+        )
+
+
+def test_resume_after_the_events_were_swept_keeps_numbering():
+    """The sweep (download TTL, 30 min) deleted the whole run row while the
+    checkpointed workspace stays resumable for 24 h; a later resume then
+    restarted numbering at 1 and a client holding cursor 30 missed the new
+    attempt's first 30 frames (``start`` and phase among them)."""
+    async def exercise() -> None:
+        store = SqliteRunEventStore(":memory:")
+        manager = DurableRunManager(store)
+        run_id = "6" * 32
+        ttl = 1800
+
+        def frames(count: int):
+            async def source():
+                yield _start(run_id)
+                for i in range(count):
+                    yield format_sse(ErrorEvent(code="COST_CAP", message=f"warn-{i}"))
+                yield format_sse(ErrorEvent(code="CANCELLED", message="stopped"))
+            return source()
+
+        await manager.start(run_id, frames(28))
+        await manager.wait(run_id)
+        cursor = manager.get_run(run_id).last_sequence
+        assert cursor == 30
+
+        _age_run(store, run_id, ttl + 60)
+        assert store.sweep_expired(ttl) == 1
+        assert store.events_after(run_id, 0) == [], "the sweep must still drop the events"
+
+        await manager.start(run_id, frames(58), resume=True)
+        await manager.wait(run_id)
+        got = [_payload(f) async for f in manager.subscribe(run_id, after_sequence=cursor)]
+
+        assert len(got) == 60
+        assert got[0]["event"] == "start"
+        assert got[0]["sequence"] == cursor + 1
+        store.close()
+
+    asyncio.run(exercise())
+
+
+def test_sweep_drops_the_run_record_once_no_workspace_can_be_resumed():
+    store = SqliteRunEventStore(":memory:")
+    run_id = "5" * 32
+    store.begin_run(run_id)
+    store.append(run_id, _start(run_id))
+    store.set_status(run_id, "cancelled", terminal_event="CANCELLED")
+
+    _age_run(store, run_id, 25 * 3600)
+    store.sweep_expired(1800)
+
+    assert store.get_run(run_id) is None
+    store.close()

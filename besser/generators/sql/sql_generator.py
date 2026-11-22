@@ -1,3 +1,4 @@
+import re
 import subprocess
 import os
 import sys
@@ -5,18 +6,87 @@ import tempfile
 import shutil
 from besser.BUML.metamodel.structural import DomainModel
 from besser.generators import GeneratorInterface
+from besser.generators.settings import subprocess_timeout
+from besser.generators.generator_interface import require_valid_identifiers
 from besser.generators.sql_alchemy import SQLAlchemyGenerator
+from besser.utilities.generation_trace import FileTrace, TraceRegion
+
+# Marker of the trailing "database connection" section of the SQLAlchemy module.
+# Everything from here on (``create_engine(DATABASE_URL)``, the ``__main__``
+# block) needs a DB driver and is irrelevant for DDL generation, so it is cut.
+_DB_CONNECTION_MARKER = "\n# Database connection"
+
+# SQLAlchemy URL whose dialect the DDL is compiled against. The DDL is compiled
+# against a mock engine (``create_mock_engine``), which builds the dialect object
+# without importing the DBAPI driver, so no database driver (pyodbc, psycopg2,
+# oracledb, ...) has to be installed. The drivers match the default
+# ``DATABASE_URL`` of the generated SQLAlchemy module so the DDL is unchanged.
+DDL_DIALECT_URLS = {
+    "sqlite": "sqlite://",
+    "postgresql": "postgresql+psycopg2://",
+    "mysql": "mysql+pymysql://",
+    "mariadb": "mysql+pymysql://",
+    "mssql": "mssql+pyodbc://",
+    "oracle": "oracle+oracledb://",
+}
+
+
+# How the SQLAlchemy module names what the DDL creates: a class or association class by its ``__tablename__``,
+# a many-to-many association by the first argument of its ``Table_(...)``.
+_TABLE_NAME = re.compile(r'__tablename__ = "([^"]+)"|\bTable_\(\s*"([^"]+)"')
+
+# First line of a DDL statement and the name it creates. Every dialect writes a statement's keywords in the
+# first column, and a statement's last line ends with ";".
+_CREATE_STATEMENT = re.compile(r'^CREATE (TABLE|TYPE) (?:IF NOT EXISTS )?[\["`]?([^\s\["`(\]]+)')
+
+# The SQLAlchemy template blocks (their traced rules) whose code creates a table or an enumeration type.
+_TABLE_BLOCKS = ("class", "association_class", "association_table")
+
 
 class SQLGenerator(GeneratorInterface):
-    def __init__(self, model: DomainModel, output_dir: str = None, sql_dialect: str = "sqlite"):
+    """Generates SQL DDL (``CREATE TABLE`` statements) for a B-UML domain model.
+
+    Args:
+        model (DomainModel): The B-UML domain model.
+        output_dir (str, optional): Output directory; defaults to ``<cwd>/output``.
+        sql_dialect (str, optional): One of ``sqlite``, ``postgresql``, ``mysql``,
+            ``mssql``, ``mariadb`` or ``oracle``. Defaults to ``sqlite``.
+        ocl_check_constraints (bool, optional): Emit ``CHECK`` constraints for the simple
+            OCL invariants of the model (an attribute compared with a literal, optionally
+            joined by ``and``). Other constraints are skipped. Defaults to ``True``.
+
+    Attributes:
+        traced_files (dict[str, FileTrace]): After ``generate()``, ``tables_<dialect>.sql`` with the lines of
+            each ``CREATE TABLE`` (of a class, association class or many-to-many association that has an ``id``)
+            and ``CREATE TYPE`` (of an enumeration that has an ``id``) statement. The DDL is produced by running
+            the generated SQLAlchemy module, so a statement is matched back to its element by the name of the
+            table or type the SQLAlchemy generator gave it; a statement that matches no such name is left untraced.
+    """
+
+    regenerable = True
+
+    def __init__(self, model: DomainModel, output_dir: str = None, sql_dialect: str = "sqlite",
+                 ocl_check_constraints: bool = True):
         super().__init__(model, output_dir)
         self.sql_dialect = sql_dialect
+        self.ocl_check_constraints = ocl_check_constraints
 
     def generate(self):
         """
         Generates SQL code based on the provided B-UML model and saves it to the specified output directory.
         If the output directory is not specified, the code will be stored in the <current directory>/output folder.
+
+        Raises:
+            ValueError: If the dialect is not supported.
+            RuntimeError: If the DDL could not be produced.
         """
+        require_valid_identifiers(self.model)
+        if self.sql_dialect not in DDL_DIALECT_URLS:
+            raise ValueError(
+                f"Invalid DBMS (SQL dialect '{self.sql_dialect}'). "
+                f"Valid options are {', '.join(sorted(DDL_DIALECT_URLS))}."
+            )
+
         # Determine output path
         final_output_dir = self.output_dir or os.path.join(os.getcwd(), "output")
         os.makedirs(final_output_dir, exist_ok=True)
@@ -27,28 +97,52 @@ class SQLGenerator(GeneratorInterface):
 
             # Generate SQLAlchemy code into the temporary folder
             alchemy_gen = SQLAlchemyGenerator(model=self.model, output_dir=temp_dir)
-            alchemy_gen.generate(dbms=self.sql_dialect)
+            alchemy_gen.generate(dbms=self.sql_dialect, ocl_check_constraints=self.ocl_check_constraints)
 
-            # Read and strip final line (optional)
+            # Keep only the model definitions: drop the database connection
+            # section (engine creation needs a driver, __main__ creates tables).
             with open(temp_py_path, "r", encoding="utf-8") as f:
-                lines = f.read().splitlines()
-            lines = lines[:-1]  # remove last line if needed
-            content = "\n".join(lines)
+                content = f.read()
+            marker_idx = content.find(_DB_CONNECTION_MARKER)
+            if marker_idx == -1:
+                raise RuntimeError(
+                    "SQL generation failed: could not locate the database connection "
+                    "section in the generated SQLAlchemy module."
+                )
+            alchemy_regions = self._table_regions(alchemy_gen, content)
+            content = content[:marker_idx]
             dialect = self.sql_dialect
 
             # Append DDL dump logic
             ddl_dump_code = '''
 
+from sqlalchemy import create_mock_engine as _create_mock_engine
 from sqlalchemy.schema import CreateTable
 import os
+
+# Dialect only: building it does not import the DBAPI driver.
+_ddl_dialect = _create_mock_engine("DIALECT_URL_PLACEHOLDER", lambda *args, **kwargs: None).dialect
+if 'DIALECT_PLACEHOLDER' == 'mssql':
+    # Without a connection the server version is unknown and SQL Server is assumed to
+    # predate 2008 (DATE/TIME rendered as DATETIME). Target a current SQL Server.
+    _ddl_dialect.server_version_info = (16,)
+    _ddl_dialect.deprecate_large_types = True
+if 'DIALECT_PLACEHOLDER' == 'sqlite':
+    # SQLite matches names case-insensitively and keeps them as written, so a mixed-case name
+    # ("createdAt") needs no quotes there; reserved words and illegal characters still get them.
+    # _requires_quotes is private SQLAlchemy API: after an upgrade, test_sqlite_quotes_only_names_that_need_it
+    # says whether it still exists.
+    _preparer = _ddl_dialect.identifier_preparer
+    _requires_quotes = _preparer._requires_quotes
+    _preparer._requires_quotes = lambda value: _requires_quotes(value.lower())
 
 current_directory = os.path.dirname(os.path.realpath(__file__))
 sql_file_path = os.path.join(current_directory, "tables_DIALECT_PLACEHOLDER.sql")
 
 ddl_statements = []
 
-# --- Emit ENUM types (not for Oracle — Oracle uses CHECK constraints) ---
-if 'DIALECT_PLACEHOLDER'.lower() != 'oracle':
+# --- Emit ENUM types: PostgreSQL only; other dialects render enums inline (Oracle via CHECK) ---
+if 'DIALECT_PLACEHOLDER'.lower() == 'postgresql':
     for table in Base.metadata.tables.values():
         for col in table.columns:
             if isinstance(col.type, Enum):
@@ -59,7 +153,7 @@ if 'DIALECT_PLACEHOLDER'.lower() != 'oracle':
                     ddl_statements.append(f"CREATE TYPE {enum_name} AS ENUM ({', '.join(enum_values)})")
 
 for table in Base.metadata.sorted_tables:
-    ddl = str(CreateTable(table).compile(engine))
+    ddl = str(CreateTable(table).compile(dialect=_ddl_dialect))
     # For Oracle, add CHECK constraint for enum columns
     if 'DIALECT_PLACEHOLDER'.lower() == 'oracle':
         for col in table.columns:
@@ -108,23 +202,83 @@ for table in Base.metadata.sorted_tables:
                     print(f"WARNING: Could not inject CHECK constraint for enum column '{col_name}' in table '{table.name}'", file=_sys.stderr)
     ddl_statements.append(ddl)
 
-with open(sql_file_path, "w") as f:
-    for stmt in ddl_statements:
-        f.write(f"{stmt};\\n\\n")
+# CreateTable pads a statement with blank lines and leaves a space after each comma.
+tidy_statements = ["\\n".join(line.rstrip() for line in stmt.strip().splitlines()) + ";" for stmt in ddl_statements]
+with open(sql_file_path, "w", encoding="utf-8", newline="\\n") as f:
+    f.write("\\n\\n".join(tidy_statements) + "\\n")
 '''
-            content += ddl_dump_code.replace("DIALECT_PLACEHOLDER", dialect)
+            content += ddl_dump_code.replace(
+                "DIALECT_URL_PLACEHOLDER", DDL_DIALECT_URLS[dialect]
+            ).replace("DIALECT_PLACEHOLDER", dialect)
 
             # Write back modified file
             with open(temp_py_path, "w", encoding="utf-8") as f:
                 f.write(content)
 
-            # Run the temporary Python file
-            try:
-                subprocess.run([sys.executable, temp_py_path], check=True, text=True, capture_output=True)
-            except subprocess.CalledProcessError as e:
-                print(f"Error running generated SQLAlchemy file:\n{e.stderr}")
+            # Run the temporary Python file (in the temp dir, so it leaves nothing behind)
+            result = subprocess.run(
+                [sys.executable, temp_py_path], text=True, capture_output=True, cwd=temp_dir, check=False,
+                timeout=subprocess_timeout(),
+            )
+            src_sql = os.path.join(temp_dir, f"tables_{self.sql_dialect}.sql")
+            if result.returncode != 0 or not os.path.isfile(src_sql):
+                details = (result.stderr or result.stdout or "").strip() or "no output"
+                raise RuntimeError(
+                    f"SQL generation failed for dialect '{self.sql_dialect}': the DDL script "
+                    f"exited with code {result.returncode}.\n{details}"
+                )
 
             # Copy generated .sql file to final output location
-            src_sql = os.path.join(temp_dir, f"tables_{self.sql_dialect}.sql")
             dst_sql = os.path.join(final_output_dir, f"tables_{self.sql_dialect}.sql")
             shutil.copyfile(src_sql, dst_sql)
+            with open(dst_sql, encoding="utf-8") as ddl:
+                self.traced_files[os.path.basename(dst_sql)] = FileTrace(
+                    tuple(self._statement_regions(ddl.read(), alchemy_regions)))
+
+    @staticmethod
+    def _table_regions(alchemy_gen: SQLAlchemyGenerator, module_code: str) -> dict:
+        """The elements the SQLAlchemy module creates tables and enumeration types for, by lower-cased name.
+
+        Args:
+            alchemy_gen: The SQLAlchemy generator, after ``generate()``.
+            module_code: The module it wrote, before the DDL logic was added.
+
+        Returns:
+            dict: ``name -> (region, "table" | "type")`` where region is the SQLAlchemy ``TraceRegion`` of the
+            element. A class comes before an association table of the same name, which cannot create a table.
+        """
+        lines = module_code.split("\n")
+        regions = alchemy_gen.traced_files.get("sql_alchemy.py", FileTrace()).regions
+        found = {}
+        for block in (*_TABLE_BLOCKS, "enumeration"):
+            for region in regions:
+                if region.rule.rsplit("#", 1)[-1] != block:
+                    continue
+                if block == "enumeration":
+                    # SQLAlchemy names the type after the lower-cased enum class.
+                    found.setdefault(region.element_name.lower(), (region, "type"))
+                    continue
+                match = _TABLE_NAME.search("\n".join(lines[region.start_line - 1:region.end_line]))
+                if match:
+                    found.setdefault((match.group(1) or match.group(2)).lower(), (region, "table"))
+        return found
+
+    @staticmethod
+    def _statement_regions(ddl: str, elements: dict) -> list:
+        """The ``TraceRegion`` of every ``CREATE TABLE``/``CREATE TYPE`` statement of ``ddl`` whose name is
+        in ``elements`` (see :meth:`_table_regions`)."""
+        regions = []
+        start = name = kind = None
+        for number, line in enumerate(ddl.split("\n"), start=1):
+            match = _CREATE_STATEMENT.match(line)
+            if match:
+                start, kind, name = number, match.group(1), match.group(2).lower()
+            if start is not None and line.endswith(";"):
+                entry = elements.get(name)
+                if entry and entry[1] == kind.lower():
+                    source = entry[0]
+                    regions.append(TraceRegion(
+                        source.element_id, source.element_type, source.element_name,
+                        f"sql_generator.py#create_{kind.lower()}", start, number))
+                start = None
+        return regions

@@ -1,0 +1,121 @@
+"""Persistent incident log for user-facing generation failures.
+
+"A user hit an issue → we have a record."  Every SSE ``error`` event a
+run emits, and every exception that would otherwise close the stream
+silently, is appended as one JSON line to a host-mounted file — so the
+evidence survives container redeploys, which destroy container logs.
+
+Best-effort by design: the incident log must never break a run.
+"""
+
+from __future__ import annotations
+
+import datetime
+import json
+import logging
+import os
+import re
+import threading
+
+from besser.utilities.secret_redaction import redact_text
+from besser.utilities.workspace_fs import copy_plain_file
+from besser.utilities.web_modeling_editor.backend.settings import BackendSettings
+
+logger = logging.getLogger(__name__)
+
+_LOCK = threading.Lock()
+
+_DEFAULT_INCIDENT_LOG_DIR = "/app/incidents"
+
+
+def _incident_path() -> str:
+    configured = BackendSettings().incident_log_dir
+    directory = _DEFAULT_INCIDENT_LOG_DIR if configured is None else configured
+    try:
+        os.makedirs(directory, exist_ok=True)
+    except Exception:
+        return ""
+    return os.path.join(directory, "incidents.jsonl")
+
+
+def _redacted(text: str | None) -> str:
+    """``text`` with credentials removed: exception text and tracebacks can quote one."""
+    return redact_text(text or "")[0]
+
+
+def record_incident(
+    kind: str,
+    run_id: str | None = None,
+    provider: str | None = None,
+    model: str | None = None,
+    code: str | None = None,
+    message: str | None = None,
+    traceback_text: str | None = None,
+    instructions: str | None = None,
+) -> None:
+    """Append one incident record. Never raises."""
+    try:
+        path = _incident_path()
+        if not path:
+            return
+        entry = {
+            "at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+            "kind": kind,
+            "run_id": run_id,
+            "provider": provider,
+            "model": model,
+            "code": code,
+            # Redacted before the cut, which could split a token past the pattern.
+            "message": _redacted(message)[:2000],
+            "traceback": _redacted(traceback_text)[:8000] or None,
+            "instructions": _redacted(instructions)[:300] or None,
+        }
+        line = json.dumps({k: v for k, v in entry.items() if v is not None},
+                          ensure_ascii=False)
+        with _LOCK:
+            with open(path, "a", encoding="utf-8") as fh:
+                fh.write(line + "\n")
+    except Exception:  # pragma: no cover — must never break a run
+        logger.debug("Could not record incident", exc_info=True)
+
+
+def persist_run_trace(
+    run_id: str | None, trace_path: str | None, *, study_run: bool = False
+) -> None:
+    """Copy a run's structured trace into a host-mounted dir, keyed by run id.
+
+    The run trace (``.besser_trace.jsonl``) normally lives only in the run's
+    temp workspace, which is swept when the container is recreated — so the
+    per-turn detail of a run (what the fix loop actually did) is lost. Copy
+    it to ``<dir>/traces/<run_id>.besser_trace.jsonl`` so a later "what did
+    that run do" is answerable after the workspace is gone.
+
+    ``<dir>`` is ``BESSER_INCIDENT_LOG_DIR`` when set (an explicit operator
+    choice, any run). Otherwise only a ``study_run`` (a run recorded for a
+    research study) falls back to ``BESSER_TELEMETRY_DIR``: the trace holds
+    the start of the user's instructions, and that directory is study data.
+
+    Best-effort by design: never raises into a caller.
+    """
+    try:
+        if not run_id or not trace_path or not os.path.isfile(trace_path):
+            return
+        settings = BackendSettings()
+        base = settings.incident_log_dir
+        if not base and study_run:
+            base = settings.telemetry_dir
+        if not base:
+            return
+        dest_dir = os.path.join(base, "traces")
+        try:
+            os.makedirs(dest_dir, exist_ok=True)
+        except Exception:
+            return
+        safe_id = re.sub(r"[^A-Za-z0-9_.-]", "_", str(run_id))[:64]
+        if not safe_id:
+            return
+        dest = os.path.join(dest_dir, f"{safe_id}.besser_trace.jsonl")
+        with _LOCK:
+            copy_plain_file(trace_path, dest)  # never follows a link the run planted at its trace
+    except Exception:  # pragma: no cover — must never break a run
+        logger.debug("Could not persist run trace for %s", run_id, exc_info=True)

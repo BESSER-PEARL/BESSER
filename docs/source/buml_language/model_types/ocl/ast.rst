@@ -69,9 +69,24 @@ Major node types
 
 :class:`LoopExp` and :class:`IteratorExp`
     Quantifiers and bulk operations over collections. ``IteratorExp``
-    covers ``forAll`` / ``exists`` / ``select`` / ``reject`` / ``collect``;
+    covers ``forAll`` / ``exists`` / ``select`` / ``reject`` / ``collect`` /
+    ``closure``;
     its ``body`` is the expression evaluated for each element, and
     ``iterators`` are the bound :class:`Variable` instances.
+
+    In the short form (``src->forAll(age > 16)``) ``iterators`` is empty and
+    a bare name in the body is resolved against the iterated element first,
+    then against ``self`` (OCL 2.4 §7.8).
+
+    ``closure`` (OCL 2.4 §7.6.5) collects the source elements and everything
+    reachable from them by applying the body repeatedly, so
+    ``self.parents->closure(parents)`` is all the ancestors of ``self``. The
+    body must yield the source element type or a collection of it. Unlike the
+    other iterators, its ``type`` is set: a :class:`SetType`, or an
+    :class:`OrderedSetType` when the source is ordered, named after the
+    element type (``Set(Person)``). The B-OCL evaluator behind the editor's
+    validator does not evaluate ``closure`` yet; such invariants are reported
+    as syntactically valid and not evaluated.
 
 Literals
     The literal subclasses (:class:`IntegerLiteralExpression`,

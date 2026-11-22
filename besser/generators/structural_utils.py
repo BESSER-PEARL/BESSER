@@ -1,8 +1,163 @@
 from __future__ import annotations
 
-from typing import Dict, List
+import re
+from typing import Dict, List, Optional
 
-from besser.BUML.metamodel.structural import DomainModel
+from besser.BUML.metamodel.structural import AssociationClass, Class, DomainModel, Property
+from besser.utilities import sort_by_timestamp
+
+# Last word of an attribute name that marks a stored secret, and the words before a last
+# "token" that make it one (an invitation or device token is data a client reads back).
+_SECRET_WORDS = frozenset({"password", "passwd", "pwd", "passphrase", "passcode", "secret", "salt"})
+_SECRET_TOKEN_KINDS = frozenset({"access", "refresh", "auth", "api", "reset", "session"})
+
+
+def is_secret_attribute(attribute: Property) -> bool:
+    """Whether a text attribute's name marks it as a stored secret, such as a password hash.
+
+    The generated search endpoint does not filter by such an attribute: a partial
+    match would let a caller recover the value one character at a time. The name
+    is read as camelCase / snake_case words. Its last word, or the word before a
+    last ``hash``, is ``password``, ``passwd``, ``pwd``, ``passphrase``,
+    ``passcode``, ``secret`` or ``salt`` (``passwordHash``, ``clientSecret``), or
+    ``token`` alone or after ``access``, ``refresh``, ``auth``, ``api``, ``reset``
+    or ``session``. Any other last word (``passwordHint``, ``tokenCount``) and an
+    ``is`` / ``has`` prefix make ordinary data. Only the search filter depends
+    on this: the attribute is stored, validated and returned like any other.
+    """
+    if attribute.type.name not in ("str", "string"):
+        return False
+    words = [word.lower() for word in re.findall(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+", attribute.name)]
+    if words and words[-1] == "hash":
+        words = words[:-1]
+    if not words or words[0] in ("is", "has"):
+        return False
+    if words[-1] == "token":
+        return len(words) == 1 or words[-2] in _SECRET_TOKEN_KINDS
+    return words[-1] in _SECRET_WORDS
+
+
+def is_server_owned_attribute(attribute: Property) -> bool:
+    """Whether backend create/update payloads omit this generated attribute.
+
+    Covers the surrogate `id`, audit timestamps (createdAt/updatedAt), and any
+    attribute the model marks `is_derived=True` -- a value the server computes,
+    which the client must never be asked to supply on create/update. A declared
+    primary key (`is_id`) is always client-supplied regardless of these checks.
+    """
+    return not attribute.is_id and (
+        attribute.name == "id"
+        or attribute.name.lower().replace("_", "") in {"createdat", "updatedat"}
+        or attribute.is_derived
+    )
+
+
+def is_shadowed_by_association_end(attribute: Property) -> bool:
+    """Whether an attribute has the name of a navigable association end its class reaches.
+
+    Generated Python gives a class one member per name. The association is the
+    richer fact (the attribute usually repeats it as text), so the SQLAlchemy,
+    Pydantic and backend generators emit the association end and leave the
+    attribute out. An end that is not navigable from the class is not part of
+    its API, so there the attribute stays (see ``end_hidden_by_attribute``).
+    ``DomainModel.validate()`` warns about the clash.
+    """
+    owner = attribute.owner
+    return isinstance(owner, Class) and attribute.name in {
+        end.name for end in owner.all_association_ends() if end.is_navigable}
+
+
+def end_hidden_by_attribute(end: Property, cls: Class) -> bool:
+    """Whether ``cls`` gets no relationship for ``end`` because an attribute keeps the name.
+
+    The counterpart of ``is_shadowed_by_association_end``: ``end`` is an end
+    ``cls`` reaches but cannot navigate, and ``cls`` has an attribute called
+    the same. The foreign key column and the other side of the association are
+    unaffected.
+    """
+    return not end.is_navigable and end.name in {attribute.name for attribute in cls.all_attributes()}
+
+
+def create_schema_accepts_end(end: Property, fkeys: Dict[str, List[str]],
+                              link_associations: frozenset = frozenset()) -> bool:
+    """Whether the backend ``<Class>Create`` schema has a field for ``end``.
+
+    ``end`` is the far end of an association of the class (as listed by
+    ``Class.association_ends()``); ``fkeys`` is ``get_foreign_keys(model)``
+    and ``link_associations`` the names of associations that carry an
+    association class. Mirrors the pydantic template: a to-many end is a
+    list field; a to-one end (N:1 or 1:1) only on the side that holds the
+    foreign key, so the non-owning side of a 1:1 has no field and a value
+    sent for it is dropped.
+    """
+    association = end.owner
+    ends = list(association.ends)
+    if len(ends) != 2:
+        return False
+    near = ends[0] if ends[1] is end else ends[1]
+    if association.name in link_associations or near.type == end.type:
+        return True  # links via the association class; self associations get every end
+    if not end.is_navigable:
+        return False
+    if end.multiplicity.max > 1:
+        return True
+    return fkeys.get(association.name, [""])[0] == near.type.name
+
+
+def display_attribute(attributes: List[Property]) -> Optional[Property]:
+    """The attribute that labels a record among others of its class (a lookup's
+    options, a lookup column), or ``None`` when there are no attributes.
+
+    The label has to let someone tell two records apart, so an attribute the
+    model marks as a business identifier wins, and an ``email`` outranks a
+    ``name``: two people called Jane are indistinguishable in a dropdown, two
+    email addresses are not.
+
+    Preference order: an attribute marked ``is_external_id`` (not the key the
+    server generates), then one named ``email``, then one named ``name``, then
+    the first string attribute that is not the id, then the first non-id
+    attribute, then the first attribute.
+    """
+    if not attributes:
+        return None
+
+    def is_key(attr: Property) -> bool:
+        return attr.is_id or attr.name == "id"
+
+    external_id = next(
+        (attr for attr in attributes
+         if attr.is_external_id and not attr.is_id and not is_server_owned_attribute(attr)),
+        None,
+    )
+    if external_id is not None:
+        return external_id
+    for preferred in ("email", "name"):
+        named = next((attr for attr in attributes if attr.name == preferred), None)
+        if named is not None:
+            return named
+    return (
+        next((attr for attr in attributes if not is_key(attr) and attr.type.name == "str"), None)
+        or next((attr for attr in attributes if not is_key(attr)), None)
+        or attributes[0]
+    )
+
+
+def form_parent_ends(domain_class: Class, model: DomainModel) -> List[Property]:
+    """The ends through which a new record of ``domain_class`` references exactly
+    one record (an order line's order), oldest first: both ends of the
+    association an association class materializes, else each navigable to-one
+    end the ``<Class>Create`` schema has a field for."""
+    if isinstance(domain_class, AssociationClass):
+        return sort_by_timestamp(set(domain_class.association.ends))
+    fkeys = get_foreign_keys(model)
+    link_associations = frozenset(
+        type_.association.name for type_ in model.types if isinstance(type_, AssociationClass)
+    )
+    return [
+        end for end in sort_by_timestamp(domain_class.all_association_ends())
+        if end.is_navigable and end.multiplicity.max == 1
+        and create_schema_accepts_end(end, fkeys, link_associations)
+    ]
 
 
 def _sorted_association_ends(association) -> list:
@@ -40,3 +195,194 @@ def get_foreign_keys(model: DomainModel) -> Dict[str, List[str]]:
             fkeys[association.name] = [end1.type.name, end0.name]
 
     return fkeys
+
+
+def get_deferred_fk_associations(model: DomainModel) -> set:
+    """Associations whose FK must be created nullable to break a table cycle.
+
+    Two tables that each hold a NOT NULL foreign key to the other cannot be
+    created, and neither row can be inserted first. SQLAlchemy says so
+    outright — ``Can't sort tables; there are unresolvable cycles between
+    tables booking, guest`` — and ``create_all`` raises before the app ever
+    serves a request. Example: Booking points at its contact Guest and Guest
+    points back at its Booking.
+
+    A cycle needs at least two associations, since a single association
+    produces only one FK column (see ``get_foreign_keys``). So one edge of
+    each cycle has to give: its FK becomes nullable, the row is inserted
+    without it, and the link is set afterwards from the other side.
+
+    Which edge gives is decided by association name, so the choice is
+    stable across regenerations — a generator that picked a different edge
+    each run would rewrite unrelated files on every run.
+
+    Returns the set of association names whose FK is deferred.
+    """
+    fkeys = get_foreign_keys(model)
+    if len(fkeys) < 2:
+        return set()
+
+    required_by_end = _required_association_ends(model)
+
+    # Edge: the table holding the FK depends on the table it points at.
+    # Only NOT NULL FKs constrain creation order, so only they can form a
+    # blocking cycle — a nullable one is already deferrable.
+    edges: Dict[str, List[tuple]] = {}
+    for assoc_name, owner in fkeys.items():
+        owner_class, fk_end_name = owner[0], owner[1]
+        target = required_by_end.get((assoc_name, fk_end_name))
+        if target is None:
+            continue  # optional FK: no ordering constraint
+        edges.setdefault(owner_class, []).append((target, assoc_name))
+
+    deferred: set = set()
+    # Iterate to a fixed point: breaking one cycle can leave another.
+    while True:
+        cycle = _find_cycle(edges, deferred)
+        if not cycle:
+            return deferred
+        deferred.add(max(cycle))
+
+
+def _required_association_ends(model: DomainModel) -> Dict[tuple, str]:
+    """(association name, end name) -> target class, for REQUIRED ends only."""
+    required: Dict[tuple, str] = {}
+    for association in model.associations:
+        ends = _sorted_association_ends(association)
+        if len(ends) != 2:
+            continue
+        for end in ends:
+            if end.multiplicity.min > 0:
+                required[(association.name, end.name)] = end.type.name
+    return required
+
+
+def _find_cycle(edges: Dict[str, List[tuple]], deferred: set) -> set:
+    """Return the association names on one cycle, or an empty set.
+
+    Only the associations actually ON the cycle are returned, not the whole
+    search path — deferring an edge that merely leads to a cycle would not
+    break it, and would make a second FK nullable for nothing.
+    """
+    colour: Dict[str, int] = {}  # 0 = on the current path, 1 = finished
+    path_nodes: List[str] = []
+    path_assocs: List[str] = []  # edge i goes from path_nodes[i] to [i+1]
+
+    def visit(node: str) -> set:
+        colour[node] = 0
+        path_nodes.append(node)
+        for target, assoc_name in sorted(edges.get(node, ()), key=lambda e: e[1]):
+            if assoc_name in deferred:
+                continue
+            state = colour.get(target)
+            if state == 0:
+                start = path_nodes.index(target)
+                return set(path_assocs[start:]) | {assoc_name}
+            if state is None:
+                path_assocs.append(assoc_name)
+                found = visit(target)
+                if found:
+                    return found
+                path_assocs.pop()
+        colour[node] = 1
+        path_nodes.pop()
+        return set()
+
+    for node in sorted(edges):
+        if node not in colour:
+            found = visit(node)
+            if found:
+                return found
+    return set()
+
+
+# Model type name -> python type used for primary keys and the foreign keys
+# that reference them. Anything not listed keeps the historical integer
+# surrogate. Shared by the SQLAlchemy and backend generators so a ForeignKey
+# annotation and its path parameter can never disagree about the PK's type.
+_PK_PY_TYPES = {"str": "str", "string": "str", "int": "int", "integer": "int", "float": "float"}
+
+
+def get_pk_py_types(model: DomainModel) -> Dict[str, str]:
+    """Class name -> python type of its primary key (default 'int').
+
+    The PK selection mirrors the SQLAlchemy generator: the ``is_id``
+    attribute, else one literally named ``id``. Classes with neither get the
+    integer surrogate and are simply absent from the mapping (callers use
+    ``.get(name, 'int')``).
+    """
+    def _own_pk(cls):
+        """The PK declared on this class itself, if any."""
+        return (next((a for a in cls.attributes if a.is_id), None)
+                or next((a for a in cls.attributes if a.name == "id"), None))
+
+    def _resolve(cls, seen):
+        """The PK type, following inheritance.
+
+        A subclass in joined-table inheritance has no id attribute of its
+        own -- its PK IS the parent's, emitted as a ForeignKey to it. Looking
+        only at the class's own attributes therefore missed every subclass,
+        which then fell back to the 'int' default while the parent carried a
+        string uuid. Every FK pointing at Guest or Employee came out
+        Mapped_[int] against a String PK: the schema is inconsistent, the API
+        rejects the real id with 422, and nothing catches it because SQLite
+        creates the tables anyway.
+        """
+        if cls.name in seen:          # defensive: a cycle in parents()
+            return None
+        seen.add(cls.name)
+        own = _own_pk(cls)
+        if own is not None:
+            type_name = (getattr(own.type, "name", "") or "").lower()
+            return _PK_PY_TYPES.get(type_name, "int")
+        for parent in cls.parents():
+            inherited = _resolve(parent, seen)
+            if inherited is not None:
+                return inherited
+        return None
+
+    pk_types: Dict[str, str] = {}
+    for cls in model.get_classes():
+        resolved = _resolve(cls, set())
+        if resolved is not None:
+            pk_types[cls.name] = resolved
+    return pk_types
+
+
+def normalize_method_code(code, method_name="method"):
+    """Normalize user-written method code so it can be embedded in generated files.
+
+    The editor's code box lets users mix tabs and spaces, which Python rejects
+    with an IndentationError the moment the generated module is imported --
+    taking the whole application down with it. Tabs are expanded to 4 spaces
+    and whitespace-only lines are blanked; if the result still does not
+    compile, a stub carrying the original code as comments is emitted instead,
+    so one broken method body can never prevent the generated app from
+    starting.
+    """
+    if not code or not code.strip():
+        return code or ""
+
+    lines = []
+    for line in code.splitlines():
+        line = line.expandtabs(4).rstrip()
+        lines.append(line if line.strip() else "")
+    normalized = "\n".join(lines)
+
+    try:
+        compile(normalized, f"<{method_name}>", "exec")
+        return normalized
+    except SyntaxError:
+        pass
+
+    commented = "\n".join(
+        ("    # " + line) if line else "    #" for line in normalized.splitlines()
+    )
+    return (
+        f"def {method_name}(self):\n"
+        f"    # NOTE: the original code of '{method_name}' does not compile and was\n"
+        f"    # commented out so the generated application can still start.\n"
+        f"    # Fix the method body in the editor and regenerate.\n"
+        f"{commented}\n"
+        f"    raise NotImplementedError(\"Method '{method_name}' has invalid code\")"
+    )

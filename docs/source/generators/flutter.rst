@@ -47,3 +47,81 @@ The code generator will produce several files, which will be located in the ``<<
 By incorporating these generated files into your Flutter project, you'll have a solid foundation for building your application, including the necessary configuration, database management capabilities, and dependency management.
 
 You can check our :doc:`../examples/mobile_app_example`, which ilustrates the usage of the Flutter code generator.
+
+Map Component
+-------------
+
+When a :doc:`Map <../buml_language/model_types/gui>` component is present in the GUI model,
+the Flutter Generator adds an interactive map widget to the generated application using the
+`flutter_map <https://pub.dev/packages/flutter_map>`_ package with
+OpenStreetMap tiles (no API key required).
+
+**Generated output**
+
+- The map screen renders a ``FlutterMap`` widget with a ``TileLayer`` for OpenStreetMap
+  and the mandatory OSM attribution, centred at the configured
+  ``center_latitude`` / ``center_longitude`` and ``zoom``.
+- The widget is wrapped in a ``SizedBox`` container to fill the available screen area
+  responsively.
+
+.. note::
+   Data-bound layers (markers, GeoJSON, choropleth, heatmap — see
+   :doc:`maps <./maps>`) are currently rendered by the **React** generator only.
+   The Flutter generator produces a static tile view; layer rendering is planned
+   as a follow-up.
+
+**Dependencies added to** ``pubspec.yaml``
+
+.. list-table::
+   :header-rows: 1
+   :widths: 35 20 45
+
+   * - Package
+     - Version
+     - Purpose
+   * - ``flutter_map``
+     - ``^7.0.2``
+     - Core Flutter mapping widget using Leaflet tiles.
+   * - ``latlong2``
+     - ``^0.9.1``
+     - Latitude/longitude data types consumed by ``flutter_map``.
+
+**Example GUI model usage**
+
+.. code-block:: python
+
+    from besser.BUML.metamodel.gui.dashboard import Map, MapLayer
+    from besser.BUML.metamodel.gui import DataBinding
+
+    # Bind a layer to a domain class with geo attributes
+    binding = DataBinding(name="location_binding", domain_concept=location_class)
+    store_layer = MapLayer(
+        name="stores",
+        latitude_field=latitude_property,
+        longitude_field=longitude_property,
+        label_field=name_property,
+        data_binding=binding,
+    )
+    store_map = Map(
+        name="StoreMap",
+        title="Store Locations",
+        center_latitude=48.8566,
+        center_longitude=2.3522,
+        zoom=12,
+        layers=[store_layer],
+    )
+
+Trace Links
+-----------
+
+After ``generate()``, ``generator.traced_files`` records which lines of the files the generator rendered come from
+which model element, for every element that has an ``id`` (as every class and attribute drawn in the web editor
+does, and every screen, by its page id). ``sql_helper.dart`` has a region for each class's table-name constant and ``CREATE TABLE`` statement and for
+each attribute's column-name constant; ``main.dart`` has a region for the main screen's home widget and one for
+each other screen's widgets. ``pubspec.yaml`` is file-level only. Recording traces does not change the generated
+files; see :doc:`traceable_generator`.
+
+.. note::
+
+   The GUI elements the web editor's converter builds carry no ``id`` yet (only a ``component_id``), so the
+   screen regions appear only for a GUI model whose screens have one.

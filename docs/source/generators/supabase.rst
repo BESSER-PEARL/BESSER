@@ -96,7 +96,9 @@ Two terms used throughout:
 **For every other class:**
 
 - ``id UUID PRIMARY KEY DEFAULT gen_random_uuid()`` for any attribute with
-  ``is_id=True``.
+  ``is_id=True``. If the modeler marked no attribute with ``is_id``, an
+  attribute named ``id`` becomes this key; without one, this column is injected
+  automatically so the foreign keys that reference ``(id)`` still resolve.
 - A denormalized ``user_id UUID NOT NULL REFERENCES public.<user_root>(id) ON
   DELETE CASCADE`` column *if* the class is reachable from the user-root via
   associations.
@@ -153,6 +155,7 @@ For the simple ``User --< IntakeSchedule`` model, the generator emits roughly
 the following (abbreviated for brevity):
 
 .. code-block:: sql
+   :force:
 
     -- user-root mirrors auth.users (no gen_random_uuid default).
     -- Note: keep email/password/phone OUT of this table -- they live in
@@ -314,6 +317,20 @@ the new columns. The cleanest re-run is to drop the schema first:
 
 The ``CASCADE`` on ``handle_new_user`` also removes its trigger on
 ``auth.users``, releasing the lock that can make full-script re-runs slow.
+
+Trace Links
+-----------
+
+The generator records which lines of the migration file come from which model element: after ``generate()``,
+``generator.traced_files[<file name>].regions`` (the key is the timestamped file name) lists, for every class,
+attribute, association, enumeration and enumeration literal that has an ``id`` (as every element drawn in the web
+editor does), the line ranges rendered from it and the template block that rendered them (``table``, ``attribute``,
+``association_end``, ``foreign_key``, ``enumeration``, ``literal``, ``grant``, ``row_level_security``,
+``auth_trigger``). A class's or a many-to-many association's ``CREATE TABLE`` holds its columns' lines; a one-to-many
+association is the ``ALTER TABLE`` that adds its foreign key. Columns the generator adds itself (the surrogate
+``id``, ``user_id``) belong to no element. Recording them does not change the generated file.
+``build_generation_trace`` in ``besser.utilities.generation_trace`` turns them into a :doc:`traceability model
+<../buml_language/model_types/traceability>`; the web editor shows them on its *Traceability* page.
 
 Related
 -------

@@ -248,3 +248,91 @@ def test_explanation_only_rule_generates_personalized_model(tmp_path, config):
     exported = (tmp_path / "personalized_agent_model.py").read_text(encoding="utf-8")
     assert "Imagine approaching the city" in exported
     assert (tmp_path / "personalized_agent_model.json").is_file()
+
+
+def test_baf_generator_hybrid_rag(tmp_path):
+    """A RAG with use_hybrid_rag emits HybridRAG with its bm25_weight (and the
+    matching import); a plain RAG keeps emitting RAG without it."""
+    agent = Agent("hybrid_rag_agent")
+    agent.platforms.append(WebSocketPlatform())
+    LLMOpenAI(agent=agent, name="gpt-4o-mini", parameters={})
+    docs_vs, docs_splitter = _make_rag("docs")
+    agent.new_rag(
+        name="docs_rag", vector_store=docs_vs, splitter=docs_splitter, llm_name="gpt-4o-mini",
+        use_hybrid_rag=True, bm25_weight=0.7,
+    )
+    state = agent.new_state(name="ask", initial=True)
+    state.set_body(Body("ask_body", actions=[RAGReply("docs_rag")]))
+
+    BAFGenerator(model=agent, output_dir=str(tmp_path), generation_mode=GenerationMode.CODE_ONLY).generate()
+    with open(os.path.join(str(tmp_path), f"{agent.name}.py"), "r", encoding="utf-8") as f:
+        code = f.read()
+
+    assert "from baf.nlp.rag.rag import RAG, HybridRAG" in code
+    assert "docs_rag = HybridRAG(" in code
+    assert "bm25_weight=0.7" in code
+
+
+def test_baf_generator_plain_rag_has_no_hybrid_import(multi_rag_agent_model, tmp_path):
+    BAFGenerator(model=multi_rag_agent_model, output_dir=str(tmp_path), generation_mode=GenerationMode.CODE_ONLY).generate()
+    with open(os.path.join(str(tmp_path), f"{multi_rag_agent_model.name}.py"), "r", encoding="utf-8") as f:
+        code = f.read()
+
+    assert "from baf.nlp.rag.rag import RAG\n" in code
+    assert "HybridRAG" not in code
+    assert "bm25_weight" not in code
+
+
+# Saved by editor builds that wrote ``database:`` for sqlite; BAF requires ``file:``
+# ("Missing required DB properties for 'db1' (dialect=sqlite): file").
+_LEGACY_SQL_YAML = """db:
+  sql:
+    - db1:
+        dialect: sqlite
+        database: shop.db
+    - db2:
+        dialect: postgresql
+        database: crm
+        host: localhost
+        port: 5432
+        username: u
+        password: p
+    - db3:
+        dialect: sqlite
+        file: kept.db
+"""
+
+
+def test_config_yaml_sqlite_database_written_as_file(agent_model, tmpdir):
+    yaml = pytest.importorskip("yaml")
+    output_dir = tmpdir.mkdir("output")
+    BAFGenerator(model=agent_model, output_dir=str(output_dir), config_yaml=_LEGACY_SQL_YAML).generate()
+
+    with open(os.path.join(str(output_dir), "config.yaml"), encoding="utf-8") as f:
+        sql = {name: cfg for entry in yaml.safe_load(f)["db"]["sql"] for name, cfg in entry.items()}
+    assert sql["db1"] == {"dialect": "sqlite", "file": "shop.db"}
+    assert sql["db2"]["database"] == "crm" and "file" not in sql["db2"]
+    assert sql["db3"] == {"dialect": "sqlite", "file": "kept.db"}
+
+
+def test_baf_generator_escapes_entity_description(agent_model, tmpdir):
+    """A quote, backslash or line break in an entity description keeps the agent file valid Python."""
+    import ast
+
+    description = "the user's city \\ region\nsecond line"
+    agent_model.new_entity("city", entries={"Paris": ["paris"]}, description=description)
+    output_dir = tmpdir.mkdir("output")
+    BAFGenerator(
+        model=agent_model,
+        output_dir=str(output_dir),
+        generation_mode=GenerationMode.CODE_ONLY,
+    ).generate()
+
+    with open(os.path.join(str(output_dir), f"{agent_model.name}.py"), encoding="utf-8") as f:
+        tree = ast.parse(f.read())
+    descriptions = [
+        kw.value.value
+        for node in ast.walk(tree) if isinstance(node, ast.Call)
+        for kw in node.keywords if kw.arg == "description" and isinstance(kw.value, ast.Constant)
+    ]
+    assert description in descriptions

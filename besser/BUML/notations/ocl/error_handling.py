@@ -111,10 +111,15 @@ class BOCLErrorListener(ErrorListener):
 
 
 class BOCLSyntaxError(Exception):
-    """Raised when OCL parsing fails."""
+    """Raised when OCL parsing fails.
 
-    def __init__(self, errors):
+    ``missing_element`` names what an unresolved navigation looked for
+    (``"Book.pages"``), so callers need not parse the message.
+    """
+
+    def __init__(self, errors, missing_element=None):
         self.errors = errors
+        self.missing_element = missing_element
         if len(errors) == 1:
             summary = errors[0]
         else:

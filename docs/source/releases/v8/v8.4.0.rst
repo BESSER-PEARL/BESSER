@@ -1,0 +1,96 @@
+Version 8.4.0
+=============
+
+Minor release: **statistics data in, forecasts and data-driven dashboards
+out**. A class diagram can be imported from any SDMX statistics API, an NN
+diagram generates a runnable time-series forecaster, and charts and metric
+cards can read from any backend endpoint. GUIs designed by the modeling
+assistant now keep their styling and inline SVG in the generated React app.
+No breaking metamodel or API changes: ``DataBinding.endpoint`` is optional,
+and models without it generate the same pages as before.
+
+Importing data
+--------------
+
+* **A class diagram from an SDMX dataflow.** The new
+  ``besser.utilities.sdmx_to_buml`` utility reads an SDMX 2.1 dataflow's
+  structure, from a provider's API or an XML file, and builds a validated
+  B-UML class diagram. Dimensions become enumerations or classes, code
+  hierarchies (HS2 to CN8, regions) a parent/children self-association, and
+  each class keeps its SDMX role in its metadata. 14 providers are preset,
+  among them Eurostat, STATEC LUSTAT, the ECB, the OECD, the IMF and the ILO.
+  See :doc:`/buml_language/model_building/sdmx_to_buml`.
+* **One "From Data" import in the editor.** The Project Hub's "From
+  spreadsheet" step becomes **From Data**, with **Files (CSV, XLSX)** as
+  before and **Statistics API (SDMX)**: pick a provider and a dataflow id. A
+  failed import no longer leaves an empty project behind, for CSV too.
+* **Safe fetching on a public server.** The backend endpoints
+  ``POST /sdmx-to-domain-model`` and ``GET /sdmx-providers`` fetch over https
+  to public addresses only, checked again on every redirect and pinned to the
+  checked IP. Each import has one deadline and a byte and request budget, XML
+  declarations are refused, and at most 2 imports run at a time. Custom URLs
+  are off unless ``BESSER_SDMX_ALLOW_CUSTOM_URL`` is set.
+
+Generators
+----------
+
+* **Time-Series Forecaster.** ``TimeSeriesForecasterGenerator`` turns a B-UML
+  NN model and a small ``ForecastConfig`` (window, horizon, season, log,
+  differencing, calendar features, standardization, seeds) into one runnable
+  PyTorch module. The module handles windowing and its inverse transforms,
+  seeded training on one series or several, ``predict``, ``save``/``load``, a
+  rolling-origin ``backtest`` against the seasonal naive, and a CSV command
+  line. Every layer the PyTorch generator supports can be used. In the
+  editor: **Generate → PyTorch → Time-Series Forecaster** on an NN diagram.
+  See :doc:`/generators/forecaster`.
+* **Charts and metric cards that read from an endpoint.** The new
+  ``DataBinding.endpoint`` lets a chart series, a chart's own binding or a
+  metric card read rows from a backend path (``/stats/sales``) or an
+  ``http(s)://`` URL instead of its class's CRUD list, so a chart on a large
+  table no longer downloads every row. It goes through the metamodel, the
+  ``.py`` export, both editor converters and React and web app generation.
+  In the GUI editor, the series and the metric-card settings have an
+  **Endpoint** field.
+* **Charts built in Python keep their series in the editor.** The B-UML to
+  JSON conversion never exported chart series, so a chart built in Python
+  lost its series and bindings when opened in the editor.
+* **Assistant-designed GUIs keep their styling in the generated app.** The
+  modeling assistant writes CSS classes as HTML ``class`` attributes, which
+  the GUI conversion did not read, so generated React apps had no
+  ``className`` and came out unstyled. Inline SVG (icons, illustrations) was
+  generated as ``<div>`` elements and drew nothing. Both are fixed: classes
+  are read from either place and exported once, and SVG elements keep their
+  tags with React attribute names.
+* **No HTML injection through GUI attributes.** The React generator no longer
+  passes ``dangerouslySetInnerHTML``, ``ref`` or ``key`` from a GUI
+  component's attributes into the generated page.
+
+B-UML export
+------------
+
+* **Attribute multiplicity and read-only in** ``.py`` **exports.** Exported
+  B-UML scripts did not write either, so ``emails: str [0..*]`` came back as
+  a single value and a read-only attribute as writable, in the editor's
+  ``.py`` import as in plain Python. Generators that read attribute
+  multiplicity (Spring, JSON Schema, SQL) then produced different code from
+  the reloaded model. Both are now written; attributes with the defaults are
+  exported as before.
+
+Deploy alongside
+----------------
+
+Deploy the modeling agent with this release:
+
+* **A GUI from a screenshot or mockup** (BESSER-PEARL/modeling-agent#38,
+  #643). An image attached in the assistant chat is read as a page mockup
+  when the message asks for a GUI, or, with no message, when it shows a user
+  interface. The assistant builds a GUI with the same sections, text,
+  colours and fonts, with tables bound to classes when a class diagram
+  exists. Several screenshots become one app with a page per image. Diagram
+  images are still read as diagrams, and the message can now name the
+  diagram type. Reading images needs a vision model: the server's OpenAI
+  models or the user's own OpenAI or Anthropic key.
+* Inline SVG in assistant-designed GUIs shows in the editor canvas instead of
+  as empty boxes.
+* A table, chart or metric card no longer shows its title twice: once as the
+  section heading and once as the widget's own title.

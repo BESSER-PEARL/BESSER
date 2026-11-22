@@ -3,44 +3,145 @@ name: CI
 on:
   pull_request:
     branches: [master, development]
+  push:
+    branches: [master, development]
+
+permissions:
+  contents: read
+
+# A new push to a pull request replaces its running checks; pushes to the
+# branches each get their own group, so every one is checked.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
-  tests:
+  test:
+    # The suite is about 20 CPU-minutes, so each Python version runs it as two
+    # halves on two runners. Together the two paths cover everything under
+    # tests/: a new directory lands in `other`.
+    name: test (${{ matrix.python-version }}, ${{ matrix.part.name }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.12']
+        part:
+          - {name: spec-driven, paths: tests/spec_driven_agent}
+          - {name: other, paths: tests --ignore=tests/spec_driven_agent}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-python
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache-dependency-path: |
+            setup.cfg
+            requirements.txt
+            besser/utilities/web_modeling_editor/backend/requirements.txt
+      # run_command confines model-authored shell to its own run directory
+      # with bubblewrap. Without the package the sandbox tests skip and the
+      # shell tests fall back to unconfined, so CI would not exercise the
+      # path production actually takes.
+      - name: Install bubblewrap (shell sandbox)
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+      # The nn extra (torch, numpy) lets the tests that run generated PyTorch
+      # code (the forecaster, the backend's NN methods) run instead of skip.
+      # Torch comes first from the CPU-only index: the default wheel pulls in
+      # CUDA, several GB that CI never uses.
+      - name: Install dependencies
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e ".[nn,dev]"
+          pip install -r besser/utilities/web_modeling_editor/backend/requirements.txt
+      # pytest-xdist (dev extra): one worker per core.
+      - name: Run tests
+        run: python -m pytest ${{ matrix.part.paths }} -n auto -q --tb=short
+
+  tests:
+    # The check branch protection knows, one per Python version as before the
+    # suite was split. Each passes only when every `test` job did.
+    name: tests (${{ matrix.python-version }})
+    needs: test
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
     strategy:
       matrix:
         python-version: ['3.11', '3.12']
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
-        with:
-          python-version: ${{ matrix.python-version }}
-          cache: 'pip'
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e .
-          pip install -r besser/utilities/web_modeling_editor/backend/requirements.txt
-          pip install pytest
-      - name: Run tests
-        run: |
-          python -m pytest tests/ -q --tb=short --ignore=tests/generators/nn -x
+      - run: test "${{ needs.test.result }}" = success
 
   lint:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - name: Set up Python
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-python
+      - name: Install dependencies
+        run: pip install ruff import-linter==2.15
+      - name: Lint
+        # Rules live in pyproject.toml ([tool.ruff]), so a local `ruff check` matches CI.
+        run: ruff check besser/
+      - name: Import layers
+        # Contracts in pyproject.toml ([tool.importlinter]).
+        run: lint-imports
+
+  openapi:
+    # The editor's typed API client is generated from the backend's OpenAPI
+    # schema committed in the frontend submodule; fail when it is stale. Its
+    # own job: checking the submodule out in `tests` would also run the tests
+    # that read editor templates from it.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          python-version: '3.12'
-          cache: 'pip'
+          submodules: true
+      - uses: ./.github/actions/setup-python
+        with:
+          cache-dependency-path: |
+            requirements.txt
+            besser/utilities/web_modeling_editor/backend/requirements.txt
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install ruff
-      - name: Check formatting
-        run: ruff check besser/ --select F841,F401,F541,F811,E711,E721,E731,E741 --ignore E501 --exclude "*/BESSERActionLanguageParser.py"
+          pip install -e .
+          pip install -r besser/utilities/web_modeling_editor/backend/requirements.txt
+      - name: Compare the editor's OpenAPI schema with the backend's
+        run: python .github/scripts/check_openapi.py
+
+  package:
+    # What users install: build the wheel, install it outside the checkout and
+    # check that the package data (templates, data files) ships with it.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-python
+      - name: Build the wheel
+        run: |
+          pip install build
+          python -m build --wheel --outdir dist/
+      - name: Install it and check the package data
+        working-directory: ${{ runner.temp }}
+        run: |
+          python -m venv wheel-env
+          wheel-env/bin/pip install "$GITHUB_WORKSPACE"/dist/*.whl
+          wheel-env/bin/python "$GITHUB_WORKSPACE/.github/scripts/check_wheel.py"
+
+  docs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-python
+        with:
+          cache-dependency-path: |
+            docs/requirements.txt
+            requirements.txt
+      - name: Install docs dependencies (mirrors the Read the Docs build)
+        run: |
+          pip install -r docs/requirements.txt
+          pip install -r requirements.txt
+      - name: Build docs and gate on new warnings
+        run: python docs/check_docs.py

@@ -1,0 +1,5736 @@
+"""
+LLM generation orchestrator -- three-phase architecture.
+
+Phase 1 (deterministic, no LLM):
+  - Select the best generator based on available models
+  - Run the generator
+  - Inventory the output (what files, what they contain)
+  - Analyze what the user asked for vs what was generated (gap analysis)
+
+Phase 2 (LLM, scoped tasks):
+  - Give the LLM a focused task list based on the gap analysis
+  - The LLM only writes what's missing (auth, config, Docker, README)
+  - Parallel tool execution when multiple independent calls are made
+
+Phase 3 (validation & fix):
+  - Validate source, startup, data entry, workflows and requirement evidence
+  - Repair and recheck within the remaining turn/cost/runtime budgets
+  - Preserve unresolved findings as incomplete, never verified completion
+"""
+
+import contextlib
+import hashlib
+import json
+import logging
+import os
+import posixpath
+import re as _re
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any, Callable
+
+from besser.BUML.metamodel.structural import DomainModel
+from besser.spec_driven_agent.agent.compaction import (
+    COMPACT_RESERVE_TOKENS,
+    # Re-exported on purpose: callers and tests import the threshold from
+    # here as well as from compaction, and assert the two agree so the
+    # orchestrator's budget cannot drift from the compactor's.
+    COMPACT_TOKEN_THRESHOLD,  # noqa: F401
+    _estimate_tokens,
+    effective_threshold,
+    maybe_compact,
+    _summarize_messages,
+)
+from besser.spec_driven_agent.planning.model_change import model_summary
+from besser.spec_driven_agent.planning.model_rules import (
+    RENAMED,
+    converted_rule_fingerprints,
+    is_dropped_by_model_change,
+)
+from besser.spec_driven_agent.planning.user_request import user_request
+from besser.spec_driven_agent.run_recap import request_text
+from besser.spec_driven_agent.planning.specification import validate_specification
+from besser.spec_driven_agent.agent.history_eviction import (
+    evict_stale_file_bodies,
+    without_thinking_blocks,
+)
+from besser.spec_driven_agent.validation.frontend_contract import (
+    _method_button_source_issues as _method_button_source_issues,
+    collect_frontend_contract_issues,
+)
+from besser.spec_driven_agent.agent.design_system import design_system_section
+from besser.spec_driven_agent.planning import requirements_ledger as _requirements_ledger
+from besser.spec_driven_agent.repair.dependency_pins import pin_requirements_file
+from besser.spec_driven_agent.repair.scaffold_repair import (
+    _DEFAULT_BACKEND_REQUIREMENTS as _DEFAULT_BACKEND_REQUIREMENTS,
+    _IMPORT_TO_REQUIREMENT as _IMPORT_TO_REQUIREMENT,
+    _ensure_requirements_txt,
+    _is_dockerfile,
+    _project_has_npm_lockfile,
+    _strip_missing_lockfile_copy,
+    ensure_frontend_scaffold,
+)
+from besser.spec_driven_agent.state.checkpoint import (
+    CHECKPOINT_SCHEMA_VERSION,
+    _SNAPSHOT_DIR,
+    Checkpoint,
+    compute_fingerprint,
+    delete_checkpoint,
+    load_checkpoint,
+    save_checkpoint,
+)
+from besser.spec_driven_agent.errors import (
+    CheckpointMismatchError,
+    EmptyInstructionsError,
+    InvalidApiKeyError,
+)
+from besser.spec_driven_agent.planning.gap_analyzer import (
+    _placement_advice, analyze_gaps_via_llm, derived_attribute_tasks,
+)
+from besser.spec_driven_agent.planning.action_inventory import (
+    collect_action_endpoints, action_gap_tasks, action_implementation_issues, merge_action_tasks,
+)
+from besser.llm.pricing import is_free_local_model
+from besser.spec_driven_agent.providers.llm_client import (
+    ClaudeLLMClient,
+    FROM_SCRATCH_MAX_TOKENS,
+    _is_quota_exhausted,
+)
+from besser.spec_driven_agent.agent.prompt_builder import (
+    build_scaffold_snapshot,
+    build_system_prompt,
+    build_inventory,
+    build_endpoint_manifest,
+    mutation_coverage_applies,
+    requests_frontend,
+    ROUTER_TEMPLATE_GENERATORS,
+    _FRONTEND_ASK_RE,
+)
+from besser.spec_driven_agent.planning.agent_wiring import AGENT_DOMAIN_TASK, agent_data_requirement
+from besser.spec_driven_agent.planning.requested_routes import requested_route_tasks
+from besser.spec_driven_agent.planning.generator_keywords import (
+    default_generator,
+    keyword_generator,
+)
+from besser.spec_driven_agent.planning.target import (
+    MODIFY_TOOL_PROPERTIES,
+    OTHER,
+    entity_requirements,
+    STACK_RULES,
+    STACK_TOOL_PROPERTIES,
+    TARGET_RULES,
+    TARGET_TOOL_PROPERTIES,
+    WEB_APP,
+    Routing,
+    Target,
+)
+from besser.spec_driven_agent.planning.stack_metadata import (
+    effective_rivals,
+    detect_routed_stack,
+    detect_stack,
+    pre_generate_metadata,
+    stack_label,
+)
+from besser.spec_driven_agent.agent.runbook import RuntimeFileRemoval, remove_app_runtime_files
+from besser.spec_driven_agent.agent.tool_executor import ToolExecutor, ends_shell_session
+from besser.spec_driven_agent.agent.tools import dumps_for_model
+from besser.spec_driven_agent.execution.process import _safe_subprocess_env
+from besser.spec_driven_agent.execution.sandbox import SandboxUnavailable, run_confined
+from besser.spec_driven_agent.validation.docker_context import (
+    compose_build_contexts,
+    dockerfile_copy_issues,
+    missing_copy_manifests,
+)
+from besser.spec_driven_agent.validation.frontend_build import install_markers
+from besser.spec_driven_agent.validation.python_imports import (
+    _declared_dependency_roots as _declared_dependency_roots,
+    _import_smoke_issues,
+    _import_time_server_starts,
+    _unresolvable_local_imports,
+)
+from besser.spec_driven_agent.validation.toolchain import (
+    _collapse_repeated_names,
+    PYTHON_CONTRACT_REPEATED_NAME_RE,
+    _collect_cargo_issues,
+    _collect_kotlinc_issues,
+    _collect_ruff_issues,
+    _collect_uncompiled_source_issues,
+    drop_duplicate_python_findings,
+    format_python_files,
+    _collect_tsc_issues,
+    _demote_tsc_without_deps,
+    _is_real_undefined_name,
+    _llm_edited_paths,
+    _ruff_line_path,
+    _tsc_project_arg,
+    _RUFF_MAX_REPORTED as _RUFF_MAX_REPORTED,
+    _TSC_PROBE_NAME,
+)
+from besser.utilities.secret_redaction import redact_trace_text
+from besser.utilities.workspace_fs import open_plain, open_plain_write, walk_plain
+# Preserve established imports while lower-level consumers use these leaves.
+from besser.spec_driven_agent.validation.issues import (
+    ValidationIssue,
+    _check_did_not_run,
+    _classify_issue,
+    _hard_blockers,
+    dependency_check_issue,
+    is_completion_issue,
+    required_check_unverified,
+    required_dependency_setup as required_dependency_setup,
+    runtime_check_unverified,
+    runtime_note_unverified,
+    _RUFF_BLOCKER_CODES as _RUFF_BLOCKER_CODES,
+    _RUFF_LINE_RE as _RUFF_LINE_RE,
+)
+from besser.spec_driven_agent.validation.python_source import (
+    _create_schema_router_mismatches,
+    _python_files,
+    python_syntax_error,
+    walk_app_tree,
+    _CREATE_MODEL_RE as _CREATE_MODEL_RE,
+    _CREATE_FIELD_RE as _CREATE_FIELD_RE,
+    _ROUTER_READ_RE as _ROUTER_READ_RE,
+)
+from besser.spec_driven_agent.state.recipe_size import bounded_recipe
+from besser.spec_driven_agent.state.tracing import (
+    EVENT_CHECKPOINT,
+    EVENT_ERROR,
+    EVENT_COST_UPDATE,
+    EVENT_GENERATOR_OUTPUT,
+    EVENT_LLM_CALL,
+    EVENT_PHASE_ENTER,
+    EVENT_PHASE_EXIT,
+    EVENT_REQUIREMENTS,
+    EVENT_RUN_END,
+    EVENT_RUN_START,
+    EVENT_SNAPSHOT,
+    EVENT_TARGET,
+    EVENT_TOOL_CALL,
+    EVENT_TURN_END,
+    EVENT_TURN_START,
+    EVENT_VALIDATION_ISSUE,
+    TRACE_FILENAME,
+    NullTraceWriter,
+    TraceWriter,
+)
+
+logger = logging.getLogger(__name__)
+
+
+from besser.spec_driven_agent.pipeline.constants import (  # noqa: F401
+    WORKSPACE_SKIP_DIRS,
+    TOOL_INPUTS_FILENAME,
+    _LOG_VALUE_BUDGET,
+    _WRITE_TOOLS_ON_RECORD,
+    _APPLICATION_OUTPUT_DIRS,
+    _APPLICATION_PRIMARY_TOOLS,
+    _EDIT_STREAK_TOOLS,
+    _EDIT_TOOLS,
+    _MAX_PARALLEL_WORKERS,
+    _MAX_TOOLCHAIN_FIX_ITERATIONS,
+    _PHASE3_FIX_TURNS,
+    _PHASE3_NO_EDIT_REMINDER,
+    _PHASE3_NO_PROGRESS_ROUNDS,
+    _PHASE3_PLATEAU_ROUNDS,
+    _READONLY_TOOLS,
+    _RECIPE_EXCLUDED_DIRS,
+    _REDUNDANT_GENERATOR_TOOLS_BY_PRIMARY,
+    _REVISION_HASH_CAP,
+    _REVISION_IGNORED_DIRS,
+    _REVISION_IGNORED_SUFFIXES,
+    _REVISION_PATH_ONLY_SUFFIXES,
+    _REVISION_PROJECT_OUTPUT_DIRS,
+    _ROLLBACK_DISCARD_DIR,
+    _ROLLBACK_PRESERVED,
+    _RUNTIME_FAILED,
+    _RUNTIME_FAILURE_PREFIXES,
+    _RUNTIME_FATAL_SOURCE_PREFIXES,
+    _RUNTIME_OBSERVED_FAILURE_PREFIXES,
+    _RUNTIME_OK,
+    _RUNTIME_UNVERIFIED,
+    _RUNTIME_UNVERIFIED_PREFIXES,
+    _SCAFFOLD_INSTALL_TIMEOUT_SECONDS,
+    _SNAPSHOT_IGNORED_DIRS,
+    _SNAPSHOT_STAGING_DIR,
+    _TOOL_DETAIL_KEYS,
+    _TOOL_DETAIL_MAX_CHARS,
+    _runtime_verdict,
+    _tool_call_detail,
+    _tool_use_blocks,
+    is_excluded_output_file,
+)
+
+
+from besser.spec_driven_agent.pipeline.edit_loop_guards import EditLoopGuardsMixin
+from besser.spec_driven_agent.pipeline.modify_run import ModifyRunMixin
+from besser.spec_driven_agent.pipeline.phase3_repair import Phase3RepairMixin, clip_finding
+from besser.spec_driven_agent.pipeline.regeneration import Regeneration
+from besser.spec_driven_agent.settings import AgentSettings
+
+# Checkpoint history eviction (see history_eviction.py). When enabled, stale
+# file bodies in older messages are stubbed at the compaction checkpoint to cut
+# the re-sent context. OFF by default: it rewrites history the provider
+# re-serializes and is not yet verified end to end. Enable with
+# BESSER_LLM_HISTORY_EVICTION=1.
+_HISTORY_EVICTION_ENABLED = AgentSettings().llm_history_eviction
+
+
+# Told to a run resumed after packaging removed what it had installed.
+DEPENDENCIES_REMOVED_NOTE = (
+    "The installed dependencies (node_modules, virtual environments, build output) were removed after "
+    "the previous run finished; install them again with the install_dependencies tool before validating."
+)
+
+
+class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
+    """
+    Three-phase orchestrator for LLM-augmented code generation.
+
+    Phase 1 runs deterministically (no LLM): selects generator, runs it,
+    inventories output, performs gap analysis.
+
+    Phase 2 gives the LLM a scoped task list based on the gaps. The LLM
+    only implements what's missing -- it doesn't rewrite the generator output.
+    Multiple independent tool calls are executed in parallel.
+
+    Phase 3 validates the output and gives the LLM a few turns to fix issues.
+    Uses snapshot/rollback if fixes make things worse.
+    """
+
+    MAX_TURNS = 120
+
+    # How many times the end_turn checklist gate sends the model back to
+    # its open items before letting the run finish anyway.
+    _MAX_TASK_NUDGES = 2
+    # End-of-turn nudges that show static frontend blockers; each also counts as a task nudge.
+    _MAX_FRONTEND_BLOCKER_NUDGES = 1
+    _PHASE2_STAGNANT_TURNS = 10
+    _PHASE2_INSPECTION_TURNS = 20
+
+    def __init__(
+        self,
+        llm_client: ClaudeLLMClient,
+        domain_model=None,
+        gui_model=None,
+        agent_model=None,
+        agent_config: dict | None = None,
+        output_dir: str | None = None,
+        max_turns: int | None = None,
+        max_cost_usd: float = 5.0,
+        max_runtime_seconds: int = 1200,
+        on_progress: Callable[..., None] | None = None,
+        on_text: Callable[[str], None] | None = None,
+        on_phase_details: Callable[[str, str], None] | None = None,
+        on_findings: Callable[..., None] | None = None,
+        use_streaming: bool = True,
+        object_model=None,
+        state_machines=None,
+        quantum_circuit=None,
+        bpmn_model=None,
+        nn_model=None,
+        auto_fix_issues: bool = False,
+        should_continue: Callable[[], bool] | None = None,
+        primary_kind: str | None = None,
+        run_id: str = "",
+        enable_tracing: bool = True,
+        enable_checkpointing: bool = True,
+        # Both default OFF: they enable run_command / install_dependencies, the
+        # arbitrary-shell capability the hosted gate exists to withhold. Opt in
+        # explicitly; generation does not need them.
+        enable_toolchain_validation: bool = False,
+        allow_shell_tools: bool = False,
+        target_generator: str | None = None,
+        target_generator_bound: bool = False,
+        source_project_export: dict | None = None,
+        previous_domain_model: DomainModel | None = None,
+        per_write_diagnostics: bool = True,
+        enable_import_smoke_check: bool = True,
+        enable_requirements_ledger: bool = True,
+        stated_requirements: list[dict] | None = None,
+        assembly_issues: list[dict] | None = None,
+    ):
+        self.client = llm_client
+        self.domain_model = domain_model
+        # The model as the user sent it, for the recipe: a modify run's
+        # model-sync adds classes to self.domain_model that the editor never sees.
+        try:
+            self._user_model = model_summary(domain_model) if domain_model is not None else None
+        except Exception:
+            self._user_model = None
+        self.gui_model = gui_model
+        self._assembly_issues = [
+            {key: str(issue.get(key, ""))[:limit] for key, limit in (
+                ("diagram_id", 120), ("diagram_type", 80), ("diagnostic", 160),
+            )}
+            for issue in assembly_issues or [] if isinstance(issue, dict)
+        ]
+        self.agent_model = agent_model
+        self.agent_config = agent_config
+        self.object_model = object_model
+        self.bpmn_model = bpmn_model
+        self.nn_model = nn_model
+        # Normalise to a list so the prompt builder can iterate uniformly.
+        if state_machines is None:
+            self.state_machines: list = []
+        elif isinstance(state_machines, (list, tuple, set)):
+            self.state_machines = [sm for sm in state_machines if sm is not None]
+        else:
+            self.state_machines = [state_machines]
+        self.quantum_circuit = quantum_circuit
+        # Classify the primary driver. Explicit override wins; otherwise we
+        # pick the first populated model in the standard preference order.
+        # This is the anchor for generator selection, prompt framing, and
+        # the plan preview endpoint.
+        self.primary_kind = primary_kind or self._auto_detect_primary_kind()
+        if self.primary_kind is None:
+            raise ValueError(
+                "LLMOrchestrator requires at least one model (domain, gui, "
+                "agent, state_machine, object, BPMN, neural network, or quantum)"
+            )
+        # Absolute: checks pin their cwd to it, which resolves a relative path twice.
+        self.output_dir = os.path.abspath(output_dir or tempfile.mkdtemp(prefix="besser_llm_"))
+        self.max_turns = max_turns or self.MAX_TURNS
+        self.max_cost_usd = max_cost_usd
+        self.max_runtime_seconds = max_runtime_seconds
+        self.on_progress = on_progress
+        self.on_text = on_text
+        self.on_phase_details = on_phase_details
+        # Phase 3 reports each validation round: (attempt, issues, restored=False).
+        self.on_findings = on_findings
+        self.use_streaming = use_streaming
+        # Weak / free-tier open models (e.g. qwen3-coder) ignore "don't switch
+        # frameworks" and delete the whole deterministic scaffold to rebuild it.
+        # Make that scaffold delete-proof for them only; capable cloud models are
+        # unaffected and keep full delete_file.
+        _model_name = (getattr(self.client, "model", "") or "").lower()
+        self.executor = ToolExecutor(
+            workspace=self.output_dir,
+            domain_model=domain_model,
+            gui_model=gui_model,
+            agent_model=agent_model,
+            agent_config=agent_config,
+            quantum_circuit=quantum_circuit,
+            object_model=object_model,
+            bpmn_model=bpmn_model,
+            nn_model=nn_model,
+            protect_scaffold=is_free_local_model(_model_name),
+            per_write_diagnostics=per_write_diagnostics,
+            # The executor enforces this too. Hiding the tools from the
+            # advertised list is not a gate: the model can name a tool it was
+            # never offered, and a dispatch table alone would run it anyway.
+            allow_shell=allow_shell_tools,
+        )
+        self.executor.app_validator = self._validate_app
+        self.executor.time_left = self._time_left
+        # Each generator call's files and traced regions go to the run log, which
+        # the run trace is built from (state/trace_model.py).
+        self.executor.on_generated = self._record_generator_output
+        self.executor.api_tester = self._test_api
+        self._app_validation_cache: tuple[tuple, dict] | None = None
+        self._api_scenarios: dict[str, dict] = {}
+        # Workflows the agent retired as replaced (test_api action='retire'): no longer
+        # replayed, still listed in the recipe and the run report with the reason.
+        self._retired_api_scenarios: list[dict] = []
+        # Give the LLM tools scoped to the models it actually has. Tools
+        # that need a domain model (pydantic/sqlalchemy/django/react/…)
+        # are hidden when there isn't one so the LLM doesn't waste turns
+        # calling generators that will just error. See tools.get_tools_for.
+        # ``allow_shell_tools=False`` drops run_command/install_dependencies —
+        # the arbitrary-shell tools. On a hosted, multi-tenant, BYOK box those
+        # are user-steerable RCE (the cwd lock + denylist are UX, not a
+        # sandbox), so the web runner disables them; trusted local/CLI/bench
+        # runs keep them for self-verification.
+        self.allow_shell_tools = allow_shell_tools
+        from besser.spec_driven_agent.agent.tools import get_tools_for
+        self.tools = get_tools_for(
+            has_domain_model=self.domain_model is not None,
+            has_gui_model=self.gui_model is not None,
+            has_agent_model=self.agent_model is not None,
+            has_state_machines=bool(self.state_machines),
+            has_quantum_circuit=self.quantum_circuit is not None,
+            has_object_model=self.object_model is not None,
+            has_bpmn_model=self.bpmn_model is not None,
+            has_nn_model=self.nn_model is not None,
+            allow_shell=allow_shell_tools,
+        )
+        # Phase 3 auto-fix policy. False = report-only (industry default
+        # for static analysers — fix on request, never blindly).
+        self.auto_fix_issues = auto_fix_issues
+        # Phase 3 toolchain checks (tsc / cargo / kotlinc) compile real
+        # projects and can add minutes of wall-clock per run. The web
+        # runner can disable them (BESSER_LLM_ENABLE_TOOLCHAIN_VALIDATION);
+        # library users keep the default. In-process checks always run.
+        self.enable_toolchain_validation = enable_toolchain_validation
+        # Phase 3 import smoke check: import the generated ORM module in a
+        # subprocess and configure its mappers (~0.5s). Deliberately NOT tied
+        # to allow_shell_tools - the hosted deployment has that off, and it is
+        # where a mapper that fails on first use ships as a green run.
+        self.enable_import_smoke_check = enable_import_smoke_check
+        # Requirements ledger: the user's verbatim request turned into atomic
+        # requirements once, then judged against the code on every Phase 3
+        # pass (see requirements_ledger.py). ``_requirements`` is None until
+        # extracted; the verdicts of the last pass go to the recipe.
+        self.enable_requirements_ledger = enable_requirements_ledger
+        self._requirements: list[dict] | None = None
+        # Requirements the editor sent ({"id", "text", "kind"}, the modeling
+        # assistant's extraction): the ledger is built from them instead of
+        # extracting again, so its verdicts name the trace's requirements.
+        self._stated_requirements = stated_requirements
+        # Where the ledger came from, for the recipe: "editor", "extracted" or None.
+        self._requirements_source: str | None = None
+        self._requirement_verdicts: list[dict] = []
+        self._requirement_verdicts_scope = ""  # the requirements and request they answered
+        self._requirement_verdicts_key = ""  # the judge's cache key (source, requirements) they answer
+        # (requirement cache key, import index): one index per judged tree; see _import_index.
+        self._import_index_cache: tuple[str, _requirements_ledger.ImportIndex] | None = None
+        self._requirement_judgments: dict[str, list[dict]] = {}
+        self._requirement_evidence_retries: set[str] = set()
+        self._requirement_extraction_attempts = 0
+        self._requirement_judge_failures: set[str] = set()  # cache keys whose judgment returned nothing
+        self._action_endpoints = None
+        self._recent_tool_failures: list[dict] = []
+        # Binding Phase-1 generator choice (e.g. from a user-approved
+        # preview plan). A bound ``None`` explicitly skips Phase 1; an
+        # unbound ``None`` keeps auto-selection. Either bound state avoids a
+        # paid selector call and executes exactly the approved plan.
+        self.target_generator = target_generator
+        self.target_generator_bound = (
+            target_generator_bound or target_generator is not None
+        )
+        # Cooperative cancellation hook. The orchestrator polls this at
+        # the top of each Phase 2 turn. Returning False causes the loop
+        # to exit cleanly — used by the SSE runner to honour
+        # ``POST /cancel-smart-gen/{run_id}`` without killing the thread.
+        self._should_continue = should_continue
+        self.tool_calls_log: list[dict] = []
+        self.total_turns = 0
+        # (loop key, succeeded) per non-readonly call. Success matters: counting
+        # names alone flags a run of SUCCESSFUL edits as a loop.
+        self._recent_tool_calls: list[tuple[str, bool]] = []
+        # Parallel ring buffer of (tool_name, path) entries used by the
+        # per-file modify-loop guard. ``path`` is None for tools that
+        # don't operate on a single file (e.g. ``list_files``,
+        # ``run_command``) — those entries break any in-progress
+        # modify_file streak. Kept separate from ``_recent_tool_calls``
+        # so the uniform-tool ``_is_stuck`` heuristic stays independent
+        # of it.
+        self._recent_modify_targets: list[tuple[str, str | None]] = []
+        # Path most recently warned about — prevents the per-file
+        # reminder from firing turn after turn while the LLM is still
+        # working on the SAME file. Resets when a different file or
+        # tool is observed.
+        self._last_modify_warning_path: str | None = None
+        self._phase2_inspection_handoff = ""
+        # Escalation for an edit the executor has already rejected and the
+        # model sends again (see _escalate_repeat_rejection): the tool the
+        # next request must call, and per path the repeat count already acted on.
+        self._force_tool_next: str | None = None
+        self._repeat_escalations: dict[str, int] = {}
+        self._compaction_count = 0
+        self._generator_used: str | None = None
+        # When Phase 1 selected a generator but the generator FAILED,
+        # the reason ("<generator>: <error>") is stored here and woven
+        # into the gap-analyser fallback + SSE stream, so neither the
+        # user nor Phase 2 is left guessing why the scaffold is missing.
+        self._phase1_failure_reason: str | None = None
+        # Phase 0.5 stack id (e.g. ``"nextjs"``) and the list of metadata
+        # files it created. Both stay None / [] when Phase 0.5 didn't
+        # run (Python stacks, or unknown target). Used by the inventory
+        # builder to surface "these files were pre-created" to the LLM.
+        self._phase0_5_stack: str | None = None
+        self._phase0_5_files: list[str] = []
+        # What the run builds (planning/target.py), decided by the Phase 1
+        # selector call; None keeps the pre-target behaviour.
+        self.target: Target | None = None
+        # Notes from formatting the LLM's Python (format_python_files), for Phase 3.
+        self._format_notes: list[str] = []
+        # The seed's target when this modify run builds another kind.
+        self._previous_target: Target | None = None
+        # A modify run: the seed recipe's target and the routing call's answer
+        # (``_route_modify_request``); None when the call failed.
+        self._seed_target: Target | None = None
+        self._modify_routing: Routing | None = None
+        # The routing call's stack no generator builds ('' for none), and
+        # whether that call answered at all on this create run.
+        self._unsupported_stack = ""
+        self._routed = False
+        self._inventory: str = ""
+        # True once the client's per-call output-token limit was raised
+        # above its default: by ``_apply_adaptive_budget`` for a pure
+        # from-scratch ``run()``, or by ``_apply_modify_budget`` for a
+        # ``modify()`` run. The legacy recipe field name is retained for
+        # compatibility; cost and runtime limits are never raised.
+        self._adaptive_budget_applied: bool = False
+        # Output-truncation retries in this Phase 2, as a PER-RUN total.
+        # Deliberately not reset on a good turn: a model that truncates
+        # repeatedly is not adapting, and an unbounded allowance would let it
+        # spend the cost cap rediscovering that.
+        self._truncation_retries: int = 0
+        self._start_time: float | None = None
+        # Stored as ValidationIssue objects so the recipe captures severity.
+        # Cast to strings via `[str(i) for i in self._validation_issues]`
+        # when emitting JSON.
+        self._validation_issues: list[ValidationIssue] = []
+        # Phase 0 findings about the SPECIFICATION. Held separately because
+        # Phase 3 replaces ``_validation_issues`` wholesale from
+        # ``_collect_validation_issues``, which never re-derives these.
+        self._model_contract_issues: list[ValidationIssue] = []
+        # True when Phase 3's repair was discarded because it ended
+        # worse than it began; the recipe must not read as a clean fix.
+        self._phase3_rolled_back = False
+        # Last boot-and-probe outcome for the delivered backend: one of the
+        # _RUNTIME_* ranks, or None when no probe result stands for the tree on
+        # disk. Written by _collect_execution_issues, read by the Phase 3 gate.
+        self._runtime_probe_verdict: int | None = None
+        # Source revision the verdict above was computed for. A verdict from an
+        # older tree is not evidence about the one being shipped.
+        self._runtime_verdict_revision: str | None = None
+        # (source revision, findings) for the boot probe; see _runtime_probe_issues.
+        self._runtime_probe_cache: tuple[str, list[str]] | None = None
+        # Per-revision check results (see _revision_cached) and frontend build verdicts.
+        self._check_results: dict[tuple, list[str]] = {}
+        self._frontend_build_verdicts: dict = {}
+        self._previous_errors: list[str] = []  # track errors to avoid re-attempting
+        # Last model name observed on the client. The provider's outage
+        # fallback (``OpenAIProvider._activate_fallback``) can swap the
+        # client's model mid-run; ``_notify_model_switch`` compares
+        # against this after each LLM call and surfaces the change
+        # through ``on_progress`` so the UI can show the actual model.
+        self._last_seen_model: str | None = getattr(llm_client, "model", None)
+
+        # Observability + crash recovery. Both are output-dir-local and
+        # opt-out via the constructor flags so unit tests that don't
+        # care (or that use in-memory ``tempfile.mkdtemp`` workspaces)
+        # can disable them without polluting the working tree.
+        self.run_id = run_id
+        self._trace: TraceWriter | NullTraceWriter = (
+            TraceWriter(self.output_dir, run_id=run_id, primary_kind=self.primary_kind,
+                        usage=self._run_usage_counters)
+            if enable_tracing
+            else NullTraceWriter()
+        )
+        self._checkpointing_enabled = enable_checkpointing
+        # Fingerprint is stable over the run; compute once so resume
+        # validation doesn't re-hash on every turn.
+        self._project_fingerprint = compute_fingerprint(
+            instructions="",  # filled in once run() knows the instructions
+            primary_kind=self.primary_kind,
+            domain_model=domain_model,
+            state_machines=self.state_machines,
+            gui_model=gui_model,
+            agent_model=agent_model,
+            object_model=object_model,
+            quantum_circuit=quantum_circuit,
+            bpmn_model=bpmn_model,
+            nn_model=nn_model,
+        )
+        self._resume_from_turn: int = 0
+        self._resume_messages: list[dict] | None = None
+        # DEPENDENCIES_REMOVED_NOTE when a resume finds them removed, else "".
+        self._dependencies_note = ""
+        self._checkpoint_phase = "phase2"
+        self._phase3_interrupted = False
+        # Phase 2 ended on an exhausted provider quota: every Phase 3 call
+        # would fail the same way.
+        self._phase2_quota_exhausted = False
+        # Why the fix loop interrupted itself, when it did: a provider failure
+        # or a stop_reason the loop cannot answer. Traced so an interrupted
+        # repair records what interrupted it, not only that it stopped.
+        self._phase3_interrupt_detail: str = ""
+        # Which guard ended the Phase 3 repair loop ("no-progress streak",
+        # "plateau", "attempt cap", a budget/cancellation reason, or "all
+        # blockers fixed"). Traced so a run's exit can be attributed without
+        # replaying the loop by hand. Report-only.
+        self._phase3_exit_reason: str = "not reached"
+        self._repair_progress: dict = {}
+        # ``True`` once Phase 2 exits via end_turn (LLM said it's done).
+        # Anything else — API error, cost cap, timeout, cancellation —
+        # leaves this ``False`` so the checkpoint is preserved for a
+        # possible resume. Kept separate from ``self._validation_issues``
+        # because those are about Phase 3 quality, not run completion.
+        self._phase2_exited_cleanly: bool = False
+        # Why Phase 2 stopped. "completed" only when the LLM signalled
+        # end_turn; otherwise one of: "api_error", "cost_cap", "timeout",
+        # "cancelled", "max_turns". The runner reads this to decide whether
+        # to warn the user that the downloaded output may be incomplete.
+        self._phase2_stop_reason: str = "max_turns"
+        # Which branch produced that reason, when the reason alone is
+        # ambiguous. "validation_required" is set both by the end_turn blocker
+        # gate and by the bounded-inspection handoff, two exits of very
+        # different character. Traced only; the runner still reads
+        # ``_phase2_stop_reason``, whose values are unchanged.
+        self._phase2_stop_detail: str = ""
+        # Short provider error string captured when stop_reason == "api_error",
+        # surfaced to the user so a rate-limit reads as such (not a mystery).
+        self._phase2_api_error: str = ""
+        # end_turn checklist gate: how many times we've already sent the
+        # model back to its open task_list items (bounded by
+        # ``_MAX_TASK_NUDGES`` so a stubborn model can't loop the budget).
+        self._end_turn_task_nudges: int = 0
+        self._end_turn_frontend_nudges: int = 0
+        # Model-derived acceptance matrix (per entity: route/page/create),
+        # computed by Phase 3 and saved in the recipe. Report-only.
+        self._acceptance_matrix: dict | None = None
+        # The run's instructions, kept for Phase 3 checks that depend on
+        # what was ASKED (e.g. "web app" requested but no frontend files).
+        self._instructions: str = ""
+
+        # Incremental modify state. ``modify()`` seeds ``output_dir``
+        # from a previous run's files and edits them in place instead of
+        # rebuilding from scratch. ``_modify_mode`` is the single flag that
+        # threads through ``_build_system_prompt`` to prepend the
+        # "preserve what works" directive; it stays False on the run() /
+        # resume() paths so those prompts are unaffected.
+        # ``_seed_generator_used`` records which deterministic generator
+        # first produced the seeded base (read back from the seed's
+        # recipe) so the inventory / new recipe frame the run correctly.
+        self._modify_mode: bool = False
+        self._seed_generator_used: str | None = None
+        # Unresolved blockers carried over from the seed run's recipe
+        # (modify() only). A modify run must pay down the seed's known
+        # debt, not just layer new edits on top of it — otherwise every
+        # defect the seed run shipped survives forever because later
+        # runs never look at it again.
+        self._seed_unresolved_issues: list[str] = []
+        # Model-sync during modify (class-diagram only). When a
+        # ``modify()`` instruction implies new domain entities (e.g. "add
+        # authentication" → a ``User`` class), ``_derive_and_apply_model_deltas``
+        # mutates ``self.domain_model`` IN PLACE and re-serialises an updated
+        # project export here so the push writes ``buml/`` from the UPDATED
+        # model. Both stay untouched on the ``run()`` / ``resume()`` paths —
+        # the delta step is invoked ONLY from ``modify()`` — so from-scratch
+        # generation is byte-identical. ``_source_project_export`` is the run's
+        # original export (passed by the web runner); ``_updated_project_export``
+        # is ``None`` unless at least one new class was actually added.
+        self._source_project_export: dict | None = source_project_export
+        self._updated_project_export: dict | None = None
+        # The classes model sync added (its LLM answer), so a resume replays them.
+        self._model_sync_classes: list[dict] = []
+        # The modify run's regeneration of the generated files (#659).
+        self._regeneration: Regeneration | None = None
+        # The model the app's stored generator output came from (modify runs), to
+        # rebuild the merge base after a BESSER upgrade (#659).
+        self._previous_domain_model = previous_domain_model
+        # Every file the seed run delivered (its recipe); None without a recipe.
+        self._seed_output_files: set[str] | None = None
+        # Generator files earlier runs' LLM edited, from the seed recipe.
+        self._seed_llm_modified: set[str] = set()
+        # Why the model-sync call failed, for the trace and the recipe.
+        self._model_sync_error: str | None = None
+        # What the workspace held before this run wrote anything (a modify
+        # run's seed, an imported repository): never deleted as the app's own.
+        self._files_at_start: frozenset[str] = frozenset(self._workspace_file_list())
+        # Files the app wrote in its test runs that this run deleted from the output.
+        self._runtime_files = RuntimeFileRemoval()
+        # The recipe this run wrote, as written; None until _save_recipe ran.
+        self.saved_recipe: dict | None = None
+
+        # Fix/modify success gate (modify() only). When a modify run is
+        # seeded by a user-reported error (a pasted traceback, a broken
+        # endpoint, "it 400s"), the reported failure IS the run's success
+        # criterion: the loop must attempt exactly that and must not report
+        # a clean success while it is unresolved. ``_fix_target`` is the
+        # parsed :class:`ReportedTarget`; ``_is_fix_run`` gates every branch
+        # so from-scratch run()/resume() are byte-identical (they never set
+        # these). ``_fix_target_resolved`` / ``_fix_target_message`` are the
+        # end-of-run verdict the runner surfaces honestly.
+        self._is_fix_run: bool = False
+        self._fix_target = None  # ReportedTarget | None
+        self._fix_target_resolved: bool | None = None
+        self._fix_target_message: str | None = None
+
+    _LOOP_THRESHOLD = 4
+    # Tighter, per-file threshold for the modify_file streak guard.
+    # Long sequences of small modify_file edits on the same path are
+    # the typical "death by a thousand cuts" failure mode: the LLM
+    # keeps making forward progress, so the legacy uniform-tool
+    # ``_is_stuck`` warning (a soft note appended to a tool_result)
+    # doesn't change behaviour. At 3 consecutive single-file edits we
+    # inject a high-salience reminder before the NEXT LLM call.
+    #
+    # Derived, not re-declared: this guard reads the same counter
+    # (``consecutive_modify_misses``) that the executor refuses on, so two
+    # independent 3s in two files could be tuned apart and silently disagree.
+    _PER_FILE_MODIFY_THRESHOLD = ToolExecutor._MAX_MODIFY_MISSES
+    # How many output-token truncations one Phase 2 may recover from in
+    # total, never reset. Past this the model is not adapting and resume is a
+    # better answer than burning the cost cap.
+    _MAX_TRUNCATION_RETRIES = 4
+
+    def _auto_detect_primary_kind(self) -> str | None:
+        """Pick the primary model kind from whatever is present.
+
+        Same order as the service-layer assembler: class diagrams are
+        preferred when present because they drive the most mature
+        deterministic generators. We duplicate the ordering here rather
+        than importing from the web-layer assembler so the orchestrator
+        stays independent of the HTTP surface.
+        """
+        if self.domain_model is not None:
+            return "class"
+        if self.gui_model is not None:
+            return "gui"
+        if self.agent_model is not None:
+            return "agent"
+        if self.state_machines:
+            return "state_machine"
+        if self.object_model is not None:
+            return "object"
+        if self.bpmn_model is not None:
+            return "bpmn"
+        if self.nn_model is not None:
+            return "nn"
+        if self.quantum_circuit is not None:
+            return "quantum"
+        return None
+
+    # ==================================================================
+    # Main entry point
+    # ==================================================================
+
+    @ends_shell_session
+    def run(self, instructions: str) -> str:
+        """Run the three-phase generation. Returns path to output directory."""
+        if not instructions or not instructions.strip():
+            raise EmptyInstructionsError("Instructions cannot be empty")
+        validate_specification(instructions)
+        self._instructions = instructions
+
+        self._start_time = time.monotonic()
+        # Re-compute fingerprint now that we know the instructions — the
+        # constructor-time value was hashed with an empty string.
+        self._project_fingerprint = self._compute_project_fingerprint(instructions)
+        self._trace.write(
+            EVENT_RUN_START,
+            # bounded: trace display only, never a decision input. The user's own
+            # words: the modeling agent's notes come first and filled the 500.
+            instructions=_requirements_ledger.original_request(instructions)[:500],
+            max_cost_usd=self.max_cost_usd,
+            max_runtime_seconds=self.max_runtime_seconds,
+            max_turns=self.max_turns,
+        )
+
+        # -- Phase 0: the model itself ------------------------------------
+        # Runs before anything is generated: a defect here is one no amount
+        # of Phase 2 or Phase 3 work can repair, because the code will be a
+        # faithful rendering of an impossible specification.
+        self._collect_model_contract_issues()
+
+        # -- Phase 1: Deterministic generation ----------------------------
+        self._trace.write(EVENT_PHASE_ENTER, phase="phase1")
+        self._run_phase1(instructions)
+        self._trace.write(
+            EVENT_PHASE_EXIT,
+            phase="phase1",
+            generator_used=self._generator_used,
+        )
+        # The scaffold's generator is known now: add the model findings that
+        # only break what that generator emits.
+        self._collect_model_contract_issues()
+
+        # -- Phase 0.5: Stack-metadata floor (only when no Phase 1 ran) ---
+        # When Phase 1 picked a Python generator (Django / FastAPI /
+        # SQLAlchemy / Pydantic / plain Python), the deterministic
+        # generator already emitted the manifest. Phase 0.5 only
+        # intervenes when Phase 1 was a no-op — i.e. the target is a
+        # stack BESSER doesn't generate (Next.js, Rust, Kotlin / Spring).
+        # This leaves the Python paths untouched.
+        self._run_phase0_5_metadata(instructions)
+
+        # -- Adaptive budget: raise the cap for from-scratch runs ---------
+        # Must run after Phase 1 (needs ``self._generator_used``) and
+        # after Phase 0.5 (needs ``self._phase0_5_stack`` for logging) but
+        # before Phase 2, since that's the loop the raised cost/runtime
+        # cap and the raised client max_tokens actually apply to.
+        self._apply_adaptive_budget()
+
+        # -- Phase 1.5: Validate Phase 1 output ---------------------------
+        phase1_issues = self._validate_phase1_output()
+        for issue in phase1_issues:
+            self._trace.write(EVENT_VALIDATION_ISSUE, phase="phase1_5", message=issue)
+
+        # -- Phase 2: LLM customization -----------------------------------
+        self._trace.write(EVENT_PHASE_ENTER, phase="phase2")
+        self._run_phase2(instructions, extra_issues=phase1_issues)
+        self._trace.write(
+            EVENT_PHASE_EXIT, phase="phase2", turns=self.total_turns,
+            stop_reason=self._phase2_stop_reason,
+            stop_detail=self._phase2_stop_detail,
+        )
+
+        # Before Phase 3, so validation and the recipe describe the shipped layout.
+        self._format_python_output()
+
+        # -- Snapshot BEFORE Phase 3 (preserves all Phase 2 work) ---------
+        # If Phase 3 fixes make things worse, we roll back here
+        # (keeping Phase 2 work intact), not back to Phase 1.
+        self._create_snapshot()
+        self._trace.write(EVENT_SNAPSHOT, before_phase="phase3")
+
+        # -- Phase 3: Validate & fix --------------------------------------
+        if self._phase2_exited_cleanly or self._phase2_stop_reason == "validation_required":
+            self._save_phase3_checkpoint()
+        self._trace.write(EVENT_PHASE_ENTER, phase="phase3")
+        self._run_phase3_validation()
+        self._trace.write(
+            EVENT_PHASE_EXIT,
+            phase="phase3",
+            unresolved_blockers=sum(
+                1 for i in self._validation_issues if i.severity == "blocker"
+            ),
+            exit_reason=self._phase3_exit_reason,
+        )
+
+        elapsed = time.monotonic() - self._start_time
+        logger.info(
+            "LLM generation finished: %d turns, %.1fs, %d tool calls, "
+            "generator=%s, compactions=%d",
+            self.total_turns, elapsed, len(self.tool_calls_log),
+            self._generator_used or "none", self._compaction_count,
+        )
+
+        # Log cost
+        logger.info("Cost: %s", self.client.usage)
+
+        self._save_recipe(instructions, elapsed)
+
+        # Clean up snapshot
+        self._remove_snapshot()
+
+        self._finish_checkpoint()
+
+        self._trace.write(
+            EVENT_RUN_END,
+            elapsed_seconds=round(elapsed, 2),
+            total_turns=self.total_turns,
+            estimated_cost_usd=float(self.client.usage.estimated_cost),
+            validation_issues=len(self._validation_issues),
+        )
+
+        return self.output_dir
+
+    # ==================================================================
+    # Resume entry point
+    # ==================================================================
+
+    def _compute_project_fingerprint(self, instructions: str) -> str:
+        """The fingerprint a checkpoint is saved with and a resume checks."""
+        return compute_fingerprint(
+            instructions=instructions,
+            primary_kind=self.primary_kind,
+            domain_model=self.domain_model,
+            state_machines=self.state_machines,
+            gui_model=self.gui_model,
+            agent_model=self.agent_model,
+            object_model=self.object_model,
+            quantum_circuit=self.quantum_circuit,
+            bpmn_model=self.bpmn_model,
+            nn_model=self.nn_model,
+        )
+
+    @ends_shell_session
+    def resume(self, instructions: str) -> str:
+        """Resume a previously-crashed run from its checkpoint.
+
+        Loads ``.besser_checkpoint.json`` from ``self.output_dir`` and
+        continues the saved phase. Phase 1 is skipped entirely. Repair
+        checkpoints contain state, not a conversation to replay: they go
+        directly to fresh validation against the current files.
+
+        Raises
+        ------
+        FileNotFoundError
+            No checkpoint in the output dir — nothing to resume.
+        ValueError
+            The checkpoint's project fingerprint disagrees with the
+            current project/instructions. We refuse rather than silently
+            resuming against a different spec.
+        """
+        validate_specification(instructions)
+        self._instructions = instructions
+        checkpoint = load_checkpoint(self.output_dir)
+        if checkpoint is None:
+            raise FileNotFoundError(
+                f"No checkpoint at {self.output_dir}; nothing to resume"
+            )
+
+        expected = self._compute_project_fingerprint(instructions)
+        if expected != checkpoint.project_fingerprint:
+            raise CheckpointMismatchError(
+                "Checkpoint fingerprint does not match the supplied "
+                "project/instructions — refusing to resume. Start a "
+                "fresh run if you changed the model or the request."
+            )
+
+        # Re-hydrate the counters that drive Phase 2 semantics.
+        self._start_time = time.monotonic()
+        self.total_turns = checkpoint.total_turns
+        # Seed the fresh UsageTracker with what the crashed run already
+        # spent — otherwise the cost cap only covers post-resume spend
+        # and a crash-resume cycle could legally double the user's bill.
+        try:
+            self.client.usage.seed_cost(float(checkpoint.estimated_cost_usd or 0.0))
+        except (AttributeError, TypeError, ValueError):
+            # Older checkpoints / mock clients without seed_cost — keep
+            # resuming rather than failing the run over cost accounting.
+            logger.debug("Could not seed resumed cost", exc_info=True)
+        self._checkpoint_phase = checkpoint.phase
+        self._resume_from_turn = checkpoint.turn if checkpoint.phase == "phase2" else 0
+        if checkpoint.dependencies_removed:
+            logger.warning("Resuming run %s: its installed dependencies were removed after it was packaged; "
+                           "the agent is told to install them again", self.run_id)
+            self._dependencies_note = DEPENDENCIES_REMOVED_NOTE
+        # The resumed prompt is rebuilt from the workspace as it is now, so the
+        # checkpoint's thinking blocks belong to a conversation that is gone.
+        self._resume_messages = (
+            self._drop_stale_thinking(checkpoint.messages, "the run was resumed")
+            if checkpoint.phase == "phase2" else None
+        )
+        self._phase2_stop_reason = checkpoint.phase2_stop_reason
+        self._phase2_exited_cleanly = checkpoint.phase2_exited_cleanly
+        self._phase3_interrupted = False
+        # On-disk changes survive interruption. Old scheduling history is only
+        # relevant to those exact bytes; validation results are always rebuilt.
+        self._repair_progress = (
+            dict(checkpoint.repair_progress)
+            if checkpoint.source_revision == self._workspace_revision() else {}
+        )
+        self._inventory = checkpoint.inventory
+        self._generator_used = checkpoint.generator_used
+        self.target = Target.from_payload(checkpoint.target)
+        if checkpoint.modify is not None:
+            self._restore_modify_state(checkpoint.modify)
+        self.executor._generator_files.clear()
+        self.executor._generator_files.update(checkpoint.generator_files)
+        if checkpoint.files_at_start is not None:
+            # Else an older checkpoint: every file now present stays protected.
+            self._files_at_start = frozenset(checkpoint.files_at_start)
+        self.executor.lock_generators(checkpoint.locked_generators)
+        self._compaction_count = checkpoint.compaction_count
+        self.tool_calls_log = list(checkpoint.tool_calls_log)
+        # Phase 3 keeps only what ``_model_contract_issues`` holds; the
+        # checkpoint's list, restored next, replaces what this appends.
+        self._collect_model_contract_issues()
+        self._validation_issues = [
+            ValidationIssue(i.get("severity", "warning"), i.get("message", ""))
+            for i in checkpoint.validation_issues
+        ]
+        self._requirements = checkpoint.requirements
+        if checkpoint.routed_stack is not None:
+            self._routed, self._unsupported_stack = True, checkpoint.routed_stack
+        self._project_fingerprint = checkpoint.project_fingerprint
+        from besser.spec_driven_agent.state.checkpoint import restore_api_scenarios
+        self._api_scenarios = restore_api_scenarios(checkpoint.api_scenarios)
+        # A resumed loop must retain the same definition of done. Rebuild the
+        # harness-owned verifier callables from the current workspace/model and
+        # reattach them by task text; ordinary LLM-planned tasks need no callable.
+        self.executor.restore_tasks(
+            checkpoint.tasks,
+            verification_tasks=self._deterministic_gap_tasks(),
+        )
+        self._reattach_frontend_verifier()
+        self.executor.restore_evidence(checkpoint.write_evidence)
+        self._trace.write(
+            EVENT_RUN_START,
+            resumed=True,
+            mode="modify" if self._modify_mode else "create",
+            resume_from_turn=checkpoint.turn,
+            resume_phase=checkpoint.phase,
+            saved_at=checkpoint.saved_at,
+        )
+
+        # -- Budget: same rule as the run being resumed (``_generator_used``
+        # was just restored from the checkpoint above). Resuming is the
+        # common path for a run that previously broke out on a cost_cap /
+        # timeout / max_tokens truncation, so this matters here too.
+        if self._modify_mode:
+            self._apply_modify_budget()
+        else:
+            self._apply_adaptive_budget()
+
+        # Phase 1 or modify() told the executor; its per-write lint needs it.
+        self.executor.set_scaffold_family(self._scaffold_family(), self._instructions)
+        if checkpoint.phase == "phase2":
+            # The scoped issues are in the system prompt, which is rebuilt:
+            # recompute them against the workspace as it is now.
+            phase1_issues = self._validate_phase1_output()
+            for issue in phase1_issues:
+                self._trace.write(EVENT_VALIDATION_ISSUE, phase="phase1_5", message=issue)
+            self._trace.write(EVENT_PHASE_ENTER, phase="phase2_resume")
+            self._run_phase2(instructions, extra_issues=(
+                self._modify_scoped_issues(phase1_issues) if self._modify_mode else phase1_issues))
+            self._trace.write(
+                EVENT_PHASE_EXIT, phase="phase2_resume", turns=self.total_turns,
+                stop_reason=self._phase2_stop_reason,
+                stop_detail=self._phase2_stop_detail,
+            )
+        else:
+            self._drop_redundant_generator_tools()
+            self._lock_application_generators()
+
+        self._format_python_output()
+        self._create_snapshot()
+        self._trace.write(EVENT_SNAPSHOT, before_phase="phase3_resume")
+        if (checkpoint.phase == "phase3" or self._phase2_exited_cleanly
+                or self._phase2_stop_reason == "validation_required"):
+            self._save_phase3_checkpoint()
+        self._trace.write(EVENT_PHASE_ENTER, phase="phase3")
+        self._run_phase3_validation()
+        self._trace.write(
+            EVENT_PHASE_EXIT, phase="phase3",
+            exit_reason=self._phase3_exit_reason,
+        )
+        self._evaluate_fix_target_gate()
+
+        elapsed = time.monotonic() - self._start_time
+        self._save_recipe(instructions, elapsed)
+        self._remove_snapshot()
+        self._finish_checkpoint()
+        self._trace.write(EVENT_RUN_END, resumed=True, elapsed_seconds=round(elapsed, 2))
+        return self.output_dir
+
+    # ==================================================================
+    # Incremental modify entry point
+    # ==================================================================
+
+
+
+
+    # ==================================================================
+    # Fix/modify success gate (modify() only)
+    # ==================================================================
+
+    # Prefix stamped on a finding promoted because it matches the reported
+    # failure. Self-contained and stable so the end-of-run gate can
+    # identify a promoted finding regardless of re-collection.
+    _FIX_TARGET_PREFIX = "reported-failure: "
+
+
+
+
+
+
+    # ==================================================================
+    # Model-sync during modify (class-diagram only)
+    # ==================================================================
+
+    # Common attribute-type spellings the LLM might return, mapped to the
+    # B-UML primitive-type names (``PrimitiveDataType`` only accepts these).
+    # Anything unrecognised falls back to ``str`` — a safe, lossless default.
+    _PRIMITIVE_TYPE_ALIASES = {
+        "str": "str", "string": "str", "text": "str", "varchar": "str",
+        "char": "str", "uuid": "str", "email": "str", "url": "str",
+        "int": "int", "integer": "int", "number": "int", "long": "int",
+        "float": "float", "double": "float", "decimal": "float", "real": "float",
+        "bool": "bool", "boolean": "bool",
+        "datetime": "datetime", "timestamp": "datetime",
+        "date": "date", "time": "time", "timedelta": "timedelta",
+        "any": "any", "object": "any", "json": "any",
+    }
+
+
+
+
+
+
+
+    # ==================================================================
+    # Phase 1: Deterministic generation (no LLM)
+    # ==================================================================
+
+    def _time_left(self) -> float | None:
+        """Seconds left in the run's runtime budget; None before it starts."""
+        if self._start_time is None:
+            return None
+        return self.max_runtime_seconds - (time.monotonic() - self._start_time)
+
+    def _run_usage_counters(self) -> dict[str, Any]:
+        """The client's cumulative token counters and the model serving it, for the run log."""
+        usage = self.client.usage
+        counters = {key: int(getattr(usage, key, 0) or 0) for key in (
+            "api_calls", "input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens")}
+        counters["model"] = getattr(usage, "served_model", None) or getattr(self.client, "model", None)
+        return counters
+
+    def _safe_usage_counters(self) -> dict[str, Any]:
+        """:meth:`_run_usage_counters`, or ``{}`` for a client that keeps none (a test double)."""
+        try:
+            return self._run_usage_counters()
+        except Exception:
+            return {}
+
+    def _record_generator_output(self, record: dict) -> None:
+        """Log one generator call's files (see ``ToolExecutor.on_generated``)."""
+        self._trace.write(EVENT_GENERATOR_OUTPUT, **record)
+
+    def _run_phase1(self, instructions: str) -> None:
+        """Select and run the best generator, then inventory the output."""
+        # Almost every BESSER generator needs a domain model. When the
+        # user drove generation from a state-machine / agent /
+        # quantum-only project, there is nothing for Phase 1 to do —
+        # skip straight to Phase 2, where the LLM writes from the
+        # primary model using write_file / run_command.
+        if not any((
+            self.domain_model is not None,
+            self.agent_model is not None,
+            self.object_model is not None,
+            self.quantum_circuit is not None,
+            self.bpmn_model is not None,
+            self.nn_model is not None,
+        )):
+            logger.info(
+                "Phase 1: skipped (no domain_model or quantum_circuit — "
+                "primary_kind=%s). LLM writes from scratch in Phase 2.",
+                self.primary_kind,
+            )
+            if self.on_progress:
+                # Surface the skip so the progress card shows a `generate`
+                # row with a clear "skipped — no model" message instead of
+                # silently jumping from `select` to `gap`.
+                self.on_progress(0, "__skipped__", "no_model")
+            self._decide_target(instructions)
+            return
+
+        generator_name = self._select_generator(instructions)
+
+        if generator_name:  # non-empty string = use this generator
+            logger.info("Phase 1: Running %s generator", generator_name)
+            if self.on_progress:
+                self.on_progress(0, generator_name, "generating")
+
+            try:
+                result = json.loads(self.executor.execute(generator_name, {}))
+            except (json.JSONDecodeError, TypeError):
+                result = {"status": "failed", "error": "Generator returned invalid response"}
+            if result.get("status") == "ok":
+                self._generator_used = generator_name
+                self.executor.set_scaffold_family(
+                    self._scaffold_family(), self._instructions)
+                self.tool_calls_log.append({
+                    "turn": 0, "tool": generator_name,
+                    "input": {}, "success": True,
+                })
+                self._inventory = build_inventory(
+                    self.output_dir, self.domain_model, generator_name,
+                )
+                logger.info("Phase 1: Generated %d files", len(result.get("files", [])))
+                self._install_scaffold_frontend_dependencies()
+                if self._asks_for_frontend() and not self._has_frontend_files():
+                    note = (f"{generator_name} has no UI; the React frontend "
+                            "will be authored in the customization phase")
+                    logger.info("Phase 1: %s", note)
+                    if self.on_phase_details:
+                        self.on_phase_details("generate", note)
+            else:
+                error_text = str(result.get("error") or "unknown error")
+                self._phase1_failure_reason = f"{generator_name}: {error_text}"
+                logger.warning("Phase 1: Generator failed: %s", error_text)
+                # Surface the failure on the SSE stream — without this
+                # the progress card shows "generating" forever and the
+                # user never learns why the scaffold was skipped.
+                if self.on_progress:
+                    self.on_progress(
+                        0, generator_name, f"failed: {error_text[:120]}"
+                    )
+        else:
+            logger.info("Phase 1: No matching generator -- LLM will write from scratch")
+            if self.on_progress:
+                self.on_progress(0, "__skipped__", "no_generator")
+            if self.target is not None and not self.target.is_web_app and self.on_phase_details:
+                self.on_phase_details(
+                    "generate",
+                    f"No BESSER generator builds a {self.target.description}: "
+                    "it is written from scratch")
+
+    def _select_generator(self, instructions: str = "") -> str | None:
+        """
+        Pick the best generator using a cheap LLM call or keyword fallback.
+
+        Tries a quick LLM call first (if available), falls back to keyword
+        matching. Respects what the user asked for — if they want NestJS,
+        returns None so the LLM writes from scratch.
+        """
+        # A binding override (user-approved preview plan) wins outright —
+        # no LLM call, no keywords. Validated upstream against the
+        # registered generator tools.
+        if self.target_generator_bound:
+            # The approved full-stack web app settles the target, so it costs
+            # no call; any other approved generator (FastAPI also scaffolds a
+            # mobile app's API) still needs the decision.
+            if self.target_generator == "generate_web_app":
+                self._record_target(Target(WEB_APP, "full-stack web app", True))
+            else:
+                self._decide_target(instructions)
+            if self.target_generator is None:
+                logger.info(
+                    "Phase 1: caller explicitly selected no deterministic generator"
+                )
+                return None
+            logger.info(
+                "Phase 1: using caller-specified generator %s",
+                self.target_generator,
+            )
+            return self.target_generator
+
+        with self._traced_llm_call("routing"):
+            llm_result = self._select_generator_with_llm(instructions)
+        if self.target is None and self._can_route():
+            logger.warning(
+                "Phase 1: the generator selector did not decide the target; "
+                "deciding it with a separate call")
+            self._decide_target(instructions)
+
+        if llm_result:
+            return llm_result
+        # A non-web target never falls back to a web scaffold: keywords would
+        # turn "a mobile app with a REST API" back into FastAPI.
+        if self.target is not None and self.target.kind == OTHER:
+            if llm_result is None:
+                logger.warning("Phase 1: no generator decided for a %s; building from scratch",
+                               self.target.description or "non-web target")
+            return None
+        # A stack no generator builds is written from scratch ("a REST API in
+        # Go"), whether the selector said NONE or failed and the target call named it.
+        if self._unsupported_stack:
+            return None
+        if llm_result == "":
+            # A NONE from the prose protocol carries no stack field: it stands.
+            if not self._routed:
+                return None
+            # A routed NONE for a web app or backend with no unsupported stack
+            # contradicts the rules (every Python one gets a generator).
+            fallback = default_generator(self, instructions)
+            logger.warning("Phase 1: the selector answered NONE for a %s with no unsupported stack; "
+                           "using %s", self.target.kind if self.target else "request", fallback)
+            return fallback
+        # No routing answer at all (the provider failed): the last-resort keywords.
+        keyword_result = keyword_generator(self, instructions)
+        if keyword_result:
+            logger.warning("Phase 1: keyword fallback decided the generator: %s", keyword_result)
+            return keyword_result
+
+        fallback = default_generator(self, instructions)
+        if fallback:
+            logger.warning("Phase 1: no generator decided; defaulting to %s for the loaded models",
+                           fallback)
+        return fallback
+
+    def _select_generator_with_llm(self, instructions: str) -> str | None:
+        """Use a cheap LLM call to pick the best generator for Phase 1."""
+        try:
+            from besser.spec_driven_agent.agent.tools import get_available_generator_names
+
+            classes = [c.name for c in self.domain_model.get_classes()] if self.domain_model else []
+
+            # Inventory of every available editor model so the selector LLM
+            # can prefer generators that match (e.g. quantum circuit → qiskit,
+            # state machines present → backend with state-pattern wiring).
+            available_models = [f"Domain model: {len(classes)} classes ({', '.join(classes[:10])})"]
+            available_models.append(f"GUI model: {'YES' if self.gui_model else 'NO'}")
+            available_models.append(f"Agent model: {'YES' if self.agent_model else 'NO'}")
+            if self.object_model is not None:
+                available_models.append(
+                    "Object model: YES (instance data — useful as seeders / fixtures)"
+                )
+            else:
+                available_models.append("Object model: NO")
+            if self.state_machines:
+                sm_names = ", ".join(getattr(sm, "name", "?") for sm in self.state_machines[:5])
+                available_models.append(
+                    f"State machines: YES ({len(self.state_machines)}: {sm_names}) — "
+                    "behavioural specs that should drive transition guards / event handlers"
+                )
+            else:
+                available_models.append("State machines: NO")
+            if self.quantum_circuit is not None:
+                available_models.append(
+                    "Quantum circuit: YES — prefer generate_qiskit for the circuit code"
+                )
+            else:
+                available_models.append("Quantum circuit: NO")
+            if self.bpmn_model is not None:
+                available_models.append(
+                    "BPMN model: YES - prefer generate_bpmn for executable process XML"
+                )
+            else:
+                available_models.append("BPMN model: NO")
+            if self.nn_model is not None:
+                available_models.append(
+                    "Neural-network model: YES - choose PyTorch or TensorFlow"
+                )
+            else:
+                available_models.append("Neural-network model: NO")
+
+            # Build the generator menu from the tool registry, restricted
+            # to generators whose required models are actually loaded.
+            # Offering an unavailable generator (e.g. generate_web_app
+            # with no GUI model) lets the LLM pick it, Phase 1 fails,
+            # and the run silently degrades to expensive from-scratch
+            # generation.
+            from besser.spec_driven_agent.agent.tools import GENERATOR_TOOLS
+            selectable_names = get_available_generator_names(
+                has_domain_model=self.domain_model is not None,
+                has_gui_model=self.gui_model is not None,
+                has_agent_model=self.agent_model is not None,
+                has_state_machines=bool(self.state_machines),
+                has_quantum_circuit=self.quantum_circuit is not None,
+                has_object_model=self.object_model is not None,
+                has_bpmn_model=self.bpmn_model is not None,
+                has_nn_model=self.nn_model is not None,
+            )
+            gen_lines = [
+                f"- {tool['name']} → {tool['description']}"
+                for tool in GENERATOR_TOOLS
+                if tool["name"] in selectable_names
+            ]
+
+            prompt = (
+                f"User request: {user_request(instructions)}\n\n"
+                "Available editor models:\n"
+                + "\n".join(f"  • {line}" for line in available_models) + "\n\n"
+                "Available BESSER generators:\n"
+                + "\n".join(gen_lines) + "\n"
+                "- NONE → write from scratch (anything no generator above produces: a native mobile or desktop app, a CLI, NestJS, Next.js, Spring Boot, Go, ...)\n\n"
+                "RULES:\n"
+                "- Pick the generator that best covers the MAIN part of the request\n"
+                "- Even if the user asks for more than one thing (backend + frontend), pick the generator for the biggest part\n"
+                "- generate_fastapi_backend includes SQLAlchemy + Pydantic — don't pick those separately\n"
+                "- generate_web_app includes React + FastAPI + Docker — most complete if GUI available\n"
+                "- A web_app target with no GUI model (and no named framework) → "
+                "generate_fastapi_backend; its React frontend is written in the customization phase\n"
+                "- If a Quantum circuit is present and the user asks for quantum/Qiskit code → generate_qiskit\n"
+                "- If state machines are present, pick the generator that fits the rest of the request — "
+                "the LLM in Phase 2 will wire state transitions on top of the generator output\n"
+                "- BPMN/workflow/process requests with a BPMN model: generate_bpmn\n"
+                "- PyTorch/torch requests with an NN model: generate_pytorch\n"
+                "- TensorFlow/Keras requests with an NN model: generate_tensorflow\n"
+                "- Agent/chatbot/BAF requests with an Agent model: generate_baf\n"
+                "- JSON fixture/seed requests with an Object model: generate_json_object\n"
+                "- Supabase requests with a Domain model: generate_supabase\n"
+                "- Pick a generator only when its output IS what the user wants built. Answer NONE "
+                "for an 'other' target (native mobile or desktop app, CLI, game, extension, embedded, "
+                "bot) unless a generator above produces exactly that (e.g. Python classes for a Python "
+                "library), and for a framework BESSER does not support (NestJS, Next.js, Express, "
+                "Spring Boot, Go, Rust). A Python / FastAPI / Django web app or backend always gets a "
+                "generator\n"
+                "- For a web_app or backend target: 'backend', 'API', 'FastAPI' or 'REST' → "
+                "generate_fastapi_backend; 'Django' → generate_django\n"
+            )
+
+            # Use the main client with a short response.
+            # Skip if client doesn't look like a real provider (e.g. mock in tests).
+            if not hasattr(self.client, '_client'):
+                return None
+
+            registered_names = selectable_names
+
+            # Preferred path: the choose_generator answer (a forced tool call,
+            # or the same answer as JSON text on a gateway without one), routed
+            # to the cheap planning sibling when one exists. Falls back to the
+            # legacy one-word protocol when neither gives a usable answer.
+            routing = self._select_generator_structured(
+                f"{prompt}\n{TARGET_RULES}\n{STACK_RULES}", registered_names)
+            if routing is not None:
+                self._record_routing(routing)
+                if routing.generator in registered_names and routing.unsupported_stack:
+                    logger.warning(
+                        "Phase 1 (LLM): %s picked for a %s request, which no generator builds; "
+                        "building from scratch", routing.generator, routing.unsupported_stack)
+                    return ""
+                if routing.generator == "NONE":
+                    logger.info("Phase 1 (LLM): Explicitly no generator")
+                    return ""
+                if routing.generator in registered_names:
+                    logger.info("Phase 1 (LLM): Selected %s", routing.generator)
+                    return routing.generator
+
+            response = self.client.chat(
+                system="You select the best code generator. Reply with only the generator name or NONE.",
+                messages=[{"role": "user", "content": (
+                    f"{prompt}\nReply with ONLY the generator name or NONE. One word. Nothing else.")}],
+                tools=[],
+            )
+
+            # Extract the answer
+            answer = ""
+            for block in response.get("content", []):
+                if hasattr(block, "text"):
+                    answer = block.text.strip()
+                elif isinstance(block, dict) and block.get("type") == "text":
+                    answer = block["text"].strip()
+
+            answer = answer.strip().lower().replace("`", "").replace("'", "").replace('"', '')
+            logger.info("Phase 1 (LLM): Raw answer: '%s'", answer[:100])
+
+            # Match against EVERY registered generator. Sort by name
+            # length descending so longer prefixes win first (e.g.
+            # ``generate_python_classes`` before ``generate_python``).
+            for gen in sorted(registered_names, key=len, reverse=True):
+                if gen in answer:
+                    logger.info("Phase 1 (LLM): Selected %s", gen)
+                    return gen
+
+            # Only treat as "no generator" if answer is exactly "none"
+            # (not just contains "none" — avoids false matches)
+            if answer.strip() == "none":
+                logger.info("Phase 1 (LLM): Explicitly no generator")
+                return ""
+
+            logger.warning("Phase 1 (LLM): Could not parse answer: '%s'", answer[:100])
+            return None  # fall through to keyword matching
+
+        except Exception as e:
+            logger.warning("Phase 1: the generator selector failed (%s)", e)
+            return None
+
+    def _client_supports_structured_chat(self) -> bool:
+        """True when ``client.chat`` accepts force_tool / model_override."""
+        import inspect
+        try:
+            sig = inspect.signature(self.client.chat)
+        except (TypeError, ValueError):
+            return False
+        params = sig.parameters
+        if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
+            return True
+        return "force_tool" in params and "model_override" in params
+
+    def _can_route(self) -> bool:
+        """True when the client is a real provider that can answer ``choose_generator``."""
+        return hasattr(self.client, "_client")
+
+    def _select_generator_structured(
+        self, prompt: str, registered_names: list[str], *, modify: bool = False,
+    ) -> Routing | None:
+        """One forced ``choose_generator`` call: the generator and what is built.
+
+        ``modify`` adds the fields only a modify run needs (a target change, a
+        failure report). A gateway that ignores ``tool_choice``, or a client with
+        no forced tools, is asked for the same answer as JSON text. Returns
+        ``None`` when no usable answer came back; the caller decides what to record.
+        """
+        modify_properties = MODIFY_TOOL_PROPERTIES if modify else {}
+        choose_tool = {
+            "name": "choose_generator",
+            "description": (
+                "Decide what the user wants built, and select the best BESSER "
+                "generator for it, or NONE to write from scratch."
+            ),
+            "input_schema": {
+                "type": "object",
+                # A modify run decides the change first, then the target it implies.
+                "properties": {
+                    **modify_properties,
+                    **TARGET_TOOL_PROPERTIES,
+                    **STACK_TOOL_PROPERTIES,
+                    "generator": {
+                        "type": "string",
+                        "enum": registered_names + ["NONE"],
+                    },
+                },
+                "required": [
+                    *modify_properties, *TARGET_TOOL_PROPERTIES, *STACK_TOOL_PROPERTIES, "generator",
+                ],
+            },
+        }
+        if self._client_supports_structured_chat():
+            # A modify run's answer can rebuild the whole app: the primary model decides it.
+            planning_model = None if modify else getattr(self.client, "planning_model", None)
+            for model_override in dict.fromkeys([planning_model, None]):
+                try:
+                    response = self.client.chat(
+                        system="You select the best code generator. Call choose_generator with your selection.",
+                        messages=[{"role": "user", "content": prompt}],
+                        tools=[choose_tool], force_tool="choose_generator",
+                        model_override=model_override,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Phase 1 (LLM): the generator selector failed on %s (%s)",
+                        model_override or "primary", exc,
+                    )
+                    continue
+                routing = self._routing_in(response)
+                if routing is not None:
+                    return routing
+                break  # the gateway ignored tool_choice: ask for the same answer as text
+            else:
+                return None  # every forced call raised: the provider is failing, not the format
+        # A client without forced tools, or a gateway that ignored them: the same
+        # answer as a JSON object in plain text.
+        schema = choose_tool["input_schema"]
+        try:
+            response = self.client.chat(
+                system="You select the best code generator. Reply with a JSON object holding your selection.",
+                messages=[{"role": "user", "content": (
+                    f"{prompt}\n\nReply with ONLY a JSON object with the keys "
+                    f"{', '.join(schema['required'])}; generator is one of "
+                    f"{', '.join(schema['properties']['generator']['enum'])}.")}],
+                tools=[],
+            )
+        except Exception as exc:
+            logger.warning("Phase 1 (LLM): the generator selector failed (%s)", exc)
+            return None
+        routing = self._routing_in(response)
+        if routing is None:
+            logger.warning("Phase 1 (LLM): the generator selector gave no usable answer")
+        return routing
+
+    @staticmethod
+    def _routing_in(response: dict) -> Routing | None:
+        """The choose_generator answer in a reply: its tool_use block, else a JSON object in its text."""
+        texts = []
+        for block in response.get("content", []):
+            block_type = getattr(block, "type", None) or (
+                block.get("type") if isinstance(block, dict) else None
+            )
+            if block_type == "tool_use":
+                return Routing.from_payload(getattr(block, "input", None) or (
+                    block.get("input") if isinstance(block, dict) else None
+                ))
+            text = getattr(block, "text", None) or (block.get("text") if isinstance(block, dict) else None)
+            if isinstance(text, str):
+                texts.append(text)
+        return Routing.from_text("".join(texts))
+
+    def _decide_target(self, instructions: str) -> None:
+        """Decide ``self.target`` when the generator is settled without the selector.
+
+        The same forced call as the selector, with NONE as the only generator.
+        """
+        if self.target is not None or not self._can_route():
+            return
+        with self._traced_llm_call("routing_target") as call:
+            routing = self._select_generator_structured(
+                f"User request: {user_request(instructions)}\n\n{TARGET_RULES}\n{STACK_RULES}\n"
+                "The generator is already settled: answer generator=NONE.",
+                [],
+            )
+            call["outcome"] = "ok" if routing is not None else "failed"
+        if routing is not None:
+            self._record_routing(routing)
+
+    def _record_routing(self, routing: Routing) -> None:
+        """A create run's routing answer: the target and the stack no generator builds."""
+        self._record_target(routing.target)
+        if routing.target is not None:
+            self._routed = True
+            self._unsupported_stack = routing.unsupported_stack
+
+    def _record_target(self, target: Target | None) -> None:
+        if target is None:
+            return
+        self.target = target
+        logger.info("Phase 1: target %s (%s)", target.kind, target.description)
+        self._trace.write(EVENT_TARGET, **target.to_dict())
+
+    # ==================================================================
+    # Phase 0.5: Stack-metadata pre-generation
+    # ==================================================================
+
+    def _run_phase0_5_metadata(self, instructions: str) -> None:
+        """Pre-create a minimal build-metadata file for non-Python stacks.
+
+        BESSER's deterministic generators only cover the Python family.
+        For Next.js / Rust / Kotlin requests, the customise loop would
+        otherwise have to invent ``tsconfig.json`` / ``Cargo.toml`` /
+        ``build.gradle.kts`` from scratch — which it occasionally forgets,
+        breaking the per-project compile check.
+
+        This step writes a stack-appropriate manifest as a floor under
+        the customise loop. The LLM is free to extend it (adding
+        dependencies, scripts, etc.) but doesn't have to remember to
+        create it.
+
+        Guarantees:
+          - No-op when Phase 1 actually ran a generator (Python stacks
+            are untouched).
+          - No-op when the target stack isn't one we have a template
+            for (e.g. Go, Ruby, Express — left to the customise loop).
+          - Strictly additive: if a file already exists at the target
+            path, it is preserved (covers the rare case where the
+            executor wrote one before Phase 0.5 ran).
+        """
+        # Don't second-guess BESSER's own generators. If Phase 1 ran a
+        # Python generator, the manifest is already on disk and almost
+        # certainly more tailored than our static template would be.
+        if self._generator_used:
+            return
+        # The templates are server projects (Spring Boot, axum, Next.js): a
+        # "Kotlin Android app" or a "Rust CLI" must not get one.
+        if self.target is not None and self.target.kind == OTHER:
+            logger.info("Phase 0.5: skipped for a %s target", self.target.description)
+            return
+
+        # The routing answer decided the stack: words of the request may be
+        # its domain ("a cargo company", "rust-proof paint").
+        if self._routed:
+            stack_id = detect_routed_stack(self._unsupported_stack)
+        else:
+            stack_id = detect_stack(instructions)
+            if stack_id is not None:
+                logger.warning("Phase 0.5: no routing answer; the %s template was picked "
+                               "from the request's keywords", stack_label(stack_id))
+        if stack_id is None:
+            logger.debug("Phase 0.5: no stack with a template (routed stack %r); skipping",
+                         self._unsupported_stack)
+            return
+
+        try:
+            written = pre_generate_metadata(stack_id, self.output_dir)
+        except Exception as exc:  # pragma: no cover - defensive
+            # A broken template must not abort the whole run — log and
+            # fall through to the customise loop, which can still try
+            # to author the files itself.
+            logger.warning(
+                "Phase 0.5 template write failed for %s: %s", stack_id, exc,
+            )
+            return
+
+        if not written:
+            return
+
+        self._phase0_5_stack = stack_id
+        self._phase0_5_files = list(written)
+        # Tell the customise loop these files already exist. Otherwise
+        # ``_inventory`` is empty for non-Python stacks (Phase 1 skipped)
+        # and the LLM has no signal that the manifest is on disk —
+        # so it might rewrite it from scratch, the very thing this
+        # phase is here to prevent.
+        bullet_files = "\n".join(f"  - {p}" for p in written)
+        self._inventory = (
+            f"Phase 0.5 pre-generated a minimal {stack_label(stack_id)} "
+            f"project manifest:\n{bullet_files}\n\n"
+            "These are MINIMAL but VALID build-config files. Build your "
+            "application on top of them — read them with `read_file` and "
+            "use `modify_file` to add dependencies as needed. Do NOT "
+            "rewrite them from scratch."
+        )
+        self._trace.write(
+            EVENT_PHASE_ENTER,
+            phase="phase0_5",
+            stack=stack_id,
+            files=list(written),
+        )
+        self._trace.write(EVENT_PHASE_EXIT, phase="phase0_5", stack=stack_id)
+        if self.on_progress:
+            # Use the same "skipped" sentinel shape so the
+            # progress card stays compact — we don't want a new top-level
+            # row for what is essentially a tiny scaffolding step.
+            self.on_progress(
+                0,
+                "__metadata__",
+                f"{stack_label(stack_id)}: {', '.join(written)}",
+            )
+
+    # ==================================================================
+    # Adaptive response sizing for from-scratch runs
+    # ==================================================================
+
+    def _apply_adaptive_budget(self) -> None:
+        """Raise only the output-token ceiling for from-scratch runs.
+
+        Called from ``run()`` / ``resume()`` after Phase 1 (and Phase 0.5)
+        have run, so ``self._generator_used`` is authoritative:
+
+        - ``None`` means Phase 1 found nothing to run -- either there was
+          no domain/quantum model at all (state-machine/agent-only
+          projects), or Phase 1 explicitly decided no registered BESSER
+          generator matches the request (e.g. the user asked for Next.js,
+          Rust, or Kotlin -- stacks BESSER doesn't scaffold). Either way,
+          Phase 2 has NOTHING to build on top of: it authors the entire
+          application from nothing, which legitimately needs bigger
+          individual responses than the common case (a Python scaffold
+          Phase 2 only patches).
+        - Anything else means a deterministic generator actually ran --
+          the common, cheaper case -- so no response-size adaptation is
+          needed.
+
+        Cost and runtime are user-authorised safety rails. They are never
+        changed here: a from-scratch run may need more budget, but it must
+        stop at the explicit cap rather than silently spending more.
+        """
+        # Scaffolded runs get the wider ceiling too: a customisation turn writes
+        # whole NEW files the scaffold never emitted (React pages, auth modules),
+        # and can overrun a 16_384 limit on its very first turn.
+
+        # Widen the per-call output-token limit: a from-scratch run
+        # writes large files with no scaffold underneath them, which is
+        # far more likely to hit the provider's default max_tokens
+        # mid-``write_file`` than the scaffolded case. See
+        # llm_client.FROM_SCRATCH_MAX_TOKENS for why raising the limit
+        # (rather than chunking/continuing a truncated tool call) is the
+        # chosen, lower-risk fix.
+        try:
+            current_max_tokens = self.client.max_tokens
+        except (AttributeError, NotImplementedError):
+            # Defensive: a test double / older client without the
+            # max_tokens property. Don't fail the run over telemetry.
+            current_max_tokens = None
+        if current_max_tokens is not None and current_max_tokens < FROM_SCRATCH_MAX_TOKENS:
+            logger.info(
+                "Adaptive response sizing: raising output-token limit %d -> %d "
+                "(generator_used=%s)",
+                current_max_tokens, FROM_SCRATCH_MAX_TOKENS, self._generator_used,
+            )
+            self.client.max_tokens = FROM_SCRATCH_MAX_TOKENS
+            self._adaptive_budget_applied = True
+
+
+    # ==================================================================
+    # Phase 1.5: Validate Phase 1 output
+    # ==================================================================
+
+    def _validate_phase1_output(self) -> list[str]:
+        """
+        Validate Phase 1 generator output before handing off to the LLM.
+
+        Checks:
+        - Python syntax on all .py files (ast.parse)
+        - Dockerfiles reference files that actually exist
+
+        Returns a list of issue strings to feed into gap analysis.
+        """
+        issues = []
+        build_contexts = compose_build_contexts(self.output_dir)
+
+        for fpath in _python_files(self.output_dir):
+            syntax_error = python_syntax_error(
+                fpath, os.path.relpath(fpath, self.output_dir).replace("\\", "/"))
+            if syntax_error:
+                issues.append(f"Fix {syntax_error[0].lower()}{syntax_error[1:]}")
+
+        for root, files in walk_app_tree(self.output_dir):
+            for fname in files:
+                fpath = os.path.join(root, fname)
+                rel = os.path.relpath(fpath, self.output_dir).replace("\\", "/")
+
+                # Check Dockerfiles reference files that exist
+                if fname == "Dockerfile":
+                    try:
+                        with open(fpath, "r", encoding="utf-8") as f:
+                            content = f.read()
+                        issues.extend(
+                            f"{issue} -- create it or fix the Dockerfile"
+                            for issue in dockerfile_copy_issues(
+                                self.output_dir, fpath, content, build_contexts)
+                        )
+                    except Exception:
+                        logger.warning("Phase 1 Dockerfile check failed for %s", rel, exc_info=True)
+
+        if issues:
+            logger.warning("Phase 1 validation found %d issues: %s", len(issues), issues)
+        else:
+            logger.info("Phase 1 validation passed -- no issues found")
+
+        return issues
+
+    # ==================================================================
+    # Phase 2: LLM customization (scoped tasks)
+    # ==================================================================
+
+    _GITIGNORE = (
+        "# Generated by BESSER\n"
+        "__pycache__/\n*.py[cod]\n*.egg-info/\n"
+        ".venv/\nvenv/\nenv/\n"
+        "node_modules/\ndist/\nbuild/\n.next/\n"
+        "*.db\n*.sqlite\n*.sqlite3\n*.db-journal\n"
+        ".env\n.env.*\n"
+        "*.log\n.pytest_cache/\n.DS_Store\n"
+    )
+
+    def _drop_redundant_generator_tools(self) -> None:
+        """Remove sub-generator tools the chosen primary already bundles.
+
+        No-op unless ``self._generator_used`` is a known bundling primary
+        (see ``_REDUNDANT_GENERATOR_TOOLS_BY_PRIMARY``). Prevents the Phase-2
+        agent from emitting duplicate ``pydantic/`` / ``sqlalchemy/`` /
+        ``rest_api/`` dirs alongside the assembled ``backend/``.
+        """
+        redundant = _REDUNDANT_GENERATOR_TOOLS_BY_PRIMARY.get(self._generator_used or "")
+        if not redundant:
+            return
+        before = len(self.tools)
+        self.tools = [
+            t for t in self.tools
+            if (t.get("name") if isinstance(t, dict) else None) not in redundant
+        ]
+        if len(self.tools) != before:
+            logger.info(
+                "Phase 2: dropped %d redundant generator tool(s) already "
+                "bundled by %s (avoids duplicate output dirs)",
+                before - len(self.tools), self._generator_used,
+            )
+
+    def _lock_application_generators(self) -> None:
+        """Refuse the whole-application generators that would overwrite the app (#666).
+
+        All of them once a primary built the scaffold (this run's Phase 1, or
+        the seed's recorded generator in a modify run). In a modify run on any
+        other seed, each one whose output folder the seed already has. A
+        resumed run keeps the lock its checkpoint recorded.
+        """
+        if self._generator_used in _APPLICATION_PRIMARY_TOOLS:
+            self.executor.lock_generators(_APPLICATION_PRIMARY_TOOLS)
+        elif self._modify_mode:
+            self.executor.lock_generators(
+                tool for tool, folder in _APPLICATION_OUTPUT_DIRS.items()
+                if os.path.isdir(os.path.join(self.output_dir, folder))
+            )
+        locked = self.executor.locked_generators
+        if not locked:
+            return
+        self.tools = [
+            t for t in self.tools
+            if (t.get("name") if isinstance(t, dict) else None) not in locked
+        ]
+        logger.info("Phase 2: locked %s, the application they write already exists",
+                    ", ".join(sorted(locked)))
+
+    def _ensure_gitignore(self) -> None:
+        """Write a .gitignore into the output root if the run didn't author one."""
+        try:
+            path = os.path.join(self.output_dir, ".gitignore")
+            if not os.path.exists(path):
+                with open_plain_write(path, "w", root=self.output_dir, encoding="utf-8") as fh:
+                    fh.write(self._GITIGNORE)
+        except OSError:
+            logger.debug("could not write .gitignore", exc_info=True)
+
+    def _run_phase2(self, instructions: str, extra_issues: list[str] | None = None) -> None:
+        """Run the Phase 2 customisation loop.
+
+        Before starting, do ONE cheap LLM call (~$0.01) to scope the
+        work into a focused task list. If that call fails, fall back to
+        no checklist — the Phase 2 LLM is smart enough to plan from
+        instructions alone.
+
+        Phase 1 validator findings are passed as ``scoped_issues`` so
+        they're presented as bugs to fix (separate from the user's
+        feature request).
+        """
+        # Drop sub-generator tools already covered by the chosen primary, so
+        # the agent can't scatter redundant pydantic/ sqlalchemy/ rest_api/
+        # dirs next to the assembled backend/.
+        self._drop_redundant_generator_tools()
+        self._lock_application_generators()
+
+        # Ship a .gitignore so a pushed/cloned repo doesn't carry caches, a
+        # runtime DB, node_modules, or a leaked .env. Deterministic — no LLM.
+        self._ensure_gitignore()
+
+        scoped_issues = list(extra_issues) if extra_issues else []
+        # "Issues to fix" takes blockers only; warnings stay in validate_app, marked advisory.
+        scoped_issues.extend(issue for issue in self._validate_app()["issues"]
+                             if _classify_issue(issue).severity == "blocker")
+
+        resumed = self._resume_messages is not None
+        # A new conversation (or one rebuilt from a checkpoint) holds none of
+        # this executor's earlier results.
+        self.executor.forget_shown_results()
+        if resumed:
+            # No new gap analysis: resume() restored the executor's checklist.
+            # It lives in the system prompt, which is rebuilt here, so show it
+            # again, every item in id order (task_list addresses items by id).
+            gap_tasks: list | None = []
+            for task in self.executor.task_snapshot():
+                closed = ("dropped" if task.get("dropped") else "done" if task["done"]
+                          else "blocked" if task["blocked"] else "")
+                gap_tasks.append(f"{task['text']} ({closed})" if closed else task)
+            messages = list(self._resume_messages or [])
+        elif budget_stop := self._budget_stop_reason():
+            # Phase 1 / 1.5 can outlast a cap or a cancel; the loop below
+            # records the stop reason before any call.
+            logger.warning("Phase 2: gap analysis skipped: %s", budget_stop)
+            gap_tasks = None
+            messages = [self._kickoff_message(instructions)]
+        else:
+            planner_instructions = self._planner_instructions(instructions)
+            with self._traced_llm_call("gap_analysis") as call:
+                gap_tasks = analyze_gaps_via_llm(
+                    # The user's words; the notes go apart, as the ledger reads them.
+                    instructions=_requirements_ledger.original_request(planner_instructions),
+                    assistant_notes=_requirements_ledger.assistant_notes(planner_instructions),
+                    generator_used=self._generator_used,
+                    domain_model=self.domain_model,
+                    inventory=self._inventory,
+                    llm_client=self.client,
+                    on_progress=self.on_progress,
+                    on_phase_details=self.on_phase_details,
+                    generator_failure=self._phase1_failure_reason,
+                    modify_mode=self._modify_mode,
+                    workspace_files=self._workspace_file_list(),
+                    action_endpoints=self._expected_action_endpoints(),
+                    target=self.target,
+                    can_call=self._verification_call_allowed,
+                )
+                call["outcome"] = "failed" if gap_tasks is None else "ok"
+                call["tasks"] = len(gap_tasks or [])
+            # The planning call may have switched the client to its
+            # outage fallback model — surface that before Phase 2 turns.
+            self._notify_model_switch()
+            messages = [self._kickoff_message(instructions)]
+
+            # Short-circuit: the planner explicitly judged the scaffold
+            # sufficient (empty list — distinct from None, which means
+            # the analysis failed). Only trusted when a deterministic
+            # generator actually ran clean and Phase 1.5 found nothing
+            # to fix; Phase 3 validation still runs as the safety net.
+            if (
+                gap_tasks == []
+                and self._generator_used
+                and not scoped_issues
+                # A modify run must never skip Phase 2: the user asked
+                # to add/change a feature on top of the seeded app, so an
+                # empty gap list ("scaffold already covers it") is never a
+                # reason to no-op here. ``_modify_mode`` is False on the
+                # from-scratch path, so run() is unaffected.
+                and not self._modify_mode
+            ):
+                # The planner's prompt already refuses an empty list for auth,
+                # payments, styling and the like; the harness's own tasks still
+                # keep Phase 2 running.
+                _needs_custom = bool(self._deterministic_gap_tasks())
+                if _needs_custom:
+                    logger.warning(
+                        "Phase 2: gap analysis returned empty, but the harness "
+                        "has its own checklist tasks; running Phase 2 anyway."
+                    )
+                    gap_tasks = None  # don't tell Phase 2 "no gaps were found"
+                else:
+                    logger.info(
+                        "Phase 2: skipped — gap analysis found the %s scaffold "
+                        "already covers the request",
+                        self._generator_used,
+                    )
+                    self._phase2_exited_cleanly = True
+                    if self.on_progress:
+                        self.on_progress(
+                            1, "__customize_skipped__",
+                            "scaffold already covers the request",
+                        )
+                    return
+
+        # Seed the executor's checklist from the gap tasks PLUS the
+        # harness's own deterministic items (e.g. "build the frontend"
+        # when a web app was asked and the scaffold has none). The LLM
+        # manages it through the ``task_list`` tool and the end_turn
+        # gate below refuses to finish while items are open — "done"
+        # becomes "the checklist is closed", not "the model said done".
+        if not resumed:
+            deterministic_tasks = self._deterministic_gap_tasks()
+            if deterministic_tasks:
+                logger.info(
+                    "Seeding %d harness-owned checklist task(s) (e.g. %r)",
+                    len(deterministic_tasks),
+                    (deterministic_tasks[0].get("text")
+                     if isinstance(deterministic_tasks[0], dict)
+                     else deterministic_tasks[0])[:80],
+                )
+                gap_tasks = merge_action_tasks(
+                    deterministic_tasks + (gap_tasks or []), self._expected_action_endpoints(),
+                )
+            if gap_tasks:
+                self.executor.set_tasks(gap_tasks)
+
+        system = self._build_system_prompt(
+            instructions=instructions,
+            scoped_issues=scoped_issues,
+            gap_tasks=gap_tasks,
+        )
+        system += (
+            "\nAfter each coherent backend change call validate_app. It returns actual "
+            "startup and data-entry failures, even when shell tools are disabled. Ending "
+            "your turn runs it by itself: call it after code changes, never just before you finish. "
+            "Fix import/DDL errors first, then schema-router contracts and business "
+            "behavior. Schema edits require updating all consumers and forms. "
+            "Use test_api to exercise complete workflows with persisted values and negative "
+            "cases from the original specification, not just health endpoints. Read routes "
+            "and request schemas first. "
+            "Never announce the app is functional before verification."
+        )
+
+        _cost_warning_fired = False
+        start_turn = self._resume_from_turn if resumed else 0
+        # Clear resume state so a subsequent run() on the same instance
+        # starts fresh.
+        self._resume_from_turn = 0
+        self._resume_messages = None
+
+        last_progress_revision = self._workspace_revision()
+        no_source_progress = 0
+        no_information_progress = 0
+        inspected: set[tuple[str, str]] = set()
+        observed_plans = {self._repair_obligations_revision()}
+        inspection_nudged = False
+        self._phase2_inspection_handoff = ""
+        for turn in range(start_turn, self.max_turns):
+            self.total_turns = turn + 1
+            self._trace.write(EVENT_TURN_START, turn=turn + 1)
+
+            # -- Cooperative cancellation -------------------------------
+            # The runner sets the underlying flag when a user POSTs to
+            # /cancel-smart-gen/{run_id}. Bail out at the next turn
+            # boundary rather than killing the worker thread.
+            if self._should_continue is not None and not self._should_continue():
+                logger.warning("Cancellation requested — stopping Phase 2 loop")
+                self._phase2_stop_reason = "cancelled"
+                break
+
+            # -- Runtime timeout check ------------------------------------
+            if self._start_time is not None:
+                elapsed = time.monotonic() - self._start_time
+                if elapsed > self.max_runtime_seconds:
+                    logger.warning(
+                        "Runtime timeout: %.1fs > %ds", elapsed, self.max_runtime_seconds,
+                    )
+                    self._phase2_stop_reason = "timeout"
+                    break
+
+            # -- Pre-call cost check ---------------------------------------
+            # The post-call check below catches the overrun; this one
+            # prevents firing ANOTHER billable request when the budget
+            # is already spent (e.g. after an expensive streaming turn).
+            if self.client.usage.estimated_cost >= self.max_cost_usd:  # reached is spent
+                logger.warning(
+                    "Cost cap already reached before turn %d: $%.4f >= $%.4f",
+                    turn + 1, self.client.usage.estimated_cost, self.max_cost_usd,
+                )
+                self._phase2_stop_reason = "cost_cap"
+                break
+
+            logger.info("LLM generation turn %d/%d", turn + 1, self.max_turns)
+
+            messages = self._maybe_compact(messages)
+
+            try:
+                response = self._chat_with_pending_force(system, messages)
+            except InvalidApiKeyError:
+                # Auth failures must PROPAGATE so the runner reports INVALID_KEY,
+                # not a misleading INTERNAL/api_error or a fake "incomplete
+                # success".
+                raise
+            except Exception as e:
+                logger.error("LLM API call failed on turn %d: %s", turn + 1, e)
+                self._phase2_stop_reason = "api_error"
+                self._phase2_api_error = str(e)
+                self._phase2_quota_exhausted = _is_quota_exhausted(e)
+                break
+            self._trace.write(EVENT_TURN_END, turn=turn + 1)
+
+            # The call may have switched the client to its outage
+            # fallback model mid-flight — surface that to the UI.
+            self._notify_model_switch()
+
+            # -- Cost cap check (after each API call) ---------------------
+            current_cost = self.client.usage.estimated_cost
+            # Every turn's cost, the closing end_turn reply included. The token
+            # counters show a run that re-bills its history (a low cache hit rate).
+            self._trace_cost_update(turn + 1)
+            if not _cost_warning_fired and current_cost > self.max_cost_usd * 0.8:
+                logger.warning(
+                    "Cost at 80%% of cap: $%.4f / $%.4f",
+                    current_cost, self.max_cost_usd,
+                )
+                _cost_warning_fired = True
+            if current_cost > self.max_cost_usd:
+                logger.warning(
+                    "Cost cap reached: $%.4f > $%.4f",
+                    current_cost, self.max_cost_usd,
+                )
+                self._phase2_stop_reason = "cost_cap"
+                break
+
+            if response["stop_reason"] == "end_turn":
+                # Checklist gate: the run is not done while gap-analysis
+                # items are open. Nudge the model back to work (bounded —
+                # a stubborn model that ignores two nudges is let through
+                # rather than looping the user's budget away; Phase 3
+                # still validates whatever state it left).
+                execution_report = self._validate_app()
+                # Static frontend blockers go back to the model once (it has the
+                # context here); any other blocker ends Phase 2 as before.
+                frontend_blockers = ([issue for issue in self._static_frontend_issues()
+                                      if _classify_issue(issue).severity == "blocker"]
+                                     if execution_report["blocker_count"] else [])
+                if execution_report["blocker_count"] > len(frontend_blockers):
+                    self._phase2_stop_reason = "validation_required"
+                    self._phase2_stop_detail = "end_turn blocker gate"
+                    self._phase2_exited_cleanly = False
+                    break
+                open_items = self.executor.open_tasks()
+                _has_verified_open = any(t.get("verify") for t in open_items)
+                _nudge_cap = (self._MAX_TASK_NUDGES + 2 if _has_verified_open
+                              else self._MAX_TASK_NUDGES)
+                frontend_nudge = (bool(frontend_blockers)
+                                  and self._end_turn_frontend_nudges < self._MAX_FRONTEND_BLOCKER_NUDGES)
+                if (open_items or frontend_nudge) and self._end_turn_task_nudges < _nudge_cap:
+                    self._end_turn_task_nudges += 1
+                    self._end_turn_frontend_nudges += frontend_nudge
+                    logger.info(
+                        "end_turn with %d open checklist item(s), %d frontend blocker(s) — nudge %d/%d",
+                        len(open_items), len(frontend_blockers) if frontend_nudge else 0,
+                        self._end_turn_task_nudges, _nudge_cap,
+                    )
+                    # An empty end_turn reply (no text, no tool calls) is not
+                    # replayed: OpenAI-compatible APIs reject an assistant
+                    # message with null content and no tool calls (400), and
+                    # Anthropic gets an empty turn mid-history.
+                    if response["content"]:
+                        messages.append(
+                            {"role": "assistant", "content": response["content"]}
+                        )
+                    parts = []
+                    if frontend_nudge:
+                        shown = "\n".join(f"  - {clip_finding(issue)}"
+                                          for issue in frontend_blockers[:self._VALIDATE_APP_MAX_ISSUES])
+                        parts.append(
+                            "Ending the turn ran validate_app, and the frontend still has these "
+                            f"blockers:\n{shown}\nFix them now; Phase 2 ends with them unfixed "
+                            "the next time you end the turn.")
+                    if open_items:
+                        listing = "\n".join(
+                            f"  {t['id']}. {t['text']}" for t in open_items
+                        )
+                        parts.append(
+                            "You ended the turn, but these checklist items "
+                            "are still OPEN:\n"
+                            f"{listing}\n"
+                            "Finish each one now. If an item is already "
+                            "complete, mark it with task_list(action='done', "
+                            "id=N, evidence=[{id, path, quote}]) when no verifier "
+                            "is attached. If required work cannot be finished, "
+                            "record task_list(action='blocked', id=N, reason=...). "
+                            "If the user did not ask for it, close it "
+                            "honestly with task_list(action='drop', id=N, "
+                            "reason=...) - never mark undone work done. End "
+                            "the turn only when every item is closed."
+                        )
+                    messages.append({
+                        "role": "user",
+                        "content": [{"type": "text", "text": "\n\n".join(parts)}],
+                    })
+                    continue
+                if frontend_blockers:
+                    self._phase2_stop_reason = "validation_required"
+                    self._phase2_stop_detail = "end_turn frontend blocker gate"
+                    self._phase2_exited_cleanly = False
+                    break
+                logger.info("LLM completed after %d turns", turn + 1)
+                self._phase2_exited_cleanly = True
+                self._phase2_stop_reason = "completed"
+                break
+
+            if response["stop_reason"] == "tool_use":
+                messages.append({"role": "assistant", "content": response["content"]})
+
+                tool_blocks = _tool_use_blocks(response["content"])
+                tool_results = self._execute_tool_blocks(tool_blocks, turn)
+                messages.append({"role": "user", "content": tool_results})
+                revision = self._workspace_revision()
+                source_changed = revision != last_progress_revision
+                if source_changed:
+                    inspected.clear()
+                    observed_plans.clear()
+                novel_inspection = self._record_novel_inspections(tool_blocks, tool_results, inspected)
+                plan = self._repair_obligations_revision()
+                novel_plan = plan not in observed_plans
+                observed_plans.add(plan)
+                no_source_progress = 0 if source_changed else no_source_progress + 1
+                no_information_progress = (0 if source_changed or novel_inspection or novel_plan
+                                           else no_information_progress + 1)
+                last_progress_revision = revision
+                handoff = (no_information_progress >= self._PHASE2_STAGNANT_TURNS
+                           or no_source_progress >= self._PHASE2_INSPECTION_TURNS)
+                if not inspection_nudged and no_source_progress >= self._PHASE2_STAGNANT_TURNS:
+                    inspection_nudged = True
+                    messages.append({"role": "user", "content": [{"type": "text", "text": (
+                        "<system-reminder>You have inspected/planned without changing source for "
+                        f"{no_source_progress} turns. New successful reads are useful, but inspection is bounded. "
+                        "Use the code already inspected to implement one coherent missing behavior, "
+                        "or use test_api/task_list evidence to verify behavior already present. "
+                        "Do not make cosmetic edits to reset progress or repeat unchanged reads. "
+                        "If a prerequisite prevents progress, record the concrete blocker. "
+                        "The next stage will retain unresolved work, not treat inspection as completion.</system-reminder>"
+                    )}]})
+                if handoff:
+                    self._phase2_stop_reason = "validation_required"
+                    self._phase2_stop_detail = (
+                        f"inspection handoff (no source change for {no_source_progress} "
+                        f"turns, no new information for {no_information_progress})")
+                    paths = sorted({path for path, _ in inspected})
+                    self._phase2_inspection_handoff = (
+                        f"Phase 2 inspected {len(inspected)} distinct successful source excerpts and "
+                        f"{len(observed_plans)} task/scenario states since the last source change. "
+                        f"No source change for {no_source_progress} turns; no new inspection/plan for "
+                        f"{no_information_progress} turns. Inspected paths: {', '.join(paths[:12]) or 'none'}"
+                        + (" (additional paths omitted)" if len(paths) > 12 else "")
+                        + ". This is an inspection handoff, not verification. Use the listed source and "
+                        "concrete diagnostics to implement or verify the next unresolved behavior; avoid restarting a full-file tour."
+                    )
+                    logger.warning("Phase 2: bounded inspection/no-progress limit; switching to diagnostic-led repair")
+
+                # Per-file modify-loop guard. After the tool_results are
+                # appended, check whether the LLM has just made a streak
+                # of modify_file calls on a single path. If so, inject a
+                # high-salience reminder as a separate user message
+                # BEFORE the next LLM call, so the model sees it at
+                # response-time (not buried inside a tool_result blob).
+                if self._apply_edit_loop_guards(messages, where="phase 2"):
+                    break
+
+                # Save a checkpoint at the end of every full turn so a
+                # crash AFTER tool execution doesn't make the LLM
+                # re-execute the same tool calls on resume. We save
+                # after appending results so the rehydrated message
+                # list starts cleanly with the next assistant turn.
+                self._save_checkpoint_for_turn(
+                    turn=turn + 1,
+                    messages=messages,
+                    instructions=instructions,
+                )
+                if handoff:
+                    break
+            elif response["stop_reason"] in ("max_tokens", "length"):
+                # The model hit its OUTPUT token limit mid-turn (typically a
+                # large write_file). That is not a provider failure — report it
+                # honestly as truncation instead of the misleading
+                # "unexpected stop_reason: length" provider error.
+                # The truncated tool call is intentionally NOT appended to
+                # ``messages`` / executed — a partial write_file's JSON
+                # arguments are usually invalid, so nothing gets written to
+                # disk in a half-finished state. The checkpoint from the
+                # last COMPLETE turn stays on disk (Phase 2 didn't exit
+                # cleanly, see ``run()``), so the run is resumable.
+                current_max_tokens = getattr(self.client, "max_tokens", None)
+                logger.warning(
+                    "Output token limit reached on turn %d (max_tokens=%s, "
+                    "adaptive_budget_applied=%s)",
+                    turn + 1, current_max_tokens, self._adaptive_budget_applied,
+                )
+                # Recoverable: the model can simply emit less next turn, and
+                # ending Phase 2 on the FIRST truncation throws whole runs away.
+                # Feed the truncation back, bounded by _MAX_TRUNCATION_RETRIES.
+                if self._truncation_retries < self._MAX_TRUNCATION_RETRIES:
+                    self._truncation_retries += 1
+                    messages.append(self._truncation_retry_prompt())
+                    logger.warning(
+                        "Output truncation recovery %d/%d — asking for a smaller turn",
+                        self._truncation_retries, self._MAX_TRUNCATION_RETRIES,
+                    )
+                    continue
+
+                self._phase2_stop_reason = "api_error"
+                self._phase2_api_error = (
+                    "The model hit its output token limit"
+                    + (f" ({current_max_tokens} tokens)" if current_max_tokens else "")
+                    # A run total: a complete turn does not reset the count.
+                    + f" on {self._truncation_retries + 1} turns of this run, so "
+                    "the generated code may be truncated. The run can be resumed "
+                    "to continue from the last completed step, or try a smaller "
+                    "scope / fewer files per run."
+                )
+                break
+            elif response["stop_reason"] == "refusal":
+                # A provider safety classifier declined the turn (HTTP 200). Its
+                # content may hold a cut-off tool call, so nothing is executed.
+                category = response.get("refusal_category")
+                logger.warning("Model refused the turn (category: %s)", category)
+                self._phase2_stop_reason = "api_error"
+                self._phase2_api_error = (
+                    "the model declined this request"
+                    + (f" (safety category: {category})" if category else "")
+                    + "; rephrase it or choose another model"
+                )
+                break
+            else:
+                logger.warning("Unexpected stop_reason: %s", response["stop_reason"])
+                self._phase2_stop_reason = "api_error"
+                self._phase2_api_error = f"unexpected stop_reason: {response['stop_reason']}"
+                break
+
+    # Above this the request is not repeated as the first user message. The
+    # system prompt already carries it whole ("## User request"), and a second
+    # copy is re-sent on every turn: a 64k-char specification is ~16k tokens a
+    # turn, on every provider that does not cache the prefix. A short request
+    # stays in the user turn, where the copy costs next to nothing.
+    _KICKOFF_INLINE_REQUEST_CHARS = 2_000
+    _KICKOFF_POINTER = (
+        "Implement the request in the \"User request\" section of your "
+        "instructions. It is given there in full, word for word: work from "
+        "that text, to its last line."
+    )
+
+    def _kickoff_message(self, instructions: str) -> dict:
+        """The first user turn of Phase 2: the request, or a pointer to it."""
+        if len(instructions) <= self._KICKOFF_INLINE_REQUEST_CHARS:
+            return {"role": "user", "content": instructions}
+        return {"role": "user", "content": self._KICKOFF_POINTER}
+
+    def _truncation_retry_prompt(self) -> dict:
+        """The user turn asking a truncated model to emit less (Phase 2 and 3)."""
+        current_max_tokens = getattr(self.client, "max_tokens", None)
+        return {"role": "user", "content": [{
+            "type": "text",
+            "text": (
+                "Your previous response was CUT OFF at the output "
+                "token limit"
+                + (f" ({current_max_tokens} tokens)"
+                   if current_max_tokens else "")
+                + ", so it was discarded and NOTHING was written to "
+                "disk. Do not repeat it as-is. Emit a SMALLER turn: "
+                "one file per tool call, and at most one or two tool "
+                "calls in this turn. Continue from where you left "
+                "off — re-state only what you still need to write."
+            ),
+        }]}
+
+    @staticmethod
+    def _record_novel_inspections(tool_blocks, tool_results, seen) -> bool:
+        """Credit successful new read output, not new arguments or failed reads."""
+        blocks = {block.id: block for block in tool_blocks}
+        novel = False
+        for result in tool_results:
+            block = blocks.get(result.get("tool_use_id"))
+            if block is None or block.name != "read_file" or not isinstance(block.input, dict):
+                continue
+            try:
+                payload = json.loads(result.get("content", ""))
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(payload, dict) or payload.get("error") or not isinstance(payload.get("content"), str):
+                continue
+            content = payload["content"]
+            path = block.input.get("path")
+            if not content.strip() or not isinstance(path, str):
+                continue
+            path = os.path.normcase(os.path.normpath(path.replace("\\", "/"))).replace("\\", "/")
+            key = (path, hashlib.sha256(content.encode("utf-8")).hexdigest())
+            if key not in seen and len(seen) < 1000:
+                seen.add(key)
+                novel = True
+        return novel
+
+    # Keys worth keeping in the trace when a tool reports them. Without them
+    # a failed call records only ``status: error`` with no reason, and the
+    # failure cannot be diagnosed afterwards.
+    _TRACE_DIAG_TEXT = ("error", "note", "advice", "warning", "matched_by",
+                        "did_you_mean", "diagnostic_message", "rejection_kind", "edit_recovery")
+    _TRACE_DIAG_MAX_CHARS = 400
+
+    def _emit_progress(self, turn: int, tool: str, status: str,
+                       detail: str | None = None) -> None:
+        """Fire ``on_progress``, tolerating a callback that predates `detail`.
+
+        ``on_progress`` is public API of a published package, so a caller may
+        still supply the original three-argument callback. Passing four
+        arguments unconditionally would raise TypeError for them; the detail is a
+        diagnostic nicety and must never break a run.
+        """
+        if not self.on_progress:
+            return
+        if not getattr(self, "_progress_takes_detail", True):
+            self.on_progress(turn, tool, status)
+            return
+        try:
+            self.on_progress(turn, tool, status, detail)
+        except TypeError:
+            self._progress_takes_detail = False
+            try:
+                self.on_progress(turn, tool, status)
+            except Exception:
+                logger.debug("on_progress callback raised; continuing", exc_info=True)
+        except Exception:
+            logger.debug("on_progress callback raised; continuing", exc_info=True)
+
+    @classmethod
+    def _trace_diagnostics(cls, result: str) -> dict:
+        """Bounded diagnostic fields from a tool result, for the trace.
+
+        Deliberately truncated: a trace line must stay greppable, and
+        ``did_you_mean`` can carry a whole file excerpt. Never raises — a
+        malformed result must not break the run it is describing.
+        """
+        try:
+            obj = json.loads(result)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return {}
+        if not isinstance(obj, dict):
+            return {}
+        diag: dict = {}
+        for key in cls._TRACE_DIAG_TEXT:
+            value = obj.get(key)
+            if value:
+                text = value if isinstance(value, str) else str(value)
+                if len(text) > cls._TRACE_DIAG_MAX_CHARS:
+                    text = text[:cls._TRACE_DIAG_MAX_CHARS] + "…[truncated]"
+                diag[key] = text
+        # Per-write diagnostics are a list; the COUNT is the useful signal,
+        # the bodies are already in the tool_result the model saw.
+        findings = obj.get("diagnostics")
+        if isinstance(findings, list) and findings:
+            diag["diagnostics_count"] = len(findings)
+        return diag
+
+    # Tools whose effect is a WRITE to a specific path. Two of these on the
+    # same path inside one turn must not run concurrently: each does
+    # read -> transform -> write, so racing them silently drops the earlier
+    # edit (last writer wins).
+    _WRITE_TOOLS = frozenset({"modify_file", "replace_file_lines", "write_file", "delete_file"})
+
+    def _serial_key(self, block) -> str:
+        """Group key for execution: writes to one path share a key (so they run
+        in order), everything else gets a unique key (so it stays parallel)."""
+        name = getattr(block, "name", "")
+        args = getattr(block, "input", None)
+        # Shell calls share the workspace, its venv and the probe's state file;
+        # run in parallel they killed each other's processes and crossed ports.
+        if name in ("run_command", "install_dependencies"):
+            return "shell"
+        if name in self._WRITE_TOOLS and isinstance(args, dict):
+            path = args.get("path")
+            if isinstance(path, str) and path.strip():
+                normalized = os.path.normcase(
+                    os.path.normpath(path.replace("\\", "/").strip())
+                ).replace("\\", "/")
+                return "path:" + normalized
+        return "id:" + str(getattr(block, "id", id(block)))
+
+    def _execute_tool_blocks(self, tool_blocks: list, turn: int) -> list[dict]:
+        """
+        Execute tool call blocks, in parallel where that is SAFE.
+
+        Blocks are grouped by write target: calls that write the same path run
+        sequentially in the order the model emitted them, while independent
+        groups still run concurrently. Without this, two ``modify_file`` calls
+        on one file in a single turn each read the pre-turn content and the
+        second write overwrites the first edit.
+
+        Args:
+            tool_blocks: List of tool_use content blocks from the LLM response.
+            turn: Current turn number.
+
+        Returns:
+            List of tool_result dicts, ordered to match ``tool_blocks``.
+        """
+        # Set before any block runs so every tool_call event in this turn can
+        # report it. A model that emits ONE call per turn needs ~4x the turns of
+        # one that batches, which makes MAX_TURNS mean wildly different things
+        # per model — invisible unless this is recorded.
+        self._blocks_in_turn = len(tool_blocks)
+        return self._run_tool_blocks(tool_blocks, turn)
+
+    def _run_tool_blocks(self, tool_blocks: list, turn: int) -> list[dict]:
+        """``_execute_tool_blocks`` without the per-turn bookkeeping, so the
+        validation split below can recurse without resetting the batch count."""
+        if not tool_blocks:
+            return []
+
+        if len(tool_blocks) == 1:
+            return [self._execute_single_tool(tool_blocks[0], turn)]
+
+        # Validation must see the completed batch, not race an in-flight edit.
+        validation_names = {"validate_app", "test_api", "task_list"}
+        validations = [b for b in tool_blocks if getattr(b, "name", None) in validation_names]
+        if validations:
+            results = self._run_tool_blocks([b for b in tool_blocks if b not in validations], turn)
+            results.extend(self._execute_single_tool(b, turn) for b in validations)
+            order = {b.id: index for index, b in enumerate(tool_blocks)}
+            return sorted(results, key=lambda result: order[result["tool_use_id"]])
+
+        groups: dict[str, list] = {}
+        for block in tool_blocks:
+            groups.setdefault(self._serial_key(block), []).append(block)
+
+        serialized = sum(1 for blocks in groups.values() if len(blocks) > 1)
+        if serialized:
+            logger.info(
+                "Executing %d tool calls in %d group(s); %d group(s) serialized "
+                "(same write target)", len(tool_blocks), len(groups), serialized,
+            )
+        else:
+            logger.info("Executing %d tool calls in parallel", len(tool_blocks))
+
+        def _run_group(blocks: list) -> list[dict]:
+            # Sequential within a group so same-path edits compose. Keep one
+            # result per call even if tracing/progress code around a tool raises
+            # unexpectedly; a sibling result must never disappear.
+            results: list[dict] = []
+            for block in blocks:
+                try:
+                    results.append(self._execute_single_tool(block, turn))
+                except Exception as exc:
+                    logger.exception(
+                        "Tool orchestration failed for %s",
+                        getattr(block, "name", "?"),
+                    )
+                    results.append({
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": dumps_for_model({"error": f"Execution failed: {exc}"}),
+                    })
+            return results
+
+        tool_results: list[dict] = []
+        with ThreadPoolExecutor(max_workers=_MAX_PARALLEL_WORKERS) as pool:
+            futures = {pool.submit(_run_group, blocks): blocks
+                       for blocks in groups.values()}
+            for future in as_completed(futures):
+                blocks = futures[future]
+                try:
+                    tool_results.extend(future.result())
+                except Exception as e:
+                    logger.error("Parallel tool execution failed for %s: %s",
+                                 getattr(blocks[0], "name", "?"), e)
+                    for block in blocks:
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": dumps_for_model({"error": f"Execution failed: {e}"}),
+                        })
+
+        # Restore the model's block order so tool_result pairing is stable.
+        block_id_order = {block.id: i for i, block in enumerate(tool_blocks)}
+        tool_results.sort(key=lambda r: block_id_order.get(r["tool_use_id"], 0))
+        return tool_results
+
+    def _execute_single_tool(self, block, turn: int) -> dict:
+        """Execute a single tool call and return the tool_result dict."""
+        # "" for a call that names no tool: the executor refuses it by name.
+        tool_name = getattr(block, "name", None) or ""
+        logger.info("Executing tool: %s", tool_name)
+
+        if tool_name not in _READONLY_TOOLS:
+            # Loop detection keys on (tool, path) when the tool targets a
+            # file: a from-scratch run legitimately calls write_file
+            # dozens of times in a row on DIFFERENT paths — that is
+            # progress, not a loop. Same tool on the SAME path (or a
+            # path-less tool like run_command repeated verbatim by name)
+            # still trips the guard.
+            loop_key = tool_name
+            if isinstance(block.input, dict):
+                raw_loop_path = block.input.get("path")
+                if isinstance(raw_loop_path, str) and raw_loop_path.strip():
+                    loop_key = f"{tool_name}:{raw_loop_path.replace(chr(92), '/').strip()}"
+        elif tool_name == "task_list":
+            # Bookkeeping is not a loop when it works, which is why task_list
+            # is read-only for loop purposes. A streak of REFUSED calls (e.g.
+            # marking tasks done one per turn, each rejected for supplying no
+            # evidence) is a loop. _is_stuck only fires when every call in the window
+            # failed, so a healthy batch still never trips it.
+            loop_key = "task_list"
+        else:
+            loop_key = None
+
+        # Track (tool, path) for the per-file modify streak guard. We record
+        # ALL tools so that unrelated work between modify calls breaks the
+        # streak. ``read_file`` captures its path too: re-reading the very
+        # file you have just failed to edit is part of the flail, not a
+        # break from it; treating it as a break lets a modify/read
+        # alternation on one file run unchecked.
+        # ``replace_file_lines`` counts as an edit: the recovery ladder
+        # steers a flailing model straight into it, so recording it as a
+        # path-less tool would let reaching recovery disarm this guard.
+        # Every other tool gets ``path=None`` and so trips the check in
+        # ``_consecutive_modify_on_same_file``.
+        target_path = None
+        if tool_name in _EDIT_STREAK_TOOLS and isinstance(block.input, dict):
+            raw_path = block.input.get("path")
+            if isinstance(raw_path, str):
+                # Normalise for stable comparison across mixed
+                # separators (Windows ``\`` vs POSIX ``/``).
+                target_path = raw_path.replace("\\", "/").strip()
+        self._recent_modify_targets.append((tool_name, target_path))
+        # Room for the threshold's worth of modify calls PLUS an interleaved
+        # read after each, so the alternating shape still fits the window.
+        _window = self._PER_FILE_MODIFY_THRESHOLD * 4
+        if len(self._recent_modify_targets) > _window:
+            self._recent_modify_targets = self._recent_modify_targets[-_window:]
+
+        if self.on_progress:
+            # `detail` carries WHAT the call was about plus this turn's batch
+            # count; the durable run store keeps only the stream.
+            self._emit_progress(
+                turn + 1, tool_name, "executing",
+                _tool_call_detail(tool_name, block.input,
+                                  getattr(self, "_blocks_in_turn", 1)),
+            )
+
+        execution = self.executor.execute_typed(tool_name, block.input)
+        # A landed edit may have satisfied a checkable item. Close it here
+        # rather than making the model spend turns arguing for it.
+        if execution.succeeded and tool_name in _WRITE_TOOLS_ON_RECORD:
+            closed = self.executor.autoclose_verified_tasks()
+            if closed:
+                execution.payload["checklist_closed"] = closed
+                logger.info("Auto-closed %d verified checklist item(s): %s",
+                            len(closed), [item["id"] for item in closed])
+        recovery = execution.payload.get("edit_recovery", {})
+        if recovery.get("next_tool") in {"read_file", "replace_file_lines", "modify_file"}:
+            self._force_tool_next = recovery["next_tool"]
+        result = execution.to_json()
+        success = execution.succeeded
+
+        if loop_key is not None:
+            self._recent_tool_calls.append((loop_key, success))
+            # Cap the ring buffer so long runs don't leak memory. Keeping
+            # 2x the loop threshold is plenty — _is_stuck() only checks
+            # the tail.
+            if len(self._recent_tool_calls) > self._LOOP_THRESHOLD * 2:
+                self._recent_tool_calls = self._recent_tool_calls[-self._LOOP_THRESHOLD * 2 :]
+
+        if loop_key is not None and not success and self._is_stuck():
+            logger.warning("Possible loop: %s", tool_name)
+            try:
+                result_obj = json.loads(result)
+            except (json.JSONDecodeError, TypeError):
+                result_obj = result
+            if not isinstance(result_obj, dict):
+                result_obj = {"result": result_obj}
+            result_obj["warning"] = (
+                f"'{tool_name}' has failed {self._LOOP_THRESHOLD} times in a row "
+                "on the same target. Do not repeat it; take a different action."
+                if tool_name != "task_list" else
+                f"{self._LOOP_THRESHOLD} task_list calls in a row were refused. "
+                "Marking an item done is bookkeeping, not progress, and the "
+                "checklist will keep refusing items you have not implemented. "
+                "Stop closing items: open the file named by the next unresolved "
+                "task and make the change, then cite it."
+            )
+            result = dumps_for_model(result_obj)
+
+        if not success:
+            try:
+                failure = json.loads(result)
+            except (TypeError, ValueError):
+                failure = {}
+            self._recent_tool_failures.append({
+                "tool": tool_name,
+                "path": block.input.get("path", "") if isinstance(block.input, dict) else "",
+                "error": str(failure.get("error", execution.status))[:600],
+                "rejection_kind": str(failure.get("rejection_kind", ""))[:80],
+            })
+            self._recent_tool_failures = self._recent_tool_failures[-8:]
+
+        logged_input = _trace_safe_input(tool_name, block.input)
+        self.tool_calls_log.append({
+            "turn": turn + 1, "tool": tool_name,
+            "input": logged_input,
+            "success": success,
+            "status": execution.status,
+        })
+        if tool_name in _WRITE_TOOLS_ON_RECORD and self._trace.path:
+            self._record_full_tool_input(turn + 1, tool_name, block.input, success, execution.status)
+        self._trace.write(
+            EVENT_TOOL_CALL,
+            turn=turn + 1,
+            tool=tool_name,
+            success=success,
+            status=execution.status,
+            input=logged_input,
+            # How many calls the model batched into this turn (1 = no batching).
+            blocks_in_turn=getattr(self, "_blocks_in_turn", 1),
+            # What the model was told, redacted and bounded.
+            result=_trace_result_excerpt(result),
+            # WHY it failed, and which edit tier matched when it succeeded —
+            # see _trace_diagnostics for why this is not optional.
+            **_redact_for_trace(self._trace_diagnostics(result)),
+        )
+
+        return {
+            "type": "tool_result",
+            "tool_use_id": block.id,
+            "content": result,
+        }
+
+    # ==================================================================
+    # Checkpointing
+    # ==================================================================
+
+    def _save_checkpoint_for_turn(
+        self,
+        turn: int,
+        messages: list[dict],
+        instructions: str,
+        *,
+        phase: str = "phase2",
+    ) -> None:
+        """Persist mid-run state so a crash after ``turn`` can recover.
+
+        No-op when checkpointing was disabled in the constructor (tests).
+        Failures are logged at debug level — instrumentation must not
+        break the run.
+        """
+        if not self._checkpointing_enabled:
+            return
+        try:
+            from besser.spec_driven_agent.state.checkpoint import api_scenario_snapshot
+            if phase not in {"phase2", "phase3"}:
+                raise ValueError("Unknown checkpoint phase")
+            self._checkpoint_phase = phase
+            ckpt = Checkpoint(
+                schema_version=CHECKPOINT_SCHEMA_VERSION,
+                run_id=self.run_id,
+                instructions=instructions,
+                primary_kind=self.primary_kind,
+                turn=turn,
+                total_turns=self.total_turns,
+                messages=messages if phase == "phase2" else [],
+                tool_calls_log=self.tool_calls_log,
+                validation_issues=[
+                    {"severity": i.severity, "message": i.message}
+                    for i in self._validation_issues
+                ],
+                inventory=self._inventory,
+                generator_used=self._generator_used,
+                target=self.target.to_dict() if self.target else None,
+                estimated_cost_usd=float(self.client.usage.estimated_cost),
+                compaction_count=self._compaction_count,
+                project_fingerprint=self._project_fingerprint,
+                saved_at=time.time(),
+                tasks=self.executor.task_snapshot(),
+                api_scenarios=api_scenario_snapshot(self._api_scenarios.values()),
+                phase=phase,
+                source_revision=self._workspace_revision() if phase == "phase3" else "",
+                phase2_stop_reason=self._phase2_stop_reason,
+                phase2_exited_cleanly=self._phase2_exited_cleanly,
+                repair_progress=self._repair_progress if phase == "phase3" else {},
+                locked_generators=sorted(self.executor.locked_generators),
+                modify=self._modify_checkpoint_state(),
+                generator_files=sorted(self.executor._generator_files),
+                files_at_start=sorted(self._files_at_start),
+                write_evidence=self.executor.evidence_snapshot(),
+                requirements=self._requirements,
+                routed_stack=self._unsupported_stack if self._routed else None,
+            )
+            path = save_checkpoint(self.output_dir, ckpt)
+            if path:
+                self._trace.write(EVENT_CHECKPOINT, turn=turn, phase=phase, path=path)
+            else:
+                # A failed write leaves no file, and the contract is that the
+                # file's ABSENCE means the run finished cleanly. So a run that
+                # crashed with a broken checkpoint write looks exactly like one
+                # that succeeded, and silently stops being resumable. Say so in
+                # the trace, which is the documented place to read a run back.
+                self._record_checkpoint_loss(
+                    turn, phase, "the checkpoint file could not be written")
+        except Exception as exc:
+            logger.debug("Checkpoint write failed on turn %d: %s", turn, exc)
+            self._record_checkpoint_loss(turn, phase, f"{type(exc).__name__}: {exc}")
+
+    def _record_checkpoint_loss(self, turn: int, phase: str, reason: str) -> None:
+        """Record that this run is no longer resumable, and why."""
+        logger.warning(
+            "Checkpoint not written on turn %s (%s): %s - this run is not resumable",
+            turn, phase, reason,
+        )
+        self._trace.write(
+            EVENT_ERROR, turn=turn, phase=phase, reason=reason,
+            detail="checkpoint not written; run is not resumable",
+        )
+
+    def _save_phase3_checkpoint(self) -> None:
+        """Persist repair state without replaying a repair transcript on resume."""
+        self._checkpoint_phase = "phase3"
+        self._save_checkpoint_for_turn(
+            self.total_turns, [], self._instructions, phase="phase3",
+        )
+
+    def _finish_checkpoint(self) -> None:
+        """Keep recovery state until both customization and validation finished."""
+        if (self._phase2_exited_cleanly and not self._phase3_interrupted
+                and not any(is_completion_issue(issue) for issue in self._validation_issues)):
+            delete_checkpoint(self.output_dir)
+        elif self._checkpoint_phase == "phase3":
+            self._save_phase3_checkpoint()
+        elif self._checkpointing_enabled:
+            # An unfinished Phase 2 must remain resumable as Phase 2. Refresh
+            # costs/tasks after validation without replacing its conversation.
+            checkpoint = load_checkpoint(self.output_dir)
+            if checkpoint is not None:
+                self._save_checkpoint_for_turn(
+                    checkpoint.turn, checkpoint.messages, self._instructions,
+                )
+
+    # ==================================================================
+    # Phase 3: Post-generation validation & fix
+    # ==================================================================
+
+
+
+
+    def _with_model_contract(
+        self, issues: list[ValidationIssue],
+    ) -> list[ValidationIssue]:
+        """Phase 3 findings with the Phase 0 model-contract ones kept in front.
+
+        Every wholesale reassignment of ``_validation_issues`` goes through
+        here. Without it a clean Phase 3 would erase the mandatory-creation-cycle
+        blocker and the run would report ``incomplete: false``.
+        """
+        return list(self._model_contract_issues) + list(issues)
+
+
+
+    # Blocker classes that mean the application does not start at all: the
+    # ORM will not map, a module will not import, a name is undefined. Unlike
+    # a missing feature these are never a reasonable price for a repair.
+    _STARTUP_BLOCKER_PREFIXES = (
+        "mapper config:", "application startup:", "python contract:",
+        "missing module:",
+    )
+
+
+
+    # Findings this prefix carries are the Phase 3 exit gate's own verdict on
+    # the delivered application, not one more item in the list.
+    _RUNTIME_GATE_PREFIX = "runtime gate:"
+
+
+
+
+
+    _FILE_LINE_RE = _re.compile(
+        r"(?<![\w./\\-])([\w./\\-]+\.\w+)(?: line |:|\()(\d+)"
+    )
+
+
+
+
+
+    # Python contract findings reported per file. Applied after repeated names
+    # collapse, so a "(+N more uses)" count is exact.
+    _PYTHON_CONTRACT_MAX_PER_FILE = 25
+
+    def _collect_execution_issues(self) -> list[str]:
+        """Cheap source checks first, then isolated startup/data-entry probes.
+
+        This path never calls an LLM, installs packages, or grants shell access.
+        It is available during editing as well as at the final verification gate.
+        """
+        from besser.spec_driven_agent.validation.write_diagnostics import (
+            diagnose_written_content,
+            undefined_name_check_skipped,
+        )
+
+        raw: list[str] = []
+        python_files = _python_files(self.output_dir)
+        if python_files:
+            raw.extend(undefined_name_check_skipped())
+        for path in python_files:
+            rel = os.path.relpath(path, self.output_dir).replace("\\", "/")
+            try:
+                with open(path, encoding="utf-8-sig") as fh:
+                    source = fh.read()
+            except (OSError, UnicodeError):
+                continue
+            findings = [f"python contract: {rel} line {finding.get('line', 1)}: {finding['message']}"
+                        for finding in diagnose_written_content(
+                            rel, source, workspace=self.output_dir, limit=sys.maxsize)]
+            raw.extend(_collapse_repeated_names(findings, PYTHON_CONTRACT_REPEATED_NAME_RE)
+                       [:self._PYTHON_CONTRACT_MAX_PER_FILE])
+        raw.extend(_create_schema_router_mismatches(self.output_dir))
+        raw.extend(_unresolvable_local_imports(self.output_dir))
+        raw.extend(_import_time_server_starts(self.output_dir))
+        from besser.spec_driven_agent.validation.frontend_schema import collect_frontend_schema_issues
+
+        raw.extend(collect_frontend_schema_issues(self.output_dir))
+        # Only a finding that PROVES the app cannot boot may skip the probe.
+        # Skipping on any static finding (a frontend field, a schema mismatch)
+        # means a weak model, which always leaves something static behind,
+        # never gets a runtime verdict, and a route that crashes on every call
+        # ships unnoticed.
+        if any(item.startswith("missing module:") for item in raw):
+            self._record_runtime_verdict(None)
+            return list(dict.fromkeys(raw))
+        if self.enable_import_smoke_check:
+            raw.extend(self._runtime_probe_issues())
+            # Guessed fixtures can legitimately violate business rules. Keep
+            # that unknown distinct from a crash, and let a real create/read
+            # scenario supply evidence without weakening application validation.
+            raw.extend(self._collect_api_scenario_issues())
+            raw = self._apply_scenario_evidence(raw)
+            # A clean list only counts as OK when a backend was actually booted;
+            # "no backend here" must never read as "the app works".
+            try:
+                probed = bool(self._probeable_backends())
+            except Exception:
+                logger.warning("Backend discovery failed; no runtime verdict", exc_info=True)
+                probed = False
+            self._record_runtime_verdict(_runtime_verdict(raw) if probed else None)
+        elif any(os.path.basename(p) == "main_api.py" for p in _python_files(self.output_dir)):
+            self._record_runtime_verdict(None)
+            # Disabled by configuration: no edit can turn the checks on, so this
+            # is a warning that withholds "verified", not a blocker to repair.
+            raw.append(runtime_check_unverified(
+                "backend startup and data entry", "these checks are disabled for this run"))
+        else:
+            # Nothing to boot in this workspace: the gate has no claim to make.
+            self._record_runtime_verdict(None)
+        return list(dict.fromkeys(raw))
+
+    def _record_runtime_verdict(self, verdict: int | None) -> None:
+        """Store the boot-and-probe outcome with the tree it was measured on."""
+        self._runtime_probe_verdict = verdict
+        self._runtime_verdict_revision = self._workspace_revision() if verdict is not None else None
+
+    def _authorization_issues(self) -> list[str]:
+        """The two-account check's warnings, for the run's report.
+
+        Phase 3 sweeps only, on the backends the probe booted for this tree, so
+        the agent's ``validate_app`` never shows them and no repair is asked for.
+        """
+        facts = getattr(self, "_runtime_probe_facts", None)
+        if not facts or facts[0] != self._workspace_revision():
+            return []
+        from besser.spec_driven_agent.validation.authorization_probe import authorization_issues
+
+        return self._revision_cached("authorization", (), lambda: authorization_issues(
+            self.output_dir, facts[1], self._instructions, self.domain_model))
+
+    def _runtime_probe_issues(self) -> list[str]:
+        """Import-smoke + constructibility findings, cached per source revision.
+
+        The probe boots the app in a subprocess and can take up to 90s per
+        backend. Phase 3 re-validates after every fix attempt, and the loop is
+        entitled to every turn Phase 2 left, so an uncached probe adds minutes
+        of wall clock per run for an answer that cannot have changed while the
+        source did not. ``_validate_app`` already caches its own call this way.
+        """
+        revision = self._workspace_revision()
+        cached = getattr(self, "_runtime_probe_cache", None)
+        if cached and cached[0] == revision:
+            return list(cached[1])
+        issues: list[str] = []
+        mapper_issues = _import_smoke_issues(self.output_dir)
+        issues.extend(mapper_issues)
+        if not any(i.startswith("mapper config:") for i in mapper_issues):
+            try:
+                from besser.spec_driven_agent.validation.constructibility import (
+                    collect_constructibility_report,
+                )
+                probe = collect_constructibility_report(self.output_dir, self.domain_model)
+                issues.extend(probe["issues"])
+                # The runtime facts themselves, not just their rendering - see
+                # _phase3_tree_score.
+                self._runtime_probe_facts = (revision, probe["backends"])
+            except Exception as exc:
+                logger.warning("Constructibility probe crashed; runtime unverified", exc_info=True)
+                issues.append(runtime_check_unverified(
+                    "the constructibility probe", f"it crashed: {type(exc).__name__}: {exc}"))
+        # A probe that did not run (no sandbox, a timeout, a harness dependency
+        # missing) is an unknown no edit can settle: a warning that still
+        # refuses verified completion, never a blocker that buys repair rounds.
+        issues = [runtime_note_unverified(item) if item.startswith("validation:") else item
+                  for item in issues]
+        self._runtime_probe_cache = (revision, list(issues))
+        return issues
+
+    def _apply_scenario_evidence(self, raw: list[str]) -> list[str]:
+        """Retire probe unknowns a retained ``test_api`` workflow actually proved.
+
+        A guessed fixture refused with 4xx, or an action state the probe cannot
+        construct, is not evidence of a defect - but it is not evidence of a
+        working app either. Only a spec-derived scenario that created a record
+        and read it back retires one. Where nothing retires it, the finding is
+        re-prefixed ``runtime unverified:`` so it reaches the fix loop as a
+        blocker instead of a warning nothing consumes.
+        """
+        from besser.spec_driven_agent.planning.mutation_inventory import route_serves
+        from besser.spec_driven_agent.validation.api_probe import confirmed_create_paths, declares_failure
+
+        revision = self._workspace_revision()
+        current = [record for record in self._api_scenarios.values()
+                   if record["revision"] == revision]
+        confirmed = {(record["report"].get("backend"), path)
+                     for record in current
+                     for path in confirmed_create_paths(record["report"])}
+        # An action route a passing current scenario exercised end-to-end: a
+        # 2xx whose body says the call did not act, or was cut, is not such a call.
+        exercised = {
+            (record["report"].get("backend"), str(response.get("path", "")))
+            for record in current if record["report"].get("status") == "passed"
+            for response in record["report"].get("responses", [])
+            if response.get("method") == "POST"
+            and isinstance(response.get("status"), int)
+            and 200 <= response["status"] < 300
+            and not response.get("truncated")
+            and not declares_failure(response.get("json"))
+        }
+
+        def settled(match, evidence) -> bool:
+            # The probe prints the route template; a scenario records the path it called.
+            return bool(match) and any(backend == match.group(1) and route_serves(match.group(2), path)
+                                       for backend, path in evidence)
+
+        checked: list[str] = []
+        for item in raw:
+            if item.startswith("create unverified: "):
+                if settled(_re.match(r"create unverified: (.+?): POST (\S+) -", item), confirmed):
+                    continue
+                item = "runtime unverified: " + item
+            elif item.startswith("action unverified: "):
+                # Same shape as the create side. Without this promotion the
+                # finding stays a warning the blocker-only fix loop ignores.
+                if settled(_re.match(r"action unverified: (.+?): POST (\S+) -", item), exercised):
+                    continue
+                item = "runtime unverified: " + item
+            checked.append(item)
+        return checked
+
+    def _probeable_backends(self) -> list[str]:
+        """Generated FastAPI services the constructibility probe can drive.
+
+        Raises when discovery fails: "no backend" would silence the runtime
+        gate, so the caller decides (the gate fails closed).
+        """
+        from besser.spec_driven_agent.validation.constructibility import _fastapi_backends
+
+        return _fastapi_backends(self.output_dir)
+
+    # Findings one validate_app result lists, most urgent first; the rest are counted.
+    _VALIDATE_APP_MAX_ISSUES = 40
+    # Dropped passing checks a refused test_api correction names; the rest are counted.
+    _DROPPED_CHECKS_SHOWN = 8
+
+    def _acceptance_matrix_issues(self) -> list[str]:
+        """Compute and keep the acceptance matrix; its missing cells as warnings."""
+        if self.target is not None and not self.target.is_web_app:
+            logger.info("Acceptance matrix not applicable to a %s target", self.target.kind)
+            return []
+        try:
+            from besser.spec_driven_agent.validation.acceptance import build_acceptance_matrix, matrix_issues
+            self._acceptance_matrix = build_acceptance_matrix(self.output_dir, self.domain_model)
+            return matrix_issues(self._acceptance_matrix)
+        except Exception as exc:
+            logger.warning("Acceptance matrix computation failed", exc_info=True)
+            return [_check_did_not_run("the acceptance matrix", f"it crashed: {type(exc).__name__}")]
+
+    def _frontend_form_issues(self) -> list[str]:
+        """Create-form checks: the probes never render a page, so a form that cannot save passes them."""
+        try:
+            from besser.spec_driven_agent.validation.frontend_forms import collect_frontend_form_issues
+            return collect_frontend_form_issues(self.output_dir)
+        except Exception as exc:
+            logger.warning("Frontend form validation failed", exc_info=True)
+            return [_check_did_not_run("the frontend form check", f"it crashed: {type(exc).__name__}")]
+
+    def _static_frontend_issues(self) -> list[str]:
+        """Phase 3's frontend source checks that need no build or node: shown by validate_app too.
+
+        The acceptance matrix is left out with a GUI model: those screens are the
+        user's scope, and the matrix would ask for pages they did not model.
+        """
+        if not self._has_frontend_files():
+            return []
+        from besser.spec_driven_agent.validation.frontend_resolution import collect_frontend_resolution_issues
+
+        return [*self._collect_frontend_contract_issues(), *collect_frontend_resolution_issues(self.output_dir),
+                *self._frontend_form_issues(),
+                *(self._acceptance_matrix_issues() if self.gui_model is None else [])]
+
+    def _validate_app(self) -> dict:
+        """Model-facing, revision-bound diagnostics with no additional LLM cost."""
+        # Phase 3's last requirement judgment (no new call): a blocker the run holds is
+        # never answered with "verified". Empty until the judge has run.
+        ledger = [issue for issue in _requirements_ledger.ledger_issues(self._requirement_verdicts)
+                  if _classify_issue(issue).severity == "blocker"]
+        revision = self._workspace_revision()
+        key = (revision, tuple(ledger))
+        if self._app_validation_cache and self._app_validation_cache[0] == key:
+            return self._app_validation_cache[1]
+        raw = self._collect_execution_issues()
+        # A static frontend warning (e.g. an entity with no page) is reported, not refused: say so.
+        raw += [issue if _classify_issue(issue).severity == "blocker" else f"{_ADVISORY_PREFIX}{issue}"
+                for issue in dict.fromkeys(self._static_frontend_issues()) if issue not in raw]
+        if ledger and self._requirement_cache_key(self._requirements_to_judge()) != self._requirement_verdicts_key:
+            # Judged on other source than the judge would read now: the edit may have settled
+            # it, and finishing judges it again. An edit the judge does not read changes nothing.
+            ledger = [f"{_ADVISORY_PREFIX}judged before your latest edits; it is re-judged when you finish: {issue}"
+                      for issue in ledger]
+        raw += ledger
+        issues = sorted((_classify_issue(s) for s in raw), key=self._repair_priority)
+        blockers = [issue for issue in issues if issue.severity == "blocker"]
+        # A required check that did not run is a warning, not a pass.
+        unverified = not blockers and any(is_completion_issue(issue) for issue in issues)
+        result = {
+            "verified": not blockers and not unverified,
+            "blocker_count": len(blockers),
+            # Each finding is cut as the fix prompt cuts it: one api scenario
+            # report alone ran to 2,500 chars.
+            "issues": [clip_finding(issue.message) for issue in issues[:self._VALIDATE_APP_MAX_ISSUES]],
+            "remaining_issue_count": max(0, len(issues) - self._VALIDATE_APP_MAX_ISSUES),
+            "scope": "Python declarations, schema/router contracts, backend startup and create probes where supported; not complete business acceptance",
+            "next_step": ("Repair concrete failures and call validate_app again. For create unverified (guessed fixtures), "
+                          "each listed endpoint needs a test_api scenario that creates the record with valid unique fixtures "
+                          "and then, in that same scenario, GETs it by id under the same path; a scenario holds at most "
+                          "20 requests, so split the endpoints across several scenarios; do not remove "
+                          "business validation to satisfy guessed samples.") if blockers else
+                         ("Some required checks did not run on this server (the validation unverified findings); "
+                          "no source edit can settle them, so do not edit code for them. Verify the remaining "
+                          "user requirements and business workflows before completion.") if unverified else
+                         "These checks pass. Verify the remaining user requirements and business workflows before completion.",
+        }
+        self._app_validation_cache = (key, result)
+        return result
+
+    def _test_api(self, args: dict) -> dict:
+        """Run and retain bounded declarative workflow checks, never arbitrary commands."""
+        action = args.get("action", "run")
+        if action not in ("run", "list", "get", "retire"):
+            return {"error": "action must be run, list, get, or retire"}
+        scenario_id = args.get("scenario_id")
+        if scenario_id is not None and (not isinstance(scenario_id, str) or not scenario_id.strip() or len(scenario_id) > 80):
+            return {"error": "scenario_id must be a nonempty workflow name of at most 80 characters."}
+        if action == "retire":
+            return self._retire_api_scenario(scenario_id, args.get("correction_reason"))
+        if action == "list":
+            revision = self._workspace_revision()
+            return {"scenarios": [{"scenario_id": record.get("scenario_id"),
+                                   "backend": record["scenario"].get("backend"),
+                                   "request_count": len(record["scenario"]["requests"]),
+                                   "last_status": record["report"].get("status"),
+                                   "current_revision": record["revision"] == revision}
+                                  for record in self._api_scenarios.values()],
+                    "next_step": "Use action=get with scenario_id to inspect exact expectations before a repair."}
+        previous = self._api_scenarios.get("named:" + scenario_id) if scenario_id else None
+        if action == "get":
+            if previous is None:
+                return {"error": "Unknown scenario_id; use action=list to find retained workflows."}
+            # Return a detached snapshot; inspecting a test must not mutate it or
+            # turn a stale report into fresh verification.
+            from besser.spec_driven_agent.validation.api_probe import redact_scenario_headers
+
+            return json.loads(json.dumps({
+                "scenario_id": scenario_id, **previous["scenario"],
+                "requests": redact_scenario_headers(previous["scenario"]["requests"]),
+                "last_report": previous["report"],
+                "current_revision": previous["revision"] == self._workspace_revision(),
+                "correction_history": previous.get("correction_history", []),
+                "authority": "Original user specification. A generated assertion can be wrong; explain any correction against that specification.",
+            }))
+        if not self.enable_import_smoke_check:
+            return {"error": "Runtime execution is disabled; API workflows have not been verified."}
+        from besser.spec_driven_agent.validation.api_probe import _MAX_REQUESTS as _MAX_SCENARIO_REQUESTS
+        from besser.spec_driven_agent.validation.api_probe import probe_api_scenario
+
+        if args.get("requests") == []:
+            return {"error": "A scenario needs at least one request; to rerun a saved one, give only its scenario_id."}
+        if "requests" not in args:
+            if previous is None:
+                return {"error": "Provide requests for a new workflow, or scenario_id to replay a retained one."}
+            if "backend" in args and args["backend"] != previous["scenario"].get("backend"):
+                return {"error": "Changing a scenario backend requires its requests and correction_reason."}
+            args = {**args, **previous["scenario"]}
+        # Freeze the caller's values: later argument mutations must not silently
+        # weaken retained assertions or bypass explicit scenario correction.
+        try:
+            scenario = json.loads(json.dumps({"requests": args.get("requests"), "backend": args.get("backend")}, allow_nan=False))
+        except (ValueError, TypeError, RecursionError):
+            return {"error": "Scenario arguments must be finite JSON values."}
+        scenario_id = scenario_id or "scenario-" + hashlib.sha256(json.dumps(scenario, sort_keys=True).encode()).hexdigest()[:16]
+        key = "named:" + scenario_id
+        previous = self._api_scenarios.get(key)
+        if (previous is not None and previous.get("submitted_requests") == scenario["requests"]
+                and previous["scenario"].get("backend") == scenario["backend"]):
+            # The model's own list again after a restore: the same scenario, restored checks kept.
+            scenario = json.loads(json.dumps(previous["scenario"]))
+        changed = previous is not None and previous["scenario"] != scenario
+        reason = args.get("correction_reason")
+        if changed and (not isinstance(reason, str) or not reason.strip()):
+            return {"error": "Changing a saved scenario requires correction_reason explaining the mistaken test; do not relax the original specification."}
+        old_requests = previous["scenario"]["requests"] if changed else []
+        dropped = _dropped_passing_requests(old_requests, previous["report"], scenario["requests"]) if changed else []
+        restored = [_scenario_request_label(old_requests[index]) for index in dropped]
+        shown = "; ".join(restored[:self._DROPPED_CHECKS_SHOWN]) + (
+            f" (+{len(restored) - self._DROPPED_CHECKS_SHOWN} more)"
+            if len(restored) > self._DROPPED_CHECKS_SHOWN else "")
+        refused = (f"Correction refused: it drops checks that passed in this scenario's last run: "
+                   f"{shown}. Resubmit the full scenario with only the failing requests fixed, or "
+                   "run those checks under their own scenario_id.")
+        submitted = scenario["requests"]
+        if dropped:
+            # The checks that passed go back at the end, so the correction costs no turn (r12-p61).
+            requests = _with_requests_appended(submitted, old_requests, dropped)
+            if requests is None or len(requests) > _MAX_SCENARIO_REQUESTS:
+                return {"error": refused}
+            scenario["requests"] = requests
+        if key not in self._api_scenarios and len(self._api_scenarios) >= 10:
+            return {"error": "Ten workflow scenarios are already retained. Rerun an existing scenario or use validate_app."}
+        revision = self._workspace_revision()
+        report = probe_api_scenario(self.output_dir, scenario["requests"], backend=scenario["backend"])
+        ran = report.get("boot") != "not_started"
+        if dropped and ran and report.get("boot") != "ok":
+            # The re-added checks did not run (the app did not boot): saved, they would read
+            # as failing and the next correction could drop them. Keep the saved scenario.
+            return {"error": f"{refused} The app did not boot, so the re-added checks did not run and the "
+                             "correction was not saved.", "report": report}
+        if dropped and _failed_requests(report) & set(range(len(submitted), len(scenario["requests"]))):
+            # Re-added after the corrected requests changed the state, a check that passed in
+            # its own place can fail on a correct app; saving that would let the next correction
+            # drop it as failing. Keep the saved scenario, as before the restore existed.
+            return {"error": f"{refused} Re-added at the end they failed, so the correction was not saved.",
+                    "report": report}
+        # Invalid tool arguments must not become impossible-to-repair app failures.
+        if ran:
+            history = list(previous.get("correction_history", [])) if previous else []
+            if changed:
+                report["correction"] = {"reason": reason[:1000], "previous_status": previous["report"].get("status")}
+                history.append(report["correction"])
+            self._api_scenarios[key] = {"scenario": scenario, "scenario_id": scenario_id, "revision": revision,
+                                        "report": report, "correction_history": history[-5:]}
+            # Run again under its id, a retired workflow is a retained one again.
+            self._retired_api_scenarios = [entry for entry in self._retired_api_scenarios
+                                           if entry["scenario_id"] != scenario_id]
+            if dropped:
+                self._api_scenarios[key]["submitted_requests"] = submitted
+            elif previous is not None and not changed and previous.get("submitted_requests") is not None:
+                self._api_scenarios[key]["submitted_requests"] = previous["submitted_requests"]
+            self._app_validation_cache = None
+        if scenario_id:
+            report["scenario_id"] = scenario_id
+        if dropped and ran:  # ran here means it booted: anything else returned above
+            report["restored_checks"] = (f"Your correction left out checks that passed last run; they were "
+                                         f"added back at the end and passed: {shown}. Rerun this scenario "
+                                         "by scenario_id alone; resending your own list keeps them too.")
+        return report
+
+    def _retire_api_scenario(self, scenario_id: str | None, reason: Any) -> dict:
+        """Stop replaying a workflow another one replaced; the report still lists it, with the reason."""
+        record = self._api_scenarios.get("named:" + scenario_id) if scenario_id else None
+        if record is None:
+            return {"error": "Unknown scenario_id; use action=list to find retained workflows."}
+        if not isinstance(reason, str) or not reason.strip():
+            return {"error": "Retiring a workflow requires correction_reason: why it no longer tests the "
+                             "specification, e.g. the scenario that replaced it."}
+        del self._api_scenarios["named:" + scenario_id]
+        self._retired_api_scenarios.append({"scenario_id": scenario_id, "reason": reason.strip()[:1000],
+                                            "last_status": record["report"].get("status")})
+        self._app_validation_cache = None
+        logger.warning("Run %s: test workflow %r retired by the agent (%s)", self.run_id, scenario_id,
+                       reason.strip()[:200])
+        return {"retired": scenario_id,
+                "note": "It no longer runs or blocks completion; the run's report lists it as retired, with this reason."}
+
+    def _collect_api_scenario_issues(self) -> list[str]:
+        """Replay retained scenarios against changed source so old green results cannot hide regressions."""
+        from besser.spec_driven_agent.validation.api_probe import DID_NOT_RUN_BOOTS
+
+        revision = self._workspace_revision()
+        issues = []
+        for index, record in enumerate(list(self._api_scenarios.values()), 1):
+            if record["revision"] != revision:
+                record["report"] = self._test_api({**record["scenario"], "scenario_id": record.get("scenario_id")})
+                record["revision"] = revision
+            report = record["report"]
+            if report.get("status") != "passed":
+                detail = report.get("error") or json.dumps({
+                    "assertion_failures": report.get("assertion_failures", []),
+                    "request_errors": [{"path": response.get("path"), "error": response["error"]}
+                                       for response in report.get("responses", []) if response.get("error")],
+                })
+                scenario_id = record.get("scenario_id") or f"workflow {index}"
+                if report.get("boot") in DID_NOT_RUN_BOOTS:
+                    # Kept and replayed on the next revision, but a scenario
+                    # that never ran is no evidence the app is wrong.
+                    issues.append(runtime_check_unverified(f"api scenario {scenario_id}", detail[:500]))
+                    continue
+                issues.append(
+                    f"api scenario: {scenario_id} failed: {detail[:2500]}. "
+                    "Inspect its exact requests and expected values with test_api(action='get', "
+                    f"scenario_id={scenario_id!r}). The original specification is authoritative: "
+                    "fix the application if its behavior is wrong; if the generated test is wrong, "
+                    "resubmit this scenario with correction_reason grounded in the specification; "
+                    "if another scenario replaced it, retire it with test_api(action='retire', "
+                    f"scenario_id={scenario_id!r}, correction_reason=...)."
+                )
+        return issues
+
+    def _collect_validation_issues(self) -> list[ValidationIssue]:
+        """Collect all validation issues from the output directory.
+
+        Returns ``ValidationIssue`` records with severity. The
+        Phase 3 fix loop only acts on ``blocker`` items when
+        ``auto_fix_issues`` is enabled.
+        """
+        # The checks run in fresh sandboxes, but they read and build this
+        # workspace: nothing the model left running may write to it meanwhile.
+        self.executor.stop_shell_processes()
+        # Repair the build configuration BEFORE looking for defects in it.
+        # The class-only path never asks the model for a Vite config: across
+        # 192 recorded class-only runs, 192 had none and 96 also had a JSX
+        # file with no React import, which is a guaranteed blank page. This
+        # writes the config (with @vitejs/plugin-react, which is also what
+        # makes the missing import harmless), so the fix loop neither sees
+        # nor pays to repair a defect we can settle for free - and, unlike
+        # the packaging-time hook, it puts back a config a Phase 3 edit
+        # deleted. Idempotent; it never overwrites what a project already has.
+        project_name = (self._source_project_export or {}).get("name") or ""
+        for repair in ensure_frontend_scaffold(self.output_dir, app_name=project_name):
+            logger.info("Auto-fixed: %s", repair)
+        build_contexts = compose_build_contexts(self.output_dir)
+        self._restore_scaffold_requirements(build_contexts)
+        raw_issues: list[str] = [
+            required_check_unverified(
+                "model assembly",
+                f"{issue['diagram_type']} [{issue['diagram_id']}]: {issue['diagnostic']}; "
+                "correct the project input and regenerate",
+            ) for issue in self._assembly_issues
+        ]
+
+        for fpath in _python_files(self.output_dir):
+            syntax_error = python_syntax_error(
+                fpath, os.path.relpath(fpath, self.output_dir).replace("\\", "/"))
+            if syntax_error:
+                raw_issues.append(syntax_error)
+
+        for root, files in walk_app_tree(self.output_dir):
+            for fname in files:
+                fpath = os.path.join(root, fname)
+                rel = os.path.relpath(fpath, self.output_dir).replace("\\", "/")
+
+                # Check Dockerfiles, including multi-service layouts
+                # (Dockerfile.frontend / Dockerfile.backend), not only the
+                # exact name "Dockerfile".
+                if _is_dockerfile(fname):
+                    try:
+                        with open(fpath, "r", encoding="utf-8") as f:
+                            content = f.read()
+                        # npm ci without a lock file -> should be npm install.
+                        # Searched across the WHOLE project, not just beside the
+                        # Dockerfile: a root Dockerfile.frontend typically COPYs
+                        # from a frontend/ subdirectory, so its own directory alone
+                        # would miss lockfiles that exist.
+                        if "npm ci" in content:
+                            if not _project_has_npm_lockfile(self.output_dir):
+                                # Auto-fix this common mistake
+                                # Later repairs must start from this content, or
+                                # they write ``npm ci`` back.
+                                content = content.replace("npm ci", "npm install")
+                                with open_plain_write(fpath, "w", root=self.output_dir, encoding="utf-8") as f:
+                                    f.write(content)
+                                logger.info("Auto-fixed: %s: npm ci -> npm install (no lock file)", rel)
+                        # COPY of a package-lock.json that does not exist is a
+                        # HARD build failure ("failed to compute cache key"), and
+                        # the LLM cannot write a lockfile - npm resolves it from
+                        # the registry. Strip the reference; package.json alone
+                        # is enough for `npm install`.
+                        if "package-lock.json" in content and not _project_has_npm_lockfile(
+                            self.output_dir
+                        ):
+                            stripped = _strip_missing_lockfile_copy(content)
+                            if stripped != content:
+                                content = stripped
+                                with open_plain_write(fpath, "w", root=self.output_dir, encoding="utf-8") as f:
+                                    f.write(content)
+                                logger.info(
+                                    "Auto-fixed: %s: dropped COPY of a "
+                                    "package-lock.json that does not exist", rel,
+                                )
+
+                        # COPY sources resolve against the build context.
+                        raw_issues.extend(dockerfile_copy_issues(
+                            self.output_dir, fpath, content, build_contexts))
+                    except Exception:
+                        logger.warning("Dockerfile check failed for %s", rel, exc_info=True)
+
+        # Known runtime-incompatible pairs (dependency_pins.py). pip resolves
+        # them without complaint, so the dry-run below cannot catch them.
+        for root, files in walk_app_tree(self.output_dir):
+            for fname in files:
+                if fname == "requirements.txt":
+                    fpath = os.path.join(root, fname)
+                    rel = os.path.relpath(fpath, self.output_dir).replace("\\", "/")
+                    try:
+                        for note in pin_requirements_file(fpath, self.output_dir):
+                            logger.info("Auto-fixed: %s: %s", rel, note)
+                    except Exception:
+                        logger.warning("dependency pin check failed for %s", rel, exc_info=True)
+
+        # Dependency resolution may execute untrusted build backends and
+        # access the network. Keep it behind the same explicit shell-tools
+        # trust gate as run_command/install_dependencies, and in the same
+        # sandbox: network on (pip must reach the index), everything else
+        # confined like run_command.
+        if self.allow_shell_tools:
+            for root, files in walk_app_tree(self.output_dir):
+                for fname in files:
+                    if fname == "requirements.txt":
+                        req_path = os.path.join(root, fname)
+                        rel = os.path.relpath(req_path, self.output_dir).replace("\\", "/")
+                        raw_issues.extend(self._revision_cached(
+                            f"pip [{rel}]", (), lambda rel=rel: self._pip_dry_run_issues(rel)))
+
+        # Static checks catch per-project compile errors that would
+        # otherwise only surface at deploy time. ruff is near-instant
+        # and always runs; the project compilers (tsc / cargo /
+        # kotlinc) can add minutes of wall-clock and are gated behind
+        # ``enable_toolchain_validation`` so the web deployment can
+        # opt out per deploy. Required TS/frontend checks record an explicit
+        # verification gap when opted out; optional lint remains advisory.
+        raw_issues.extend(self._collect_frontend_contract_issues())
+        raw_issues.extend(_method_button_source_issues(self.output_dir))
+        raw_issues.extend(action_implementation_issues(
+            self.output_dir, self._expected_action_endpoints(),
+        ))
+        try:
+            from besser.spec_driven_agent.validation.endpoint_coherence import (
+                collect_endpoint_coherence_issues,
+            )
+
+            # Warning severity: _classify_issue deliberately leaves this prefix
+            # at the conservative warning default. Promote to blocker only after
+            # a measured false-positive review.
+            raw_issues.extend(collect_endpoint_coherence_issues(self.output_dir))
+        except Exception as exc:
+            logger.warning("Endpoint coherence validation failed", exc_info=True)
+            raw_issues.append(_check_did_not_run(
+                "the endpoint coherence check", f"it crashed: {type(exc).__name__}"))
+        raw_issues.extend(self._collect_framework_switch_issues())
+        raw_issues.extend(self._collect_missing_frontend_issue())
+        raw_issues.extend(self._collect_data_contract_issues())
+        raw_issues.extend(self._collect_model_conformance_issues())
+
+        # Model-derived acceptance matrix: per entity — route present,
+        # page present, create wired. REPORT-ONLY (warnings + recipe
+        # field): a GUI-scoped run may legitimately omit entities, so
+        # these are visibility, never blockers. It measures web routes and
+        # pages, so it says nothing about a native or CLI target.
+        raw_issues.extend(self._acceptance_matrix_issues())
+
+        execution_issues = self._collect_execution_issues()
+        # An enabled ledger that extracted nothing verified nothing. Saying so
+        # is the difference between "the user asked for nothing" and "we never
+        # looked".
+        if (self.enable_requirements_ledger and self._requirements is None
+                and self._requirement_extraction_attempts):
+            raw_issues.append(_check_did_not_run(
+                "the requirements ledger",
+                f"{self._requirement_extraction_attempts} extraction attempt(s) on "
+                f"{getattr(self.client, 'model', 'this model')} returned nothing",
+            ))
+        # Only an observed failure defers the judge; an unverified create or
+        # action (e.g. a guessed POST refused by login) says nothing about the app.
+        if not self.enable_requirements_ledger or not _hard_blockers(
+                [i for i in map(_classify_issue, execution_issues) if i.severity == "blocker"]):
+            raw_issues.extend(self._collect_requirement_issues())
+        else:
+            raw_issues.append("validation: business-requirement judgment deferred until startup/data-entry blockers are fixed")
+        raw_issues.extend(self._collect_task_issues())
+        raw_issues.extend(self._collect_ruff_issues())
+        raw_issues.extend(execution_issues)
+        raw_issues.extend(self._authorization_issues())
+        # The TS collector reports a relevant disabled check as unknown; it
+        # never enables tooling. Already-authorized dependency setup is an
+        # actionable verification prerequisite, not a request for source edits.
+        raw_issues.extend(self._collect_tsc_issues())
+        raw_issues.extend(self._format_notes)
+        raw_issues.extend(_collect_uncompiled_source_issues(
+            self.output_dir,
+            frozenset({".rs", ".kt"}) if self.enable_toolchain_validation else frozenset()))
+        if self.enable_toolchain_validation:
+            raw_issues.extend(self._collect_cargo_issues())
+            raw_issues.extend(self._collect_kotlinc_issues())
+        else:
+            logger.info(
+                "Phase 3: toolchain validation (tsc/cargo/kotlinc) disabled "
+                "for this run"
+            )
+
+        # Every import a generated frontend makes must resolve to a file it
+        # ships or a package it declares, and a JSX file needs React in scope
+        # unless the project configures the automatic runtime. Pure
+        # filesystem: no install, no bundler, no shell, so unlike
+        # ``frontend_build`` below it runs in every configuration.
+        #
+        # The probe boots the backend and drives HTTP; it never renders a page,
+        # so a blank frontend can carry a perfect probe score.
+        # ``React is not defined`` is a runtime error in a bundle that builds
+        # cleanly, which is why the build check cannot substitute for this.
+        from besser.spec_driven_agent.validation.frontend_resolution import (
+            collect_frontend_resolution_issues,
+        )
+        raw_issues.extend(collect_frontend_resolution_issues(self.output_dir))
+        raw_issues.extend(self._frontend_form_issues())
+
+        from besser.spec_driven_agent.validation.frontend_build import collect_frontend_build_issues
+        build_verdicts = self._frontend_build_verdicts
+        remaining = self.max_runtime_seconds - (
+            time.monotonic() - self._start_time if self._start_time is not None else 0)
+        raw_issues.extend(collect_frontend_build_issues(
+            self.output_dir, enabled=self.enable_toolchain_validation,
+            allow_shell=self.allow_shell_tools, source_revision=self._workspace_revision,
+            build_verdicts=build_verdicts, can_run=self._verification_call_allowed,
+            timeout=remaining,
+        ))
+
+        issues = [_classify_issue(s) for s in drop_duplicate_python_findings(raw_issues)]
+        # For the duration of a fix/modify run, promote findings that match
+        # the user-reported target from warning to blocker so the Phase 3
+        # fix loop is driven to resolve them and the success gate keys on
+        # them. Non-matching findings keep their severity. No-op on
+        # from-scratch runs (``_is_fix_run`` is only set in modify()).
+        return sorted(self._promote_fix_target_findings(issues), key=self._repair_priority)
+
+    _SCAFFOLD_FAMILIES = {
+        "generate_fastapi_backend": "fastapi",
+        "generate_web_app": "fastapi",
+        "generate_rest_api": "fastapi",
+        "generate_django": "django",
+    }
+
+    def _scaffold_family(self) -> str | None:
+        return self._SCAFFOLD_FAMILIES.get(self._generator_used or "")
+
+    def _restore_scaffold_requirements(self, build_contexts: dict[str, str]) -> None:
+        """Put back a requirements.txt a Phase 2 edit deleted from a FastAPI scaffold.
+
+        A repair step, run before validation (which only reports). The default
+        it writes is the FastAPI stack, so only that scaffold family gets it,
+        and only where a Dockerfile's COPY resolves in the build context.
+        """
+        if self._scaffold_family() != "fastapi":
+            return
+        workspace = os.path.realpath(self.output_dir)
+        for root, dirs, files in walk_plain(self.output_dir):
+            dirs[:] = [d for d in dirs if d not in ("node_modules", ".git", _SNAPSHOT_DIR)]
+            for fname in files:
+                if not _is_dockerfile(fname):
+                    continue
+                fpath = os.path.join(root, fname)
+                try:
+                    with open(fpath, "r", encoding="utf-8") as f:
+                        content = f.read()
+                except OSError:
+                    continue
+                for path in missing_copy_manifests(fpath, content, build_contexts):
+                    target = os.path.dirname(path)
+                    inside = os.path.realpath(target).startswith(workspace + os.sep)
+                    if (os.path.basename(path) == "requirements.txt" and inside
+                            and os.path.isdir(target) and _ensure_requirements_txt(target)):
+                        logger.info("Auto-fixed: restored missing %s",
+                                    os.path.relpath(path, self.output_dir))
+
+    def _install_scaffold_frontend_dependencies(self) -> None:
+        """Install the deterministic frontend's declared packages, once.
+
+        The scaffold ships a package.json and no node_modules, so the first
+        thing the model tries against the frontend fails, and discovering why
+        costs many turns and a large share of the run's spend. The validator
+        deliberately refuses to install (it must report
+        the workspace, not change it -- see ``test_validation_honesty``), so
+        this belongs here, at scaffold time, where writing files is the point.
+
+        Best-effort and silent on failure: the model keeps its own
+        ``install_dependencies`` tool, and ``collect_frontend_build_issues``
+        still reports an uninstalled frontend.
+        """
+        import subprocess
+
+        if not self.allow_shell_tools:
+            return  # same authorization the model's install tool runs under
+        npm = shutil.which("npm") or shutil.which("npm.cmd")
+        if not npm:
+            return
+        for folder, dirs, files in walk_plain(self.output_dir):
+            dirs[:] = [d for d in dirs if d not in ("node_modules", ".git")]
+            if "package.json" not in files or os.path.isdir(
+                    os.path.join(folder, "node_modules")):
+                continue
+            try:
+                # Sandboxed like run_command: npm runs the packages' install
+                # scripts, and a continued repo supplies its own package.json.
+                run_confined(
+                    [npm, "install", "--no-audit", "--no-fund"], cwd=folder,
+                    workspace=self.output_dir, network=True,
+                    env=_safe_subprocess_env(),
+                    timeout=_SCAFFOLD_INSTALL_TIMEOUT_SECONDS,
+                )
+                logger.info("Phase 1: installed frontend dependencies in %s",
+                            os.path.relpath(folder, self.output_dir))
+            except SandboxUnavailable as exc:
+                logger.warning("Phase 1: dependency install skipped for %s, "
+                               "sandbox unavailable: %s", folder, exc)
+            except (subprocess.TimeoutExpired, OSError) as exc:
+                logger.info("Phase 1: dependency install skipped for %s (%s)",
+                            folder, exc)
+
+    def _collect_framework_switch_issues(self) -> list[str]:
+        """BLOCKER when generated code imports a rival framework.
+
+        A weak model can rewrite a FastAPI scaffold into a Flask hybrid via
+        write_file (bypassing delete protection) and ship an unbootable mix.
+        The HARD-CONSTRAINTS prompt forbids this; Phase 3 enforces it.
+        """
+        family = self._scaffold_family()
+        # A rival the USER asked for is the request, not a switch.
+        rivals = effective_rivals(family, self._instructions)
+        if not rivals:
+            return []
+        offenders: list[str] = []
+        for root, files in walk_app_tree(self.output_dir):
+            for fname in files:
+                if not fname.endswith(".py"):
+                    continue
+                fpath = os.path.join(root, fname)
+                rel = os.path.relpath(fpath, self.output_dir).replace("\\", "/")
+                if rel.startswith(".besser_"):
+                    continue
+                try:
+                    with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
+                        content = f.read()
+                except Exception:
+                    continue
+                for rival in rivals:
+                    if _re.search(rf"^\s*(?:from|import)\s+{rival}\b", content, _re.MULTILINE):
+                        offenders.append(f"{rel} (imports {rival})")
+                        break
+        if not offenders:
+            return []
+        shown = ", ".join(offenders[:6])
+        more = f" (+{len(offenders) - 6} more)" if len(offenders) > 6 else ""
+        return [
+            f"frontend contract: framework switch — the scaffold is {family} "
+            f"but these files import a rival framework: {shown}{more}. "
+            f"Remove the rewrite and extend the existing {family} app."
+        ]
+
+    # "web application" must match: a trailing \b after "app" cannot match
+    # when the word continues into "lication", and that is the most natural
+    # phrasing of the request. Every alternative here has to tolerate the
+    # word being spelled out.
+    # Deliberately NOT included: "spa" — a hotel spec has one.
+    _WEBAPP_ASK_RE = _FRONTEND_ASK_RE
+
+    def _asks_for_frontend(self) -> bool:
+        """The run must ship a web frontend: a ``web_app`` target, or, with no
+        target decided, web-app vocabulary or a bare "app" on create."""
+        if self.target is not None:
+            return self.target.is_web_app
+        return requests_frontend(self._instructions, bare_app=not self._modify_mode)
+
+    def _has_frontend_files(self) -> bool:
+        for root, files in walk_app_tree(self.output_dir):
+            # Not the harness's folders: a snapshot, the tree a rollback parks.
+            if os.path.relpath(root, self.output_dir).replace("\\", "/").startswith(".besser_"):
+                continue
+            for fname in files:
+                if fname.endswith((".js", ".jsx", ".ts", ".tsx", ".html")) or fname == "package.json":
+                    return True
+        return False
+
+    _FRONTEND_CHECKLIST_TASK = (
+        "Create the React frontend (none exists yet) — write these files "
+        "with write_file: frontend/package.json (react, react-dom, "
+        "react-router-dom, vite), frontend/index.html, "
+        "frontend/src/main.jsx, frontend/src/App.jsx (router with a home "
+        "route + nav), frontend/src/api.js (fetch helpers for the backend "
+        "routes), and per entity frontend/src/pages/<Entity>List.jsx with "
+        "a table plus working Create/Edit/Delete wired to the API. This "
+        "task cannot be marked done until frontend files exist on disk."
+    )
+    _FRONTEND_TASK_FILES_CLAUSE = "This task cannot be marked done until frontend files exist on disk."
+
+    # The text both checklist variants start with; a checkpoint is matched on it.
+    _FRONTEND_TASK_PREFIX = _FRONTEND_CHECKLIST_TASK.split(_FRONTEND_TASK_FILES_CLAUSE)[0].rstrip()
+
+    def _routed_entity_pages(self) -> dict[str, bool]:
+        """{class: has a frontend page} for each model class with a backend route
+        (acceptance matrix), association classes left out: they are edited inline."""
+        from besser.BUML.metamodel.structural import AssociationClass
+        from besser.spec_driven_agent.validation.acceptance import build_acceptance_matrix
+
+        linked = {cls.name for cls in self.domain_model.get_classes() if isinstance(cls, AssociationClass)}
+        matrix = build_acceptance_matrix(self.output_dir, self.domain_model) or {}
+        return {cls: bool(cells.get("page")) for cls, cells in sorted(matrix.items())
+                if cells.get("route") and cls not in linked}
+
+    def _frontend_checklist_task(self) -> dict:
+        """The 'build the frontend' item. With no GUI model the LLM authors the
+        screens: the item names the routed classes, and closes on an app with at
+        least one entity screen, not on its first file. Classes left without a page
+        stay acceptance warnings. With a GUI model (or no routes yet) any frontend
+        file closes it."""
+        routed = list(self._routed_entity_pages()) if self.gui_model is None and self.domain_model else []
+        if not routed:
+            return {"text": self._FRONTEND_CHECKLIST_TASK, "verify": self._has_frontend_files}
+        text = self._FRONTEND_CHECKLIST_TASK.replace(self._FRONTEND_TASK_FILES_CLAUSE, (
+            f"Build a screen for each class with backend routes ({', '.join(routed)}) unless the request "
+            "scopes the UI to fewer screens, in which case the request wins."))
+        return {"text": text, "verify": self._frontend_has_entity_screen}
+
+    def _reattach_frontend_verifier(self) -> None:
+        """Give a restored frontend item its verifier, matched on the stable prefix.
+
+        ``restore_tasks`` matches verifiers by exact text, and the text names the
+        routed classes (and changed between versions); the item is also seeded only
+        while no frontend file exists, so a frontend written before the crash would
+        leave it with none.
+        """
+        if not self._asks_for_frontend():
+            return
+        verify = self._frontend_checklist_task()["verify"]
+        for task in getattr(self.executor, "_tasks", []):
+            if task.get("verify") is None and task["text"].startswith(self._FRONTEND_TASK_PREFIX):
+                task["verify"] = verify
+
+    def _frontend_has_entity_screen(self) -> bool:
+        """Frontend files exist, at least one routed class has a page, and the app
+        renders a route that can serve home (files alone, if no class is routed).
+
+        The route check: an ``entities.js`` naming every class marks each one as a
+        page in the matrix, before any screen exists (r10-p81, r11-p81).
+        """
+        if not self._has_frontend_files():
+            return False
+        pages = self._routed_entity_pages()
+        return not pages or (any(pages.values()) and self._frontend_route_serves_home())
+
+    def _frontend_route_serves_home(self) -> bool:
+        """``frontend_contract``'s home-route signal: a route that is an index, "/" or computed."""
+        from besser.spec_driven_agent.validation.frontend_contract import _CodeFiles, _route_may_serve_home
+
+        files = []
+        for root, names in walk_app_tree(self.output_dir):
+            for name in names:
+                if not name.endswith((".js", ".jsx", ".ts", ".tsx")):
+                    continue
+                path = os.path.join(root, name)
+                try:
+                    if os.path.getsize(path) > _FRONTEND_SOURCE_MAX_BYTES:
+                        continue
+                    with open(path, "r", encoding="utf-8", errors="ignore") as handle:
+                        files.append((os.path.relpath(path, self.output_dir).replace("\\", "/"), handle.read()))
+                except OSError:
+                    continue
+        return bool(_route_may_serve_home(_CodeFiles(files)))
+
+    def _deterministic_gap_tasks(self) -> list[str]:
+        """Checklist items the harness ADDS regardless of the planner.
+
+        With a backend-only scaffold, no layer
+        explicitly ORDERS the frontend — the gap planner assumes the
+        scaffold has screens, and prompt Rule 15 is prose a terse model
+        skips. Making it a checklist item puts it behind the end_turn
+        gate, which is enforcement, not prose.
+        """
+        tasks: list = []
+        if self._asks_for_frontend() and not self._has_frontend_files():
+            # Cheat-proof: done is refused until the frontend exists.
+            tasks.append(self._frontend_checklist_task())
+        if not self._modify_mode and agent_data_requirement(self.agent_model, self.domain_model):
+            # The requirements judge checks it in Phase 3 (agent_data); a modify
+            # run's app already has an agent, so only the judge applies there.
+            tasks.append(AGENT_DOMAIN_TASK.format(agent=self.agent_model.name))
+        tasks.extend(action_gap_tasks(self.output_dir, self._expected_action_endpoints()))
+        tasks.extend(self._unenforced_rule_tasks())
+        if not self._modify_mode and self._scaffold_family() == "fastapi":
+            tasks.extend(derived_attribute_tasks(self.domain_model))
+            # A path the user wrote must exist verbatim, whatever the planner judged.
+            tasks.extend(requested_route_tasks(
+                self.output_dir, _requirements_ledger.original_request(self._instructions)))
+        tasks.extend(self._conversion_recovery_tasks())
+        return tasks
+
+    def _conversion_recovery_tasks(self) -> list:
+        """The one checklist item per rejected model constraint.
+
+        The text is the requirement's own, so the requirements judge can close
+        it (``_collect_task_issues``). On a FastAPI scaffold a planning note says
+        where the check can run: a rule reading related rows needs the router
+        handler and the database session, not a Pydantic validator.
+        """
+        tasks: list = []
+        for item in self._requirements_for_validation():
+            if not item.get("conversion_issue_id"):
+                continue
+            if self._scaffold_family() == "fastapi":
+                tasks.append({"text": item["text"], "planning_notes": [
+                    _placement_advice(item["text"], "the generated Pydantic schemas (pydantic_classes.py)")]})
+            else:
+                tasks.append(item["text"])
+        return tasks
+
+    def _expected_action_endpoints(self):
+        # Keep initial obligations even if a handler is deleted, and discover
+        # handlers introduced after an initially empty/from-scratch scaffold.
+        known = {(item.path, item.http_method, item.route, item.router_binding, item.router_prefix): item
+                 for item in self._action_endpoints or []}
+        for item in collect_action_endpoints(self.output_dir):
+            known.setdefault((item.path, item.http_method, item.route, item.router_binding, item.router_prefix), item)
+        self._action_endpoints = list(known.values())
+        return self._action_endpoints
+
+    def _collect_task_issues(self) -> list[str]:
+        conversion_requirements = [item for item in self._requirements_for_validation()
+                                   if item.get("conversion_issue_id")]
+        verified_conversion_texts = set()
+        if self.enable_requirements_ledger and conversion_requirements:
+            # Phase 3 may implement a rule without closing its Phase 2 task.
+            # Only the current source+requirements judgment can discharge it;
+            # a stale verdict or a task_list claim cannot.
+            verdicts = self._requirement_judgments.get(
+                self._requirement_cache_key(self._requirements_to_judge()), [],
+            )
+            verified_ids = {item["id"] for item in _requirements_ledger.verify_evidence(
+                verdicts, self.output_dir,
+            ) if item["status"] == "implemented"}
+            verified_conversion_texts = {item["text"] for item in conversion_requirements
+                                         if item["id"] in verified_ids}
+        issues = []
+        for task in self.executor.open_tasks() + self.executor.blocked_tasks():
+            if task["text"] in verified_conversion_texts:
+                task.update(done=True, blocked=False, verification="evidence_checked")
+                task.pop("blocked_reason", None)
+                continue
+            verify = task.get("verify")
+            if verify is not None:
+                try:
+                    if verify():
+                        # A Phase 3 edit can satisfy a formerly blocked structural
+                        # task; evaluate the real callback, never trust the claim.
+                        self.executor._task_list({"action": "done", "id": task["id"]})
+                        continue
+                except Exception:
+                    pass  # The task remains unresolved, not successful.
+            issues.append(
+                f"task unverified: task {task['id']} remains unresolved: {task['text']}. "
+                f"{task.get('blocked_reason', '')} Inspect and implement the required work; "
+                "record exact current evidence with task_list (existing=true is allowed "
+                "for an implementation already present; acceptance still needs verification)."
+            )
+        return issues
+
+    def _unenforced_rule_tasks(self) -> list[str]:
+        """One task per modeled OCL rule the generators could not enforce.
+
+        The pydantic generator declines a constraint that spans relationships
+        and leaves a NOTE in the schema (pydantic_classes_template.py.j2). The
+        rule is the user's own words in the model, so it is checklist work,
+        not a comment that can be shipped unimplemented. FastAPI scaffolds
+        only - the placement names a router file.
+        """
+        if self._scaffold_family() != "fastapi" or self.domain_model is None:
+            return []
+        from besser.generators.pydantic_classes.ocl_utils import parse_ocl_constraint
+        from besser.spec_driven_agent.planning.model_rules import deferred_collection_minimum
+        tasks: list[str] = []
+        for constraint in list(getattr(self.domain_model, "constraints", None) or []):
+            context = getattr(constraint, "context", None)
+            if context is None or getattr(constraint, "language", "OCL") != "OCL":
+                continue
+            try:
+                parsed = parse_ocl_constraint(constraint, self.domain_model)
+            except Exception:
+                parsed = None
+            if not (isinstance(parsed, dict) and parsed.get("skipped")):
+                continue
+            cls = context.name
+            deferred = deferred_collection_minimum(constraint)
+            enforced = constraint.expression
+            if deferred is not None:
+                end, others = deferred
+                if not others:
+                    enforced = None
+                else:
+                    enforced = (f"{' and '.join(others)} (the rest of the rule; its minimum on "
+                                f"{end.name} is reported, not enforced)")
+            if enforced is not None:
+                tasks.append(
+                    f"Enforce the modeled rule '{constraint.name}' of {cls} - OCL: "
+                    f"{enforced}. The generators could not express it "
+                    "(it spans relationships), so nothing enforces it yet: implement "
+                    f"the check in the create and update endpoints of routers/{cls.lower()}.py "
+                    "and in every modeled method that changes the values involved, and "
+                    "refuse a violating request with HTTP 400 naming the rule."
+                )
+            if deferred is not None:
+                # Refused at creation, the record could never be created; refused
+                # at removal, its related records could never be deleted or moved.
+                tasks.append(
+                    f"Report the modeled rule '{constraint.name}' of {cls} - OCL: "
+                    f"{constraint.expression}. Each {end.type.name} belongs to one {cls} and needs it "
+                    f"first, so a {cls} exists before any of its {end.name}: never refuse creating or "
+                    f"editing a {cls}, or deleting or moving one of its {end.name}, because of this "
+                    f"minimum, and show a {cls} below it as incomplete wherever it is listed. A later "
+                    f"step that needs a complete {cls} (submitting, confirming or starting it) may "
+                    "refuse an incomplete one with HTTP 400 naming the rule."
+                )
+        return tasks
+
+    def _collect_missing_frontend_issue(self) -> list[str]:
+        """BLOCKER when the user asked for a web app and got no frontend.
+
+        Otherwise 'build a hotel reservation web app' can ship an API-only
+        tree — presence of a backend reads as success.
+        Fires only when the request asks for a UI (``_asks_for_frontend``)
+        AND the workspace holds not a single frontend artifact
+        (js/ts/tsx/jsx/html or a package.json).
+        """
+        if not self._asks_for_frontend() or self._has_frontend_files():
+            return []
+        return [
+            "frontend contract: the instructions request a web app / "
+            "frontend, but the output contains no frontend files at all "
+            "(no js/ts/html, no package.json). Build the frontend — a "
+            "backend-only tree does not satisfy a web-app request."
+        ]
+
+    def _collect_data_contract_issues(self) -> list[str]:
+        """Sweep the workspace with the model-derived data-contract lint.
+
+        Same checks the executor already ran per-write (contract_checks
+        module) — this catches what slipped through anyway: files the
+        model wrote before a violation pattern existed in them, Phase 1
+        scaffold output, and violations introduced by one edit into
+        another file's assumptions. Blocker findings feed the Phase 3
+        fix loop via the ``data contract:`` prefix; advisory findings
+        are reported as warnings.
+        """
+        try:
+            from besser.spec_driven_agent.validation.contract_checks import (
+                build_data_contract,
+                collect_inverted_end_issues,
+                collect_undeclared_attribute_issues,
+                lint_file,
+            )
+            contract = build_data_contract(self.domain_model)
+        except Exception as exc:
+            # Returning [] here reported "no data-contract violations" when the
+            # truth was that the contract could not be built and nothing was
+            # checked. Say which it is.
+            logger.warning("Data-contract check could not run: %s", exc, exc_info=True)
+            return [_check_did_not_run("the data-contract check", str(exc)[:200])]
+        if contract is None:
+            # A legitimately empty contract (no domain model / no classes):
+            # nothing to check, not a failure.
+            return []
+
+        issues: list[str] = []
+        exts = (".py", ".js", ".jsx", ".ts", ".tsx")
+        for root, files in walk_app_tree(self.output_dir):
+            for fname in files:
+                if not fname.endswith(exts):
+                    continue
+                fpath = os.path.join(root, fname)
+                rel = os.path.relpath(fpath, self.output_dir).replace("\\", "/")
+                if rel.startswith(".besser_"):
+                    continue
+                try:
+                    if os.path.getsize(fpath) > 1_000_000:
+                        continue
+                    with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
+                        content = f.read()
+                except Exception:
+                    continue
+                for finding in lint_file(rel, content, contract):
+                    prefix = "data contract:" if finding.blocker else "data contract (advisory):"
+                    issues.append(
+                        f"{prefix} {finding.path} line {finding.line}: {finding.message}"
+                    )
+
+        # Two workspace-wide sweeps, not per-file lints: the bad read and the
+        # declaration that would excuse it live in different files, so neither
+        # can be decided from one file's text. Both score zero false positives
+        # on known-working apps, and both return finished ``data contract:``
+        # messages.
+        issues.extend(collect_inverted_end_issues(self.output_dir, contract))
+        issues.extend(collect_undeclared_attribute_issues(self.output_dir, contract))
+        return issues
+
+    def _planner_instructions(self, instructions: str) -> str:
+        """The request, then the requirements ledger as numbered lines.
+
+        The planner already reads the verbatim spec and still skips
+        requirements. A numbered list is something to diff against, not
+        prose to skim. The
+        extraction happens here, once per run, so Phase 2 and Phase 3 hold
+        the model to the same list.
+        """
+        if self.enable_requirements_ledger and self._requirements is None:
+            self._extract_requirements(instructions)
+        requirements = self._requirements_for_validation()
+        if not requirements:
+            return instructions
+        return (
+            f"{instructions}\n\n"
+            "## Requirements the user stated (each is verified after generation)\n\n"
+            f"{_requirements_ledger.render_requirements(requirements)}"
+        )
+
+    def _requirements_for_validation(self) -> list[dict]:
+        """Keep rejected model rules as obligations, independent of LLM extraction.
+
+        Do not insert them into the executable model or turn failed extraction
+        into a successful empty ledger. Model losses remain visible even when
+        the planner omits them or a checklist item is dropped.
+        """
+        requirements = list(self._requirements or [])
+        next_id = max((item["id"] for item in requirements), default=0) + 1
+        for issue in getattr(self.domain_model, "conversion_issues", []) or []:
+            if not isinstance(issue, dict) or is_dropped_by_model_change(issue):
+                continue  # dropped by the user's model change: reported, not recovered
+            expression = issue.get("expression") or issue.get("original_text") or ""
+            source = issue.get("source") or {}
+            label = issue.get("name") or issue.get("context") or issue.get("id") or "unnamed rule"
+            contract_kind = issue.get("kind") or "constraint"
+            target = issue.get("context") or "unknown context"
+            if issue.get("method"):
+                target += f"::{issue['method']}"
+            if contract_kind == "postcondition":
+                obligation = "The action must guarantee the intended state or result after successful execution. "
+            elif contract_kind == "precondition":
+                obligation = "The action must check the intended condition before execution and refuse when it fails. "
+            else:
+                obligation = "The application must enforce the intended behavior and reject violations. "
+            rename = issue.get(RENAMED)
+            follow = (f"The model renamed {rename['from']} to {rename['to']} since the last run: "
+                      "keep the rule and enforce it on the new name. " if rename else "")
+            text = (
+                f"Recover model constraint '{label}' rejected during conversion. "
+                f"Contract: {contract_kind} on {target}. {obligation}{follow}"
+                "Use the actual model/API relationship names. "
+                "Resolve conflicts in favor of the original user specification "
+                "and its requirements above; the rejected expression is source "
+                "intent, not executable code. "
+                f"Original OCL: {expression}. Conversion reason: {issue.get('reason', 'unknown')}. "
+                f"Source diagram: {source.get('diagram_title') or source.get('diagram_id') or 'unknown'}; "
+                f"element: {source.get('element_id') or 'unknown'}. "
+                "Verify the runtime enforcement, not just the presence of a model, "
+                "comment, task completion claim, or renamed expression. If the "
+                "intended behavior cannot be recovered from the original spec and "
+                "model, keep it unresolved rather than inventing a rule."
+            )
+            requirements.append({
+                "id": next_id, "kind": "action" if contract_kind == "postcondition" else "rule",
+                "text": text,
+                "conversion_issue_id": issue.get("id") or f"conversion-{next_id}",
+            })
+            next_id += 1
+        return requirements
+
+    def _requirements_to_judge(self) -> list[dict]:
+        """What Phase 3 judges: the validation list, the agent's use of the
+        model's data, and the per-entity checks of a non-web app (reported,
+        never planned as obligations)."""
+        requirements = self._requirements_for_validation()
+        derived = [item for item in [agent_data_requirement(self.agent_model, self.domain_model)] if item]
+        if not self._generator_used:
+            # A BESSER generator built the base (a BAF chatbot, Python classes):
+            # per-entity screens are not what it delivers.
+            derived += entity_requirements(self.target, self.domain_model)
+        next_id = max((item["id"] for item in requirements), default=0) + 1
+        return requirements + [{"id": next_id + i, **item} for i, item in enumerate(derived)]
+
+    def _collect_requirement_issues(self) -> list[str]:
+        """``requirement:`` blockers for what the user asked for and the code
+        does not do: the check of the app against the request itself, which
+        catches planned-but-unimplemented and never-planned requirements.
+        """
+        if not self.enable_requirements_ledger:
+            findings = ([required_check_unverified(
+                "original-specification coverage", "requirements ledger is disabled",
+            )] if _requirements_ledger.original_request(self._instructions).strip() else [])
+            findings.extend(
+                required_check_unverified("model conversion recovery", f"{item['text']} Requirements ledger is disabled")
+                for item in self._requirements_for_validation() if item.get("conversion_issue_id")
+            )
+            return findings
+        if self._requirements is None:
+            self._extract_requirements(self._instructions)
+        if self._requirements is None:
+            if (_requirements_ledger._is_real_provider(self.client)
+                    or getattr(self.domain_model, "conversion_issues", None)):
+                return [
+                    "requirement unverified: requirement extraction failed; "
+                    "the original specification has not been checked. Do not "
+                    "treat this as an empty requirement list or verified completion."
+                ]
+            return []  # Offline clients cannot run the optional LLM judge.
+        requirements = self._requirements_to_judge()
+        if not requirements:
+            return []
+        digest, digest_gaps = _requirements_ledger.build_app_digest_and_gaps(self.output_dir)
+        cache_key = self._requirement_cache_key(requirements)
+        imports = self._import_index(cache_key)
+        scope = json.dumps([requirements, self._instructions], sort_keys=True)
+        verdicts = self._requirement_judgments.get(cache_key)
+        checked = None  # the check of a fresh judgment, reused below when nothing was kept
+        # A judge outage is an unknown no code edit settles: a warning that
+        # still refuses verified completion, not a blocker that buys repair rounds.
+        judge_failed = required_check_unverified(
+            "the requirements judge",
+            "it returned no verdicts; coverage of the original specification has not been verified",
+        )
+        judge_stopped = ("requirement unverified: verification stopped or budget exhausted; "
+                         "original-specification coverage is not verified.")
+        if verdicts is None:
+            if not self._verification_call_allowed():
+                return [judge_stopped]
+            if cache_key in self._requirement_judge_failures:
+                return [judge_failed]  # the same prompt already failed; asking again re-rolls a full-price call
+            if len(self._requirement_judge_failures) >= _requirements_ledger.JUDGE_FAILED_ROUNDS_PER_RUN:
+                logger.warning("Requirements ledger: the judge returned nothing on %d revisions; "
+                               "not asked again this run", len(self._requirement_judge_failures))
+                return [f"{judge_failed} It failed on {len(self._requirement_judge_failures)} "
+                        "revisions and is not asked again this run."]
+            kept = self._requirements_still_verified(scope, imports)
+            to_judge = [item for item in requirements if item["id"] not in kept]
+            with self._traced_llm_call("requirements_judge") as call:
+                verdicts = _requirements_ledger.judge_coverage(
+                    to_judge, digest, self.client, original_spec=self._instructions,
+                    can_call=self._verification_call_allowed,
+                ) if to_judge else []
+                call.update(_judge_outcome(to_judge, verdicts))
+                if verdicts:
+                    checked = _requirements_ledger.verify_evidence(verdicts, self.output_dir, imports)
+                    call.update(_citation_outcome(verdicts, checked))
+            if verdicts is not None and kept:
+                logger.info("Requirements ledger: %d verdict(s) kept, their cited files are unchanged; "
+                            "%d judged again", len(kept), len(to_judge))
+                verdicts = sorted([*kept.values(), *verdicts], key=lambda item: item["id"])
+                checked = None
+        if verdicts is None:
+            if not self._verification_call_allowed():
+                return [judge_stopped]  # a stop mid-judgment is not a judge failure
+            self._requirement_judge_failures.add(cache_key)
+            return [judge_failed]
+        # Cache successful judgments only, keyed to the full bytes of the judged
+        # source, not the clipped prompt. An unchanged app must not 'improve' by chance.
+        self._requirement_judgments[cache_key] = verdicts
+        if len(self._requirement_judgments) > 8:
+            self._requirement_judgments.pop(next(iter(self._requirement_judgments)))
+        self._requirement_verdicts = checked if checked is not None else _requirements_ledger.verify_evidence(
+            verdicts, self.output_dir, imports,
+        )
+        # A partial/missing/unverified verdict about a file the digest left out or cut
+        # was not judged on the code; it joins the focused round with that file shown
+        # (the judge is told to answer unverified for code it was not shown).
+        unseen = {item["id"]: _requirements_ledger.named_digest_gaps(item, digest_gaps)
+                  for item in self._requirement_verdicts if item["status"] in ("partial", "missing", "unverified")}
+        unseen = {rid: paths for rid, paths in unseen.items() if paths}
+        unknown_ids = {item["id"] for item in self._requirement_verdicts
+                       if item["status"] == "unverified"} | set(unseen)
+        if (unknown_ids and cache_key not in self._requirement_evidence_retries
+                and len(self._requirement_judge_failures) < _requirements_ledger.JUDGE_FAILED_ROUNDS_PER_RUN
+                and self._verification_call_allowed()):
+            # Bad citations and unseen files need a bounded way to recover without
+            # gratuitous code edits. Rejudge only those entries once per revision;
+            # never reroll other missing/verified judgments on unchanged source.
+            self._requirement_evidence_retries.add(cache_key)
+            replacements = self._rejudge_unknown(requirements, unknown_ids, unseen, imports)
+            if replacements:
+                verdicts = [replacements.get(item["id"], item) for item in verdicts]
+                self._requirement_judgments[cache_key] = verdicts
+                self._requirement_verdicts = _requirements_ledger.verify_evidence(verdicts, self.output_dir, imports)
+        self._requirement_verdicts = _requirements_ledger.scope_to_output(
+            self._requirement_verdicts, self._ui_in_scope())
+        self._requirement_verdicts_scope = scope
+        self._requirement_verdicts_key = cache_key
+        return _requirements_ledger.ledger_issues(self._requirement_verdicts)
+
+    def _rejudge_unknown(self, requirements: list[dict], unknown_ids: set[int], unseen: dict[int, list[str]],
+                         imports: _requirements_ledger.ImportIndex) -> dict[int, dict]:
+        """The focused re-judge of the unknown verdicts: their files shown, each requirement's
+        taken in turn; one more round for an answer naming a file that round left out
+        (``_REJUDGE_ROUNDS``). Returns the raw verdicts that replace the first judge's.
+
+        Only a verified "implemented" replaces a verdict as it is: the focused digest omits
+        most of the app, so a missing/partial from it proves no absence. Otherwise the
+        CHECKED first verdict keeps its status and takes the re-judge's citation (when it
+        gave one), note and inspection paths: the first judge's note ("risk_service.py was
+        not provided") is stale (r12-p81), and a raw first "implemented" with the re-judge's
+        empty citation is not a verdict anyone gave (r13-p81).
+        """
+        files = _requirements_ledger._source_files(self.output_dir)
+        checked = {item["id"]: item for item in self._requirement_verdicts}
+        first = dict(checked)
+        focus = {rid: [*unseen.get(rid, []), *checked[rid].get("inspection_paths", []),
+                       *_requirements_ledger.cited_paths(checked[rid].get("evidence"))] for rid in sorted(unknown_ids)}
+        replacements: dict[int, dict] = {}
+        for round_number in range(1, _REJUDGE_ROUNDS + 1):
+            focus_paths = _requirements_ledger.focus_paths_in_turn(list(focus.values()))
+            shown_files = _requirements_ledger.resolved_focus_paths(files, focus_paths)
+            focused_digest, gaps, shown = _requirements_ledger.build_app_digest_details(
+                self.output_dir, focus_paths=focus_paths)
+            to_rejudge = [item for item in requirements if item["id"] in focus]
+            with self._traced_llm_call("requirements_rejudge") as call:
+                repair = _requirements_ledger.judge_coverage(
+                    to_rejudge, focused_digest, self.client, original_spec=self._instructions,
+                    previous_verdicts=[checked[rid] for rid in focus], can_call=self._verification_call_allowed,
+                )
+                call.update(_judge_outcome(to_rejudge, repair), round=round_number)
+                repaired = _requirements_ledger.verify_evidence(repair or [], self.output_dir, imports)
+                if repair:
+                    call.update(_citation_outcome(repair, repaired))
+            valid_ids = {item["id"] for item in repaired if item["status"] == "implemented"}
+            where = f"Judged again with {', '.join(shown_files)} shown" if shown_files else "Judged again on the whole app"
+            for item, verified in zip(repair or [], repaired):
+                rid = item["id"]
+                if rid in valid_ids:
+                    replacements[rid] = item
+                    continue
+                base = {key: value for key, value in first[rid].items()
+                        if key not in (*_requirements_ledger.VERDICT_FINGERPRINT_KEYS, _requirements_ledger.EVIDENCE_UNLOCATED)}
+                cited = bool(_requirements_ledger.render_evidence(item.get("evidence")).strip(": "))
+                # Its own "implemented" is kept and re-checked, so the reason is about its citation.
+                status = "implemented" if item.get("status") == "implemented" and cited else base["status"]
+                # Without a citation of its own the first one stays, and so does why it failed.
+                reason = "" if cited else _check_reason(str(first[rid].get("note") or ""))
+                replacements[rid] = {**base, "status": status,
+                                     "evidence": item["evidence"] if cited else base.get("evidence", ""),
+                                     "inspection_paths": item.get("inspection_paths", []),
+                                     "note": f"{where}: {item.get('note') or 'no note'}"
+                                             + (f" {reason}" if reason else "")}
+                checked[rid] = verified
+            # A file this round did not show whole (left out or cut), named by an answer that is
+            # not a verified implemented. The schema files a focused digest shows are not.
+            left_out = (frozenset(files) - shown) | gaps
+            named = {item["id"]: _requirements_ledger.named_digest_gaps(item, left_out)
+                     for item in repaired if item["id"] not in valid_ids}
+            named = {rid: paths for rid, paths in named.items() if paths}
+            if not named or not self._verification_call_allowed():
+                break
+            focus = {rid: [*paths, *focus[rid]] for rid, paths in named.items()}
+        return replacements
+
+    def _requirements_still_verified(self, scope: str,
+                                     imports: _requirements_ledger.ImportIndex) -> dict[int, dict]:
+        """The last pass's verified verdicts whose cited files, and the files
+        those import or are mounted by, are byte-identical (no call): an edit
+        elsewhere must not re-roll them. An edit to a cited file can break the
+        behaviour while the cited line survives."""
+        if scope != self._requirement_verdicts_scope:
+            return {}
+
+        def unchanged(hashes: dict[str, str]) -> bool:
+            return all(digest and _requirements_ledger.cited_file_hash(os.path.join(self.output_dir, rel)) == digest
+                       for rel, digest in hashes.items())
+
+        # A verdict recorded before dependency hashes existed has none to check.
+        previous = [item for item in self._requirement_verdicts if item.get("status") == "implemented"
+                    and item.get("cited_file_hashes") and unchanged(item["cited_file_hashes"])
+                    and unchanged(item.get("dependency_file_hashes") or {})]
+        return {item["id"]: item for item in _requirements_ledger.verify_evidence(previous, self.output_dir, imports)
+                if item["status"] == "implemented"}
+
+    def _format_python_output(self) -> None:
+        """Format the Python files the LLM wrote whole (``write_file``) in this run.
+
+        A file it only edited keeps its author's layout, generator files keep
+        the templates' own, and a modify run leaves the existing app alone. A
+        formatter that could not run is reported by Phase 3.
+        """
+        if self._modify_mode:
+            return
+        generated = {os.path.normcase(os.path.join(self.output_dir, p)) for p in self.executor._generator_files}
+        written = sorted(
+            os.path.relpath(path, self.output_dir).replace("\\", "/")
+            for path in self._llm_edited_paths_by(frozenset({"write_file"}))
+            if path.endswith(".py") and path not in generated
+        )
+        app_files = [rel for rel in written if not rel.startswith(("..", _SNAPSHOT_DIR, ".besser_"))]
+        self._format_notes = format_python_files(self.output_dir, app_files)
+        for note in self._format_notes:
+            logger.warning("Phase 2: %s", note)
+
+    def _ui_in_scope(self) -> bool:
+        """A UI the user asked for but the tree lacks keeps UI requirements in scope."""
+        return bool(
+            self._has_frontend_files() or self._asks_for_frontend()
+            or (self.target is not None and self.target.has_user_interface))
+
+    def _collect_frontend_contract_issues(self) -> list[str]:
+        # Its route and HTTP-write checks describe a React web app.
+        if self.target is not None and not self.target.is_web_app:
+            return []
+        return collect_frontend_contract_issues(self.output_dir)
+
+    def _import_index(self, cache_key: str) -> _requirements_ledger.ImportIndex:
+        """The import index of the judged tree ``cache_key`` names (it carries the
+        tree's fingerprint), reused until that tree changes."""
+        if self._import_index_cache is None or self._import_index_cache[0] != cache_key:
+            self._import_index_cache = (cache_key, _requirements_ledger.ImportIndex(self.output_dir))
+        return self._import_index_cache[1]
+
+    def _requirement_cache_key(self, requirements: list[dict]) -> str:
+        """What the judge answers: the source it reads, the requirements and
+        the specification. An edit elsewhere (README, a pin, a test) cannot
+        change its verdicts, so it must not pay for a new judgment."""
+        return hashlib.sha256(json.dumps([
+            _requirements_ledger.judged_source_fingerprint(self.output_dir),
+            requirements, self._instructions,
+        ], sort_keys=True).encode("utf-8")).hexdigest()
+
+    def _extract_requirements(self, instructions: str) -> None:
+        if self._stated_requirements is not None:
+            self._requirements = _requirements_ledger.stated_requirements_ledger(
+                self._stated_requirements, instructions)
+            self._stated_requirements = None  # decided once: used, or extract below
+            if self._requirements is not None:
+                self._requirements_source = "editor"
+                self._trace.write(EVENT_REQUIREMENTS, source="editor", items=self._requirements)
+                return
+        # One initial attempt and one recovery attempt; failed extraction stays
+        # unknown instead of being cached forever as a successful empty list.
+        if self._requirement_extraction_attempts >= 2 or not self._verification_call_allowed():
+            return
+        self._requirement_extraction_attempts += 1
+        before = self._safe_usage_counters()
+        with self._traced_llm_call("requirements_extraction") as call:
+            self._requirements = _requirements_ledger.extract_requirements(
+                instructions, self.client, can_call=self._verification_call_allowed)
+            call["outcome"] = "failed" if self._requirements is None else "ok"
+            call["requirements"] = len(self._requirements or [])
+        if self._requirements is not None:
+            self._requirements_source = "extracted"
+            after = self._safe_usage_counters()
+            # The extraction's own tokens, so the run trace can give the
+            # RequirementExtraction its LLM call (and not count them twice).
+            self._trace.write(
+                EVENT_REQUIREMENTS, source="extracted", items=self._requirements,
+                extraction_usage={key: after[key] - before.get(key, 0)
+                                  for key in after if isinstance(after[key], int)},
+                model=after.get("model"),
+            )
+        else:
+            # extract_requirements has five silent None paths; an empty list
+            # in the recipe would read as "the user asked for nothing" rather
+            # than "we never looked".
+            logger.warning(
+                "Requirements ledger: extraction returned nothing on attempt %d "
+                "(model %s); requirement verification will not run",
+                self._requirement_extraction_attempts, getattr(self.client, "model", "?"),
+            )
+
+    def _verification_call_allowed(self) -> bool:
+        """Do not start a paid extraction/judgment after a stop or spend cap."""
+        return not (
+            (self.max_cost_usd is not None and self.client.usage.estimated_cost >= self.max_cost_usd)
+            or (self._start_time is not None and time.monotonic() - self._start_time >= self.max_runtime_seconds)
+            or (self._should_continue is not None and not self._should_continue())
+        )
+
+    @staticmethod
+    def _is_project_tool_output(rel: str, names_by_dir: dict[str, set[str]]) -> bool:
+        """Whether ``rel`` lies in a ``_REVISION_PROJECT_OUTPUT_DIRS`` folder
+        that sits at the workspace root or next to its tool's manifest."""
+        parts = rel.split("/")[:-1]
+        for depth, part in enumerate(parts):
+            manifests = _REVISION_PROJECT_OUTPUT_DIRS.get(part)
+            if manifests is None:
+                continue
+            if depth == 0:
+                return True
+            siblings = names_by_dir.get("/".join(parts[:depth]), ())
+            if any(name == manifest or (manifest.startswith(".") and name.endswith(manifest))
+                   for name in siblings for manifest in manifests):
+                return True
+        return False
+
+    def _workspace_revision(self) -> str:
+        """Hash every authored file's path and content.
+
+        Runtime outputs (``_REVISION_IGNORED_SUFFIXES`` / ``_DIRS`` /
+        ``_PROJECT_OUTPUT_DIRS``) are skipped entirely, and data the app writes
+        counts by path only; ``_workspace_file_list`` has already dropped
+        dependency dirs and ``.besser_*``. A file is hashed up to
+        ``_REVISION_HASH_CAP`` bytes plus its size, so a large asset cannot
+        stall the check.
+        """
+        fingerprint = hashlib.sha256()
+        workspace = os.path.realpath(self.output_dir)
+        rels = sorted(self._workspace_file_list())
+        names_by_dir: dict[str, set[str]] = {}
+        for rel in rels:
+            folder, _, name = rel.rpartition("/")
+            names_by_dir.setdefault(folder, set()).add(name)
+        for rel in rels:
+            if (rel.lower().endswith(_REVISION_IGNORED_SUFFIXES)
+                    or _REVISION_IGNORED_DIRS.intersection(rel.split("/")[:-1])
+                    or self._is_project_tool_output(rel, names_by_dir)):
+                continue
+            path = os.path.realpath(os.path.join(workspace, rel))
+            try:
+                if os.path.commonpath([workspace, path]) != workspace:
+                    continue
+            except ValueError:
+                continue
+            fingerprint.update(rel.encode("utf-8"))
+            if rel.lower().endswith(_REVISION_PATH_ONLY_SUFFIXES):
+                fingerprint.update(b"\0")
+                continue
+            try:
+                with open(path, "rb") as source:
+                    fingerprint.update(source.read(_REVISION_HASH_CAP))
+                    fingerprint.update(str(os.fstat(source.fileno()).st_size).encode())
+            except OSError:
+                fingerprint.update(b"<unreadable>")
+            fingerprint.update(b"\0")
+        return fingerprint.hexdigest()
+
+
+    def _collect_ruff_issues(self) -> list[str]:
+        """Delegate to the toolchain module. The warn-once flag is run state,
+        so it is passed in and read back out."""
+        issues, self._warned_ruff_missing = _collect_ruff_issues(
+            self.output_dir, self.tool_calls_log, _WRITE_TOOLS_ON_RECORD,
+            getattr(self, "_warned_ruff_missing", False),
+        )
+        return issues
+
+    def _llm_edited_paths(self) -> set[str]:
+        """Delegate to the toolchain module."""
+        return self._llm_edited_paths_by(_WRITE_TOOLS_ON_RECORD)
+
+    def _llm_edited_paths_by(self, tools: frozenset[str]) -> set[str]:
+        """Absolute, normalised paths the LLM wrote with these tools."""
+        return _llm_edited_paths(self.output_dir, self.tool_calls_log, tools)
+
+    @staticmethod
+    def _ruff_line_path(line: str) -> str:
+        """Delegate to the toolchain module."""
+        return _ruff_line_path(line)
+
+    # Skips that a compiler run reports next to its verdict and whose cause is
+    # in the cache key (node_modules markers, the tree). Any other "did not
+    # run" - timeout, no sandbox, launch failure, unfetched crates, no network,
+    # a missing or disabled tool - keeps the result out of the cache: a later
+    # attempt may run, and those skips cost seconds, not minutes.
+    _STABLE_SKIP_REASONS = (
+        "dependencies are not installed; only partial source checks are possible",
+        "Android module: the build server has no Android SDK",
+    )
+
+    def _revision_cached(self, check: str, inputs: tuple, collect: Callable[[], list[str]]) -> list[str]:
+        """``collect()``'s findings, reused for the same tree and ``inputs``.
+
+        Phase 3 re-validates after no-edit rounds and after a rollback
+        restore; tsc, cargo, kotlinc and the pip dry-run cost up to 30-180 s
+        each for an answer that cannot have changed. A failure is a verdict
+        and is reused too; a result holding a check that did not run is not.
+        Keyed by revision, not just the latest one, so a restored tree hits.
+        In memory only, per run, like ``_runtime_probe_issues``.
+        """
+        results = self._check_results
+        key = (check, self._workspace_revision(), inputs)
+        if key in results:
+            return list(results[key])
+        issues = collect()
+        if not any(issue.startswith("validation")
+                   and not any(reason in issue for reason in self._STABLE_SKIP_REASONS)
+                   for issue in issues):
+            results[key] = list(issues)
+        return issues
+
+    def _pip_dry_run_issues(self, rel: str) -> list[str]:
+        """``pip install --dry-run`` of one requirements file, sandboxed."""
+        try:
+            result = run_confined(
+                [sys.executable, "-m", "pip", "install",
+                 "--dry-run", "-r", "requirements.txt", "--quiet"],
+                workspace=self.output_dir, network=True,
+                timeout=30,
+                cwd=os.path.dirname(os.path.join(self.output_dir, rel)),
+                # Never expose provider keys / OAuth secrets to a
+                # (possibly untrusted) requirements.txt's build
+                # backend, which pip may execute to resolve sdists.
+                env=_safe_subprocess_env(),
+            )
+        except SandboxUnavailable as exc:
+            return [_check_did_not_run(f"the dependency check for {rel}", str(exc))]
+        except Exception as exc:
+            # A timeout is "not checked", never "no conflict".
+            reason = ("timed out after 30s"
+                      if isinstance(exc, subprocess.TimeoutExpired)
+                      else type(exc).__name__)
+            return [_check_did_not_run(f"the dependency check for {rel}", reason)]
+        issue = dependency_check_issue(rel, result.stderr) if result.returncode != 0 else None
+        return [issue] if issue else []
+
+    def _collect_tsc_issues(self) -> list[str]:
+        """Delegate to the toolchain module, once per tree, install state and
+        compiler choice (host ``tsc``/``npm``, a project-local ``tsc``)."""
+        local_tsc = os.path.join("node_modules", ".bin", "tsc.cmd" if os.name == "nt" else "tsc")
+        installs = tuple(
+            (folder, install_markers(os.path.join(self.output_dir, folder)),
+             os.path.isfile(os.path.join(self.output_dir, folder, local_tsc)))
+            for folder in sorted({rel.rpartition("/")[0] for rel in self._workspace_file_list()
+                                  if rel.rpartition("/")[2] == "tsconfig.json"}))
+        tools = tuple(shutil.which(name) for name in ("tsc", "tsc.cmd", "npm", "npm.cmd"))
+        return self._revision_cached(
+            "tsc", (self.allow_shell_tools, self.enable_toolchain_validation, tools, installs),
+            lambda: _collect_tsc_issues(
+                self.output_dir, self.allow_shell_tools,
+                self.enable_toolchain_validation, _RECIPE_EXCLUDED_DIRS,
+            ))
+
+    @classmethod
+    def _collapse_repeated_names(cls, err_lines: list[str]) -> list[str]:
+        """Delegate to the toolchain module."""
+        return _collapse_repeated_names(err_lines)
+
+    # Tests read the probe name off the class.
+    _TSC_PROBE_NAME = _TSC_PROBE_NAME
+
+    def _tsc_project_arg(self, project_dir: str, deps_installed: bool):
+        """Delegate to the toolchain module."""
+        return _tsc_project_arg(project_dir, deps_installed)
+
+    @classmethod
+    def _is_real_undefined_name(cls, line: str) -> bool:
+        """Delegate to the toolchain module."""
+        return _is_real_undefined_name(line)
+
+    def _demote_tsc_without_deps(
+        self, err_lines: list[str], rel: str, issues: list[str]
+    ) -> list[str]:
+        """Delegate to the toolchain module."""
+        return _demote_tsc_without_deps(err_lines, rel, issues)
+
+    def _collect_cargo_issues(self) -> list[str]:
+        """Delegate to the toolchain module, once per tree."""
+        return self._revision_cached("cargo", (), lambda: _collect_cargo_issues(self.output_dir))
+
+    def _collect_kotlinc_issues(self) -> list[str]:
+        """Delegate to the toolchain module, once per tree."""
+        return self._revision_cached("kotlinc", (), lambda: _collect_kotlinc_issues(self.output_dir))
+
+    # ==================================================================
+    # Snapshot / Rollback
+    # ==================================================================
+
+
+
+
+    # ==================================================================
+    # Interactive error feedback
+    # ==================================================================
+
+    def fix_error(self, error_message: str) -> str:
+        """
+        Fix a user-reported error. The LLM analyzes it and either:
+        - Explains what the user should do (environment issues)
+        - Fixes the code (code bugs)
+
+        Returns the LLM's explanation/summary of what it did, or a
+        "Fix cycle stopped: <reason>" message when a cap, cancellation or
+        a failed/truncated/declined call ended the cycle first.
+        """
+        if not error_message or not error_message.strip():
+            raise ValueError("Error message cannot be empty")
+
+        # Check if this looks like an actual error (not a question)
+        error_keywords = {"error", "traceback", "exception", "failed", "fatal",
+                          "cannot", "not found", "denied", "refused", "timeout",
+                          "syntax", "import", "module", "attribute", "type"}
+        lower = error_message.lower()
+        is_error = any(kw in lower for kw in error_keywords)
+
+        if not is_error:
+            return (
+                "That doesn't look like an error message. "
+                "Paste the actual error/traceback from your terminal."
+            )
+
+        # Check if we already tried to fix this exact error.
+        # Extract the actual error line (last meaningful line), not the
+        # traceback boilerplate which looks similar across different errors.
+        lines = [ln.strip() for ln in error_message.strip().splitlines() if ln.strip()]
+        error_line = ""
+        for line in reversed(lines):
+            # Skip traceback frame lines and empty lines
+            if line and not line.startswith(("File ", "^", "Traceback", "---")):
+                error_line = line[:200]
+                break
+        if not error_line:
+            error_line = error_message.strip()[:200]
+
+        already_tried = False
+        for prev in self._previous_errors:
+            if prev == error_line:
+                already_tried = True
+                break
+        self._previous_errors.append(error_line)
+
+        # A fix request is a new request: it gets a full runtime window, not
+        # what generate() left of its own (which also bounds run_command).
+        self._start_time = time.monotonic()
+
+        retry_note = ""
+        if already_tried:
+            retry_note = (
+                "\n\nA previous fix for this same error did not resolve it, which points to "
+                "an environment issue. Leave the code as is and explain what the user needs to do "
+                "in their environment (restart, rebuild, clear cache, reset database, etc.).\n"
+            )
+
+        fix_prompt = (
+            "The user ran the generated code and got this error:\n\n"
+            f"```\n{error_message}\n```\n\n"
+            f"{retry_note}"
+            "Decide whether this is a code bug (syntax, import, logic, config) or an "
+            "environment issue (stale DB, old Docker volume, env var, port conflict). "
+            "Fix a code bug with modify_file; for an environment issue, tell the user what "
+            "to do instead of changing code. End with a summary of what you did or what "
+            "the user should do."
+        )
+        system = (
+            "You are debugging an error. Not all errors need code fixes. "
+            "If it's an environment issue (stale data, 'already exists', "
+            "'connection refused'), explain what the user should do. "
+            "If it's a code bug, fix it."
+        )
+        messages: list[dict] = [{"role": "user", "content": fix_prompt}]
+        self.executor.forget_shown_results()
+
+        max_fix_turns = 10
+        llm_explanation = ""
+
+        def stopped(reason: str, turns_done: int) -> str:
+            # Every early exit says why, and whether anything was changed.
+            progress = (f"after {turns_done} turn(s); check the files it changed"
+                        if turns_done else "no change was made")
+            logger.warning("Fix cycle stopped (%s), %s", reason, progress)
+            note = f"\n\nThe model's last note: {llm_explanation}" if llm_explanation else ""
+            return f"Fix cycle stopped: {reason} ({progress}).{note}"
+
+        for turn in range(max_fix_turns):
+            budget_stop = self._budget_stop_reason()
+            if budget_stop:
+                return stopped(budget_stop, turn)
+            self.total_turns += 1
+
+            try:
+                response = self._chat_with_pending_force(system, messages)
+            except InvalidApiKeyError:
+                # The caller must report the bad key, not a fix summary.
+                raise
+            except Exception as e:
+                logger.error("Fix cycle API call failed: %s", e)
+                return stopped(f"the LLM call failed: {e}", turn)
+
+            # Fix-cycle calls can trigger the outage fallback too.
+            self._notify_model_switch()
+
+            # Capture LLM's text explanation
+            for block in response.get("content", []):
+                if hasattr(block, "text") and block.text:
+                    llm_explanation = block.text
+
+            stop_reason = response["stop_reason"]
+            if stop_reason == "end_turn":
+                logger.info("Fix cycle completed after %d turns", turn + 1)
+                return llm_explanation or "Fix cycle completed."
+
+            if stop_reason in ("max_tokens", "length"):
+                # Like Phase 2, a truncated tool call is not executed.
+                return stopped("the model hit its output token limit", turn)
+            if stop_reason == "refusal":
+                category = response.get("refusal_category")
+                return stopped("the model declined this request"
+                               + (f" (safety category: {category})" if category else ""), turn)
+            if stop_reason != "tool_use":
+                return stopped(f"unexpected stop_reason: {stop_reason}", turn)
+
+            messages.append({"role": "assistant", "content": response["content"]})
+            tool_blocks = _tool_use_blocks(response["content"])
+            tool_results = self._execute_tool_blocks(tool_blocks, self.total_turns - 1)
+            messages.append({"role": "user", "content": tool_results})
+
+            # Per-file modify-loop guard (mirrors Phase 2). The fix
+            # cycle is the most common offender — the LLM gets a
+            # single error to fix and starts dribbling out one-line
+            # modify_file calls instead of rewriting the file.
+            if self._apply_edit_loop_guards(messages, where="fix cycle"):
+                return stopped("the same edit was refused repeatedly", turn + 1)
+
+        return stopped(f"the {max_fix_turns}-turn limit was reached before the model finished", max_fix_turns)
+
+    def _budget_stop_reason(self) -> str:
+        """Why the run may not start another billable call, or "" if it may.
+
+        Same comparisons as ``_verification_call_allowed``: a cap exactly
+        reached is spent.
+        """
+        if self._should_continue is not None and not self._should_continue():
+            return "the run was cancelled"
+        if self.max_cost_usd is not None and self.client.usage.estimated_cost >= self.max_cost_usd:
+            return (f"the ${self.max_cost_usd:.2f} cost cap is spent "
+                    f"(${self.client.usage.estimated_cost:.2f} used)")
+        if self._start_time is not None and time.monotonic() - self._start_time >= self.max_runtime_seconds:
+            return f"the {self.max_runtime_seconds}s runtime cap was reached"
+        return ""
+
+    # ==================================================================
+    # Delegating methods
+    # ==================================================================
+
+    def _build_system_prompt(
+        self,
+        instructions: str,
+        scoped_issues: list[str] | None = None,
+        gap_tasks: list[str] | None = None,
+    ) -> str:
+        """Delegate to prompt_builder module.
+
+        ``instructions`` is the user's verbatim request — embedded in the
+        prompt so the LLM plans its own work. ``scoped_issues`` are
+        validator findings from Phase 1 that the LLM must address as
+        concrete bugs (not user requests). ``gap_tasks`` is the optional
+        focused checklist produced by the cheap gap-analyzer LLM call.
+        """
+        # Optionally inline small scaffold files (BESSER_LLM_INLINE_SCAFFOLD=1)
+        # to save the first read_file turns. OFF by default: the copy is a
+        # per-run constant, so after the model edits a file it is stale, and
+        # quoting from it produces modify_file misses. Like other coding agents,
+        # file text reaches the model only through read_file, which is current;
+        # reads batch four to a turn.
+        scaffold_snapshot = ""
+        if (
+            AgentSettings().llm_inline_scaffold
+            and (self._generator_used or self._phase0_5_files)
+        ):
+            try:
+                scaffold_snapshot = build_scaffold_snapshot(self.output_dir)
+                # Inlined files count as read: a miss on any other file is a
+                # quote from memory and the executor says so.
+                self.executor.mark_known(
+                    _re.findall(r"^### `(.+?)`$", scaffold_snapshot, _re.M)
+                )
+            except Exception:
+                logger.debug("Scaffold snapshot build failed", exc_info=True)
+
+        # Exact backend endpoint manifest so the LLM-authored frontend targets
+        # real routes instead of reconstructing (and drifting from) them. Best
+        # effort — never let a parse failure abort prompt construction.
+        endpoint_manifest = ""
+        requirements = self._requirements_for_validation()
+        # Empty counts as known only when this process ran the extraction and it
+        # returned a list; failed, skipped or restored-on-resume is unknown (None).
+        known_empty = self._requirements is not None and self._requirement_extraction_attempts > 0
+        known_requirements = requirements if requirements or known_empty else None
+        try:
+            endpoint_manifest = build_endpoint_manifest(
+                self.output_dir,
+                response_model=(self.domain_model if self._generator_used in ROUTER_TEMPLATE_GENERATORS
+                                else None),
+                mutation_coverage=mutation_coverage_applies(self.domain_model, known_requirements),
+            )
+        except Exception:
+            logger.debug("Endpoint manifest build failed", exc_info=True)
+
+        design_system = ""
+        try:
+            design_system = design_system_section(self.output_dir, self.gui_model)
+        except Exception:
+            logger.debug("Design system section build failed", exc_info=True)
+
+        return build_system_prompt(
+            domain_model=self.domain_model,
+            gui_model=self.gui_model,
+            agent_model=self.agent_model,
+            inventory=f"{self._inventory}\n\n{self._dependencies_note}" if self._dependencies_note else self._inventory,
+            instructions=instructions,
+            scoped_issues=scoped_issues or [],
+            gap_tasks=gap_tasks or [],
+            max_turns=self.max_turns,
+            object_model=self.object_model,
+            state_machines=self.state_machines,
+            quantum_circuit=self.quantum_circuit,
+            bpmn_model=self.bpmn_model,
+            nn_model=self.nn_model,
+            primary_kind=self.primary_kind,
+            scaffold_snapshot=scaffold_snapshot,
+            endpoint_manifest=endpoint_manifest,
+            requirements=_requirements_ledger.render_requirements(requirements),
+            # ``_modify_mode`` is False on the run()/resume() paths, so the
+            # from-scratch prompt stays byte-identical; only ``modify()``
+            # flips it to prepend the "preserve what works" directive.
+            modify_mode=self._modify_mode,
+            design_system=design_system,
+            target=self.target,
+            previous_target=self._previous_target,
+            routed_stack=self._unsupported_stack if self._routed else None,
+            # Without both, the runtime-verification runbook never renders.
+            allow_shell=self.allow_shell_tools,
+            output_dir=self.output_dir,
+        )
+
+    def _maybe_compact(self, messages: list[dict]) -> list[dict]:
+        """Delegate to compaction module.
+
+        When history eviction is enabled (``BESSER_LLM_HISTORY_EVICTION=1``),
+        first run a lossless checkpoint eviction: stub stale write_file/read_file
+        bodies in older messages (the files are on disk, re-readable). This runs
+        ONLY at the compaction checkpoint (when history already exceeds the
+        threshold), never per turn — so it doesn't repeatedly bust the prompt
+        cache. It's lighter-touch than summarization and often drops the history
+        back under the threshold so no summarize is needed; if not, the summarize
+        below still runs on top. Gated OFF by default and not yet verified
+        end to end — see history_eviction.py.
+        """
+        model = getattr(self.client, "model", None)
+        # The reserve must match the output the model is actually ALLOWED to
+        # produce this run. The from-scratch and modify paths raise
+        # client.max_tokens to FROM_SCRATCH_MAX_TOKENS (32_768), which is
+        # double the COMPACT_RESERVE_TOKENS default - so a constant reserve
+        # leaves only half the headroom the response may need.
+        reserve = max(
+            COMPACT_RESERVE_TOKENS, int(getattr(self.client, "max_tokens", 0) or 0)
+        )
+        evicted = 0
+        if _HISTORY_EVICTION_ENABLED and _estimate_tokens(messages) >= effective_threshold(
+            model, reserve=reserve
+        ):
+            messages, evicted = evict_stale_file_bodies(messages)
+            if evicted:
+                self._eviction_count = getattr(self, "_eviction_count", 0) + 1
+                logger.info(
+                    "Checkpoint eviction: stubbed %d stale file body/bodies "
+                    "(history now ~%d tokens)", evicted, _estimate_tokens(messages),
+                )
+        result, did_compact = maybe_compact(
+            messages=messages,
+            tool_calls_log=self.tool_calls_log,
+            output_dir=self.output_dir,
+            domain_model=self.domain_model,
+            gui_model=self.gui_model,
+            agent_model=self.agent_model,
+            state_machines=self.state_machines,
+            object_model=self.object_model,
+            quantum_circuit=self.quantum_circuit,
+            bpmn_model=self.bpmn_model,
+            nn_model=self.nn_model,
+            primary_kind=self.primary_kind,
+            # Clamps the threshold to the model's context window — the
+            # fixed default overflows genuinely small local models long
+            # before it trips. See compaction.py for why the window table
+            # must never guess LOW.
+            model=model,
+            reserve=reserve,
+            # Carried through the summary: without it the model resumes after a
+            # compaction unable to see the checklist the end_turn gate is
+            # blocking on, the blockers it is meant to be fixing, or the
+            # non-negotiable id/server-owned-field rules.
+            work_state=self._compaction_work_state(),
+        )
+        if did_compact:
+            self._compaction_count += 1
+        if did_compact or evicted:
+            result = self._drop_stale_thinking(result, "the history was compacted")
+            # Earlier read results may be gone: no "unchanged since" stubs.
+            self.executor.forget_shown_results()
+        return result
+
+    def _drop_stale_thinking(self, messages: list[dict], why: str) -> list[dict]:
+        """Remove thinking blocks whose conversation is no longer what is sent.
+
+        See ``without_thinking_blocks``: replayed after the history or the
+        system prompt changed, they fail the request on current Claude models.
+        """
+        messages, removed = without_thinking_blocks(messages)
+        if removed:
+            logger.info("Dropped %d thinking block(s): %s", removed, why)
+        return messages
+
+    def _compaction_work_state(self) -> dict:
+        """Open work a compaction must not summarize away."""
+        return {
+            "tasks": self.executor.open_tasks() + self.executor.blocked_tasks(),
+            "blockers": [i.message for i in self._validation_issues
+                         if i.severity == "blocker"],
+            "contract_rules": self._data_contract_rules(),
+        }
+
+    def _data_contract_rules(self) -> list[str]:
+        """The model-derived id/server-owned rules, as short lines.
+
+        Same source as the system prompt's data-contract section
+        (``contract_checks.build_data_contract``) and the same rules
+        ``_collect_data_contract_issues`` enforces.
+        """
+        try:
+            from besser.spec_driven_agent.validation.contract_checks import build_data_contract
+
+            contract = build_data_contract(self.domain_model)
+        except Exception:
+            logger.debug("Data contract extraction failed", exc_info=True)
+            return []
+        if contract is None:
+            return []
+        rules = [
+            f"`{cls}.{attr}` is {type_name} in EVERY layer - path param, column, "
+            "foreign key, schema and TypeScript interface; never parseInt a string id"
+            for cls, (attr, type_name) in sorted(contract.pk_types.items())
+        ]
+        rules.append(
+            "a surrogate id (class with no declared id attribute), created_at/updated_at "
+            "and every is_derived attribute are server-owned: never in a create schema "
+            "or create form, always computed; a declared id attribute is client-supplied"
+        )
+        rules.append(
+            "an unimplemented method must fail visibly, never return a fake success"
+        )
+        return rules
+
+    def _summarize_messages(self, messages: list[dict]) -> str:
+        """Delegate to compaction module."""
+        return _summarize_messages(messages, self.tool_calls_log, self.output_dir)
+
+    # ==================================================================
+    # Model-switch visibility
+    # ==================================================================
+
+    def _notify_model_switch(self) -> None:
+        """Surface a mid-run model change to the progress channel.
+
+        The provider's outage fallback (``OpenAIProvider._activate_fallback``)
+        swaps the client's model sticky-for-the-run when the primary
+        endpoint stays down past the retry budget. That happens inside a
+        ``chat``/``chat_stream`` call, so the orchestrator only sees it
+        afterwards: compare ``self.client.model`` against the last value
+        we saw and, on change, emit the ``__model_switch__`` sentinel via
+        ``on_progress`` (the SSE runner translates it into a
+        ``model_update`` event). Cheap enough to call after every LLM
+        call; a no-op when nothing changed.
+        """
+        current = getattr(self.client, "model", None)
+        if not current or current == self._last_seen_model:
+            return
+        logger.info(
+            "LLM model changed mid-run: %s -> %s",
+            self._last_seen_model, current,
+        )
+        self._last_seen_model = current
+        if self.on_progress:
+            try:
+                self.on_progress(0, "__model_switch__", current)
+            except Exception:
+                logger.debug(
+                    "on_progress failed for model switch", exc_info=True
+                )
+
+    # ==================================================================
+    # Streaming
+    # ==================================================================
+
+    def _call_streaming(self, system: str, messages: list[dict]) -> dict:
+        collected_content = []
+        stop_reason = "end_turn"
+        refusal_category = None
+        for event in self.client.chat_stream(
+            system=system, messages=messages, tools=self.tools,
+        ):
+            if event["type"] == "text_delta" and self.on_text:
+                self.on_text(event["text"])
+            elif event["type"] == "message_done":
+                stop_reason = event.get("stop_reason", "end_turn")
+                refusal_category = event.get("refusal_category")
+                if event.get("content"):
+                    collected_content = event["content"]
+        return {"stop_reason": stop_reason, "content": collected_content,
+                "refusal_category": refusal_category}
+
+    # ==================================================================
+    # Loop detection
+    # ==================================================================
+
+    # ``DomainModel.validate`` warnings that make any generated CRUD app
+    # unusable, whichever stack builds it. Matched case-insensitively on the
+    # message start, like ``_classify_issue``.
+    _MODEL_CONTRACT_WARNING_PREFIXES = (
+        "mandatory creation cycle",
+        "class names differ only in case",
+        "attribute names differ only in case",
+    )
+    # Warnings about what one family of BESSER generators emits: each was
+    # observed to stop that scaffold from loading (SyntaxError, a table
+    # defined twice, a Django system-check error), and is harmless to others,
+    # so it is promoted only once the generator that built the scaffold is known.
+    _SCAFFOLD_CONTRACT_WARNING_PREFIXES = {
+        "fastapi": (
+            "python keyword name", "empty enumeration", "join table name clash",
+            "foreign key column clash", "subclass declares 'id'", "class-typed attribute",
+        ),
+        "django": (
+            "python keyword name", "empty enumeration", "foreign key column clash",
+            "subclass declares 'id'", "attribute 'id' is not the identifier",
+        ),
+    }
+
+    def _collect_model_contract_issues(self) -> None:
+        """Promote the domain model's errors and its fatal warnings to blockers.
+
+        ``DomainModel.validate`` only warns about, e.g., a mandatory creation
+        cycle: an association with 1..1 on both ends is legal UML, and
+        BESSER's own ``user_reference_domain_model`` ships three of them. Here
+        the intent IS to generate a CRUD API, and a cycle makes that API
+        unusable — if ``BookingCreate`` requires a ReservedRoom id while
+        ``ReservedRoomCreate`` requires a Booking id, neither class can ever
+        be created. Every validation error is promoted too: an invalid
+        identifier or a dangling type is broken code whatever is generated.
+
+        Deliberately NOT part of ``_collect_validation_issues``: the Phase 3
+        fix loop edits code, and no edit to the generated code can repair the
+        specification it was generated from. Surfacing it early is the whole
+        value. Run before Phase 1 and again once the scaffold's generator is
+        known (``_SCAFFOLD_CONTRACT_WARNING_PREFIXES``); a finding already
+        recorded is not recorded twice.
+
+        Kept in ``_model_contract_issues`` as well, because Phase 3 REPLACES
+        ``_validation_issues`` with what ``_collect_validation_issues``
+        returns; ``_with_model_contract`` carries these across that.
+        """
+        if self.domain_model is None:
+            return
+        try:
+            result = self.domain_model.validate(raise_exception=False)
+        except Exception:
+            logger.warning("Phase 0: domain-model validation raised; model contract not checked",
+                           exc_info=True)
+            return
+        prefixes = self._MODEL_CONTRACT_WARNING_PREFIXES + self._SCAFFOLD_CONTRACT_WARNING_PREFIXES.get(
+            self._scaffold_family() or "", ())
+        findings = list(result.get("errors", [])) + [
+            warning for warning in result.get("warnings", [])
+            if warning.lower().startswith(prefixes)
+        ]
+        recorded = {issue.message for issue in self._model_contract_issues}
+        for finding in findings:
+            issue = _classify_issue(f"model contract: {finding}")
+            if issue.message in recorded:
+                continue
+            self._model_contract_issues.append(issue)
+            self._validation_issues.append(issue)
+            logger.warning("Phase 0: %s", issue.message)
+            self._trace.write(
+                EVENT_VALIDATION_ISSUE, phase="phase0",
+                severity=issue.severity, message=issue.message,
+            )
+
+    def _workspace_file_list(self) -> list[str]:
+        """Every file in the output tree, relative and ``/``-separated.
+
+        Feeds the gap analyser's path repair. Unlike the inventory string
+        (capped at 30 entries) this is the complete list, which is the
+        point: the paths a planner invents are the ones it could not see.
+        """
+        files: list[str] = []
+        try:
+            for root, dirs, fnames in walk_plain(self.output_dir):
+                dirs[:] = [d for d in dirs if d not in _RECIPE_EXCLUDED_DIRS]
+                for f in fnames:
+                    if f.startswith(".besser_"):
+                        continue
+                    rel = os.path.relpath(os.path.join(root, f), self.output_dir)
+                    files.append(rel.replace("\\", "/"))
+        except Exception:
+            # Path repair is a best-effort assist, never a run blocker.
+            logger.debug("Workspace walk failed; skipping path repair", exc_info=True)
+            return []
+        return files
+
+
+    # Repeats of an edit the executor already rejected, per path. Advisory
+    # guards alone let a model alternate read_file / modify_file for dozens of
+    # turns. Aider stops after three reflections and hands the prompt to a
+    # human; headless, the runtime has to change editing strategy, not
+    # permanently close the file before the model has a way to recover.
+    # Ignoring recovery remains bounded.
+    _REPEAT_FORCE_AT = 3
+    _REPEAT_STOP_AT = 7
+    # ``executor.last_repeat`` also reports refusals counted per TARGET
+    # (same path + same anchor, redrafted text) once they pass the executor's
+    # own _TARGET_REPEAT_AT, through this same channel. So _REPEAT_STOP_AT is
+    # deliberately also the target-refusal ceiling: seven refusals at one
+    # anchor with no successful edit in between is a dead loop, whether the
+    # model resent identical text or seven different drafts. Named so it reads
+    # as a decision rather than an accident of the shared channel.
+    _TARGET_REFUSAL_STOP_AT = _REPEAT_STOP_AT
+
+
+
+    def _record_full_tool_input(
+        self, turn: int, tool_name: str, tool_input: object, success: bool, status: str,
+    ) -> None:
+        """Append the UNTRUNCATED input of a write tool to the sidecar. The
+        trace, checkpoint and recipe are bounded by ``_sanitize_for_log``;
+        this is where a run's real edits can be read back and cut into
+        fixtures."""
+        try:
+            row = {"turn": turn, "tool": tool_name, "success": success,
+                   "status": status, "input": tool_input}
+            with open_plain_write(os.path.join(self.output_dir, TOOL_INPUTS_FILENAME), "a",
+                                  root=self.output_dir, encoding="utf-8") as f:
+                f.write(json.dumps(row, default=str) + "\n")
+        except Exception:
+            logger.debug("tool-input sidecar write failed", exc_info=True)
+
+
+
+
+    # ==================================================================
+    # Recipe
+    # ==================================================================
+
+    @staticmethod
+    def _load_recipe_history(recipe_path: str) -> list[dict]:
+        """Read the session history from an existing recipe, best-effort.
+
+        Legacy recipes (written before the history field existed) get one
+        entry synthesized from their own instructions + tool log, so a
+        modify run still sees the seed run.
+        """
+        if not os.path.isfile(recipe_path):
+            return []
+        try:
+            with open_plain(recipe_path, "r", encoding="utf-8") as fh:
+                prior = json.load(fh)
+        except Exception:
+            return []
+        if not isinstance(prior, dict):
+            return []
+        history = prior.get("history")
+        if isinstance(history, list) and history:
+            # Each run rewrites the earlier entries: bound them as a new one is bounded.
+            return [_bounded_history_entry(h) for h in history if isinstance(h, dict)]
+        # Legacy recipe — synthesize the seed entry.
+        instructions = prior.get("instructions")
+        if not isinstance(instructions, str) or not instructions.strip():
+            return []
+        touched = sorted({
+            (tc.get("input") or {}).get("path")
+            for tc in prior.get("tool_calls", []) or []
+            if isinstance(tc, dict)
+            and tc.get("tool") in ("write_file", "modify_file", "replace_file_lines")
+            and isinstance((tc.get("input") or {}).get("path"), str)
+        })
+        return [{
+            # bounded: recipe history display only
+            "instructions": instructions[:_MAX_HISTORY_REQUEST_CHARS],
+            "saved_at": "",
+            "mode": "create",
+            "files_touched": touched[:_MAX_HISTORY_FILES],
+        }]
+
+    def _usage_counters(self) -> dict:
+        """The client's cumulative call, token and cost counters (empty without a tracker)."""
+        usage = getattr(self.client, "usage", None)
+        if usage is None or not hasattr(usage, "summary"):
+            return {}
+        counters = {key: value for key, value in usage.summary().items()
+                    if key == "api_calls" or key.endswith("_tokens")}
+        return {**counters, "cost_usd": float(usage.estimated_cost)}
+
+    def _trace_cost_update(self, turn: int, **extra) -> None:
+        """A ``cost_update`` with the cumulative cost and token counters after a loop turn."""
+        counters = self._usage_counters()
+        cost = counters.pop("cost_usd", None)
+        if cost is None and getattr(getattr(self.client, "usage", None), "estimated_cost", None) is not None:
+            cost = float(self.client.usage.estimated_cost)
+        self._trace.write(EVENT_COST_UPDATE, turn=turn, estimated_cost_usd=cost, **extra,
+                          **{key: value for key, value in counters.items() if key.endswith("_tokens")})
+
+    @contextlib.contextmanager
+    def _traced_llm_call(self, purpose: str):
+        """One ``llm_call`` trace event for the provider calls made inside the block.
+
+        The caller may set ``outcome`` and counts on the yielded dict. Nothing is
+        written when the block made no call and reports no failure.
+        """
+        before = self._usage_counters()
+        call: dict = {"outcome": "ok"}
+        try:
+            yield call
+        except Exception:
+            call["outcome"] = "error"
+            raise
+        finally:
+            after = self._usage_counters()
+            delta = {key: value - before.get(key, 0) for key, value in after.items()}
+            if "cost_usd" in delta:
+                delta["cost_usd"] = round(delta["cost_usd"], 6)
+            if delta.get("api_calls") or call["outcome"] != "ok":
+                models = {"model": getattr(self.client, "model", None)}
+                if planning := getattr(self.client, "planning_model", None):
+                    models["planning_model"] = planning  # gap analysis and the judge try it first
+                self._trace.write(EVENT_LLM_CALL, purpose=purpose, **models, **call, **delta)
+
+    def _checks_that_ran(self) -> dict:
+        """What ran on the delivered tree: a passing frontend build, and the calls of the
+        API workflows that passed on it."""
+        revision = self._workspace_revision()
+        passed = [record["report"] for record in self._api_scenarios.values()
+                  if record["revision"] == revision and record["report"].get("status") == "passed"]
+        # A build verdict is keyed (folder, revision, install markers, script); None is a pass.
+        builds = [verdict for key, verdict in self._frontend_build_verdicts.items() if key[1] == revision]
+        return {
+            "frontend_build": ("passed" if any(verdict is None for verdict in builds) else "failed" if builds
+                               else "not_run" if self._has_frontend_files() else "none"),
+            "exercised": {(str(response.get("method", "")).upper(), str(response.get("path", "")))
+                          for report in passed for response in report.get("responses") or []
+                          if isinstance(response, dict) and response.get("path")},
+            "workflows_passed": len(passed),
+        }
+
+    def _business_rules_stated(self) -> bool | None:
+        """False only when the ledger ran and found nothing to check: no requirement in the
+        request and no rule in the model. None when the ledger did not run. Kind labels
+        are not read: they differ between runs of one request."""
+        if not self.enable_requirements_ledger or self._requirements is None:
+            return None
+        return bool(getattr(self.domain_model, "constraints", None) or self._requirements_for_validation())
+
+    # Paths of runtime files the recipe names; it travels in the done event.
+    _MAX_RECIPE_RUNTIME_FILES = 50
+
+    def _written_paths(self) -> set[str]:
+        """Workspace-relative paths whose content a generator or a write tool
+        produced; a later ``delete_file`` takes a path out again."""
+        written = set(self.executor._generator_files)
+        for call in self.tool_calls_log:
+            path = (call.get("input") or {}).get("path")
+            if call.get("success") is False or not isinstance(path, str) or not path.strip():
+                continue
+            rel = posixpath.normpath(path.strip().replace("\\", "/"))
+            if call.get("tool") == "delete_file":
+                written.discard(rel)
+            elif call.get("tool") in _WRITE_TOOLS_ON_RECORD:
+                written.add(rel)
+        return written
+
+    def remove_app_runtime_files(self) -> dict:
+        """Delete what the app wrote while the agent test-ran it in the workspace.
+
+        Runs before the recipe lists the output, and again from packaging, so
+        a run that ended without a recipe is covered too. Returns the recipe's
+        account of every call so far.
+        """
+        self.executor.stop_shell_processes()
+        result = remove_app_runtime_files(self.output_dir, self._written_paths() | self._files_at_start)
+        if result.removed:
+            logger.warning("Removed %d file(s) the app wrote while it was test-run; they are not "
+                           "part of the output: %s", len(result.removed), ", ".join(result.removed[:20]))
+        earlier = self._runtime_files
+        self._runtime_files = RuntimeFileRemoval(
+            earlier.removed + result.removed,
+            tuple(dict.fromkeys(earlier.not_removed + result.not_removed)),
+            result.note or earlier.note)
+        outcome = self._runtime_files
+        return {
+            # Written by the app while the agent test-ran it, and deleted: not output.
+            "runtime_files_removed": list(outcome.removed[:self._MAX_RECIPE_RUNTIME_FILES]),
+            "runtime_files_removed_count": len(outcome.removed),
+            # Still in the output: the delete failed.
+            "runtime_files_not_removed": list(outcome.not_removed[:self._MAX_RECIPE_RUNTIME_FILES]),
+            "runtime_files_not_removed_count": len(outcome.not_removed),
+            "runtime_files_note": outcome.note,
+        }
+
+    def _save_recipe(self, instructions: str, elapsed: float) -> None:
+        runtime_files = self.remove_app_runtime_files()
+        # Build file manifest. Dependency / build directories are pruned:
+        # an LLM-run ``npm install`` would otherwise put thousands of
+        # node_modules entries in the manifest, ballooning the recipe
+        # past the SSE embed cap (which drops the whole recipe from the
+        # done event).
+        output_files = []
+        generator_files = self.executor._generator_files if hasattr(self.executor, '_generator_files') else set()
+        # ``source`` records who CREATED the file, and resume re-seeds the
+        # scaffold guardrail from it, so it must keep its two values. It
+        # therefore cannot answer "did the LLM change this?" for edits to
+        # generator files. That is the number that says which work
+        # regeneration would overwrite, so record it separately.
+        llm_edited = self._llm_edited_paths()
+        try:
+            for root, dirs, fnames in walk_plain(self.output_dir):
+                dirs[:] = [d for d in dirs if d not in _RECIPE_EXCLUDED_DIRS]
+                for f in fnames:
+                    if f.startswith(".besser_") or is_excluded_output_file(f):
+                        continue
+                    full = os.path.join(root, f)
+                    rel = os.path.relpath(full, self.output_dir).replace("\\", "/")
+                    entry = {
+                        "path": rel,
+                        "size": os.path.getsize(full),
+                        "source": "generator" if rel in generator_files else "llm",
+                    }
+                    if os.path.normcase(os.path.normpath(full)) in llm_edited or rel in self._seed_llm_modified:
+                        entry["llm_modified"] = True
+                    output_files.append(entry)
+        except Exception:
+            pass
+
+        # Build model summary. Every field is populated best-effort —
+        # a state-machine-only or agent-only run still gets a recipe,
+        # it just doesn't claim there were classes/enums/associations
+        # that weren't actually part of the project.
+        recipe_model: dict[str, Any] = {"primary_kind": self.primary_kind}
+        if self.domain_model is not None:
+            try:
+                recipe_model.update({
+                    "name": getattr(self.domain_model, "name", None),
+                    "classes": [c.name for c in self.domain_model.get_classes()],
+                    "enumerations": [e.name for e in self.domain_model.get_enumerations()],
+                    "associations": len(self.domain_model.associations),
+                    # The next modify run compares the user's model with this one.
+                    "user_model": self._user_model,
+                    # ... and tells a rule its model change broke from a new one.
+                    "converted_rules": converted_rule_fingerprints(self.domain_model),
+                })
+            except Exception:
+                # Domain model is present but malformed — don't fail
+                # the whole recipe write over it.
+                logger.debug("Skipping domain model summary in recipe (malformed)")
+        if self.state_machines:
+            recipe_model["state_machines"] = [
+                getattr(sm, "name", "unnamed") for sm in self.state_machines
+            ]
+        if self.agent_model is not None:
+            recipe_model["agent_present"] = True
+        if self.gui_model is not None:
+            recipe_model["gui_present"] = True
+        if self.quantum_circuit is not None:
+            recipe_model["quantum_present"] = True
+        if self.bpmn_model is not None:
+            recipe_model["bpmn"] = {
+                "name": getattr(self.bpmn_model, "name", None),
+                "processes": len(getattr(self.bpmn_model, "processes", []) or []),
+            }
+        if self.nn_model is not None:
+            recipe_model["neural_network"] = {
+                "name": getattr(self.nn_model, "name", None),
+                "modules": len(getattr(self.nn_model, "modules", []) or []),
+            }
+
+        # Session history (pi's branch-summary mechanic): each run appends
+        # a compact entry — request, mode, files it touched — on top of
+        # whatever the seed recipe already carried. The next modify run
+        # opens with this history in its inventory, so the agent knows
+        # what was asked and changed before, instead of starting amnesiac.
+        recipe_path = os.path.join(self.output_dir, ".besser_recipe.json")
+        history = self._load_recipe_history(recipe_path)
+        touched = sorted({
+            (tc.get("input") or {}).get("path")
+            for tc in self.tool_calls_log
+            if tc.get("tool") in ("write_file", "modify_file", "replace_file_lines")
+            and isinstance((tc.get("input") or {}).get("path"), str)
+        })
+        entry = {
+            "instructions": request_text(instructions)[:_MAX_HISTORY_REQUEST_CHARS],  # bounded: one history line
+            "saved_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "mode": "modify" if self._modify_mode else "create",
+            "files_touched": touched[:_MAX_HISTORY_FILES],
+        }
+        if self.run_id:
+            entry["run_id"] = self.run_id
+        # A resumed run keeps the run id and the tool log of the attempt it
+        # continues: it replaces that attempt's entry instead of adding one.
+        if self.run_id and history and history[-1].get("run_id") == self.run_id:
+            history[-1] = entry
+        else:
+            history.append(entry)
+        history = history[-_MAX_HISTORY_ENTRIES:]
+
+        from besser.spec_driven_agent.state.checkpoint import api_scenario_snapshot
+        recipe = {
+            "instructions": instructions,
+            "history": history,
+            "model": recipe_model,
+            "llm_model": self.client.model,
+            "generator_used": self._generator_used,
+            "target": self.target.to_dict() if self.target else None,
+            "turns": self.total_turns,
+            "tool_calls_count": len(self.tool_calls_log),
+            "compactions": self._compaction_count,
+            "elapsed_seconds": round(elapsed, 1),
+            "max_cost_usd": self.max_cost_usd,
+            "max_runtime_seconds": self.max_runtime_seconds,
+            # Legacy field name: true when the per-call response-token
+            # ceiling was raised (from-scratch or modify/fix run).
+            # Cost/runtime caps remain caller-authorised.
+            "adaptive_budget_applied": self._adaptive_budget_applied,
+            # Items the model declined as not requested (task_list drop) with
+            # its stated reasons: the reviewer sees what was NOT built and why.
+            "dropped_tasks": [
+                {"id": t["id"], "text": t["text"], "reason": t["dropped"]}
+                for t in getattr(self.executor, "_tasks", []) if t.get("dropped")
+            ],
+            "tasks": self.executor.task_snapshot(),
+            # The user's requirements with the last Phase 3 verdict on each:
+            # what was NOT built is read here, not inferred from the code.
+            # The file hashes stay out: only this run's kept-verdict check reads them.
+            "requirements": _requirements_ledger.with_verification_levels(
+                _requirements_ledger.without_fingerprints(self._requirement_verdicts), self.output_dir,
+                **self._checks_that_ran()),
+            # False: the request and the model state no business rule, so none was checked.
+            "business_rules_stated": self._business_rules_stated(),
+            # "editor" when the ledger is the modeling assistant's extraction
+            # (verdicts carry its trace id as "ref"), "extracted" when the run
+            # extracted it, None when no ledger was built.
+            "requirements_source": self._requirements_source,
+            "api_scenarios": api_scenario_snapshot(self._api_scenarios.values(), include_reports=True),
+            "api_scenarios_retired": list(self._retired_api_scenarios),
+            "model_conversion_issues": getattr(self.domain_model, "conversion_issues", []) or [],
+            "model_assembly_issues": self._assembly_issues,
+            "usage": self.client.usage.summary(),
+            "validation_issues": [
+                {"severity": i.severity, "message": i.message}
+                for i in self._validation_issues
+            ],
+            # Per-entity route/page/create facts (None when no domain
+            # model or Phase 3 didn't run). The UI/recipe reader can
+            # render this as the model-derived definition of done.
+            "acceptance_matrix": self._acceptance_matrix,
+            # The Phase 3 edits in tool_calls are on disk only when this is
+            # False; a rollback discarded them and kept the Phase 2 output.
+            "phase3_rolled_back": self._phase3_rolled_back,
+            **runtime_files,
+            "output_files": sorted(output_files, key=lambda f: f["path"]),
+            "output_summary": {
+                "total_files": len(output_files),
+                "from_generator": sum(1 for f in output_files if f["source"] == "generator"),
+                "from_llm": sum(1 for f in output_files if f["source"] == "llm"),
+                # Generator files the LLM changed: the work a regeneration
+                # would overwrite. from_llm alone counts only new files.
+                "generator_files_edited_by_llm": sum(
+                    1 for f in output_files
+                    if f.get("llm_modified") and f["source"] == "generator"),
+                "total_bytes": sum(f["size"] for f in output_files),
+            },
+            "tool_calls": self.tool_calls_log,
+            # Pointer to the structured trace file alongside this recipe.
+            # Clients that want per-turn detail (tool calls, cost ticks,
+            # phase transitions) can read it instead of re-parsing the
+            # recipe's flattened summaries.
+            "trace_file": TRACE_FILENAME if self._trace.path else None,
+        }
+        if self._model_sync_error:
+            recipe["model_sync_error"] = self._model_sync_error
+        # Modify runs only: how the model differs from the one the base app was
+        # built from, so the run card can say what changed in the model.
+        model_change = getattr(self, "_model_change", None) if self._modify_mode else None
+        if model_change is not None:
+            recipe["model_change"] = model_change.to_dict()
+        # Fix/modify success-gate outcome. Present ONLY on a fix run so the
+        # from-scratch recipe stays byte-identical; records the reported
+        # target and whether it was confirmed fixed, so a later "what did
+        # the fix run actually do" is answerable from the recipe alone.
+        if self._is_fix_run and self._fix_target is not None:
+            recipe["fix_run"] = {
+                "detected": True,
+                "target": self._fix_target.descriptor,
+                "kind": self._fix_target.kind,
+                "entities": list(self._fix_target.entities),
+                "target_resolved": self._fix_target_resolved,
+                "target_message": self._fix_target_message,
+            }
+        recipe_path = os.path.join(self.output_dir, ".besser_recipe.json")
+        try:
+            self.saved_recipe, text = bounded_recipe(recipe)
+            with open_plain_write(recipe_path, "w", root=self.output_dir, encoding="utf-8") as f:
+                f.write(text)
+        except Exception as e:
+            logger.warning("Failed to save recipe: %s", e)
+
+
+# ======================================================================
+# Helpers
+# ======================================================================
+
+
+# The recipe's session history: runs kept, request characters and files per run.
+_MAX_HISTORY_ENTRIES = 10
+_MAX_HISTORY_REQUEST_CHARS = 300
+_MAX_HISTORY_FILES = 20
+
+
+def _bounded_history_entry(entry: dict) -> dict:
+    """A history entry read back from a recipe, with the bounds a new entry has.
+
+    The recipe can come from any repository, so an entry may hold anything.
+    """
+    bounded = {key: entry[key] for key in ("saved_at", "mode", "run_id")
+               if isinstance(entry.get(key), str) and len(entry[key]) <= _MAX_HISTORY_REQUEST_CHARS}
+    if isinstance(entry.get("instructions"), str):
+        bounded["instructions"] = entry["instructions"][:_MAX_HISTORY_REQUEST_CHARS]
+    files = entry.get("files_touched")
+    if isinstance(files, list):
+        bounded["files_touched"] = [f[:_MAX_HISTORY_REQUEST_CHARS] for f in files
+                                    if isinstance(f, str)][:_MAX_HISTORY_FILES]
+    return {key: bounded[key] for key in entry if key in bounded}
+
+
+# Frontend source larger than this is a bundle, not a screen (frontend_contract's cap).
+_FRONTEND_SOURCE_MAX_BYTES = 1_000_000
+
+# validate_app's marker for a static frontend warning: reported, never refused.
+_ADVISORY_PREFIX = "advisory, not a blocker: "
+
+
+# Focused re-judge rounds per judged source: the first, and one more for files it left out.
+_REJUDGE_ROUNDS = 2
+
+
+def _check_reason(note: str) -> str:
+    """The ``[reason]`` verify_evidence appended to a verdict's note ("" when none); the
+    reason may itself hold brackets (``LEVEL_ORDER["medium"]``)."""
+    if not note.endswith("]"):
+        return ""
+    at = note.rfind(" [citation ")
+    at = at if at >= 0 else note.rfind(" [")
+    return note[at + 1:] if at >= 0 else ""
+
+
+def _citation_outcome(verdicts: list[dict], checked: list[dict]) -> dict:
+    """For a judge's trace event: how many "implemented" citations the check verified,
+    and per requirement id why one failed (the unlocated label, or the check's reason)."""
+    claimed = [item for item in verdicts if item.get("status") == "implemented"]
+    failures = {}
+    for raw, item in zip(verdicts, checked):
+        if raw.get("status") == "implemented" and item.get("status") != "implemented":
+            reason = _check_reason(str(item.get("note") or ""))[1:-1]
+            failures[str(item.get("id"))] = item.get(_requirements_ledger.EVIDENCE_UNLOCATED) or reason[:120]
+    return {"citations": {"claimed": len(claimed), "verified": len(claimed) - len(failures)}, "failures": failures}
+
+
+def _judge_outcome(requirements: list[dict], verdicts: list[dict] | None) -> dict:
+    """A judge call's trace outcome: failed, or the verdict count per status."""
+    if verdicts is None:
+        return {"outcome": "failed", "requirements": len(requirements)}
+    statuses: dict[str, int] = {}
+    for item in verdicts:
+        statuses[item.get("status", "?")] = statuses.get(item.get("status", "?"), 0) + 1
+    return {"outcome": "ok", "requirements": len(requirements), "verdicts": statuses}
+
+
+def _scenario_request_label(request: dict) -> str:
+    """``METHOD path -> expected status`` for one test_api request."""
+    expected = request.get("expected_status")
+    shown = ("2xx" if expected is None else "|".join(map(str, expected)) if isinstance(expected, list)
+             else str(expected))
+    return f"{request.get('method')} {request.get('path')} -> {shown}"
+
+
+def _failed_requests(report: dict) -> set[int]:
+    """Indices of a test_api report's requests that errored, answered no status or failed an assertion."""
+    failed = {item.get("index") for item in report.get("responses") or [] if isinstance(item, dict)
+              and (not isinstance(item.get("status"), int) or item.get("failures") or "error" in item)}
+    failed |= {item.get("index") for item in report.get("assertion_failures") or [] if isinstance(item, dict)}
+    return failed
+
+
+def _with_requests_appended(new: list, old: list, indices: list[int]) -> list | None:
+    """``new`` with ``old[i]`` for each of ``indices`` appended, references renumbered: onto
+    the appended copy, or onto the request ``new`` keeps with the same method and route
+    and body (at the same index, or the only one; r13-web1). None when one reads a response that
+    neither gives."""
+    from besser.spec_driven_agent.validation.api_probe import _REFERENCE
+
+    position = {index: len(new) + offset for offset, index in enumerate(indices)}
+    for index, request in enumerate(old):
+        # The same request: method, route and body. Another body is another record (review 11).
+        same = [kept for kept, candidate in enumerate(new)
+                if isinstance(candidate, dict) and isinstance(request, dict)
+                and _request_route(candidate) == _request_route(request)
+                and candidate.get("json") == request.get("json")]
+        if index not in position and same:
+            if index in same:
+                position[index] = index
+            elif len(same) == 1:
+                position[index] = same[0]
+    appended = []
+    for index in indices:
+        text = json.dumps(old[index])
+        if not {int(ref) for ref, _ in _REFERENCE.findall(text)} <= position.keys():
+            return None
+        appended.append(json.loads(_REFERENCE.sub(
+            lambda match: "{{" + str(position[int(match.group(1))])
+            + (f".{match.group(2)}" if match.group(2) else "") + "}}", text)))
+    return [*new, *appended]
+
+
+def _dropped_passing_requests(old: list, report: dict, new: list) -> list[int]:
+    """Indices of ``old`` requests that passed in ``report`` and whose route ``new`` no longer calls.
+
+    A request that failed, or reads (``{{N...}}``) a response that failed, may be
+    dropped. Requests match on method and normalised path only (references and
+    numeric ids are one placeholder; query string and trailing slash ignored), so
+    fixing an id, a status, a slash or a query value is a correction, not a drop.
+    """
+    from besser.spec_driven_agent.validation.api_probe import _REFERENCE
+
+    responses = {item.get("index"): item for item in report.get("responses") or [] if isinstance(item, dict)}
+    failed: set[int] = set()
+    for index, request in enumerate(old):
+        response = responses.get(index) or {}
+        if (not isinstance(response.get("status"), int) or response.get("failures") or "error" in response
+                or {int(ref) for ref, _ in _REFERENCE.findall(json.dumps(request))} & failed):
+            failed.add(index)
+    kept = {_request_route(request) for request in new if isinstance(request, dict)}
+    return [index for index, request in enumerate(old)
+            if index not in failed and isinstance(request, dict) and _request_route(request) not in kept]
+
+
+def _request_route(request: dict) -> tuple[str, str]:
+    """A test_api request's method and normalised path: references and numeric ids are one
+    placeholder; query string and trailing slash ignored."""
+    from besser.spec_driven_agent.validation.api_probe import _REFERENCE
+
+    path = _REFERENCE.sub("{id}", str(request.get("path", ""))).split("?", 1)[0].rstrip("/")
+    return (str(request.get("method", "")).upper(),
+            "/".join("{id}" if segment.isdigit() else segment for segment in path.split("/")))
+
+
+def _redact_for_trace(value: Any) -> Any:
+    """``value`` with credential-shaped strings replaced, recursively."""
+    if isinstance(value, str):
+        return redact_trace_text(value)
+    if isinstance(value, list):
+        return [_redact_for_trace(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _redact_for_trace(item) for key, item in value.items()}
+    return value
+
+
+def _trace_safe_input(tool_name: str, data: Any) -> Any:
+    """A tool input as the trace and checkpoint record it: redacted, bounded."""
+    if tool_name == "test_api" and isinstance(data, dict) and "requests" in data:
+        from besser.spec_driven_agent.validation.api_probe import redact_scenario_headers
+
+        data = {**data, "requests": redact_scenario_headers(data["requests"])}
+    return _sanitize_for_log(_redact_for_trace(data))
+
+
+def _trace_result_excerpt(result: Any) -> dict:
+    """The start of a tool result for the trace, redacted before it is cut."""
+    text = result if isinstance(result, str) else json.dumps(result, default=str)
+    return {"chars": len(text), **_sanitize_for_log({"excerpt": redact_trace_text(text)})}
+
+
+def _sanitize_for_log(data: Any) -> Any:
+    """Bound string values for the logs with a marker that cannot be read as
+    code. A plain ``"..."`` suffix is easily mistaken for a model-written
+    elision. The marker names the
+    cut, its size and a fingerprint, so two different over-budget inputs
+    never render identically."""
+    if isinstance(data, dict):
+        out: dict = {}
+        for k, v in data.items():
+            if isinstance(v, str) and len(v) > _LOG_VALUE_BUDGET:
+                digest = hashlib.sha256(v.encode("utf-8", "replace")).hexdigest()[:12]
+                v = (
+                    v[:_LOG_VALUE_BUDGET]
+                    + f"\n<<truncated {len(v) - _LOG_VALUE_BUDGET} of {len(v)} chars, "
+                    f"sha256 {digest}>>"
+                )
+            out[k] = v
+        return out
+    return data

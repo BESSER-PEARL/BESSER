@@ -2,12 +2,12 @@
 
 import os
 import re
-from jinja2 import Environment, FileSystemLoader
 
 from besser.BUML.metamodel.structural import DomainModel
 from besser.generators import GeneratorInterface
 from besser.utilities import sort_by_timestamp
 from besser.utilities.buml_code_builder.common import _escape_python_string
+from besser.utilities.generation_trace import traced_environment
 
 
 def _regex_findall(value, pattern):
@@ -46,17 +46,21 @@ class TestCaseGenerator(GeneratorInterface):
     # starts with "Test"); it is a generator, not a test case.
     __test__ = False
 
+    regenerable = True
+
     def __init__(self, model: DomainModel, output_dir: str = None, module_name: str = "classes"):
         super().__init__(model, output_dir)
         self.module_name = module_name
 
     def generate(self) -> None:
-        """Generate ``test_hypothesis.py`` in the configured output directory."""
-        file_path = self.build_generation_path(file_name="test_hypothesis.py")
+        """Generate ``test_hypothesis.py`` in the configured output directory.
+
+        ``traced_files["test_hypothesis.py"]`` then holds the lines rendered from each element with an ``id``.
+        """
         templates_path = os.path.join(
             os.path.dirname(os.path.abspath(__file__)), "templates"
         )
-        env = Environment(loader=FileSystemLoader(templates_path))
+        env = traced_environment(templates_path)
         # Custom filters used by hypothesis_tests_template.py.j2:
         # - to_strategy: maps B-UML primitive type names -> Hypothesis strategies
         # - escape_py: escapes model-controlled text embedded in string literals
@@ -66,13 +70,12 @@ class TestCaseGenerator(GeneratorInterface):
         env.filters["regex_findall"] = _regex_findall
         env.filters["regex_replace"] = _regex_replace
         template = env.get_template("hypothesis_tests_template.py.j2")
-        with open(file_path, mode="w", encoding="utf-8") as f:
-            generated_code = template.render(
-                domain=self.model,
-                module_name=self.module_name,
-                sort_by_timestamp=sort_by_timestamp,
-            )
-            f.write(generated_code)
+        generated_code = template.render(
+            domain=self.model,
+            module_name=self.module_name,
+            sort_by_timestamp=sort_by_timestamp,
+        )
+        self._write_traced("test_hypothesis.py", generated_code)
 
 
 def buml_type_to_hypothesis_strategy(type_name: str) -> str:

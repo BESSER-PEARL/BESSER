@@ -1,101 +1,13 @@
 {
   "project": {
-    "id": "project_1775817484154_z6sfmy78u",
+    "id": "project_1789137281339_7g9z6kwoj",
     "type": "Project",
     "name": "test",
     "description": "New project",
     "owner": "User",
-    "createdAt": "2026-04-10T10:38:04.154Z",
+    "createdAt": "2026-09-11T14:34:41.339Z",
     "currentDiagramType": "NNDiagram",
     "diagrams": {
-      "ClassDiagram": [
-        {
-          "id": "acb975da-015d-487a-a1d9-dd4e3cc27675",
-          "title": "Class Diagram",
-          "model": {
-            "version": "3.0.0",
-            "type": "ClassDiagram",
-            "size": {
-              "width": 1400,
-              "height": 740
-            },
-            "elements": {},
-            "relationships": {},
-            "interactive": {
-              "elements": {},
-              "relationships": {}
-            },
-            "assessments": {}
-          },
-          "lastUpdate": "2026-04-08T10:49:34.566Z"
-        }
-      ],
-      "ObjectDiagram": [
-        {
-          "id": "7c623073-b25c-458a-928c-79c9a51a9dc4",
-          "title": "Object Diagram",
-          "model": {
-            "version": "3.0.0",
-            "type": "ObjectDiagram",
-            "size": {
-              "width": 1400,
-              "height": 740
-            },
-            "elements": {},
-            "relationships": {},
-            "interactive": {
-              "elements": {},
-              "relationships": {}
-            },
-            "assessments": {}
-          },
-          "lastUpdate": "2026-04-08T10:49:34.566Z"
-        }
-      ],
-      "StateMachineDiagram": [
-        {
-          "id": "92af6fe9-1e42-4159-99bf-baca64982694",
-          "title": "State Machine Diagram",
-          "model": {
-            "version": "3.0.0",
-            "type": "StateMachineDiagram",
-            "size": {
-              "width": 1400,
-              "height": 740
-            },
-            "elements": {},
-            "relationships": {},
-            "interactive": {
-              "elements": {},
-              "relationships": {}
-            },
-            "assessments": {}
-          },
-          "lastUpdate": "2026-04-08T10:49:34.566Z"
-        }
-      ],
-      "AgentDiagram": [
-        {
-          "id": "3ac42918-e78a-4f30-bf0c-2abf18e00f00",
-          "title": "Agent Diagram",
-          "model": {
-            "version": "3.0.0",
-            "type": "AgentDiagram",
-            "size": {
-              "width": 1400,
-              "height": 740
-            },
-            "elements": {},
-            "relationships": {},
-            "interactive": {
-              "elements": {},
-              "relationships": {}
-            },
-            "assessments": {}
-          },
-          "lastUpdate": "2026-04-08T10:49:34.566Z"
-        }
-      ],
       "NNDiagram": [
         {
           "id": "a9ead949-1f15-468f-8516-2a0b9716df6f",
@@ -161,6 +73,8 @@
                 "quantumCircuitId": "",
                 "isOptional": false,
                 "isDerived": false,
+                "isId": false,
+                "isExternalId": false,
                 "attributeName": "name",
                 "value": "l1",
                 "isMandatory": true
@@ -184,6 +98,8 @@
                 "quantumCircuitId": "",
                 "isOptional": false,
                 "isDerived": false,
+                "isId": false,
+                "isExternalId": false,
                 "attributeName": "num_embeddings",
                 "value": "10000",
                 "isMandatory": true
@@ -207,6 +123,8 @@
                 "quantumCircuitId": "",
                 "isOptional": false,
                 "isDerived": false,
+                "isId": false,
+                "isExternalId": false,
                 "attributeName": "embedding_dim",
                 "value": "326",
                 "isMandatory": true
@@ -252,6 +170,8 @@
                 "quantumCircuitId": "",
                 "isOptional": false,
                 "isDerived": false,
+                "isId": false,
+                "isExternalId": false,
                 "attributeName": "name",
                 "value": "l2",
                 "isMandatory": true
@@ -275,6 +195,8 @@
                 "quantumCircuitId": "",
                 "isOptional": false,
                 "isDerived": false,
+                "isId": false,
+                "isExternalId": false,
                 "attributeName": "hidden_size",
                 "value": "40",
                 "isMandatory": true
@@ -298,6 +220,8 @@
                 "quantumCircuitId": "",
                 "isOptional": false,
                 "isDerived": false,
+                "isId": false,
+                "isExternalId": false,
                 "attributeName": "return_type",
                 "value": "full",
                 "isMandatory": false
@@ -321,6 +245,8 @@
                 "quantumCircuitId": "",
                 "isOptional": false,
                 "isDerived": false,
+                "isId": false,
+                "isExternalId": false,
                 "attributeName": "input_size",
                 "value": "326",
                 "isMandatory": false
@@ -344,6 +270,8 @@
                 "quantumCircuitId": "",
                 "isOptional": false,
                 "isDerived": false,
+                "isId": false,
+                "isExternalId": false,
                 "attributeName": "dropout",
                 "value": "0.5",
                 "isMandatory": false
@@ -367,6 +295,8 @@
                 "quantumCircuitId": "",
                 "isOptional": false,
                 "isDerived": false,
+                "isId": false,
+                "isExternalId": false,
                 "attributeName": "bidirectional",
                 "value": "true",
                 "isMandatory": false
@@ -390,6 +320,8 @@
                 "quantumCircuitId": "",
                 "isOptional": false,
                 "isDerived": false,
+                "isId": false,
+                "isExternalId": false,
                 "attributeName": "batch_first",
                 "value": "true",
                 "isMandatory": false
@@ -407,7 +339,8 @@
                 },
                 "attributes": [
                   "9d5946eb-457f-40be-8d5c-18cfbbb773b4",
-                  "23f84f8b-16e0-413c-9e07-959909549f16"
+                  "23f84f8b-16e0-413c-9e07-959909549f16",
+                  "82ff7c5e-af17-4efb-9b6d-65ac41d1afa9"
                 ],
                 "methods": []
               },
@@ -430,6 +363,8 @@
                 "quantumCircuitId": "",
                 "isOptional": false,
                 "isDerived": false,
+                "isId": false,
+                "isExternalId": false,
                 "attributeName": "name",
                 "value": "l3",
                 "isMandatory": true
@@ -453,9 +388,36 @@
                 "quantumCircuitId": "",
                 "isOptional": false,
                 "isDerived": false,
+                "isId": false,
+                "isExternalId": false,
                 "attributeName": "rate",
                 "value": "0.2",
                 "isMandatory": true
+              },
+              "82ff7c5e-af17-4efb-9b6d-65ac41d1afa9": {
+                "id": "82ff7c5e-af17-4efb-9b6d-65ac41d1afa9",
+                "name": "name_module_input = l2",
+                "type": "NameModuleInputAttributeDropout",
+                "owner": "29f79d1a-bb72-4e16-b43c-74141ee4085d",
+                "bounds": {
+                  "x": -190,
+                  "y": -310,
+                  "width": 240,
+                  "height": 20
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false,
+                "attributeName": "name_module_input",
+                "value": "l2",
+                "isMandatory": false
               },
               "99723b0a-7145-4193-a316-624e28dfc76d": {
                 "id": "99723b0a-7145-4193-a316-624e28dfc76d",
@@ -497,6 +459,8 @@
                 "quantumCircuitId": "",
                 "isOptional": false,
                 "isDerived": false,
+                "isId": false,
+                "isExternalId": false,
                 "attributeName": "name",
                 "value": "l4",
                 "isMandatory": true
@@ -520,6 +484,8 @@
                 "quantumCircuitId": "",
                 "isOptional": false,
                 "isDerived": false,
+                "isId": false,
+                "isExternalId": false,
                 "attributeName": "hidden_size",
                 "value": "40",
                 "isMandatory": true
@@ -543,6 +509,8 @@
                 "quantumCircuitId": "",
                 "isOptional": false,
                 "isDerived": false,
+                "isId": false,
+                "isExternalId": false,
                 "attributeName": "return_type",
                 "value": "last",
                 "isMandatory": false
@@ -566,6 +534,8 @@
                 "quantumCircuitId": "",
                 "isOptional": false,
                 "isDerived": false,
+                "isId": false,
+                "isExternalId": false,
                 "attributeName": "input_size",
                 "value": "80",
                 "isMandatory": false
@@ -589,6 +559,8 @@
                 "quantumCircuitId": "",
                 "isOptional": false,
                 "isDerived": false,
+                "isId": false,
+                "isExternalId": false,
                 "attributeName": "dropout",
                 "value": "0.2",
                 "isMandatory": false
@@ -612,6 +584,8 @@
                 "quantumCircuitId": "",
                 "isOptional": false,
                 "isDerived": false,
+                "isId": false,
+                "isExternalId": false,
                 "attributeName": "batch_first",
                 "value": "true",
                 "isMandatory": false
@@ -631,7 +605,8 @@
                   "887726cc-8d65-4178-8f83-608f02ba2e26",
                   "eebd0855-00a2-4cdc-8e18-e4f61cd4bc59",
                   "e66fdfde-9bbb-402b-bec9-27dd6b8f07c0",
-                  "2c333e44-44b9-4645-8034-3034c134a747"
+                  "2c333e44-44b9-4645-8034-3034c134a747",
+                  "03e66f73-a2a3-40df-9e40-cde4c4e431c0"
                 ],
                 "methods": []
               },
@@ -654,6 +629,8 @@
                 "quantumCircuitId": "",
                 "isOptional": false,
                 "isDerived": false,
+                "isId": false,
+                "isExternalId": false,
                 "attributeName": "name",
                 "value": "l5",
                 "isMandatory": true
@@ -677,6 +654,8 @@
                 "quantumCircuitId": "",
                 "isOptional": false,
                 "isDerived": false,
+                "isId": false,
+                "isExternalId": false,
                 "attributeName": "out_features",
                 "value": "40",
                 "isMandatory": true
@@ -700,6 +679,8 @@
                 "quantumCircuitId": "",
                 "isOptional": false,
                 "isDerived": false,
+                "isId": false,
+                "isExternalId": false,
                 "attributeName": "in_features",
                 "value": "40",
                 "isMandatory": false
@@ -712,7 +693,7 @@
                 "bounds": {
                   "x": 90,
                   "y": -310,
-                  "width": 170,
+                  "width": 180,
                   "height": 20
                 },
                 "code": "",
@@ -723,8 +704,35 @@
                 "quantumCircuitId": "",
                 "isOptional": false,
                 "isDerived": false,
+                "isId": false,
+                "isExternalId": false,
                 "attributeName": "actv_func",
                 "value": "relu",
+                "isMandatory": false
+              },
+              "03e66f73-a2a3-40df-9e40-cde4c4e431c0": {
+                "id": "03e66f73-a2a3-40df-9e40-cde4c4e431c0",
+                "name": "name_module_input = l4",
+                "type": "NameModuleInputAttributeLinear",
+                "owner": "bc8fa1c6-205d-41a5-bdd3-77ce5b45f4aa",
+                "bounds": {
+                  "x": 90,
+                  "y": -310,
+                  "width": 240,
+                  "height": 20
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false,
+                "isId": false,
+                "isExternalId": false,
+                "attributeName": "name_module_input",
+                "value": "l4",
                 "isMandatory": false
               },
               "4582f578-1508-4643-a942-86bec6e891e6": {
@@ -765,6 +773,8 @@
                 "quantumCircuitId": "",
                 "isOptional": false,
                 "isDerived": false,
+                "isId": false,
+                "isExternalId": false,
                 "attributeName": "name",
                 "value": "l6",
                 "isMandatory": true
@@ -788,6 +798,8 @@
                 "quantumCircuitId": "",
                 "isOptional": false,
                 "isDerived": false,
+                "isId": false,
+                "isExternalId": false,
                 "attributeName": "out_features",
                 "value": "2",
                 "isMandatory": true
@@ -811,6 +823,8 @@
                 "quantumCircuitId": "",
                 "isOptional": false,
                 "isDerived": false,
+                "isId": false,
+                "isExternalId": false,
                 "attributeName": "in_features",
                 "value": "40",
                 "isMandatory": false
@@ -834,6 +848,8 @@
                 "quantumCircuitId": "",
                 "isOptional": false,
                 "isDerived": false,
+                "isId": false,
+                "isExternalId": false,
                 "attributeName": "actv_func",
                 "value": "softmax",
                 "isMandatory": false
@@ -878,6 +894,8 @@
                 "quantumCircuitId": "",
                 "isOptional": false,
                 "isDerived": false,
+                "isId": false,
+                "isExternalId": false,
                 "attributeName": "batch_size",
                 "value": "32",
                 "isMandatory": true
@@ -901,6 +919,8 @@
                 "quantumCircuitId": "",
                 "isOptional": false,
                 "isDerived": false,
+                "isId": false,
+                "isExternalId": false,
                 "attributeName": "epochs",
                 "value": "10",
                 "isMandatory": true
@@ -924,6 +944,8 @@
                 "quantumCircuitId": "",
                 "isOptional": false,
                 "isDerived": false,
+                "isId": false,
+                "isExternalId": false,
                 "attributeName": "learning_rate",
                 "value": "0.001",
                 "isMandatory": true
@@ -947,6 +969,8 @@
                 "quantumCircuitId": "",
                 "isOptional": false,
                 "isDerived": false,
+                "isId": false,
+                "isExternalId": false,
                 "attributeName": "optimizer",
                 "value": "adam",
                 "isMandatory": true
@@ -959,7 +983,7 @@
                 "bounds": {
                   "x": -300,
                   "y": 40,
-                  "width": 260,
+                  "width": 270,
                   "height": 20
                 },
                 "code": "",
@@ -970,6 +994,8 @@
                 "quantumCircuitId": "",
                 "isOptional": false,
                 "isDerived": false,
+                "isId": false,
+                "isExternalId": false,
                 "attributeName": "loss_function",
                 "value": "crossentropy",
                 "isMandatory": true
@@ -993,6 +1019,8 @@
                 "quantumCircuitId": "",
                 "isOptional": false,
                 "isDerived": false,
+                "isId": false,
+                "isExternalId": false,
                 "attributeName": "metrics",
                 "value": "[accuracy]",
                 "isMandatory": true
@@ -1212,50 +1240,25 @@
             },
             "assessments": {}
           },
-          "lastUpdate": "2026-04-10T11:31:46.986Z"
-        }
-      ],
-      "UserDiagram": [
-        {
-          "id": "8c65c53a-1961-4fac-85da-271169d789e4",
-          "title": "User Diagram",
-          "model": {
-            "version": "3.0.0",
-            "type": "UserDiagram",
-            "size": {
-              "width": 1400,
-              "height": 740
-            },
-            "elements": {},
-            "relationships": {},
-            "interactive": {
-              "elements": {},
-              "relationships": {}
-            },
-            "assessments": {}
-          },
-          "lastUpdate": "2026-04-08T10:49:34.566Z"
-        }
-      ],
-      "QuantumCircuitDiagram": [
-        {
-          "id": "a5305903-0441-43cb-a268-052815a4d17e",
-          "title": "Quantum Circuit",
-          "model": {
-            "cols": [],
-            "gates": [],
-            "gateMetadata": {},
-            "initialStates": [],
-            "version": "1.0.0"
-          },
-          "lastUpdate": "2026-04-08T10:49:34.566Z"
+          "lastUpdate": "2026-09-11T14:35:13.353Z"
         }
       ]
     },
     "settings": {
       "defaultDiagramType": "ClassDiagram",
       "autoSave": true,
-      "collaborationEnabled": false
+      "collaborationEnabled": false,
+      "perspectives": {
+        "ClassDiagram": true,
+        "ObjectDiagram": true,
+        "StateMachineDiagram": true,
+        "AgentDiagram": true,
+        "UserDiagram": true,
+        "GUINoCodeDiagram": true,
+        "QuantumCircuitDiagram": true,
+        "NNDiagram": true,
+        "BPMN": true
+      }
     },
     "currentDiagramIndices": {
       "ClassDiagram": 0,
@@ -1264,10 +1267,12 @@
       "AgentDiagram": 0,
       "NNDiagram": 0,
       "UserDiagram": 0,
-      "QuantumCircuitDiagram": 0
+      "GUINoCodeDiagram": 0,
+      "QuantumCircuitDiagram": 0,
+      "BPMN": 0
     },
-    "schemaVersion": 3
+    "schemaVersion": 4
   },
-  "exportedAt": "2026-04-10T11:32:00.347Z",
+  "exportedAt": "2026-09-11T14:35:20.964Z",
   "version": "2.0.0"
 }

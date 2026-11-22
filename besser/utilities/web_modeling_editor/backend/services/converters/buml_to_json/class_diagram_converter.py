@@ -27,127 +27,149 @@ from besser.utilities.web_modeling_editor.backend.services.utils import (
     determine_connection_direction, calculate_connection_points,
     calculate_path_points, calculate_relationship_bounds
 )
+from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._safe_buml_loader import (
+    SAFE_DATETIME_MODULE,
+    safe_load_buml,
+)
+from besser.utilities.web_modeling_editor.backend.services.converters.parsers.multiplicity_parser import (
+    format_multiplicity_label,
+)
+from besser.utilities.utils import explicit_timestamp_iso, sort_by_timestamp
+from besser.utilities.web_modeling_editor.backend.services.converters.element_ids import element_id_taker
 
 
-def _format_multiplicity_label(multiplicity):
-    """Render a ``Multiplicity`` as its UML association-end label.
+def _set_timestamp(target: dict, element) -> dict:
+    """Record ``element.timestamp`` on a JSON dict as an ISO 8601 ``timestamp``.
 
-    Collapses an exact multiplicity (``min == max``) to a single value, matching
-    UML convention (``1..1`` -> ``1``, ``5..5`` -> ``5``). An unbounded upper bound
-    renders as ``*`` (``0..*``, ``1..*``). The result round-trips through
-    ``parse_multiplicity`` (a bare ``N`` is read back as ``N..N``).
+    Only an explicit timestamp is written (see ``Element.has_explicit_timestamp``);
+    one that defaulted to the creation time is left out, so converting the same
+    model twice gives the same JSON. ``json_to_buml`` falls back to the creation
+    time when the field is absent.
     """
-    min_val = multiplicity.min
-    if multiplicity.max == UNLIMITED_MAX_MULTIPLICITY:
-        return f"{min_val}..*"
-    if min_val == multiplicity.max:
-        return f"{min_val}"
-    return f"{min_val}..{multiplicity.max}"
+    iso = explicit_timestamp_iso(element)
+    if iso is not None:
+        target["timestamp"] = iso
+    return target
 
 
-def parse_buml_content(content: str) -> DomainModel:
-    """Parse B-UML content from a Python file and return a DomainModel and OCL constraints."""
+def fresh_primitive_types() -> dict:
+    """Per-load copies of the primitive types, so an upload never holds the shared singletons."""
+    return {
+        "StringType": PrimitiveDataType("str"),
+        "IntegerType": PrimitiveDataType("int"),
+        "FloatType": PrimitiveDataType("float"),
+        "BooleanType": PrimitiveDataType("bool"),
+        "TimeType": PrimitiveDataType("time"),
+        "DateType": PrimitiveDataType("date"),
+        "DateTimeType": PrimitiveDataType("datetime"),
+        "TimeDeltaType": PrimitiveDataType("timedelta"),
+        "AnyType": PrimitiveDataType("any"),
+    }
+
+
+def structural_allowed_names() -> dict:
+    """The names structural B-UML code may use, for ``safe_load_buml``; everything else is refused.
+
+    Shared with the loaders of sections that build on a structural model (a project's trace).
+    """
+    return {
+        "Class": Class,
+        "Property": Property,
+        "Method": Method,
+        "Parameter": StructuralParameter,
+        "PrimitiveDataType": PrimitiveDataType,
+        "BinaryAssociation": BinaryAssociation,
+        "Constraint": Constraint,
+        "Multiplicity": Multiplicity,
+        "UNLIMITED_MAX_MULTIPLICITY": UNLIMITED_MAX_MULTIPLICITY,
+        "Generalization": Generalization,
+        "Enumeration": Enumeration,
+        "EnumerationLiteral": EnumerationLiteral,
+        "DomainModel": DomainModel,
+        "AssociationClass": AssociationClass,
+        "Metadata": Metadata,
+        "MethodImplementationType": MethodImplementationType,
+        # Element timestamps: ``timestamp=datetime.datetime.fromisoformat(...)``.
+        "datetime": SAFE_DATETIME_MODULE,
+        "set": set,
+        "list": list,
+        "dict": dict,
+        "tuple": tuple,
+        **fresh_primitive_types(),
+        # No-op stub: project-exported files often end with a
+        # `project = Project(name=..., models=[domain_model], ...)` tail.
+        # The class converter only cares about the DomainModel; swallowing
+        # the Project(...) call with a stub keeps the sandbox import-tolerant.
+        "Project": lambda *args, **kwargs: None,
+    }
+
+
+def _repairing_binary_association(warnings: list[str]):
+    """``BinaryAssociation`` that makes a composition's non-composite end navigable instead of failing.
+
+    Ecore containment usually has no opposite, so files converted from Ecore
+    write that end non-navigable. The JSON import repairs the same case.
+    """
+    def binary_association(name, ends, *args, **kwargs):
+        properties = [end for end in ends if isinstance(end, Property)]
+        if len(properties) == 2:
+            for whole, part in (properties, properties[::-1]):
+                if whole.is_composite is True and part.is_navigable is False:
+                    part.is_navigable = True
+                    message = (
+                        f"Association '{name}': the non-composite end '{part.name}' ({part.type.name}) "
+                        f"of a composition must be navigable; made it navigable."
+                    )
+                    logger.warning(message)
+                    warnings.append(message)
+        return BinaryAssociation(name, ends, *args, **kwargs)
+
+    return binary_association
+
+
+def parse_buml_content(content: str, warnings: list[str] | None = None) -> DomainModel:
+    """Parse B-UML content from a Python file and return a DomainModel and OCL constraints.
+
+    Args:
+        content: The BUML source.
+        warnings: Receives a message for every repair made to load the model.
+    """
+    if warnings is None:
+        warnings = []
     try:
         # If caller already passed a DomainModel instance, return it directly.
         if isinstance(content, DomainModel):
             return content
 
-        # Create a safe environment for eval without any generators.
-        # __name__ is set to a sentinel (not "__main__") so any
-        # ``if __name__ == "__main__":`` guarded blocks in user files are
-        # skipped during import — matching normal Python import semantics.
-        safe_globals = {
-            "__name__": "besser_buml_import",
-            "__builtins__": {
-                "set": set,
-                "list": list,
-                "dict": dict,
-                "tuple": tuple,
-                "str": str,
-                "int": int,
-                "float": float,
-                "bool": bool,
-                "len": len,
-                "range": range,
-                "True": True,
-                "False": False,
-                "None": None,
-                "print": lambda *a, **kw: None,  # no-op to prevent info leakage
-            },
-            "Class": Class,
-            "Property": Property,
-            "Method": Method,
-            "Parameter": StructuralParameter,
-            "PrimitiveDataType": PrimitiveDataType,
-            "BinaryAssociation": BinaryAssociation,
-            "Constraint": Constraint,
-            "Multiplicity": Multiplicity,
-            "UNLIMITED_MAX_MULTIPLICITY": UNLIMITED_MAX_MULTIPLICITY,
-            "Generalization": Generalization,
-            "Enumeration": Enumeration,
-            "EnumerationLiteral": EnumerationLiteral,
-            "DomainModel": DomainModel,
-            "AssociationClass": AssociationClass,
-            "Metadata": Metadata,
-            "MethodImplementationType": MethodImplementationType,
-            "set": set,
-            "StringType": PrimitiveDataType("str"),
-            "IntegerType": PrimitiveDataType("int"),
-            "FloatType": PrimitiveDataType("float"),
-            "BooleanType": PrimitiveDataType("bool"),
-            "TimeType": PrimitiveDataType("time"),
-            "DateType": PrimitiveDataType("date"),
-            "DateTimeType": PrimitiveDataType("datetime"),
-            "TimeDeltaType": PrimitiveDataType("timedelta"),
-            "AnyType": PrimitiveDataType("any"),
-            # No-op stub: project-exported files often end with a
-            # `project = Project(name=..., models=[domain_model], ...)` tail.
-            # The class converter only cares about the DomainModel; swallowing
-            # the Project(...) call with a stub keeps the sandbox import-tolerant.
-            "Project": lambda *args, **kwargs: None,
+        # Allowlist of names that may appear in the BUML source. Everything
+        # else is rejected by the safe loader.
+        allowed_names = {
+            **structural_allowed_names(),
+            "BinaryAssociation": _repairing_binary_association(warnings),
         }
 
         # Ensure we have a string before preprocessing
         if not isinstance(content, str):
             raise TypeError(f"Expected B-UML content as str or DomainModel, got {type(content)!r}")
 
-        # Strip a leading UTF-8 BOM so the sandboxed exec does not fail with
-        # "invalid non-printable character U+FEFF" for files saved with a BOM.
-        if content.startswith("﻿"):
-            content = content[1:]
+        # Only the model is loaded, not a generator run at the end of the file.
+        cleaned_content = "\n".join(
+            line for line in content.splitlines()
+            if not any(gen in line for gen in ["Generator(", ".generate("])
+        )
 
-        # Pre-process the content to remove import and generator-related lines.
-        # All required types are already provided in safe_globals, so import
-        # statements are unnecessary and would fail in the sandboxed environment.
-        cleaned_lines = []
-        in_import_block = False
-        for line in content.splitlines():
-            stripped = line.lstrip()
-            if in_import_block:
-                # Continue skipping until we find the closing parenthesis
-                if ")" in line:
-                    in_import_block = False
-                continue
-            if stripped.startswith(("import ", "from ")):
-                # Check if this is a multi-line import (has open paren but no close)
-                if "(" in line and ")" not in line:
-                    in_import_block = True
-                continue
-            if any(gen in line for gen in ["Generator(", ".generate("]):
-                continue
-            cleaned_lines.append(line)
-        cleaned_content = "\n".join(cleaned_lines)
-
-        # Execute the cleaned B-UML content
-        local_vars = {}
-        exec(cleaned_content, safe_globals, local_vars)
+        # Execute the cleaned B-UML content through the safe AST-based loader.
+        local_vars = safe_load_buml(cleaned_content, allowed_names)
 
         domain_name = "Imported_Domain_Model"
+        domain_timestamp = None
         for var_name, var_value in local_vars.items():
             if isinstance(var_value, DomainModel):
                 domain_name = var_value.name
+                if var_value.has_explicit_timestamp:
+                    domain_timestamp = var_value.timestamp
 
-        domain_model = DomainModel(domain_name)
+        domain_model = DomainModel(domain_name, timestamp=domain_timestamp)
         # First pass: Add all classes and enumerations
         classes = {}
         for var_name, var_value in local_vars.items():
@@ -176,7 +198,7 @@ def class_buml_to_json(domain_model):
     elements = {}
     relationships = {}
     # Retrieve method diagram reference mapping (populated by json_to_buml round-trip).
-    # Keyed by (class_name, method_name) -> {"stateMachineId": ..., "quantumCircuitId": ...}
+    # Keyed by (class_name, method_name) -> {"stateMachineId": ..., "quantumCircuitId": ..., "neuralNetworkId": ...}
     method_diagram_refs = getattr(domain_model, 'method_diagram_refs', {})
     # Retrieve saved layout positions for round-trip fidelity (populated by json_to_buml).
     # Keyed by element name (classes/enums) or composite key (relationships).
@@ -216,16 +238,15 @@ def class_buml_to_json(domain_model):
 
     # First pass: Create all class and enumeration elements
     class_id_map = {}  # Store mapping between Class objects and their IDs
+    take_id = element_id_taker()
 
     # Sort types/constraints by name for deterministic output across runs.
     for type_obj in sorted(
         (t for t in domain_model.types | domain_model.constraints if isinstance(t, (Class, Enumeration, Constraint))),
         key=lambda t: t.name,
     ):
-            # Generate UUID for the element. OCL pre/post are emitted as
-            # full text including the Class::method header, so element-id
-            # stability is no longer required.
-            element_id = str(uuid.uuid4())
+            # Reuse the element's id (from the editor JSON); mint one if absent.
+            element_id = take_id(type_obj)
             class_id_map[type_obj] = element_id
 
             # Use saved layout position if available, otherwise fall back to grid layout
@@ -258,7 +279,7 @@ def class_buml_to_json(domain_model):
             y_offset = y + header_height  # Members start below the header
             if isinstance(type_obj, Class):
                 for attr in sorted(type_obj.attributes, key=lambda a: a.name):
-                    attr_id = str(uuid.uuid4())
+                    attr_id = take_id(attr)
                     attr_type = (
                         attr.type.name if hasattr(attr.type, "name") else str(attr.type)
                     )
@@ -290,13 +311,14 @@ def class_buml_to_json(domain_model):
                         if not isinstance(default_value, (str, int, float, bool)):
                             default_value = getattr(default_value, "name", None) or str(default_value)
                         attr_element["defaultValue"] = default_value
+                    _set_timestamp(attr_element, attr)
                     elements[attr_id] = attr_element
                     attribute_ids.append(attr_id)
                     y_offset += 30
 
                 # Process methods
                 for method in sorted(type_obj.methods, key=lambda m: m.name):
-                    method_id = str(uuid.uuid4())
+                    method_id = take_id(method)
                     visibility_symbol = next(
                         k for k, v in VISIBILITY_MAP.items() if v == method.visibility
                     )
@@ -354,6 +376,7 @@ def class_buml_to_json(domain_model):
                             MethodImplementationType.BAL: "bal",
                             MethodImplementationType.STATE_MACHINE: "state_machine",
                             MethodImplementationType.QUANTUM_CIRCUIT: "quantum_circuit",
+                            MethodImplementationType.NEURAL_NETWORK: "neural_network",
                         }
                         impl_type_str_map = {
                             "none": "none",
@@ -361,6 +384,7 @@ def class_buml_to_json(domain_model):
                             "bal": "bal",
                             "state_machine": "state_machine",
                             "quantum_circuit": "quantum_circuit",
+                            "neural_network": "neural_network",
                         }
                         impl_type = method.implementation_type
                         if isinstance(impl_type, str):
@@ -391,6 +415,14 @@ def class_buml_to_json(domain_model):
                     if quantum_circuit_id:
                         method_element["quantumCircuitId"] = quantum_circuit_id
 
+                    neural_network_id = refs.get("neuralNetworkId") or None
+                    if not neural_network_id and getattr(method, "neural_network", None):
+                        # If we have an actual neural network object, use its name as ID
+                        neural_network_id = method.neural_network.name
+                    if neural_network_id:
+                        method_element["neuralNetworkId"] = neural_network_id
+
+                    _set_timestamp(method_element, method)
                     elements[method_id] = method_element
                     method_ids.append(method_id)
                     y_offset += 30
@@ -404,8 +436,8 @@ def class_buml_to_json(domain_model):
                 else:
                     literals_iter = sorted(type_obj.literals, key=lambda lit: lit.name)
                 for literal in literals_iter:
-                    literal_id = str(uuid.uuid4())
-                    elements[literal_id] = {
+                    literal_id = take_id(literal)
+                    elements[literal_id] = _set_timestamp({
                         "id": literal_id,
                         "name": literal.name,
                         "type": "ClassAttribute",  # We use ClassAttribute type for literals
@@ -416,7 +448,7 @@ def class_buml_to_json(domain_model):
                             "width": 159,
                             "height": 30,
                         },
-                    }
+                    }, literal)
                     attribute_ids.append(literal_id)
                     y_offset += 30
 
@@ -482,52 +514,51 @@ def class_buml_to_json(domain_model):
                 if type_obj.metadata.icon:
                     element_data["icon"] = type_obj.metadata.icon
 
+            _set_timestamp(element_data, type_obj)
             elements[element_id] = element_data
 
     # Second pass: Create relationships
     for association in sorted(domain_model.associations, key=lambda a: a.name):
         try:
-            rel_id = str(uuid.uuid4())
+            rel_id = take_id(association)
             name = association.name if association.name else ""
-            # Sort ends by name for deterministic source/target assignment
-            # before applying the swap logic below.
-            ends = sorted(association.ends, key=lambda e: e.name)
+            # Declaration order is the drawn orientation: the JSON -> BUML processor creates
+            # the source end first and an exported script recreates the ends in that order.
+            ends = sort_by_timestamp(association.ends)
             if len(ends) == 2:
                 source_prop, target_prop = ends
+                saved_rel = layout_positions.get(f"rel_{name}")
 
-                # Check navigability and composition, swap if needed
+                # Keep the orientation the diagram was drawn with (recorded by
+                # the JSON -> BUML processor), so the saved endpoint layout is
+                # applied to the right classes. Navigability does not affect the
+                # orientation: it is emitted explicitly per end below.
+                if saved_rel and saved_rel.get("source_role") == target_prop.name:
+                    source_prop, target_prop = target_prop, source_prop
+
+                # The composite (whole) end of a composition is always the target.
                 if source_prop.is_composite and not target_prop.is_composite:
                     source_prop, target_prop = target_prop, source_prop
-                elif not source_prop.is_composite and not target_prop.is_composite:
-                    if not source_prop.is_navigable and target_prop.is_navigable:
-                        pass
-                    elif source_prop.is_navigable and not target_prop.is_navigable:
-                        source_prop, target_prop = target_prop, source_prop
-                    elif not source_prop.is_navigable and not target_prop.is_navigable:
-                        logger.warning("Both ends of association %s are not navigable. Skipping this association.", name)
-                        continue
 
                 source_class = source_prop.type
                 target_class = target_prop.type
 
                 if source_class in class_id_map and target_class in class_id_map:
-                    # Determine relationship type.
+                    # Determine relationship type. Plain associations are always
+                    # emitted as ClassBidirectional; which ends are navigable is
+                    # carried by the explicit per-end "navigable" flags.
                     # NOTE: ClassAggregation cannot be reconstructed here because the
                     # B-UML metamodel does not carry an aggregation flag on Property.
                     # Aggregation associations are round-tripped as ClassBidirectional.
                     rel_type = (
                         RELATIONSHIP_TYPES["composition"]
                         if target_prop.is_composite
-                        else (
-                            RELATIONSHIP_TYPES["bidirectional"]
-                            if source_prop.is_navigable and target_prop.is_navigable
-                            else RELATIONSHIP_TYPES["unidirectional"]
-                        )
+                        else RELATIONSHIP_TYPES["bidirectional"]
                     )
 
-                    # Check for saved layout positions from a previous round-trip
-                    saved_rel = layout_positions.get(f"rel_{name}")
-                    if saved_rel:
+                    # Restore saved layout positions from a previous round-trip
+                    # ("source_role" alone is orientation, not layout).
+                    if saved_rel and any(key != "source_role" for key in saved_rel):
                         # Restore saved layout
                         rel_bounds = saved_rel.get("bounds", {"x": 0, "y": 0, "width": 0, "height": 0})
                         path_points = saved_rel.get("path", [{"x": 0, "y": 0}, {"x": 0, "y": 0}])
@@ -568,35 +599,37 @@ def class_buml_to_json(domain_model):
                             "height": 0,
                         }
 
-                    relationships[rel_id] = {
+                    relationships[rel_id] = _set_timestamp({
                         "id": rel_id,
                         "name": name,
                         "type": rel_type,
-                        "source": {
+                        "source": _set_timestamp({
                             "element": class_id_map[source_class],
-                            "multiplicity": _format_multiplicity_label(source_prop.multiplicity),
+                            "multiplicity": format_multiplicity_label(source_prop.multiplicity),
                             "role": source_prop.name,
+                            "navigable": source_prop.is_navigable,
                             "direction": source_dir,
                             "bounds": source_bounds,
-                        },
-                        "target": {
+                        }, source_prop),
+                        "target": _set_timestamp({
                             "element": class_id_map[target_class],
-                            "multiplicity": _format_multiplicity_label(target_prop.multiplicity),
+                            "multiplicity": format_multiplicity_label(target_prop.multiplicity),
                             "role": target_prop.name,
+                            "navigable": target_prop.is_navigable,
                             "direction": target_dir,
                             "bounds": target_bounds,
-                        },
+                        }, target_prop),
                         "bounds": rel_bounds,
                         "path": path_points,
                         "isManuallyLayouted": is_manually_layouted,
-                    }
+                    }, association)
         except Exception as e:
             logger.error("Error converting relationship to JSON: %s", e, exc_info=True)
             continue
 
     # Handle generalizations
     for generalization in sorted(domain_model.generalizations, key=lambda g: (g.specific.name, g.general.name)):
-        rel_id = str(uuid.uuid4())
+        rel_id = take_id(generalization)
         if (
             generalization.general in class_id_map
             and generalization.specific in class_id_map
@@ -619,7 +652,7 @@ def class_buml_to_json(domain_model):
                 gen_source_bounds = {"x": 0, "y": 0, "width": 0, "height": 0}
                 gen_target_bounds = {"x": 0, "y": 0, "width": 0, "height": 0}
 
-            relationships[rel_id] = {
+            relationships[rel_id] = _set_timestamp({
                 "id": rel_id,
                 "type": "ClassInheritance",
                 "source": {
@@ -631,7 +664,7 @@ def class_buml_to_json(domain_model):
                     "bounds": gen_target_bounds,
                 },
                 "path": gen_path,
-            }
+            }, generalization)
 
     # Handle association classes
     for type_obj in sorted(domain_model.types, key=lambda t: t.name):
@@ -713,7 +746,7 @@ def class_buml_to_json(domain_model):
             for kind, constraints in (("precondition", getattr(method, "pre", []) or []),
                                        ("postcondition", getattr(method, "post", []) or [])):
                 for constraint in constraints:
-                    box_id = str(uuid.uuid4())
+                    box_id = take_id(constraint)
                     elements[box_id] = {
                         "id": box_id,
                         "type": "ClassOCLConstraint",
@@ -730,6 +763,7 @@ def class_buml_to_json(domain_model):
                     # are symmetric for method contracts too.
                     if getattr(constraint, "description", None):
                         elements[box_id]["description"] = constraint.description
+                    _set_timestamp(elements[box_id], constraint)
                     rel_id = str(uuid.uuid4())
                     relationships[rel_id] = {
                         "id": rel_id,
@@ -821,6 +855,7 @@ def class_buml_to_json(domain_model):
             elem.pop("implementationType", None)
             elem.pop("stateMachineId", None)
             elem.pop("quantumCircuitId", None)
+            elem.pop("neuralNetworkId", None)
         if elem.get("type") == "ClassMethod":
             if not elem.get("implementationType"):
                 elem.pop("implementationType", None)
@@ -828,6 +863,8 @@ def class_buml_to_json(domain_model):
                 elem.pop("stateMachineId", None)
             if not elem.get("quantumCircuitId"):
                 elem.pop("quantumCircuitId", None)
+            if not elem.get("neuralNetworkId"):
+                elem.pop("neuralNetworkId", None)
 
     result = {
         "version": "3.0.0",
@@ -838,5 +875,6 @@ def class_buml_to_json(domain_model):
         "relationships": relationships,
         "assessments": {},
     }
+    _set_timestamp(result, domain_model)
 
     return result

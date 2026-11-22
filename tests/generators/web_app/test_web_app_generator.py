@@ -130,3 +130,74 @@ def test_web_app_generator_creates_dockerfiles(domain_model, gui_model, tmpdir):
 
     assert os.path.isfile(frontend_dockerfile), "Frontend Dockerfile should be generated"
     assert os.path.isfile(backend_dockerfile), "Backend Dockerfile should be generated"
+
+
+def _host_binding_agent(name):
+    from besser.BUML.metamodel.state_machine.agent import Agent, WebSocketPlatform
+    agent = Agent(name)
+    agent.platforms.append(WebSocketPlatform())
+    agent.new_state(name="initial", initial=True)
+    return agent
+
+
+def _run_dockerfile_config_patch(agent_dir):
+    """Run the agent Dockerfile's config.yaml RUN step in ``agent_dir``; return the result."""
+    import re
+    import subprocess
+    import sys
+    import yaml
+
+    with open(os.path.join(agent_dir, "Dockerfile"), encoding="utf-8") as f:
+        match = re.search(r'^RUN python -c "(.*config\.yaml.*)"$', f.read(), re.MULTILINE)
+    assert match, "agent Dockerfile has no config.yaml patch step"
+    subprocess.run([sys.executable, "-c", match.group(1)], cwd=agent_dir, check=True)
+    with open(os.path.join(agent_dir, "config.yaml"), encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+
+# Editor-shaped config.yaml (AgentConfigYamlEditor defaults bind localhost).
+_EDITOR_AGENT_YAML = """agent:
+  check_transitions_delay: 5
+
+platforms:
+  websocket:
+    host: localhost
+    port: 8765
+    streamlit:
+      host: localhost
+      port: 5000
+"""
+
+
+@pytest.mark.parametrize("config_yaml", [None, _EDITOR_AGENT_YAML], ids=["template", "editor_yaml"])
+def test_compose_agent_binds_all_interfaces(domain_model, gui_model, tmpdir, config_yaml):
+    """A localhost-bound agent is unreachable through the compose port mapping."""
+    pytest.importorskip("yaml")
+    output_dir = str(tmpdir.mkdir("output"))
+    agent = _host_binding_agent("helper")
+    WebAppGenerator(
+        model=domain_model,
+        gui_model=gui_model,
+        output_dir=output_dir,
+        agent_models=[agent],
+        agent_config_yamls={"helper": config_yaml} if config_yaml else None,
+    ).generate()
+
+    cfg = _run_dockerfile_config_patch(os.path.join(output_dir, "agents", "helper"))
+    ws = cfg["platforms"]["websocket"]
+    assert ws["host"] == "0.0.0.0"
+    assert ws["streamlit"]["host"] == "0.0.0.0"
+    assert ws["port"] == 8765
+
+
+def test_standalone_agent_config_stays_on_localhost(tmpdir):
+    """Outside docker-compose the agent keeps binding localhost."""
+    yaml = pytest.importorskip("yaml")
+    from besser.generators.agents.baf_generator import BAFGenerator
+
+    output_dir = str(tmpdir.mkdir("output"))
+    BAFGenerator(_host_binding_agent("helper"), output_dir=output_dir).generate()
+    with open(os.path.join(output_dir, "config.yaml"), encoding="utf-8") as f:
+        ws = yaml.safe_load(f)["platforms"]["websocket"]
+    assert ws["host"] == "localhost"
+    assert ws["streamlit"]["host"] == "localhost"

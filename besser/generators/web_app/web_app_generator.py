@@ -5,7 +5,21 @@ from besser.BUML.metamodel.structural import DomainModel
 from besser.generators.backend import BackendGenerator
 from besser.generators.react import ReactGenerator
 from besser.generators import GeneratorInterface
+from besser.generators.agents.baf_version import BAF_VERSION
 from besser.utilities.buml_code_builder.common import safe_var_name
+
+
+WEBAPP_DB_MOUNT = "/app/webapp_data"
+"""Where each agent container mounts the backend's ``sqlite_data`` volume.
+
+The backend keeps its SQLite file at ``/app/data/<model name>.db``; agents keep
+their own ``/app/data`` volume, so the shared one is mounted next to it.
+"""
+
+
+def webapp_database_file(model_name: str) -> str:
+    """Path of the web app's SQLite database inside an agent container."""
+    return f"{WEBAPP_DB_MOUNT}/{model_name}.db"
 
 
 def agent_slug(name) -> str:
@@ -66,14 +80,31 @@ class WebAppGenerator(GeneratorInterface):
             per agent to the underlying :class:`BAFGenerator`.
         agent_model: **Deprecated.** Single-agent back-compat shim. Prefer ``agent_models``.
         agent_config: **Deprecated.** Single-agent back-compat shim. Prefer ``agent_configs``.
+        agent_config_yamls (dict, optional): Mapping of ``agent.name`` -> user-authored
+            ``config.yaml`` text, written instead of the default agent config.
+        link_agent_database (bool, optional): Connect every agent to the web app's
+            database (default ``True``). The agent's ``db1`` -- the database a
+            ``DBReply`` with ``db_selection_type='default'`` queries -- becomes the
+            backend's SQLite file, and ``docker-compose.yml`` mounts the backend's
+            ``sqlite_data`` volume into each agent container at ``/app/webapp_data``.
+            A user-authored ``db1`` that holds no ``YOUR-...`` placeholder is kept.
+            Pass ``False`` when the services do not share a volume (e.g. separate
+            hosting services); the agent config then keeps its placeholders.
+        app_name (str, optional): The application's name as its users see it: the
+            browser tab title and the README headings. Without it the README is
+            titled after the domain model and the browser tab reads ``BESSER App``.
     """
+
+    regenerable = True
 
     def __init__(self, model: DomainModel, gui_model: GUIModel, output_dir: str = None,
                  agent_models=None, agent_configs=None,
                  agent_model=None, agent_config=None,
-                 agent_config_yamls=None):
+                 agent_config_yamls=None, link_agent_database: bool = True, app_name: str = None):
         super().__init__(model, output_dir)
         self.gui_model = gui_model
+        self.app_name = app_name
+        self.link_agent_database = link_agent_database
         if agent_model is not None and not agent_models:
             agent_models = [agent_model]
         if agent_config is not None and not agent_configs:
@@ -87,6 +118,14 @@ class WebAppGenerator(GeneratorInterface):
         self.env = Environment(loader=FileSystemLoader(templates_path), trim_blocks=True,
                                lstrip_blocks=True, extensions=['jinja2.ext.do'])
         self.env.filters['agent_slug'] = agent_slug
+
+    def _regeneration_refusal(self) -> "str | None":
+        from besser.generators.agents.baf_generator import _config_has_personalization_content
+
+        for agent in self.agent_models:
+            if _config_has_personalization_content(self.agent_configs.get(getattr(agent, "name", None))):
+                return "a personalized agent calls an LLM, so its output differs from run to run."
+        return None
 
     @property
     def agent_model(self):
@@ -113,18 +152,21 @@ class WebAppGenerator(GeneratorInterface):
         if self.agent_models:
             self._generate_agent(self.env)
         self._generate_docker_files(self.env)
+        self._generate_readme(self.env)
 
     def _generate_frontend(self, env):
         # Generate frontend code in 'frontend' subfolder
         frontend_dir = os.path.join(self.output_dir, "frontend") if self.output_dir else "frontend"
-        frontend_gen = ReactGenerator(self.model, self.gui_model, output_dir=frontend_dir)
+        frontend_gen = ReactGenerator(self.model, self.gui_model, output_dir=frontend_dir, app_name=self.app_name)
         frontend_gen.generate()
+        self._merge_traced_files(frontend_gen, "frontend")
 
     def _generate_backend(self, env):
         # Generate backend code in 'backend' subfolder
         backend_dir = os.path.join(self.output_dir, "backend") if self.output_dir else "backend"
         backend_gen = BackendGenerator(self.model, output_dir=backend_dir)
         backend_gen.generate()
+        self._merge_traced_files(backend_gen, "backend")
 
     def _generate_agent(self, env):
         """Generate agent code for every configured agent model.
@@ -136,6 +178,7 @@ class WebAppGenerator(GeneratorInterface):
 
         agents_root = os.path.join(self.output_dir, "agents") if self.output_dir else "agents"
         os.makedirs(agents_root, exist_ok=True)
+        default_db = self.agent_default_db()
 
         seen_slugs = set()
         for agent in self.agent_models:
@@ -152,7 +195,29 @@ class WebAppGenerator(GeneratorInterface):
             os.makedirs(agent_dir, exist_ok=True)
             cfg = self.agent_configs.get(getattr(agent, "name", None))
             cfg_yaml = self.agent_config_yamls.get(getattr(agent, "name", None))
-            BAFGenerator(agent, output_dir=agent_dir, config=cfg, config_yaml=cfg_yaml).generate()
+            agent_gen = BAFGenerator(agent, output_dir=agent_dir, config=cfg, config_yaml=cfg_yaml,
+                                     default_db=default_db)
+            agent_gen.generate()
+            self._merge_traced_files(agent_gen, f"agents/{slug}")
+
+    def agent_default_db(self):
+        """The ``db1`` entry pointing the agents at the web app's SQLite database.
+
+        Returns ``None`` when ``link_agent_database`` is off, so the agent config
+        keeps its placeholders.
+        """
+        if not self.link_agent_database:
+            return None
+        return {"dialect": "sqlite", "file": webapp_database_file(self.model.name)}
+
+    def _generate_readme(self, env):
+        """Write the README that tells how to run the generated application."""
+        readme_path = os.path.join(self.output_dir, "README.md")
+        with open(readme_path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(env.get_template("README.md.j2").render(
+                title=(self.app_name or self.model.name).replace("_", " "),
+                agent_models=self.agent_models,
+            ))
 
     def _generate_docker_files(self, env):
         """
@@ -171,6 +236,8 @@ class WebAppGenerator(GeneratorInterface):
                 # template fork that still reads ``agent_model`` keeps working.
                 agent_model=self.agent_models[0] if self.agent_models else None,
                 name=self.model.name,
+                link_agent_database=self.link_agent_database,
+                webapp_db_mount=WEBAPP_DB_MOUNT,
             ))
 
         # Generate frontend Dockerfile
@@ -197,4 +264,4 @@ class WebAppGenerator(GeneratorInterface):
                 cfg = self.agent_configs.get(getattr(agent, "name", None))
                 needs_torch = resolve_intent_recognition_technology(cfg) == "classical"
                 with open(agent_dockerfile_path, 'w') as f:
-                    f.write(agent_dockerfile_template.render(agent_model=agent, needs_torch=needs_torch))
+                    f.write(agent_dockerfile_template.render(agent_model=agent, needs_torch=needs_torch, baf_version=BAF_VERSION))

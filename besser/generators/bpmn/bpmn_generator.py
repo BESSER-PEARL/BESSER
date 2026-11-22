@@ -13,13 +13,18 @@ See ``docs/source/generators/bpmn.rst`` for the design and the known
 limitations (multi-process ``dataStoreReference``, sub-process artifact hoisting).
 """
 
+import math
 import os
 import re
 import xml.etree.ElementTree as ET
-from typing import Optional
+from typing import List, Optional, Tuple
+from xml.parsers import expat
 
 from besser.BUML.metamodel.bpmn import (
     Activity,
+    AgenticGateway,
+    AgenticLane,
+    AgenticTask,
     BPMNModel,
     CallActivity,
     Collaboration,
@@ -44,6 +49,7 @@ from besser.BUML.metamodel.bpmn import (
     Transaction,
 )
 from besser.generators import GeneratorInterface
+from besser.utilities.generation_trace import FileTrace, TraceRegion, element_ref, trace_source
 from besser.utilities.utils import sort_by_timestamp
 
 
@@ -56,11 +62,12 @@ _NS = {
     "bpmndi": "http://www.omg.org/spec/BPMN/20100524/DI",
     "dc": "http://www.omg.org/spec/DD/20100524/DC",
     "di": "http://www.omg.org/spec/DD/20100524/DI",
+    "agentic": "https://www.besser-pearl.org/bpmn/agentic",
 }
 
 # BESSER-PEARL is the publishing org for files emitted by this generator.
 # `xmlns:bpmn=<OMG URI>` is what makes this a BPMN file; `targetNamespace` is
-# just the source identifier — see 05- guide §2.
+# just the source identifier.
 _TARGET_NAMESPACE = "http://besser-pearl.org/bpmn"
 
 
@@ -109,6 +116,175 @@ def _qname(prefix: str, local: str) -> str:
     """Build an ElementTree expanded-name (``{ns-uri}local``) for a namespaced tag."""
     return f"{{{_NS[prefix]}}}{local}"
 
+def _emit_agentic_extension(host_el, obj) -> None:
+    """Emit ``<bpmn:extensionElements><agentic:agentic .../></bpmn:extensionElements>``
+    as the next child of ``host_el`` when ``obj`` is a SEAA'25 agentic subclass.
+
+    Attribute presence + ordering mirror WME's ``emitAgenticExtension()``:
+
+    * ``role`` -- iff ``AgenticLane``.
+    * ``reflectionMode`` -- iff ``AgenticTask``.
+    * ``gatewayRole`` -- iff ``AgenticGateway``.
+    * ``trustScore`` -- on every agentic subclass.
+    * ``agentDiagramRef`` -- iff carried + set (the agentic task, or the legacy
+      lane carrier). Never on gateways.
+
+    A merging ``AgenticGateway`` with a ``governance_dsl`` additionally emits a
+    sibling ``<agentic:governance>`` CDATA-style child (escaped text -- stdlib
+    ET has no native CDATA, but the text content round-trips through any XML
+    parser identically).
+
+    No-op for non-agentic objects so callers can invoke it unconditionally.
+    """
+    if not isinstance(obj, (AgenticTask, AgenticGateway, AgenticLane)):
+        return
+
+    attrs: dict = {}
+    if isinstance(obj, AgenticLane):
+        attrs["role"] = obj.role.value
+        # Swarm size. Emit only when > 1 (absence = default 1), matching WME's
+        # exporter behavior.
+        if obj.swarm_size > 1:
+            attrs["multiplicity"] = str(obj.swarm_size)
+    if isinstance(obj, AgenticTask):
+        attrs["reflectionMode"] = obj.reflection_mode.value
+    if isinstance(obj, AgenticGateway):
+        attrs["gatewayRole"] = obj.gateway_role.value
+    attrs["trustScore"] = str(obj.trust_score)
+    # agentDiagramRef rides whatever construct carries it (the agentic task or
+    # the legacy lane), emitted only when set.
+    ref = getattr(obj, "agent_diagram_ref", None)
+    if ref is not None:
+        attrs["agentDiagramRef"] = ref
+
+    ext_el = ET.SubElement(host_el, _qname("bpmn", "extensionElements"))
+    ET.SubElement(ext_el, _qname("agentic", "agentic"), attrib=attrs)
+    # Governance DSL: sibling child of <agentic:agentic>,
+    # merging gateways only, emitted when set.
+    gov = getattr(obj, "governance_dsl", None)
+    if isinstance(obj, AgenticGateway) and gov is not None and gov.strip() != "":
+        ET.SubElement(ext_el, _qname("agentic", "governance")).text = gov
+
+# ---------------------------------------------------------------------------
+# Edge geometry (BPMN DI waypoints)
+# ---------------------------------------------------------------------------
+
+# How far (px) an edge end may sit from its shape's bounds and still count as
+# attached. Editor ports sit on the bounds; a little slack absorbs rounding.
+_ATTACH_TOLERANCE = 5.0
+
+
+def _fmt_coord(value) -> str:
+    """Render a coordinate without a spurious ``.0`` and with at most 2 decimals."""
+    try:
+        number = round(float(value), 2)
+    except (TypeError, ValueError, OverflowError):
+        return "0"
+    if math.isnan(number) or math.isinf(number):
+        return "0"
+    return str(int(number)) if number.is_integer() else str(number)
+
+
+def _to_float(value) -> Optional[float]:
+    """``float(value)`` for finite numbers, ``None`` otherwise (``None`` counts as 0)."""
+    try:
+        number = float(value or 0)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _bounds_of(obj) -> Optional[tuple]:
+    """``(x, y, width, height)`` of ``obj``'s on-canvas bounds, or ``None``."""
+    bounds = (getattr(obj, "layout", None) or {}).get("bounds")
+    if not isinstance(bounds, dict):
+        return None
+    values = tuple(_to_float(bounds.get(key)) for key in ("x", "y", "width", "height"))
+    return None if any(v is None for v in values) else values
+
+
+def _path_points(path, dx: float = 0.0, dy: float = 0.0) -> Optional[list]:
+    """Convert a WME ``path`` (list of ``{"x", "y"}``) to ``(x, y)`` tuples shifted by
+    ``(dx, dy)``; ``None`` when the path has fewer than two usable points."""
+    if not isinstance(path, list) or len(path) < 2:
+        return None
+    points = []
+    for point in path:
+        if not isinstance(point, dict):
+            return None
+        x, y = _to_float(point.get("x")), _to_float(point.get("y"))
+        if x is None or y is None:
+            return None
+        points.append((x + dx, y + dy))
+    return points
+
+
+def _touches(point: tuple, bounds: tuple) -> bool:
+    """Whether ``point`` lies on, inside, or within ``_ATTACH_TOLERANCE`` of ``bounds``."""
+    x, y, w, h = bounds
+    px, py = point
+    dist_x = max(x - px, 0.0, px - (x + w))
+    dist_y = max(y - py, 0.0, py - (y + h))
+    return dist_x <= _ATTACH_TOLERANCE and dist_y <= _ATTACH_TOLERANCE
+
+
+def _route_between(source: tuple, target: tuple) -> list:
+    """Orthogonal route from ``source``'s boundary to ``target``'s boundary.
+
+    The dominant axis between the two centres picks the sides (right/left or
+    bottom/top); a non-aligned pair gets a two-bend elbow through the midpoint,
+    like the editor's own layouter draws.
+    """
+    sx, sy, sw, sh = source
+    tx, ty, tw, th = target
+    scx, scy = sx + sw / 2, sy + sh / 2
+    tcx, tcy = tx + tw / 2, ty + th / 2
+    if abs(tcx - scx) >= abs(tcy - scy):
+        start = (sx + sw, scy) if tcx >= scx else (sx, scy)
+        end = (tx, tcy) if tcx >= scx else (tx + tw, tcy)
+        if start[1] == end[1]:
+            return [start, end]
+        mid_x = (start[0] + end[0]) / 2
+        return [start, (mid_x, start[1]), (mid_x, end[1]), end]
+    start = (scx, sy + sh) if tcy >= scy else (scx, sy)
+    end = (tcx, ty) if tcy >= scy else (tcx, ty + th)
+    if start[0] == end[0]:
+        return [start, end]
+    mid_y = (start[1] + end[1]) / 2
+    return [start, (start[0], mid_y), (end[0], mid_y), end]
+
+
+def _edge_waypoints(flow) -> Optional[list]:
+    """Absolute DI waypoints for ``flow``, or ``None`` when nothing can be placed.
+
+    The Web Modeling Editor stores a relationship's ``path`` *relative to the
+    relationship's own* ``bounds``, so the stored points are shifted by
+    ``bounds.x/y`` first. The result is kept only when it starts on the source
+    shape and ends on the target shape. Otherwise -- placeholder geometry (the
+    modeling assistant creates flows with a dummy ``(0,0)->(100,0)`` path that
+    only the editor's layouter replaces), a stale path, or no path at all -- the
+    edge is re-routed between the two shapes so BPMN tools (Camunda Modeler,
+    bpmn-js) draw it connected instead of at a fixed spot on the canvas.
+    """
+    layout = getattr(flow, "layout", None) or {}
+    rel_bounds = layout.get("bounds") if isinstance(layout.get("bounds"), dict) else {}
+    off_x = _to_float(rel_bounds.get("x")) or 0.0
+    off_y = _to_float(rel_bounds.get("y")) or 0.0
+    candidates = [_path_points(layout.get("path"), off_x, off_y)]
+    if off_x or off_y:
+        # Tolerate producers that already stored absolute points.
+        candidates.append(_path_points(layout.get("path")))
+
+    source_bounds = _bounds_of(flow.source)
+    target_bounds = _bounds_of(flow.target)
+    if source_bounds is None or target_bounds is None:
+        # No shapes to attach to: keep whatever path there is (best effort).
+        return candidates[0]
+    for points in candidates:
+        if points and _touches(points[0], source_bounds) and _touches(points[-1], target_bounds):
+            return points
+    return _route_between(source_bounds, target_bounds)
+
 
 # ---------------------------------------------------------------------------
 # BPMNGenerator
@@ -121,7 +297,17 @@ class BPMNGenerator(GeneratorInterface):
         model (BPMNModel): The BPMN model to serialise.
         output_dir (str, optional): Directory for the ``.bpmn`` output file.
         file_name (str, optional): Output filename (default ``"bpmn_diagram.bpmn"``).
+
+    Attributes:
+        traced_files (dict[str, FileTrace]): After ``generate()``, the ``.bpmn`` file with the model as source
+            and the lines of each XML element emitted for a model element that has an ``id`` (a model converted
+            from the web editor gives each element its editor id; ``layout["id"]`` only names its XML element).
+            Regions are rule ``bpmn_generator#<xml tag>``, and
+            ``bpmn_generator#shape`` / ``#edge`` for the diagram-interchange shape or edge of the element.
+            A process, a lane set or a derived data-store/object definition has no editor id and no region.
     """
+
+    regenerable = True
 
     def __init__(self, model: BPMNModel, output_dir: Optional[str] = None,
                  file_name: str = "bpmn_diagram.bpmn"):
@@ -131,9 +317,15 @@ class BPMNGenerator(GeneratorInterface):
         # repeated calls on the same instance produce identical output.
         self._id_for: dict = {}
         self._used_ids: set = set()
-        # Helper id counters for non-metamodel ids (LaneSet, DataObjectRef,
-        # DataStoreRef, BPMNDiagram, BPMNPlane, Shape, Edge). Per-call.
+        # Helper id counters for non-metamodel ids (LaneSet, BPMNDiagram,
+        # BPMNPlane, Shape, Edge). Per-call.
         self._fresh_counter: dict = {}
+        # DataStore -> id of its definitions-level ``<bpmn:dataStore>``. The
+        # metamodel object's own id (``_id_for_obj``) goes to the visual
+        # ``<bpmn:dataStoreReference>``, which is what DI shapes and data
+        # associations must point at (bpmn-js / Camunda Modeler only render
+        # references). Per-call.
+        self._data_store_def_id: dict = {}
 
     # --- public API ---------------------------------------------------------
 
@@ -147,6 +339,7 @@ class BPMNGenerator(GeneratorInterface):
         self._id_for = {}
         self._used_ids = set()
         self._fresh_counter = {}
+        self._data_store_def_id = {}
 
         output_dir = self.build_generation_dir()
         output_path = os.path.join(output_dir, self._file_name)
@@ -163,12 +356,17 @@ class BPMNGenerator(GeneratorInterface):
             },
         )
 
-        # 1. Root-level data stores (BPMN 2.0.2 §10.3).
+        # 1. Root-level data stores (BPMN 2.0.2 §10.3). The DataStore's own id
+        #    is reserved for its <bpmn:dataStoreReference> (the visual element);
+        #    the definition gets a derived ``DataStore_<ref-id>`` id, mirroring
+        #    the Web Modeling Editor's own exporter.
         for ds in sort_by_timestamp(self.model.data_stores):
+            ref_id = self._id_for_obj(ds, "DataStoreReference")
+            def_id = self._derived_id(f"DataStore_{ref_id}")
+            self._data_store_def_id[ds] = def_id
             ET.SubElement(
                 definitions, _qname("bpmn", "dataStore"),
-                attrib={"id": self._id_for_obj(ds, "DataStore"),
-                        "name": ds.name or ""},
+                attrib={"id": def_id, "name": ds.name or ""},
             )
 
         # 2. One <bpmn:process> per Process.
@@ -189,7 +387,50 @@ class BPMNGenerator(GeneratorInterface):
         ET.indent(definitions, space="  ")
         tree = ET.ElementTree(definitions)
         tree.write(output_path, encoding="UTF-8", xml_declaration=True)
+        self._record_trace(output_path)
         return output_path
+
+    # --- tracing ------------------------------------------------------------
+
+    def _record_trace(self, output_path: str) -> None:
+        """Map each XML element emitted for a model element back to it, by line range of the written file.
+
+        The file is read back and its elements located with the XML parser's own line numbers; an element is
+        matched to its model element through the id the generator gave it (``_id_for``), so the mapping is
+        exact whatever id the model element had (a clash or a non-NCName editor id is renamed).
+        """
+        with open(output_path, encoding="utf-8", newline="") as f:
+            text = f.read()
+        objects = {xml_id: obj for obj, xml_id in self._id_for.items()}
+        regions: List[TraceRegion] = []
+        open_elements: List[Tuple[str, Optional[object], int]] = []
+
+        def region_of(tag: str, obj, start: int, end: int) -> None:
+            ref = element_ref(obj)
+            if ref is None:
+                return
+            rule = {"BPMNShape": "shape", "BPMNEdge": "edge"}.get(tag, tag)
+            regions.append(TraceRegion(ref.element_id, ref.element_type, obj.name or ref.element_id,
+                                       f"bpmn_generator#{rule}", start, end))
+
+        parser = expat.ParserCreate()
+
+        def start_element(name, attributes):
+            tag = name.split(":")[-1]
+            ref = attributes.get("bpmnElement") if tag in ("BPMNShape", "BPMNEdge") else attributes.get("id")
+            open_elements.append((tag, objects.get(ref), parser.CurrentLineNumber))
+
+        def end_element(_name):
+            tag, obj, start = open_elements.pop()
+            if obj is not None:
+                region_of(tag, obj, start, parser.CurrentLineNumber)
+
+        parser.StartElementHandler, parser.EndElementHandler = start_element, end_element
+        parser.Parse(text.encode("utf-8"), True)
+        regions.sort(key=lambda r: (r.start_line, -r.end_line))
+        source = trace_source(self.model, "bpmn_generator#definitions")
+        self.traced_files[self._file_name.replace(os.sep, "/")] = FileTrace(
+            tuple(regions), (source,) if source else ())
 
     # --- id strategy --------------------------------------------------------
 
@@ -217,6 +458,16 @@ class BPMNGenerator(GeneratorInterface):
         else:
             candidate = self._fresh_id(prefix)
         self._id_for[obj] = candidate
+        return candidate
+
+    def _derived_id(self, candidate: str) -> str:
+        """Reserve ``candidate`` (suffixed ``_N`` on collision) as an XML-only id."""
+        base = candidate
+        suffix = 1
+        while candidate in self._used_ids:
+            candidate = f"{base}_{suffix}"
+            suffix += 1
+        self._used_ids.add(candidate)
         return candidate
 
     def _fresh_id(self, prefix: str) -> str:
@@ -253,6 +504,7 @@ class BPMNGenerator(GeneratorInterface):
                     attrib={"id": self._id_for_obj(lane, "Lane"),
                             "name": lane.name or ""},
                 )
+                _emit_agentic_extension(lane_el, lane)
                 for member in sort_by_timestamp(lane.flow_nodes):
                     ref = ET.SubElement(lane_el, _qname("bpmn", "flowNodeRef"))
                     ref.text = self._id_for_obj(member, type(member).__name__)
@@ -266,25 +518,33 @@ class BPMNGenerator(GeneratorInterface):
             self._emit_sequence_flow(process_el, flow)
 
         # 2d. Data store references — emit only in the first process (§11.1).
+        #     The reference carries the DataStore's own id so DI shapes and
+        #     data associations resolve to the visual element.
         if is_first_process:
             for ds in sort_by_timestamp(self.model.data_stores):
                 ET.SubElement(
                     process_el, _qname("bpmn", "dataStoreReference"),
-                    attrib={"id": self._fresh_id("DataStoreRef"),
+                    attrib={"id": self._id_for_obj(ds, "DataStoreReference"),
                             "name": ds.name or "",
-                            "dataStoreRef": self._id_for_obj(ds, "DataStore")},
+                            "dataStoreRef": self._data_store_def_id[ds]},
                 )
 
-        # 2e. Data objects + their reference siblings (per spec).
+        # 2e. Data objects + their reference siblings (per spec). As for data
+        #     stores, the metamodel object's id goes to the
+        #     <bpmn:dataObjectReference> -- the element bpmn-js / Camunda
+        #     Modeler draw -- and the semantic <bpmn:dataObject> gets a derived
+        #     ``DataObject_<ref-id>`` id. A DI shape or data association that
+        #     pointed at the bare <bpmn:dataObject> would not be rendered.
         for do in sort_by_timestamp(process.data_objects):
-            do_id = self._id_for_obj(do, "DataObject")
+            ref_id = self._id_for_obj(do, "DataObjectReference")
+            do_id = self._derived_id(f"DataObject_{ref_id}")
             ET.SubElement(
                 process_el, _qname("bpmn", "dataObject"),
                 attrib={"id": do_id},
             )
             ET.SubElement(
                 process_el, _qname("bpmn", "dataObjectReference"),
-                attrib={"id": self._fresh_id("DataObjectRef"),
+                attrib={"id": ref_id,
                         "name": do.name or "",
                         "dataObjectRef": do_id},
             )
@@ -341,6 +601,8 @@ class BPMNGenerator(GeneratorInterface):
             attrs["default"] = self._id_for_obj(node.default_flow, "Flow")
 
         el = ET.SubElement(parent, _qname("bpmn", tag), attrib=attrs)
+
+        _emit_agentic_extension(el, node)
 
         # 3. <bpmn:incoming> / <bpmn:outgoing> children — required by Camunda
         #    Modeler / bpmn-js (§3.1). Sorted for deterministic output.
@@ -519,21 +781,21 @@ class BPMNGenerator(GeneratorInterface):
                         "height": str(bounds.get("height", 0))},
             )
 
-        # One BPMNEdge per connecting object with a path.
+        # One BPMNEdge per connecting object whose route is known: its stored
+        # path, or one routed between its endpoints' shapes.
         for flow in sort_by_timestamp(self.model.all_connecting_objects()):
-            path = (getattr(flow, "layout", None) or {}).get("path")
-            if not path:
+            waypoints = _edge_waypoints(flow)
+            if not waypoints:
                 continue
             edge = ET.SubElement(
                 plane, _qname("bpmndi", "BPMNEdge"),
                 attrib={"id": self._fresh_id("Edge"),
                         "bpmnElement": self._id_for_obj(flow, type(flow).__name__)},
             )
-            for point in path:
+            for x, y in waypoints:
                 ET.SubElement(
                     edge, _qname("di", "waypoint"),
-                    attrib={"x": str(point.get("x", 0)),
-                            "y": str(point.get("y", 0))},
+                    attrib={"x": _fmt_coord(x), "y": _fmt_coord(y)},
                 )
 
     def _shape_iter(self):

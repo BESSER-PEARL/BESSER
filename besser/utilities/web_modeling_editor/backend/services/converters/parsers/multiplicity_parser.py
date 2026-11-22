@@ -49,3 +49,19 @@ def parse_multiplicity(multiplicity_str):
         )
 
     return Multiplicity(min_multiplicity=min_multiplicity, max_multiplicity=max_multiplicity)
+
+
+def format_multiplicity_label(multiplicity: Multiplicity) -> str:
+    """Render a ``Multiplicity`` as its UML label.
+
+    Collapses an exact multiplicity (``min == max``) to a single value, matching
+    UML convention (``1..1`` -> ``1``, ``5..5`` -> ``5``). An unbounded upper bound
+    renders as ``*`` (``0..*``, ``1..*``). The result round-trips through
+    ``parse_multiplicity`` (a bare ``N`` is read back as ``N..N``).
+    """
+    min_val = multiplicity.min
+    if multiplicity.max == UNLIMITED_MAX_MULTIPLICITY:
+        return f"{min_val}..*"
+    if min_val == multiplicity.max:
+        return f"{min_val}"
+    return f"{min_val}..{multiplicity.max}"

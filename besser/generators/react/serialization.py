@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import logging
 from enum import Enum
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from besser.BUML.metamodel.gui import (
     Alert,
     Button,
+    DataBinding,
     DataList,
     EmbeddedContent,
     Form,
@@ -26,6 +28,7 @@ from besser.BUML.metamodel.gui.dashboard import (
     LookupColumn,
     ExpressionColumn,
     LineChart,
+    Map,
     MetricCard,
     PieChart,
     RadarChart,
@@ -39,8 +42,25 @@ from besser.BUML.metamodel.gui.events_actions import (
     Transition,
     Update,
 )
-from besser.BUML.metamodel.structural import Class, Enumeration
+from besser.BUML.metamodel.structural import Association, AssociationClass, Class, Enumeration
+from besser.generators.structural_utils import (
+    create_schema_accepts_end,
+    display_attribute,
+    form_parent_ends,
+    get_foreign_keys,
+    is_server_owned_attribute,
+)
 from besser.utilities import sort_by_timestamp
+
+from .routes import page_route
+
+logger = logging.getLogger(__name__)
+
+_CHARTS = (LineChart, BarChart, PieChart, RadarChart, RadialBarChart)
+# Components that only read their records, so they may read them from a
+# DataBinding.endpoint; tables, maps and forms also write back through the
+# class's CRUD API and keep it.
+_ENDPOINT_READERS = (*_CHARTS, MetricCard)
 
 
 class GuiSerializationMixin:
@@ -63,12 +83,14 @@ class GuiSerializationMixin:
             "module_name": meta.get("module_name"),
             "all_table_fields": all_table_fields,
             "used_components": used_component_types,
+            "app_title": self._humanize(self.app_name) or "BESSER App",
         }
 
     def _serialize_gui_model(self) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
         pages: List[Dict[str, Any]] = []
         pages_meta: List[Dict[str, str]] = []
         self._style_map = {}
+        self._node_elements = {}
 
         modules = self._sorted_by_name(self.gui_model.modules)
         module_name = modules[0].name if modules else "AppModule"
@@ -113,12 +135,13 @@ class GuiSerializationMixin:
         screen_id = getattr(screen, 'page_id', None) or screen.component_id or screen.name
         screen_name = screen.name
 
+        self._current_screen = screen
         node: Dict[str, Any] = {
             "id": screen_id,
             "name": screen.description or self._humanize(screen_name),
             "description": screen.description or "",
             "is_main": bool(screen.is_main_page),
-            "route_path": screen.route_path or f"/{screen_name}".lower().replace(' ', '-'),
+            "route_path": screen.route_path or page_route(screen_name),
             "components": [],
         }
 
@@ -131,7 +154,7 @@ class GuiSerializationMixin:
         for element in elements:
             node["components"].append(self._serialize_component(element))
 
-        return self._clean_dict(node)
+        return self._remember_element(self._clean_dict(node), screen)
 
     def _serialize_component(self, element: ViewComponent) -> Dict[str, Any]:
         component_type = self._map_component_type(element)
@@ -271,6 +294,10 @@ class GuiSerializationMixin:
                         if input_params:
                             attributes['input-parameters'] = input_params
 
+            crud = self._crud_button_target(element)
+            if crud:
+                node["crud"] = crud
+
             # Output instance_source (table/component ID providing instance data)
             instance_source = getattr(element, "instance_source", None)
             if instance_source:
@@ -320,18 +347,29 @@ class GuiSerializationMixin:
 
         if isinstance(element, Form):
             inputs = []
+            # Document order (the processor numbers a form's inputs), then name
             for input_field in sorted(
-                getattr(element, "inputFields", []), key=lambda f: getattr(f, "name", "").lower()
+                getattr(element, "inputFields", []),
+                key=lambda f: (
+                    f.display_order is None, f.display_order or 0, getattr(f, "name", "").lower()
+                ),
             ):
                 field_options = getattr(input_field, "options", None)
+                # A plain <input placeholder="..."> keeps it as an attribute
+                placeholder = getattr(input_field, "placeholder", None) or (
+                    getattr(input_field, "custom_attributes", None) or {}
+                ).get("placeholder")
+                binding = self._form_input_binding(element, input_field)
                 inputs.append(
                     self._clean_dict(
                         {
                             "id": getattr(input_field, "name", None),
-                            "label": getattr(input_field, "label", None) or self._humanize(getattr(input_field, "name", "")),
+                            **binding,
+                            "label": (getattr(input_field, "label", None) or placeholder
+                                      or self._humanize(getattr(input_field, "name", ""))),
                             "type": self._enum_value(getattr(input_field, "field_type", None)),
-                            "placeholder": getattr(input_field, "placeholder", None),
-                            "required": getattr(input_field, "required", False) or None,
+                            "placeholder": placeholder,
+                            "required": getattr(input_field, "required", False) or binding.get("required"),
                             "default_value": getattr(input_field, "default_value", None),
                             "options": [{"value": o.value, "label": o.label} for o in field_options] if field_options else None,
                             "min_value": getattr(input_field, "min_value", None),
@@ -342,8 +380,11 @@ class GuiSerializationMixin:
                         }
                     )
                 )
+            inputs.extend(self._required_parent_inputs(element, inputs))
             if inputs:
                 node["inputs"] = inputs
+            node["submit_label"] = getattr(element, "submit_label", None) or "Submit"
+            node["submit_class"] = (attributes or {}).get("data-submit-class")
 
         if isinstance(element, Menu):
             items = []
@@ -579,6 +620,8 @@ class GuiSerializationMixin:
                 attributes = list(domain_concept.all_attributes())
                 attributes = sort_by_timestamp(attributes) if attributes else []
                 for attr in attributes:
+                    if is_server_owned_attribute(attr):
+                        continue
                     field_type = getattr(attr, "type", None)
                     column_dict = {
                         "column_type": "field",
@@ -603,36 +646,19 @@ class GuiSerializationMixin:
 
                     form_columns.append(column_dict)
 
-                ends = list(domain_concept.all_association_ends())
-                ends = sort_by_timestamp(ends) if ends else []
-                for end in ends:
-                    if hasattr(end, "is_navigable") and not end.is_navigable:
-                        continue
+                # Display fields the user configured on the table's lookup columns:
+                # the dialog's selects should show the same values as the table.
+                configured_lookup_fields = {
+                    c.get("path"): c.get("field")
+                    for c in columns
+                    if c.get("column_type") == "lookup" and c.get("path") and c.get("field")
+                }
 
-                    target = getattr(end, "type", None)
-                    target_attrs = []
-                    if target and hasattr(target, "all_attributes"):
-                        target_attrs = sort_by_timestamp(list(target.all_attributes()))
-                    lookup_field = target_attrs[0].name if target_attrs else ""
-
-                    max_mult = getattr(getattr(end, "multiplicity", None), "max", None)
-                    is_list = max_mult == "*" or (isinstance(max_mult, int) and max_mult > 1)
-
-                    column_dict = {
-                        "column_type": "lookup",
-                        "path": end.name,
-                        "field": end.name,
-                        "lookup_field": lookup_field,
-                        "entity": getattr(target, "name", "") if target else "",
-                        "type": "list" if is_list else "str",
-                        "required": False,
-                    }
-
-                    multiplicity = getattr(end, "multiplicity", None)
-                    if multiplicity and getattr(multiplicity, "min", 0) > 0:
-                        column_dict["required"] = True
-
-                    form_columns.append(column_dict)
+                is_association_row = isinstance(domain_concept, AssociationClass)
+                for end in self._settable_ends(domain_concept):
+                    form_columns.append(
+                        self._lookup_form_column(end, configured_lookup_fields.get(end.name), is_association_row)
+                    )
 
             if form_columns:
                 node["chart"]["formColumns"] = form_columns
@@ -658,6 +684,50 @@ class GuiSerializationMixin:
             )
             node["color"] = element.primary_color or element.value_color or "#2c3e50"
 
+        if isinstance(element, Map):
+            node["title"] = element.title or self._humanize(element.name)
+            node["map_config"] = self._clean_dict(
+                {
+                    "centerLatitude": element.center_latitude,
+                    "centerLongitude": element.center_longitude,
+                    "zoom": element.zoom,
+                }
+            )
+            # Serialize each MapLayer with its own data binding and field references
+            serialized_layers = []
+            for layer in getattr(element, "layers", None) or []:
+                lt = layer.effective_layer_type()
+                serialized_layers.append(
+                    self._clean_dict(
+                        {
+                            "name": layer.name,
+                            "type": lt.value,
+                            "dataBinding": self._serialize_data_binding(
+                                getattr(layer, "data_binding", None), owner=layer
+                            ),
+                            "latitudeField": getattr(
+                                getattr(layer, "latitude_field", None), "name", None
+                            ),
+                            "longitudeField": getattr(
+                                getattr(layer, "longitude_field", None), "name", None
+                            ),
+                            "labelField": getattr(
+                                getattr(layer, "label_field", None), "name", None
+                            ),
+                            "weightField": getattr(
+                                getattr(layer, "weight_field", None), "name", None
+                            ),
+                            "geojsonField": getattr(
+                                getattr(layer, "geojson_field", None), "name", None
+                            ),
+                            "valueField": getattr(
+                                getattr(layer, "value_field", None), "name", None
+                            ),
+                        }
+                    )
+                )
+            node["layers"] = serialized_layers
+
         if isinstance(element, AgentComponent):
             node["agent-name"] = element.agent_name or ""
             node["agent-title"] = element.agent_title or "BESSER Agent"
@@ -666,15 +736,235 @@ class GuiSerializationMixin:
 
         # Clean up raw GrapesJS series from attributes for chart components
         # We use the processed series array instead of the raw JSON string
-        if isinstance(element, (LineChart, BarChart, PieChart, RadarChart, RadialBarChart)):
+        if isinstance(element, _CHARTS):
             if "attributes" in node and isinstance(node["attributes"], dict) and "series" in node["attributes"]:
                 node["attributes"] = {k: v for k, v in node["attributes"].items() if k != "series"}
 
-        binding_data = self._serialize_data_binding(getattr(element, "data_binding", None))
+        binding_data = self._serialize_data_binding(
+            getattr(element, "data_binding", None),
+            use_endpoint=isinstance(element, _ENDPOINT_READERS),
+            owner=element,
+        )
         if binding_data:
             node["data_binding"] = binding_data
 
-        return self._clean_dict(node)
+        return self._remember_element(self._clean_dict(node), element)
+
+    def _remember_element(self, node: Dict[str, Any], element: ViewComponent) -> Dict[str, Any]:
+        """Note which GUI element a serialized node came from, so that the page built from it can be traced.
+
+        The node is kept alongside the element so that its ``id()`` stays its own.
+        """
+        self._node_elements[id(node)] = (node, element)
+        return node
+
+    def _element_of(self, node: Dict[str, Any]) -> Optional[ViewComponent]:
+        """The GUI element ``node`` was serialized from (None for any other dict)."""
+        entry = self._node_elements.get(id(node))
+        return entry[1] if entry and entry[0] is node else None
+
+    def _settable_ends(self, domain_concept) -> List[Any]:
+        """The association ends a create/edit form of the class can set, oldest first."""
+        is_association_row = isinstance(domain_concept, AssociationClass)
+        ends = list(
+            domain_concept.association.ends if is_association_row
+            else domain_concept.all_association_ends()
+        )
+        ends = sort_by_timestamp(ends) if ends else []
+        domain_model = getattr(self, "model", None)
+        fkeys = get_foreign_keys(domain_model) if domain_model is not None else {}
+        link_associations = set(self._association_class_index())
+        settable = []
+        for end in ends:
+            if not is_association_row and hasattr(end, "is_navigable") and not end.is_navigable:
+                continue
+            # An end the backend's Create schema has no field for (the
+            # non-owning side of a 1:1) would be sent and silently dropped.
+            if not is_association_row and not create_schema_accepts_end(end, fkeys, link_associations):
+                continue
+            settable.append(end)
+        return settable
+
+    def _lookup_form_column(self, end, lookup_field: Optional[str] = None,
+                            is_association_row: bool = False) -> Dict[str, Any]:
+        """The form column of an association end: a select of the related class's
+        records, labelled by ``lookup_field`` (default: its display attribute)."""
+        target = getattr(end, "type", None)
+        target_attrs = []
+        if target and hasattr(target, "all_attributes"):
+            target_attrs = sort_by_timestamp(list(target.all_attributes()))
+        lookup_field = lookup_field or self._select_display_field(target_attrs)
+        # The identifying attribute of the target class: option values,
+        # payload ids and edit prefill key on it, while lookup_field
+        # stays the human-readable label source.
+        target_field = next(
+            (a.name for a in target_attrs if getattr(a, "is_id", False)), "id"
+        )
+        target_attribute = next(
+            (attr for attr in target_attrs if attr.name == target_field), None
+        )
+        target_type = getattr(getattr(target_attribute, "type", None), "name", "int")
+
+        max_mult = getattr(getattr(end, "multiplicity", None), "max", None)
+        # One association-class row always selects exactly one entity
+        # at each end, irrespective of the relationship multiplicity.
+        is_list = not is_association_row and (
+            max_mult == "*" or (isinstance(max_mult, int) and max_mult > 1)
+        )
+
+        column_dict = {
+            "column_type": "lookup",
+            "path": end.name,
+            "field": end.name,
+            "lookup_field": lookup_field,
+            "target_field": target_field,
+            "target_type": target_type,
+            "entity": getattr(target, "name", "") if target else "",
+            "type": "list" if is_list else "str",
+            "required": False,
+        }
+
+        multiplicity = getattr(end, "multiplicity", None)
+        if is_association_row or multiplicity and getattr(multiplicity, "min", 0) > 0:
+            column_dict["required"] = True
+
+        # List ends whose association is materialized by an association class
+        # carry the association class attributes so the create/edit form can
+        # collect them per selected target.
+        if is_list:
+            association_class_meta = self._association_class_metadata(end)
+            if association_class_meta:
+                column_dict["association_class"] = association_class_meta
+
+        return column_dict
+
+    def _form_input_binding(self, form: Form, input_field: InputField) -> Dict[str, Any]:
+        """The attribute a bound form's input posts (``field``) and its type; for
+        an association end, the related record it selects (``lookup``)."""
+        if getattr(form, "data_binding", None) is None:
+            return {}
+        attribute = getattr(getattr(input_field, "data_binding", None), "data_field", None)
+        if attribute is None or is_server_owned_attribute(attribute):
+            return {}
+        if isinstance(attribute.owner, Association):
+            column = self._lookup_form_column(
+                attribute, is_association_row=isinstance(form.data_binding.domain_concept, AssociationClass)
+            )
+            return {**self._form_lookup_binding(column), "required": column["required"] or None}
+        attr_type = getattr(attribute, "type", None)
+        field_type = "enum" if isinstance(attr_type, Enumeration) else getattr(attr_type, "name", "str")
+        return {"field": attribute.name, "field_type": field_type}
+
+    @staticmethod
+    def _form_lookup_binding(column: Dict[str, Any]) -> Dict[str, Any]:
+        """A lookup form column as a bound form posts it: the key of the chosen record."""
+        return {
+            "field": column["path"],
+            "field_type": column["target_type"],
+            "lookup": {
+                "entity": column["entity"],
+                "lookupField": column["lookup_field"],
+                "targetField": column["target_field"],
+                "targetType": column["target_type"],
+            },
+        }
+
+    def _required_parent_inputs(self, form: Form, inputs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """A select for each record a new one must reference (an order's customer)
+        that no input of the bound form supplies: without it every submit is refused."""
+        domain_class = getattr(getattr(form, "data_binding", None), "domain_concept", None)
+        if domain_class is None:
+            return []
+        is_association_row = isinstance(domain_class, AssociationClass)
+        supplied = {field.get("field") for field in inputs}
+        taken = {field.get("id") for field in inputs}
+        selects = []
+        for end in form_parent_ends(domain_class, self.model):
+            column = self._lookup_form_column(end, is_association_row=is_association_row)
+            if not column["required"] or end.name in supplied:
+                continue
+            selects.append({
+                "id": end.name if end.name not in taken else f"{end.name}_ref",
+                **self._form_lookup_binding(column),
+                "label": end.name[:1].upper() + self._humanize(end.name)[1:],
+                "type": "Dropdown",
+                "required": True,
+            })
+        return selects
+
+    def _crud_button_target(self, button: Button) -> Optional[Dict[str, Any]]:
+        """The table a create/update/delete button acts through.
+
+        The button's ``instance_source`` names it; otherwise it is the table
+        bound to the button's entity on the same screen, else on another
+        screen (create only: the app navigates there and opens its dialog).
+        """
+        action = self._enum_value(getattr(button, "actionType", None))
+        if action not in ("create", "update", "delete"):
+            return None
+        entity = getattr(button, "entity_class", None) or next(
+            (
+                act.target_class
+                for event in (getattr(button, "events", None) or [])
+                for act in event.actions
+                if isinstance(act, (Create, Update, Delete)) and getattr(act, "target_class", None)
+            ),
+            None,
+        )
+        tables = self._tables_by_screen()
+        current = getattr(self, "_current_screen", None)
+        source = getattr(button, "instance_source", None)
+        table_id = source if isinstance(source, str) and source else None
+        table_screen = current
+        if isinstance(source, Table):
+            table_id = source.component_id or source.name
+            table_screen = next((scr for scr, table in tables if table is source), current)
+            if entity is None:
+                entity = getattr(getattr(source, "data_binding", None), "domain_concept", None)
+        if table_id is None and entity is not None:
+            bound = [
+                (scr, table) for scr, table in tables
+                if getattr(getattr(table, "data_binding", None), "domain_concept", None) is entity
+            ]
+            here = [(scr, table) for scr, table in bound if scr is current]
+            candidates = here or (bound if action == "create" else [])
+            if candidates:
+                table_screen, table = candidates[0]
+                table_id = table.component_id or table.name
+        if not table_id:
+            return None
+        target_path = None
+        if table_screen is not None and table_screen is not current:
+            target_path = table_screen.route_path or page_route(table_screen.name)
+        return self._clean_dict(
+            {
+                "action": action,
+                "tableId": table_id,
+                "entity": getattr(entity, "name", None),
+                "targetPath": target_path,
+                "confirmMessage": (
+                    (button.confirmation_message or "Are you sure?")
+                    if getattr(button, "confirmation_required", False) else None
+                ),
+            }
+        )
+
+    def _tables_by_screen(self) -> List[Tuple[Any, Table]]:
+        """(screen, table) for every table of the GUI model, in page order."""
+
+        def walk(elements):
+            by_order = sorted(elements or [], key=lambda e: (e.display_order is None, e.display_order or 0, e.name))
+            for element in by_order:
+                if isinstance(element, Table):
+                    yield element
+                if isinstance(element, ViewContainer):
+                    yield from walk(element.view_elements)
+
+        index: List[Tuple[Any, Table]] = []
+        for module in self._sorted_by_name(self.gui_model.modules):
+            for screen in self._sorted_by_name(module.screens):
+                index.extend((screen, table) for table in walk(screen.view_elements))
+        return index
 
     def _serialize_events(self, element: Button) -> Optional[List[Dict[str, Any]]]:
         events = getattr(element, "events", None)
@@ -737,7 +1027,15 @@ class GuiSerializationMixin:
 
         return self._clean_dict(data)
 
-    def _serialize_data_binding(self, binding) -> Optional[Dict[str, Any]]:
+    def _serialize_data_binding(self, binding: Optional[DataBinding], use_endpoint: bool = False,
+                                owner: Any = None) -> Optional[Dict[str, Any]]:
+        """The binding as the runtime blocks read it.
+
+        ``endpoint`` is the binding's own ``endpoint`` when ``use_endpoint`` (a chart
+        or metric card), flagged ``custom_endpoint`` so the runtime fetches it as
+        written; else the domain concept's CRUD list (``/<class>/``). ``owner`` (the
+        component) names it in the warning when an endpoint is ignored.
+        """
         if not binding:
             return None
 
@@ -749,8 +1047,18 @@ class GuiSerializationMixin:
         data_field_path = getattr(binding, "data_field_path", None)
 
         endpoint = None
-        if domain and getattr(domain, "name", None):
-            endpoint = f"/{domain.name.lower()}/"
+        custom_endpoint = binding.endpoint
+        if custom_endpoint and use_endpoint:
+            endpoint = custom_endpoint
+        else:
+            if custom_endpoint:
+                logger.warning(
+                    "DataBinding.endpoint %r ignored on %s %r: only charts and metric cards read from an "
+                    "endpoint; it keeps the CRUD list of its class.",
+                    custom_endpoint, type(owner).__name__, getattr(owner, "name", None),
+                )
+            if domain and getattr(domain, "name", None):
+                endpoint = f"/{domain.name.lower()}/"
 
         # Use path for nested fields, otherwise use field attribute name
         label_field_value = label_field_path if label_field_path else (getattr(label_field, "name", None) if label_field else None)
@@ -760,11 +1068,35 @@ class GuiSerializationMixin:
             {
                 "entity": getattr(domain, "name", None),
                 "endpoint": endpoint,
+                "custom_endpoint": bool(custom_endpoint and use_endpoint) or None,
+                "row_key_fields": self._row_key_fields(domain),
                 "label_field": label_field_value,
                 "data_field": data_field_value,
                 "filter": str(data_filter) if data_filter else None,
+                "filter_expression": binding.filter_expression or None,
+                "aggregation": self._enum_value(getattr(binding, "aggregation", None)),
             }
         )
+
+    @staticmethod
+    def _row_key_fields(domain) -> Optional[List[str]]:
+        """The row fields that address one entity in the generated REST API.
+
+        An association class is keyed by the foreign keys of its two ends
+        (``/<class>/{<end>_id}/{<end>_id}/``, ends in name order — the same
+        order the backend generator uses); any other class by its declared
+        ``is_id`` attribute, falling back to the surrogate ``id``.
+        """
+        if domain is None:
+            return None
+        if isinstance(domain, AssociationClass):
+            ends = sorted(domain.association.ends, key=lambda end: end.name)
+            return [f"{end.name}_id" for end in ends]
+        attributes = list(domain.all_attributes()) if hasattr(domain, "all_attributes") else list(
+            getattr(domain, "attributes", None) or []
+        )
+        id_attr = next((attr.name for attr in sort_by_timestamp(attributes) if getattr(attr, "is_id", False)), None)
+        return [id_attr or "id"]
 
     def _serialize_chart_series(self, series_list) -> Optional[List[Dict[str, Any]]]:
         """Serialize chart series with their data bindings."""
@@ -808,6 +1140,9 @@ class GuiSerializationMixin:
                 if domain:
                     series_data["dataSource"] = domain.name.lower()
                     series_data["endpoint"] = f"/{domain.name.lower()}/"
+                if binding.endpoint:
+                    series_data["endpoint"] = binding.endpoint
+                    series_data["customEndpoint"] = True
 
                 # Use label_field_path for nested fields, otherwise use label_field attribute
                 label_field_path = getattr(binding, "label_field_path", None)
@@ -825,6 +1160,10 @@ class GuiSerializationMixin:
 
                 if filter_expression:
                     series_data["filter"] = str(filter_expression)
+
+                aggregation = self._enum_value(getattr(binding, "aggregation", None))
+                if aggregation:
+                    series_data["aggregation"] = aggregation
 
             serialized.append(self._clean_dict(series_data))
 
@@ -1163,12 +1502,80 @@ class GuiSerializationMixin:
         return json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False)
 
     @staticmethod
+    def _select_display_field(attributes: List[Any]) -> str:
+        """The name of the attribute shown for a related record in lookup selects
+        (see ``display_attribute``), or ``""`` when there is none."""
+        attribute = display_attribute(attributes)
+        return attribute.name if attribute is not None else ""
+
+    @staticmethod
     def _select_lookup_field(attributes: List[Any]) -> str:
         if not attributes:
             return ""
         non_id_attrs = [attr for attr in attributes if not getattr(attr, "is_id", False)]
         selected = non_id_attrs[0] if non_id_attrs else attributes[0]
         return getattr(selected, "name", "")
+
+    def _association_class_index(self) -> Dict[str, AssociationClass]:
+        """Map the name of each association to the AssociationClass materializing it."""
+        index: Dict[str, AssociationClass] = {}
+        domain_model = getattr(self, "model", None)
+        for type_ in getattr(domain_model, "types", None) or []:
+            if not isinstance(type_, AssociationClass):
+                continue
+            association_name = getattr(getattr(type_, "association", None), "name", None)
+            if association_name:
+                index[association_name] = type_
+        return index
+
+    def _association_class_metadata(self, end: Any) -> Optional[Dict[str, Any]]:
+        """Association class metadata for an association end, or None when there is none.
+
+        The generated create/edit form uses it to collect the association class
+        attributes for every selected target of the relationship.
+        """
+        association_name = getattr(getattr(end, "owner", None), "name", None)
+        if not association_name:
+            return None
+        association_class = self._association_class_index().get(association_name)
+        if association_class is None:
+            return None
+        return {
+            "entity": association_class.name,
+            "fields": self._association_class_fields(association_class),
+        }
+
+    @staticmethod
+    def _association_class_fields(association_class: AssociationClass) -> List[Dict[str, Any]]:
+        """Serialize the attributes of an association class in model (timestamp) order."""
+        if hasattr(association_class, "all_attributes"):
+            attributes = list(association_class.all_attributes())
+        else:
+            attributes = list(getattr(association_class, "attributes", None) or [])
+        attributes = sort_by_timestamp(attributes) if attributes else []
+
+        fields: List[Dict[str, Any]] = []
+        for attr in attributes:
+            if is_server_owned_attribute(attr):
+                continue
+            attr_type = getattr(attr, "type", None)
+            field_dict: Dict[str, Any] = {"name": attr.name, "type": "str"}
+
+            if isinstance(attr_type, Enumeration):
+                field_dict["type"] = "enum"
+                field_dict["options"] = sorted([literal.name for literal in attr_type.literals])
+            elif attr_type is not None and getattr(attr_type, "name", None):
+                field_dict["type"] = attr_type.name
+
+            required = False
+            if not getattr(attr, "is_optional", False):
+                multiplicity = getattr(attr, "multiplicity", None)
+                if multiplicity and getattr(multiplicity, "min", 0) > 0:
+                    required = True
+            field_dict["required"] = required
+
+            fields.append(field_dict)
+        return fields
 
     @staticmethod
     def _sorted_by_name(items: Iterable[Any]) -> List[Any]:
@@ -1245,6 +1652,8 @@ class GuiSerializationMixin:
             return "table"
         if isinstance(element, MetricCard):
             return "metric-card"
+        if isinstance(element, Map):
+            return "map"
         if isinstance(element, AgentComponent):
             return "agent-component"
         if isinstance(element, Alert):
@@ -1330,6 +1739,10 @@ class GuiSerializationMixin:
                 used_types.add('Table')
             elif isinstance(element, MetricCard):
                 used_types.add('MetricCard')
+            elif isinstance(element, Map):
+                used_types.add('Map')
+            elif isinstance(element, AgentComponent):
+                used_types.add('AgentComponent')
 
             # Recursively scan children if this is a ViewContainer
             if isinstance(element, ViewContainer):

@@ -1,0 +1,781 @@
+{
+  "title": "Library Agent",
+  "model": {
+    "version": "3.0.0",
+    "type": "AgentDiagram",
+    "size": {
+      "width": 1660,
+      "height": 640
+    },
+    "interactive": {
+      "elements": {},
+      "relationships": {}
+    },
+    "elements": {
+      "initial_72th6ksf3_mm9b38u1": {
+        "id": "initial_72th6ksf3_mm9b38u1",
+        "name": "",
+        "type": "StateInitialNode",
+        "owner": null,
+        "bounds": {
+          "x": -810,
+          "y": -130,
+          "width": 45,
+          "height": 45
+        }
+      },
+      "state_zl3bfe65n_mm9b38u1": {
+        "id": "state_zl3bfe65n_mm9b38u1",
+        "name": "Idle",
+        "type": "AgentState",
+        "owner": null,
+        "bounds": {
+          "x": -170,
+          "y": -30,
+          "width": 260,
+          "height": 70
+        },
+        "stateType": "standard",
+        "fallbackBodyEnabled": true,
+        "actions": [
+          "body_wybm5pc31_mm9b38u1"
+        ],
+        "fallbackActions": [],
+        "bodies": [
+          "body_wybm5pc31_mm9b38u1"
+        ],
+        "fallbackBodies": []
+      },
+      "body_wybm5pc31_mm9b38u1": {
+        "id": "body_wybm5pc31_mm9b38u1",
+        "name": "How can I assist you today?",
+        "type": "AgentStateBody",
+        "owner": "state_zl3bfe65n_mm9b38u1",
+        "bounds": {
+          "x": -169.5,
+          "y": 10.5,
+          "width": 259,
+          "height": 30
+        },
+        "actionType": "TextReplyAction",
+        "replyType": "text",
+        "useSessionVars": false,
+        "llm_name": ""
+      },
+      "state_j5tnma02n_mm9b38u1": {
+        "id": "state_j5tnma02n_mm9b38u1",
+        "name": "OpeningHoursState",
+        "type": "AgentState",
+        "owner": null,
+        "bounds": {
+          "x": 390,
+          "y": -40,
+          "width": 420,
+          "height": 100
+        },
+        "stateType": "standard",
+        "fallbackBodyEnabled": true,
+        "actions": [
+          "body_a8ph8sxrt_mm9b38u1",
+          "fb1432f7-1778-4c8b-90f3-e471e86cec31"
+        ],
+        "fallbackActions": [],
+        "bodies": [
+          "body_a8ph8sxrt_mm9b38u1",
+          "fb1432f7-1778-4c8b-90f3-e471e86cec31"
+        ],
+        "fallbackBodies": []
+      },
+      "body_a8ph8sxrt_mm9b38u1": {
+        "id": "body_a8ph8sxrt_mm9b38u1",
+        "name": "Our opening hours are Monday\u2013Friday 9 AM\u20136 PM.",
+        "type": "AgentStateBody",
+        "owner": "state_j5tnma02n_mm9b38u1",
+        "bounds": {
+          "x": 390.5,
+          "y": 0.5,
+          "width": 419,
+          "height": 30
+        },
+        "actionType": "TextReplyAction",
+        "replyType": "text",
+        "useSessionVars": false,
+        "llm_name": ""
+      },
+      "fb1432f7-1778-4c8b-90f3-e471e86cec31": {
+        "id": "fb1432f7-1778-4c8b-90f3-e471e86cec31",
+        "name": "Saturday 10 AM\u20134 PM. Closed Sunday.",
+        "type": "AgentStateBody",
+        "owner": "state_j5tnma02n_mm9b38u1",
+        "bounds": {
+          "x": 390.5,
+          "y": 30.5,
+          "width": 419,
+          "height": 30
+        },
+        "actionType": "TextReplyAction",
+        "replyType": "text",
+        "useSessionVars": false,
+        "llm_name": ""
+      },
+      "state_krso67h8q_mm9b38u1": {
+        "id": "state_krso67h8q_mm9b38u1",
+        "name": "CheapestBookState",
+        "type": "AgentState",
+        "owner": null,
+        "bounds": {
+          "x": 390,
+          "y": -260,
+          "width": 420,
+          "height": 190
+        },
+        "stateType": "standard",
+        "fallbackBodyEnabled": true,
+        "actions": [
+          "body_38x5jthwr_mm9b38u1",
+          "body_0yl3shkws_mm9b38u1",
+          "b533e6a5-cc51-4f0d-a269-98bf81a02c31",
+          "7c8e27fb-8cce-4f3d-9cc4-19ef5a963b8a",
+          "b779be48-1bc4-4984-9274-00c91203552a"
+        ],
+        "fallbackActions": [],
+        "bodies": [
+          "body_38x5jthwr_mm9b38u1",
+          "body_0yl3shkws_mm9b38u1",
+          "b533e6a5-cc51-4f0d-a269-98bf81a02c31",
+          "7c8e27fb-8cce-4f3d-9cc4-19ef5a963b8a",
+          "b779be48-1bc4-4984-9274-00c91203552a"
+        ],
+        "fallbackBodies": []
+      },
+      "body_38x5jthwr_mm9b38u1": {
+        "id": "body_38x5jthwr_mm9b38u1",
+        "name": "To get the cheapest book of an author, follow these steps:",
+        "type": "AgentStateBody",
+        "owner": "state_krso67h8q_mm9b38u1",
+        "bounds": {
+          "x": 390.5,
+          "y": -219.5,
+          "width": 419,
+          "height": 30
+        },
+        "actionType": "TextReplyAction",
+        "replyType": "text",
+        "useSessionVars": false,
+        "llm_name": ""
+      },
+      "body_0yl3shkws_mm9b38u1": {
+        "id": "body_0yl3shkws_mm9b38u1",
+        "name": "1. Go to the Library tab.",
+        "type": "AgentStateBody",
+        "owner": "state_krso67h8q_mm9b38u1",
+        "bounds": {
+          "x": 390.5,
+          "y": -189.5,
+          "width": 419,
+          "height": 30
+        },
+        "actionType": "TextReplyAction",
+        "replyType": "text",
+        "useSessionVars": false,
+        "llm_name": ""
+      },
+      "b533e6a5-cc51-4f0d-a269-98bf81a02c31": {
+        "id": "b533e6a5-cc51-4f0d-a269-98bf81a02c31",
+        "name": "2. In the table, select the library where you want to search.",
+        "type": "AgentStateBody",
+        "owner": "state_krso67h8q_mm9b38u1",
+        "bounds": {
+          "x": 390.5,
+          "y": -159.5,
+          "width": 419,
+          "height": 30
+        },
+        "actionType": "TextReplyAction",
+        "replyType": "text",
+        "useSessionVars": false,
+        "llm_name": ""
+      },
+      "7c8e27fb-8cce-4f3d-9cc4-19ef5a963b8a": {
+        "id": "7c8e27fb-8cce-4f3d-9cc4-19ef5a963b8a",
+        "name": "3. Click on \u201cCheapest Book\u201d.",
+        "type": "AgentStateBody",
+        "owner": "state_krso67h8q_mm9b38u1",
+        "bounds": {
+          "x": 390.5,
+          "y": -129.5,
+          "width": 419,
+          "height": 30
+        },
+        "actionType": "TextReplyAction",
+        "replyType": "text",
+        "useSessionVars": false,
+        "llm_name": ""
+      },
+      "b779be48-1bc4-4984-9274-00c91203552a": {
+        "id": "b779be48-1bc4-4984-9274-00c91203552a",
+        "name": "4. Select an author and click \u201cExecute\u201d.",
+        "type": "AgentStateBody",
+        "owner": "state_krso67h8q_mm9b38u1",
+        "bounds": {
+          "x": 390.5,
+          "y": -99.5,
+          "width": 419,
+          "height": 30
+        },
+        "actionType": "TextReplyAction",
+        "replyType": "text",
+        "useSessionVars": false,
+        "llm_name": ""
+      },
+      "state_5emfhqwzt_mm9b38u1": {
+        "id": "state_5emfhqwzt_mm9b38u1",
+        "name": "ContactState",
+        "type": "AgentState",
+        "owner": null,
+        "bounds": {
+          "x": 390,
+          "y": 160,
+          "width": 420,
+          "height": 100
+        },
+        "stateType": "standard",
+        "fallbackBodyEnabled": true,
+        "actions": [
+          "body_b6vkku4r1_mm9b38u1",
+          "body_8i8n5kbs0_mm9b38u1"
+        ],
+        "fallbackActions": [],
+        "bodies": [
+          "body_b6vkku4r1_mm9b38u1",
+          "body_8i8n5kbs0_mm9b38u1"
+        ],
+        "fallbackBodies": []
+      },
+      "body_b6vkku4r1_mm9b38u1": {
+        "id": "body_b6vkku4r1_mm9b38u1",
+        "name": "You can contact a librarian at library@example.com or call +1 555-123-4567.",
+        "type": "AgentStateBody",
+        "owner": "state_5emfhqwzt_mm9b38u1",
+        "bounds": {
+          "x": 390.5,
+          "y": 200.5,
+          "width": 419,
+          "height": 30
+        },
+        "actionType": "TextReplyAction",
+        "replyType": "text",
+        "useSessionVars": false,
+        "llm_name": ""
+      },
+      "body_8i8n5kbs0_mm9b38u1": {
+        "id": "body_8i8n5kbs0_mm9b38u1",
+        "name": "They will get back to you shortly.",
+        "type": "AgentStateBody",
+        "owner": "state_5emfhqwzt_mm9b38u1",
+        "bounds": {
+          "x": 390.5,
+          "y": 230.5,
+          "width": 419,
+          "height": 30
+        },
+        "actionType": "TextReplyAction",
+        "replyType": "text",
+        "useSessionVars": false,
+        "llm_name": ""
+      },
+      "46badadf-e50d-481e-8246-3ba2393fce47": {
+        "id": "46badadf-e50d-481e-8246-3ba2393fce47",
+        "name": "Greeting",
+        "type": "AgentState",
+        "owner": null,
+        "bounds": {
+          "x": -670,
+          "y": -140,
+          "width": 340,
+          "height": 70
+        },
+        "stateType": "standard",
+        "fallbackBodyEnabled": true,
+        "actions": [
+          "e3aad61a-89b4-46a6-8c16-6f80b861d717"
+        ],
+        "fallbackActions": [],
+        "bodies": [
+          "e3aad61a-89b4-46a6-8c16-6f80b861d717"
+        ],
+        "fallbackBodies": []
+      },
+      "e3aad61a-89b4-46a6-8c16-6f80b861d717": {
+        "id": "e3aad61a-89b4-46a6-8c16-6f80b861d717",
+        "name": "Welcome to the library support system!",
+        "type": "AgentStateBody",
+        "owner": "46badadf-e50d-481e-8246-3ba2393fce47",
+        "bounds": {
+          "x": -669.5,
+          "y": -99.5,
+          "width": 339,
+          "height": 30
+        },
+        "actionType": "TextReplyAction",
+        "replyType": "text",
+        "useSessionVars": false,
+        "llm_name": ""
+      }
+    },
+    "relationships": {
+      "transition_ixdyt9fr7_mm9b38u1": {
+        "id": "transition_ixdyt9fr7_mm9b38u1",
+        "name": "",
+        "type": "AgentStateTransitionInit",
+        "owner": null,
+        "bounds": {
+          "x": -765,
+          "y": -107.5,
+          "width": 95,
+          "height": 1
+        },
+        "path": [
+          {
+            "x": 0,
+            "y": 0
+          },
+          {
+            "x": 95,
+            "y": 0
+          }
+        ],
+        "source": {
+          "direction": "Right",
+          "element": "initial_72th6ksf3_mm9b38u1"
+        },
+        "target": {
+          "direction": "Left",
+          "element": "46badadf-e50d-481e-8246-3ba2393fce47"
+        },
+        "isManuallyLayouted": false
+      },
+      "transition_x8h483xz2_mm9b38u1": {
+        "id": "transition_x8h483xz2_mm9b38u1",
+        "name": "",
+        "type": "AgentStateTransition",
+        "owner": null,
+        "bounds": {
+          "x": 90,
+          "y": 5,
+          "width": 300,
+          "height": 1
+        },
+        "path": [
+          {
+            "x": 0,
+            "y": 0
+          },
+          {
+            "x": 300,
+            "y": 0
+          }
+        ],
+        "source": {
+          "direction": "Upright",
+          "element": "state_zl3bfe65n_mm9b38u1"
+        },
+        "target": {
+          "direction": "Upleft",
+          "element": "state_j5tnma02n_mm9b38u1"
+        },
+        "isManuallyLayouted": false,
+        "transitionType": "predefined",
+        "predefined": {
+          "predefinedType": "when_intent_matched",
+          "intentName": "OpeningHours"
+        },
+        "custom": {
+          "condition": []
+        }
+      },
+      "transition_53oz6z5cc_mm9b38u1": {
+        "id": "transition_53oz6z5cc_mm9b38u1",
+        "name": "",
+        "type": "AgentStateTransition",
+        "owner": null,
+        "bounds": {
+          "x": 25,
+          "y": -165,
+          "width": 365,
+          "height": 135
+        },
+        "path": [
+          {
+            "x": 0,
+            "y": 135
+          },
+          {
+            "x": 0,
+            "y": 0
+          },
+          {
+            "x": 365,
+            "y": 0
+          }
+        ],
+        "source": {
+          "direction": "Topright",
+          "element": "state_zl3bfe65n_mm9b38u1"
+        },
+        "target": {
+          "direction": "Left",
+          "element": "state_krso67h8q_mm9b38u1"
+        },
+        "isManuallyLayouted": false,
+        "transitionType": "predefined",
+        "predefined": {
+          "predefinedType": "when_intent_matched",
+          "intentName": "CheapestBook"
+        },
+        "custom": {
+          "condition": []
+        }
+      },
+      "transition_jc0mk7kpn_mm9b38u1": {
+        "id": "transition_jc0mk7kpn_mm9b38u1",
+        "name": "",
+        "type": "AgentStateTransition",
+        "owner": null,
+        "bounds": {
+          "x": 25,
+          "y": 40,
+          "width": 365,
+          "height": 170
+        },
+        "path": [
+          {
+            "x": 0,
+            "y": 0
+          },
+          {
+            "x": 0,
+            "y": 170
+          },
+          {
+            "x": 365,
+            "y": 170
+          }
+        ],
+        "source": {
+          "direction": "Bottomright",
+          "element": "state_zl3bfe65n_mm9b38u1"
+        },
+        "target": {
+          "direction": "Left",
+          "element": "state_5emfhqwzt_mm9b38u1"
+        },
+        "isManuallyLayouted": false,
+        "transitionType": "predefined",
+        "predefined": {
+          "predefinedType": "when_intent_matched",
+          "intentName": "Contact"
+        },
+        "custom": {
+          "condition": []
+        }
+      },
+      "transition_zuuhzl5f9_mm9b38u1": {
+        "id": "transition_zuuhzl5f9_mm9b38u1",
+        "name": "",
+        "type": "AgentStateTransition",
+        "owner": null,
+        "bounds": {
+          "x": -40,
+          "y": -212.5,
+          "width": 430,
+          "height": 182.5
+        },
+        "path": [
+          {
+            "x": 430,
+            "y": 0
+          },
+          {
+            "x": 0,
+            "y": 0
+          },
+          {
+            "x": 0,
+            "y": 182.5
+          }
+        ],
+        "source": {
+          "direction": "Upleft",
+          "element": "state_krso67h8q_mm9b38u1"
+        },
+        "target": {
+          "direction": "Up",
+          "element": "state_zl3bfe65n_mm9b38u1"
+        },
+        "isManuallyLayouted": false,
+        "transitionType": "predefined",
+        "predefined": {
+          "predefinedType": "auto",
+          "conditionValue": ""
+        },
+        "custom": {
+          "condition": []
+        }
+      },
+      "transition_rjozmqoco_mm9b38u1": {
+        "id": "transition_rjozmqoco_mm9b38u1",
+        "name": "",
+        "type": "AgentStateTransition",
+        "owner": null,
+        "bounds": {
+          "x": -40,
+          "y": 40,
+          "width": 640,
+          "height": 260
+        },
+        "path": [
+          {
+            "x": 640,
+            "y": 220
+          },
+          {
+            "x": 640,
+            "y": 260
+          },
+          {
+            "x": 0,
+            "y": 260
+          },
+          {
+            "x": 0,
+            "y": 0
+          }
+        ],
+        "source": {
+          "direction": "Down",
+          "element": "state_5emfhqwzt_mm9b38u1"
+        },
+        "target": {
+          "direction": "Down",
+          "element": "state_zl3bfe65n_mm9b38u1"
+        },
+        "isManuallyLayouted": false,
+        "transitionType": "predefined",
+        "predefined": {
+          "predefinedType": "auto",
+          "conditionValue": ""
+        },
+        "custom": {
+          "condition": []
+        }
+      },
+      "5f574d18-6641-4c80-bd19-92b862b47b7c": {
+        "id": "5f574d18-6641-4c80-bd19-92b862b47b7c",
+        "name": "",
+        "type": "AgentStateTransition",
+        "owner": null,
+        "bounds": {
+          "x": 90,
+          "y": 22.5,
+          "width": 405,
+          "height": 77.5
+        },
+        "path": [
+          {
+            "x": 405,
+            "y": 37.5
+          },
+          {
+            "x": 405,
+            "y": 77.5
+          },
+          {
+            "x": 150,
+            "y": 77.5
+          },
+          {
+            "x": 150,
+            "y": 0
+          },
+          {
+            "x": 0,
+            "y": 0
+          }
+        ],
+        "source": {
+          "direction": "Bottomleft",
+          "element": "state_j5tnma02n_mm9b38u1"
+        },
+        "target": {
+          "direction": "Downright",
+          "element": "state_zl3bfe65n_mm9b38u1"
+        },
+        "isManuallyLayouted": false,
+        "transitionType": "predefined",
+        "predefined": {
+          "predefinedType": "auto",
+          "conditionValue": ""
+        },
+        "custom": {
+          "condition": []
+        }
+      },
+      "5cf30015-c8cf-47be-8ad0-80bbba94d35e": {
+        "id": "5cf30015-c8cf-47be-8ad0-80bbba94d35e",
+        "name": "",
+        "type": "AgentStateTransition",
+        "owner": null,
+        "bounds": {
+          "x": -330,
+          "y": -87.5,
+          "width": 160,
+          "height": 92.5
+        },
+        "path": [
+          {
+            "x": 0,
+            "y": 0
+          },
+          {
+            "x": 80,
+            "y": 0
+          },
+          {
+            "x": 80,
+            "y": 92.5
+          },
+          {
+            "x": 160,
+            "y": 92.5
+          }
+        ],
+        "source": {
+          "direction": "Downright",
+          "element": "46badadf-e50d-481e-8246-3ba2393fce47"
+        },
+        "target": {
+          "direction": "Left",
+          "element": "state_zl3bfe65n_mm9b38u1"
+        },
+        "isManuallyLayouted": false,
+        "transitionType": "predefined",
+        "predefined": {
+          "predefinedType": "auto",
+          "conditionValue": ""
+        },
+        "custom": {
+          "condition": []
+        }
+      }
+    },
+    "assessments": {},
+    "components": {
+      "7018084a-2566-49a9-ac3b-2f8c353c3d63": {
+        "id": "7018084a-2566-49a9-ac3b-2f8c353c3d63",
+        "type": "AgentIntent",
+        "name": "Contact",
+        "owner": null,
+        "intent_description": "Requesting to speak with a human assistant.",
+        "bodies": [
+          "18da4d31-627a-437f-bf42-6db4c93d4907",
+          "e7b6fa1a-0fd9-476f-92e2-ffffd398e405",
+          "8b7d84e6-e4c2-46d6-9407-4c342eef5b9b"
+        ]
+      },
+      "508abfa7-29de-43d3-9f89-90c8702c412d": {
+        "id": "508abfa7-29de-43d3-9f89-90c8702c412d",
+        "type": "AgentIntent",
+        "name": "OpeningHours",
+        "owner": null,
+        "intent_description": "Asking for the opening hours of the library.",
+        "bodies": [
+          "818fee5c-d273-4db2-a38a-f64322e7b234",
+          "2f62b4c5-dfb5-4084-a69d-65324f639928",
+          "543cf7d0-dd0e-44fe-9b57-1e9aa49db8d1",
+          "c645775d-2e07-498a-a8c9-dc3653f76a6f"
+        ]
+      },
+      "477435a4-f763-41d9-9298-1d27f540c620": {
+        "id": "477435a4-f763-41d9-9298-1d27f540c620",
+        "type": "AgentIntent",
+        "name": "CheapestBook",
+        "owner": null,
+        "intent_description": "",
+        "bodies": [
+          "c32afae9-9250-41a3-bcae-bb5f81a707f4",
+          "63b2ca7c-35ed-4b01-a3ca-32b8cf524f20",
+          "79212729-4718-4b7b-a86c-3e28d9109d59"
+        ]
+      },
+      "9649a704-ee9f-4edd-a4ed-db1473f79f4c": {
+        "id": "9649a704-ee9f-4edd-a4ed-db1473f79f4c",
+        "type": "AgentIntent",
+        "name": "Other",
+        "owner": null,
+        "intent_description": "Any other question.",
+        "bodies": []
+      },
+      "818fee5c-d273-4db2-a38a-f64322e7b234": {
+        "id": "818fee5c-d273-4db2-a38a-f64322e7b234",
+        "type": "AgentIntentBody",
+        "name": "what are the opening hours?",
+        "owner": "508abfa7-29de-43d3-9f89-90c8702c412d"
+      },
+      "2f62b4c5-dfb5-4084-a69d-65324f639928": {
+        "id": "2f62b4c5-dfb5-4084-a69d-65324f639928",
+        "type": "AgentIntentBody",
+        "name": "library hours",
+        "owner": "508abfa7-29de-43d3-9f89-90c8702c412d"
+      },
+      "543cf7d0-dd0e-44fe-9b57-1e9aa49db8d1": {
+        "id": "543cf7d0-dd0e-44fe-9b57-1e9aa49db8d1",
+        "type": "AgentIntentBody",
+        "name": "when do you open?",
+        "owner": "508abfa7-29de-43d3-9f89-90c8702c412d"
+      },
+      "c645775d-2e07-498a-a8c9-dc3653f76a6f": {
+        "id": "c645775d-2e07-498a-a8c9-dc3653f76a6f",
+        "type": "AgentIntentBody",
+        "name": "hours of operation",
+        "owner": "508abfa7-29de-43d3-9f89-90c8702c412d"
+      },
+      "18da4d31-627a-437f-bf42-6db4c93d4907": {
+        "id": "18da4d31-627a-437f-bf42-6db4c93d4907",
+        "type": "AgentIntentBody",
+        "name": "I need to speak to someone",
+        "owner": "7018084a-2566-49a9-ac3b-2f8c353c3d63"
+      },
+      "e7b6fa1a-0fd9-476f-92e2-ffffd398e405": {
+        "id": "e7b6fa1a-0fd9-476f-92e2-ffffd398e405",
+        "type": "AgentIntentBody",
+        "name": "contact support",
+        "owner": "7018084a-2566-49a9-ac3b-2f8c353c3d63"
+      },
+      "8b7d84e6-e4c2-46d6-9407-4c342eef5b9b": {
+        "id": "8b7d84e6-e4c2-46d6-9407-4c342eef5b9b",
+        "type": "AgentIntentBody",
+        "name": "human assistance",
+        "owner": "7018084a-2566-49a9-ac3b-2f8c353c3d63"
+      },
+      "c32afae9-9250-41a3-bcae-bb5f81a707f4": {
+        "id": "c32afae9-9250-41a3-bcae-bb5f81a707f4",
+        "type": "AgentIntentBody",
+        "name": "how to get the title of the cheapest book of an author?",
+        "owner": "477435a4-f763-41d9-9298-1d27f540c620"
+      },
+      "63b2ca7c-35ed-4b01-a3ca-32b8cf524f20": {
+        "id": "63b2ca7c-35ed-4b01-a3ca-32b8cf524f20",
+        "type": "AgentIntentBody",
+        "name": "I want to know the cheapest book",
+        "owner": "477435a4-f763-41d9-9298-1d27f540c620"
+      },
+      "79212729-4718-4b7b-a86c-3e28d9109d59": {
+        "id": "79212729-4718-4b7b-a86c-3e28d9109d59",
+        "type": "AgentIntentBody",
+        "name": "which is the cheapest book?",
+        "owner": "477435a4-f763-41d9-9298-1d27f540c620"
+      }
+    }
+  }
+}

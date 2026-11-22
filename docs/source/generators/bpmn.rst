@@ -56,11 +56,19 @@ producing organisation. Inside it:
   / … elements for gateways, ``<bpmn:sequenceFlow>`` elements for sequence flows,
   ``<bpmn:laneSet>`` / ``<bpmn:lane>`` elements for lane sets, and
   ``<bpmn:dataObjectReference>`` / ``<bpmn:dataObject>`` pairs for data objects.
+  Data associations are nested in their task as ``<bpmn:dataInputAssociation>``
+  (data element → task) or ``<bpmn:dataOutputAssociation>`` (task → data element).
 - A single ``<bpmn:collaboration>`` element when the model has a
   ``Collaboration``, containing ``<bpmn:participant>`` elements and
   ``<bpmn:messageFlow>`` elements for cross-pool flows.
 - ``<bpmn:dataStore>`` elements at the definitions level for model-scoped data
-  stores.
+  stores, each referenced by a ``<bpmn:dataStoreReference>`` in the first process.
+
+A data object or data store's own id goes to its ``*Reference`` element (the
+one BPMN tools draw); the semantic ``<bpmn:dataObject>`` / ``<bpmn:dataStore>``
+gets a derived ``DataObject_<id>`` / ``DataStore_<id>`` id. DI shapes and data
+associations therefore point at the references, as Camunda Modeler and bpmn-js
+expect, matching the Web Modeling Editor's own BPMN exporter.
 
 Default sequence flows emit the diagonal-slash marker per BPMN 2.0.2 § 8.3.13
 (the ``default`` attribute on the source element plus a ``<bpmn:conditionExpression>``
@@ -75,6 +83,14 @@ opaque ``BPMNElement.layout`` passthrough populated by ``process_bpmn_diagram``
 when importing from the Web Modeling Editor). For freshly-built or programmatic
 models the DI section is omitted and the importing tool auto-lays out on open.
 
+Edge waypoints are absolute canvas coordinates. The editor stores a flow's
+``path`` relative to the flow's own ``bounds``, so the generator offsets it by
+``bounds.x`` / ``bounds.y``. A path is kept only if it then starts on the source
+shape and ends on the target shape; otherwise (placeholder geometry, such as the
+flows the modeling assistant creates before the editor re-routes them, a stale
+path, or no path at all) the edge is re-routed orthogonally between the two
+shapes' bounds, so every arrow is drawn connected to its steps.
+
 Identifier handling
 -------------------
 
@@ -82,5 +98,94 @@ WME ids are preserved on round-trip when they are
 `NCName <https://www.w3.org/TR/REC-xml-names/#NT-NCName>`_-valid; otherwise
 fresh ``<Class>_<uuid8>`` ids are minted to guarantee well-formed XML.
 
-Engine-specific variants (Camunda 7/8 or Flowable BPMN XML with execution
-attributes) are out of scope for this generator.
+Agentic extension elements
+--------------------------
+
+Models that use the :ref:`bpmn-agentic-extension` (``AgenticTask`` /
+``AgenticGateway`` / ``AgenticLane``) emit additional information per element
+through the standard BPMN 2.0 ``<bpmn:extensionElements>`` mechanism. The root
+``<bpmn:definitions>`` element gains the
+``xmlns:agentic="https://www.besser-pearl.org/bpmn/agentic"`` namespace
+declaration, and each agentic element carries one ``<agentic:agentic .../>``
+child with flat attributes.
+
+An ``AgenticTask`` emits ``reflectionMode`` and ``trustScore``, plus
+``agentDiagramRef`` when the task is linked to an Agent diagram:
+
+.. code-block:: xml
+
+    <bpmn:userTask id="Task_1" name="Review">
+      <bpmn:extensionElements>
+        <agentic:agentic reflectionMode="cross" trustScore="85"
+                         agentDiagramRef="a1b2c3d4-..."/>
+      </bpmn:extensionElements>
+      <bpmn:incoming>Flow_in</bpmn:incoming>
+      <bpmn:outgoing>Flow_out</bpmn:outgoing>
+    </bpmn:userTask>
+
+An ``AgenticGateway`` emits ``gatewayRole`` and ``trustScore``. A merging
+gateway that carries ``governance_dsl`` additionally emits a sibling
+``<agentic:governance>`` child holding the policy snippet:
+
+.. code-block:: xml
+
+    <bpmn:parallelGateway id="Gateway_M" name="Vote">
+      <bpmn:extensionElements>
+        <agentic:agentic gatewayRole="merging" trustScore="85"/>
+        <agentic:governance>policy MajorityPolicy {
+        ...governance policy...
+        }</agentic:governance>
+      </bpmn:extensionElements>
+    </bpmn:parallelGateway>
+
+An ``AgenticLane`` emits ``role`` and ``trustScore``. It also emits
+``multiplicity`` when the lane represents more than one agent instance, and
+``agentDiagramRef`` when the lane is linked to an Agent diagram:
+
+.. code-block:: xml
+
+    <bpmn:lane id="Lane_Reviewer" name="Reviewers">
+      <bpmn:extensionElements>
+        <agentic:agentic role="supervision" trustScore="85"
+                         multiplicity="3" agentDiagramRef="a1b2c3d4-..."/>
+      </bpmn:extensionElements>
+      <bpmn:flowNodeRef>Task_1</bpmn:flowNodeRef>
+    </bpmn:lane>
+
+Attribute presence follows the metamodel defaults. Lane ``multiplicity`` is
+omitted when it is ``1`` (absence means one instance), while ``trustScore`` is
+emitted on every agentic element. Message flows remain standard BPMN
+``<bpmn:messageFlow>`` elements; A2A runtime wiring is carried by Agent diagram
+tags during deployment generation, not by agentic message-flow attributes in
+BPMN XML.
+
+The ``<bpmn:extensionElements>`` element is always emitted as the **first
+child** of its host (``tFlowNode`` / ``tLane`` per the BPMN 2.0 schema). Enum
+values use lowercase strings (``"cross"`` / ``"supervision"`` /
+``"merging"`` / ...), mirroring the WME editor's wire format. The
+``<agentic:governance>`` body is written as escaped text rather than a
+``CDATA`` section (Python's standard ``ElementTree`` has no native CDATA);
+this is semantically equivalent -- any XML parser yields the same text
+content, which WME trims on import.
+
+Vanilla BPMN models (no agentic subclasses) emit no
+``<bpmn:extensionElements>`` blocks -- the agentic emission is strictly
+additive.
+
+Engine-specific variants (Camunda 7 / 8 / Flowable BPMN XML with execution
+attributes) are out of scope for this generator and can be added as separate
+generators in the future.
+
+Trace Links
+-----------
+
+The generator builds the XML with ``ElementTree`` rather than templates, so it records which lines come from which
+model element by reading the written file back: after ``generate()``, ``generator.traced_files["<file name>"].regions``
+holds the line range of each XML element (flow nodes, sequence and message flows, data object references, data
+associations, participants, the collaboration, lanes, annotations and groups, and the ``BPMNShape`` / ``BPMNEdge`` of
+each, rule ``bpmn_generator#<xml tag>``, ``#shape`` or ``#edge``) matched to its model element through the id the
+generator gave it, so a renamed id is matched exactly. An element is recorded when it has an ``id``: the web editor's
+processor gives every element and flow its editor element id, which it also keeps in ``layout["id"]`` for the XML to
+reuse (``layout["id"]`` alone names the XML element but does not trace it). Processes, the lane set and the derived
+data store and data object definitions have no editor id and no region; elements without an id are not traced.
+Recording the trace does not change the written file. See :doc:`traceable_generator`.

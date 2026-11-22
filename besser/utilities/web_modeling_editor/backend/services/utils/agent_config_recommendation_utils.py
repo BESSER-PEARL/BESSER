@@ -6,6 +6,8 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from besser.llm import extract_json
+
 logger = logging.getLogger(__name__)
 
 RECOMMENDATION_ALLOWED_VALUES = {
@@ -31,9 +33,26 @@ RECOMMENDATION_ALLOWED_VALUES = {
     "responseTiming": ["instant", "delayed"],
     "agentPlatform": ["websocket", "streamlit", "telegram"],
     "intentRecognitionTechnology": ["classical", "llm-based"],
-    "llmProvider": ["openai", "huggingface", "huggingfaceapi", "replicate", "ollama"],
+    # "huggingfaceapi" (no underscore) is the legacy spelling still emitted by saved
+    # frontend configs; it is kept alongside the canonical "huggingface_api" so that
+    # normalize_recommended_agent_config() does not silently drop an existing provider.
+    "llmProvider": [
+        "openai", "huggingface", "huggingface_api", "huggingfaceapi", "replicate", "ollama",
+        "mistral", "deepseek", "google", "meta", "anthropic",
+        "qwen", "xai", "groq", "together", "openrouter",
+    ],
     "openaiModels": ["gpt-5.5", "gpt-5", "gpt-5-mini", "gpt-5-nano"],
     "ollamaModels": ["llama3", "llama3.1", "mistral", "qwen2.5", "gemma3", "phi4", "gemma3n:e2b"],
+    "mistralModels": ["mistral-small-latest", "mistral-large-latest", "open-mistral-nemo"],
+    "deepseekModels": ["deepseek-chat", "deepseek-reasoner"],
+    "googleModels": ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.0-flash"],
+    "metaModels": ["Llama-3.3-70B-Instruct", "Llama-4-Scout-17B-16E-Instruct-FP8"],
+    "anthropicModels": ["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"],
+    "qwenModels": ["qwen-max", "qwen-plus", "qwen-turbo"],
+    "xaiModels": ["grok-3", "grok-3-mini", "grok-2-latest"],
+    "groqModels": ["llama-3.3-70b-versatile", "gemma2-9b-it", "mixtral-8x7b-32768"],
+    "togetherModels": ["meta-llama/Llama-3.3-70B-Instruct-Turbo", "Qwen/Qwen2.5-72B-Instruct-Turbo"],
+    "openrouterModels": ["anthropic/claude-opus-4", "google/gemini-2.5-pro", "openai/gpt-4o"],
 }
 
 
@@ -120,21 +139,9 @@ def extract_json_object(raw_text: str) -> Dict[str, Any]:
     if not isinstance(raw_text, str) or not raw_text.strip():
         raise ValueError("Empty LLM response")
 
-    text = raw_text.strip()
-    if text.startswith("```"):
-        lines = text.splitlines()
-        if len(lines) >= 3:
-            text = "\n".join(lines[1:-1]).strip()
-
-    start = text.find("{")
-    end = text.rfind("}")
-    if start == -1 or end == -1 or end <= start:
+    parsed = extract_json(raw_text, dict)
+    if parsed is None:
         raise ValueError("LLM response does not contain a valid JSON object")
-
-    candidate = text[start : end + 1]
-    parsed = json.loads(candidate)
-    if not isinstance(parsed, dict):
-        raise ValueError("LLM response JSON root must be an object")
     return parsed
 
 

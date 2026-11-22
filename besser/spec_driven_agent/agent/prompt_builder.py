@@ -1,0 +1,1384 @@
+"""
+System prompt construction for the LLM orchestrator.
+
+Builds the system prompt that guides the LLM's behavior during Phase 2,
+including domain model context, file inventory, and scoped task lists.
+"""
+
+import logging
+import os
+import re
+from typing import Any
+
+from besser.spec_driven_agent.validation.contract_checks import build_data_contract
+from besser.spec_driven_agent.execution.process import COMMAND_OUTPUT_DIR
+from besser.spec_driven_agent.planning.mutation_inventory import build_mutation_manifest
+from besser.spec_driven_agent.model_serializer import (
+    serialize_agent_model,
+    serialize_bpmn_model,
+    serialize_domain_model,
+    serialize_gui_model,
+    serialize_nn_model,
+    serialize_object_model,
+    serialize_quantum_circuit,
+    serialize_state_machines,
+    to_prompt_json,
+)
+from besser.spec_driven_agent.agent.runbook import runbook_section
+from besser.spec_driven_agent.planning.model_rules import is_dropped_by_model_change
+from besser.spec_driven_agent.planning.stack_metadata import idiom_guidance_section
+from besser.spec_driven_agent.providers.llm_client import SYSTEM_CACHE_SPLIT
+from besser.utilities.workspace_fs import walk_plain
+from besser.spec_driven_agent.planning.target import OTHER, Target
+
+logger = logging.getLogger(__name__)
+
+
+
+# A run needs a frontend when the scaffold has one or the user asks for one.
+# ``requests_frontend`` is also the orchestrator's frontend gate.
+_FRONTEND_FILE_RE = re.compile(r"\.(?:jsx?|tsx?|html|vue|svelte)\b|package\.json")
+_FRONTEND_ASK_RE = re.compile(
+    r"\b(web[ -]?app(?:lication)?s?|front[ -]?end|web ?site|"
+    r"web ?interface|single[ -]page app(?:lication)?s?|ui|"
+    r"user interface|dashboard|portal)\b")
+# A bare "app" is a UI ask too ("I want a todo app") unless the request
+# is headless or names a backend kind of app.
+_APP_ASK_RE = re.compile(r"\bapp(?:lication)?s?\b")
+_BACKEND_APP_RE = re.compile(
+    r"\brest(?:ful)? api\b|\b(?:api|fastapi|backend|back[ -]end|server|cli|"
+    r"command[ -]line|console|terminal)[ -]app(?:lication)?s?\b")
+_NO_FRONTEND_RE = re.compile(
+    r"\b(?:api|backend|back[ -]end|server)[ -]only\b|"
+    r"\b(?:only|just) (?:an? |the )?(?:rest(?:ful)? )?(?:api|backend)\b|\bheadless\b|"
+    r"\b(?:no|without(?: an?| the)?) (?:frontend|front[ -]end|ui|gui|user interface)\b")
+
+
+def requests_frontend(instructions: str | None, *, bare_app: bool = True) -> bool:
+    """True when the request asks for something users interact with.
+
+    ``bare_app=False`` for modify runs, where "the app" names the existing project.
+    """
+    low = (instructions or "").lower()
+    if _NO_FRONTEND_RE.search(low):
+        return False
+    if _FRONTEND_ASK_RE.search(low):
+        return True
+    return bare_app and bool(_APP_ASK_RE.search(low)) and not _BACKEND_APP_RE.search(low)
+
+def _other_target_rule(target: Target) -> str:
+    """Rule 15 for a target that is not a web app (planning/target.py)."""
+    ui = (
+        "    It is used through screens: build a complete, navigable UI for that\n"
+        "    platform - every entity reachable, working create / edit / delete -\n"
+        "    and keep the data locally unless the user asked for a server. Every\n"
+        "    control is visible at the default window size.\n"
+        if target.has_user_interface else ""
+    )
+    return f"""\
+15. **Build exactly the requested target: {target.description or "what the user asked for"}.**
+    No BESSER generator produces it. Use the stack the user named, or the most
+    standard one for this target when they named none, with its standard project
+    manifest and entry point so it builds and runs with that stack's usual commands.
+{ui}    Do NOT add a web frontend or a web backend the user did not ask for.
+"""
+
+
+DROPPED_RULES_NOTE = (
+    "dropped_by_model_change lists rules whose attributes or classes the user "
+    "just removed from the model: do not re-implement them and do not add back "
+    "what they used."
+)
+
+# The model-query tools exist only with a domain model (tools._TOOL_MODEL_REQUIREMENTS).
+# Names and purpose only: each tool's own description, sent with every
+# request, already lists its predicates and return value.
+_MODEL_TOOLS_SECTION = """\
+## Tools for deeper model inspection
+
+When the JSON below is not enough, ask the model rather than re-reading or
+guessing: `query_class(name)` for one class in full, `list_classes_with(predicate)`
+to filter classes, `get_constraints_for(class_name)` for a class's OCL
+constraints (Rule 6: each one becomes a runtime validator - the generator
+does not enforce them for you).
+"""
+
+def build_system_prompt(
+    domain_model,
+    gui_model,
+    agent_model,
+    inventory: str,
+    instructions: str,
+    max_turns: int,
+    scoped_issues: list[str] | None = None,
+    gap_tasks: list[str] | None = None,
+    object_model=None,
+    state_machines=None,
+    quantum_circuit=None,
+    bpmn_model=None,
+    nn_model=None,
+    primary_kind: str | None = None,
+    scaffold_snapshot: str = "",
+    endpoint_manifest: str = "",
+    modify_mode: bool = False,
+    requirements: str = "",
+    allow_shell: bool = False,
+    output_dir: str | None = None,
+    design_system: str = "",
+    target: Target | None = None,
+    previous_target: Target | None = None,
+    routed_stack: str | None = None,
+) -> str:
+    """
+    Build the system prompt with all available models, inventory, the user's
+    request, and any concrete validator-detected issues.
+
+    Each non-empty model is embedded as a JSON section so the LLM can reason
+    over the full editor context, not just the class diagram. The LLM plans
+    its own task breakdown from ``instructions``.
+
+    Args:
+        domain_model: Optional BUML domain model. When None, the LLM is
+            told explicitly that no ClassDiagram was provided and must
+            drive the run from whichever ``primary_kind`` model IS
+            present — see Rule 3 in the system prompt below.
+        gui_model: Optional GUIModel.
+        agent_model: Optional AgentModel.
+        inventory: Description of what the generator already produced.
+        instructions: The user's verbatim natural-language request.
+        max_turns: Maximum agent loop iterations (for budget hints).
+        scoped_issues: Validator-detected issues from Phase 1 the LLM must
+            fix as concrete bugs (separate from user-requested features).
+        object_model: Optional ObjectModel (instance data — useful as fixtures/seeders).
+        state_machines: Optional list of StateMachine objects.
+        quantum_circuit: Optional QuantumCircuit.
+        bpmn_model: Optional BPMNModel process specification.
+        nn_model: Optional neural-network architecture and training spec.
+        primary_kind: Which model is driving the generation: "class",
+            "gui", "agent", "state_machine", "object", "bpmn", "nn",
+            "quantum". Used to
+            frame the LLM's task (e.g. "this is a state-machine-driven
+            run — emit the transition code").
+        allow_shell: Whether ``run_command`` / ``install_dependencies`` are
+            in this run's tool list. Only then is the runtime-verification
+            runbook rendered — a procedure built on commands the model
+            cannot issue is worse than no procedure at all.
+        output_dir: The run workspace. Required for the runbook, which
+            installs its helper script there and names the backend it found.
+        modify_mode: When True the run is an incremental modify — the
+            output_dir was seeded from a previous run's generated files and
+            the LLM edits them in place. Prepends a directive that biases
+            the model toward the smallest surgical change. MUST leave the
+            from-scratch prompt byte-identical when False.
+        design_system: The rendered design-system section
+            (``design_system.design_system_section``), or ``""``. When set, it
+            joins the rules and replaces the guidance it conflicts with: the
+            GUI "loose hint" framing, Rule 2's write_file fallback for pages,
+            Rule 13's styling advice and Rule 15's "one shared stylesheet".
+        target: What the run builds (``planning/target.py``); ``None`` keeps
+            the pre-target rules.
+        previous_target: The seed's target when a modify run builds another
+            kind of software; it lifts the keep-the-stack constraint.
+        routed_stack: The routing answer's ``unsupported_stack``, ``None``
+            without one; picks the idiom block over the request's keywords.
+
+    Returns:
+        The full system prompt string.
+    """
+    model_sections: list[str] = []
+    if domain_model is not None:
+        model_sections.extend([
+            "## Domain Model",
+            "",
+            "```json",
+            to_prompt_json(serialize_domain_model(domain_model)),
+            "```",
+        ])
+        issues = getattr(domain_model, "conversion_issues", None) or []
+        if any(is_dropped_by_model_change(i) for i in issues):
+            model_sections.extend(["", DROPPED_RULES_NOTE])
+        if not all(is_dropped_by_model_change(i) for i in issues):
+            model_sections.extend([
+                "",
+                "### Where the model disagrees with your specification",
+                "The conversion_issues above are model expressions the converter "
+                "dropped or could not attach — none of them run; the scaffold "
+                "enforces none of them. For each one: check the generated code "
+                "yourself and report what you found. Do not take an absent "
+                "complaint, a code comment, or a closed checklist item as proof "
+                "it's handled — verify, then close the gap in code (Rule 3: the "
+                "specification decides, not the model).",
+            ])
+
+    gui_json = serialize_gui_model(gui_model)
+    if gui_json:
+        if design_system:
+            # The screens carry a finished visual design (design.css): their
+            # look is not a sketch to restructure, whatever drives the run.
+            gui_framing = (
+                "Screens, components and data bindings declared in the editor, "
+                "with a finished visual design (see Design system). Keep their "
+                "look, layout and components; the specification and the domain "
+                "model decide behaviour and data. A screen you add follows the "
+                "same design."
+            )
+        elif primary_kind == "gui":
+            # GUI-driven run: the screens ARE the spec — match them.
+            gui_framing = (
+                "Screens, components and data bindings declared in the editor. "
+                "This is the UI spec — build the UI to match "
+                "these screens and wire components to the domain classes."
+            )
+        else:
+            # Class/other-driven run: the GUI model here is incidental and is
+            # frequently auto-generated (e.g. by the modeling agent), so it's
+            # rough and over-literal adherence drags the output down. Frame it
+            # as a hint, not a contract — the domain model and good UX win.
+            gui_framing = (
+                "A rough UI sketch from the editor — often auto-generated and "
+                "incomplete. Treat it as a LOOSE HINT for which screens and "
+                "fields matter, NOT a spec to reproduce literally. The domain "
+                "model and good UX take priority: freely restructure, merge, "
+                "add, drop, or relayout screens and components to produce a "
+                "clean app. Do NOT degrade the result just to mirror this "
+                "sketch, and don't treat its omissions as restrictions."
+            )
+        model_sections.extend([
+            "",
+            "## GUI Model",
+            "",
+            gui_framing,
+            "",
+            "```json",
+            to_prompt_json(gui_json),
+            "```",
+        ])
+
+    agent_json = serialize_agent_model(agent_model)
+    if agent_json:
+        model_sections.extend([
+            "",
+            "## Agent Model",
+            "",
+            "Conversational agent states and intents. Drives chatbot wiring.",
+            "",
+            "```json",
+            to_prompt_json(agent_json),
+            "```",
+        ])
+
+    object_json = serialize_object_model(object_model) if object_model is not None else None
+    if object_json:
+        model_sections.extend([
+            "",
+            "## Object Model (instance data)",
+            "",
+            "Concrete instances of domain classes - real expected values (Rule 5).",
+            "",
+            "```json",
+            to_prompt_json(object_json),
+            "```",
+        ])
+
+    sm_json = serialize_state_machines(state_machines) if state_machines else None
+    if sm_json:
+        model_sections.extend([
+            "",
+            "## State Machines",
+            "",
+            "Behavioural spec for domain entities (Rule 4).",
+            "",
+            "```json",
+            to_prompt_json(sm_json),
+            "```",
+        ])
+
+    q_json = serialize_quantum_circuit(quantum_circuit) if quantum_circuit is not None else None
+    if q_json:
+        model_sections.extend([
+            "",
+            "## Quantum Circuit",
+            "",
+            "Quantum circuit definition for Qiskit / Cirq code generation.",
+            "",
+            "```json",
+            to_prompt_json(q_json),
+            "```",
+        ])
+
+    bpmn_json = serialize_bpmn_model(bpmn_model)
+    if bpmn_json:
+        model_sections.extend([
+            "",
+            "## BPMN Process Model",
+            "",
+            "Executable process specification. Preserve task ordering, gateway "
+            "semantics, events, lanes, and message flows in the implementation.",
+            "",
+            "```json",
+            to_prompt_json(bpmn_json),
+            "```",
+        ])
+
+    nn_json = serialize_nn_model(nn_model)
+    if nn_json:
+        model_sections.extend([
+            "",
+            "## Neural Network Model",
+            "",
+            "Ordered architecture, tensor operations, datasets, and training "
+            "configuration. Preserve declared dimensions and module inputs.",
+            "",
+            "```json",
+            to_prompt_json(nn_json),
+            "```",
+        ])
+
+    # Cross-model links — heuristic correlations so the LLM treats related
+    # diagrams as a single system, not as independent islands.
+    cross_links = _compute_cross_model_links(
+        domain_model=domain_model,
+        sm_json=sm_json,
+        object_json=object_json,
+        agent_json=agent_json,
+    )
+    if cross_links:
+        model_sections.extend([
+            "",
+            "## Cross-model links",
+            "",
+            "Heuristic associations between the models above. Use these as "
+            "hints about which code should cross-reference which model.",
+            "",
+            "```json",
+            to_prompt_json(cross_links),
+            "```",
+        ])
+
+    models_block = "\n".join(model_sections)
+
+    # Model-derived data contract — the hard rules a weak model breaks
+    # first (id types, server-owned fields, honest 501s). Per project, like
+    # the serialized models.
+    contract_section = _data_contract_section(domain_model)
+
+    # Build inventory section
+    inventory_section = ""
+    if inventory:
+        inventory_section = f"\n## What was already generated\n\n{inventory}\n"
+
+    # Exact backend endpoint manifest — removes the frontend's URL-reconstruction
+    # guesswork (the #1 "builds but 404s" failure). Constant across turns within
+    # a run, so it caches with the rest of the prompt.
+    endpoint_section = ""
+    if endpoint_manifest:
+        endpoint_section = (
+            "\n## Backend REST API — the EXACT routes your frontend must call\n\n"
+            f"{endpoint_manifest}\n"
+        )
+
+    # The requirements ledger (requirements_ledger.py): the user's request as
+    # numbered, testable items. Phase 3 judges the code against exactly this
+    # list, so the model is told up front what it will be held to.
+    requirements_section = ""
+    if requirements:
+        requirements_section = (
+            "\n## Requirements the user stated\n\n"
+            "Each of these is verified against your code after generation and "
+            "an unmet one is sent back to you as a blocker. Implement every one, "
+            "or close its checklist item honestly with the reason.\n\n"
+            f"{requirements}\n"
+        )
+
+    # Inline scaffold contents — saves the LLM 2-4 read_file round-trips
+    # at the start of nearly every run. Constant ACROSS TURNS within a
+    # run, so it caches like the rest of the prompt.
+    snapshot_section = ""
+    if scaffold_snapshot:
+        snapshot_section = (
+            "\n## Scaffold file contents (snapshot at end of Phase 1)\n\n"
+            "These were the contents when customisation started. Files "
+            "reproduced here do NOT need a read_file before their first "
+            "edit. Once you edit a file, your edits supersede this "
+            "snapshot — re-read only files you have modified.\n\n"
+            f"{scaffold_snapshot}\n"
+        )
+
+    # Phase 1 validator findings — concrete bugs the LLM must fix on top of
+    # whatever the user asked for. Kept separate from the user request so
+    # the LLM doesn't conflate "user wants X" with "generator produced
+    # broken Dockerfile".
+    issues_section = ""
+    if scoped_issues:
+        formatted = "\n".join(f"  - {issue}" for issue in scoped_issues)
+        issues_section = (
+            "\n## Issues to fix from Phase 1 validation\n\n"
+            "These are concrete problems detected in the generator output. "
+            "Fix them in addition to implementing the user request:\n\n"
+            f"{formatted}\n"
+        )
+
+    # The runtime-verification runbook. Rendered only when the run actually
+    # holds the shell tools it tells the model to use, and only for the
+    # backend scaffold its helper knows how to drive; otherwise "". Lives at
+    # the end of the variable tail, where the last substantive instruction
+    # before "summarize what you changed" is the one about verifying first.
+    runbook_block = ""
+    if allow_shell and output_dir:
+        try:
+            runbook_block = runbook_section(output_dir)
+        except Exception:
+            logger.debug("Runbook section build failed", exc_info=True)
+
+    # ------------------------------------------------------------------
+    # Cache strategy
+    # ------------------------------------------------------------------
+    # Anthropic prompt caching keys on byte-identical prefixes. Everything
+    # BEFORE the ``SYSTEM_CACHE_SPLIT`` marker depends only on the run's
+    # configuration (scaffold or not, frontend or not, design or not, target
+    # kind, primary kind), so llm_client caches it as its own block shared by
+    # every run of that configuration. Anything per project or per request
+    # (models, data contract, design, idioms, inventory, request) goes after it.
+    # Primary-kind banner. When the user drove the run from anything
+    # other than a ClassDiagram, we tell the LLM up front so it doesn't
+    # default to "build a CRUD app". Omitted for class-diagram-driven
+    # runs because that IS the default.
+    primary_banner = ""
+    if primary_kind and primary_kind != "class":
+        friendly = {
+            "gui": "GUI-driven run — screens and components are the spec; there is no domain/class model.",
+            "agent": "Agent-driven run — the chatbot / intent flow is the spec; there is no domain/class model.",
+            "state_machine": "State-machine-driven run — transition tables are the spec. Generate transition code / guards.",
+            "object": "Object-diagram-driven run — instance data is the spec. Emit seed data / fixtures.",
+            "quantum": "Quantum-circuit-driven run — circuit gates are the spec. Emit Qiskit code.",
+            "bpmn": "BPMN-driven run - process flow, gateways, events, and tasks are the spec. Emit executable workflow integration.",
+            "nn": "Neural-network-driven run - layers and tensor flow are the spec. Emit training and evaluation code.",
+        }.get(primary_kind, f"Primary model kind: {primary_kind}")
+        primary_banner = f"\n> Primary input: {friendly}\n"
+
+    # Stack-specific idiom reminders, keyed on the request's wording (per run).
+    # See stack_metadata.idiom_guidance_section for the detection + content.
+    # The idiom blocks assume a web / server project.
+    builds_other = target is not None and target.kind == OTHER
+    idiom_section = "" if builds_other else idiom_guidance_section(instructions, routed_stack)
+    # Named only when offered: tools.py withholds these without a domain model.
+    model_tools_section = _MODEL_TOOLS_SECTION if domain_model is not None else ""
+
+    # The HARD-CONSTRAINTS header below is deliberately forceful: weaker
+    # models (e.g. the free qwen tier) ignore softer wording and delete the
+    # generated scaffold to rebuild it in another framework.
+    #
+    # Rule 7 depends on whether a scaffold exists: a from-scratch project
+    # needs its standard project file; a scaffold already ships one, and
+    # rewriting it (or adding an unrequested README) is what Rule 1 forbids.
+    has_scaffold = bool(scaffold_snapshot) or bool(
+        inventory and "produced 0 files" not in inventory
+    )
+    if has_scaffold:
+        hygiene_rule = (
+            "7. **Standard hygiene.** The scaffold already ships its project files\n"
+            "   (`package.json`, `requirements.txt`, ...): never recreate or rewrite\n"
+            "   them - add a dependency with `modify_file`. Do not add a `README.md`,\n"
+            "   `tests/`, `Dockerfile` or `.env.example` unless the user request\n"
+            "   mentions them."
+        )
+    else:
+        hygiene_rule = (
+            "7. **Standard hygiene.** Every project must ship the STANDARD project\n"
+            "   file for its target stack: `pyproject.toml` for Python, `pom.xml`\n"
+            "   for Java with Maven, `package.json` for Node / TypeScript,\n"
+            "   `Cargo.toml` for Rust, `go.mod` for Go, `Gemfile` for Ruby,\n"
+            "   `build.gradle.kts` for Kotlin / Gradle. Ship a brief `README.md`\n"
+            "   with a one-line summary + a runnable quick-start command. Only add\n"
+            "   `tests/`, `Dockerfile`, or `.env.example` when the user request\n"
+            "   mentions them."
+        )
+    # With a GUI design the pages are styled by design.css: a rewrite loses the
+    # design, and a new stylesheet or theme competes with it.
+    if design_system:
+        write_back = (
+            "   file, then `write_file` it back with your change applied (a designed page:\n"
+            "   `replace_file_lines` on the block instead). Never\n"
+        )
+        rewrite_scope = "   in full, except a designed page (see Design system). Do not rewrite a file\n"
+        styling_rule = (
+            "13. **Styling/theme requests must actually RENDER - through the design\n"
+            "    system.** Restyle by overriding `--ds-*` values (and adding rules if\n"
+            "    needed) in `src/design-overrides.css`, so every designed page picks the\n"
+            "    change up; never hard-code colours in pages. Map informal colour names\n"
+            "    to hex: rose → `#f43f5e`, pink → `#ec4899`, amber/yellow → `#f59e0b` /\n"
+            "    `#eab308`, teal → `#14b8a6`, indigo → `#6366f1`, emerald → `#10b981`.\n"
+            "    A theme that's only mentioned in a comment but not visibly applied is\n"
+            "    a failure."
+        )
+        stylesheet_bullet = (
+            "    - Every screen styled with the design system (see Design system) -\n"
+            "      no second stylesheet, no unstyled browser-default HTML."
+        )
+    else:
+        write_back = "   file, then `write_file` it back with your change applied. Never\n"
+        rewrite_scope = "   in full. Do not rewrite a file\n"
+        styling_rule = (
+            "13. **Styling/theme requests must actually RENDER.** When the user names\n"
+            "    colours or a visual theme, define them as concrete CSS — real hex\n"
+            "    values or CSS variables — and apply them consistently across the UI\n"
+            "    (backgrounds, buttons, headers, links, accents), not just one element.\n"
+            "    Map informal colour names to hex: rose → `#f43f5e`, pink → `#ec4899`,\n"
+            "    amber/yellow → `#f59e0b` / `#eab308`, teal → `#14b8a6`, indigo →\n"
+            "    `#6366f1`, emerald → `#10b981`. `rose`, `amber`, `teal`, `indigo` and\n"
+            "    `emerald` are not CSS colour keywords, so `color: rose` renders nothing;\n"
+            "    use the hex. A theme that's only mentioned in a comment\n"
+            "    but not visibly applied is a failure. Aim for a clean, modern,\n"
+            "    cohesive look (consistent spacing, a primary + accent colour, readable\n"
+            "    contrast)."
+        )
+        stylesheet_bullet = (
+            "    - One shared stylesheet applied across the whole app (cards or clean tables,\n"
+            "      the look Rule 13 aims for), not unstyled browser-default HTML."
+        )
+    # Rule 15 orders a React CRUD frontend; a backend-only run (no GUI, no
+    # frontend in the scaffold, none asked for) must not be told to build one.
+    if target is not None:
+        needs_frontend = target.is_web_app
+    else:
+        needs_frontend = (
+            gui_model is not None or bool(design_system)
+            or bool(_FRONTEND_FILE_RE.search(f"{inventory}\n{scaffold_snapshot}"))
+            or requests_frontend(instructions, bare_app=not modify_mode)
+        )
+    crud_rule = f"""\
+15. **A domain-model app needs a COMPLETE, NAVIGABLE CRUD frontend** — unless
+    the UI is already specified by GUI screens. Read-only lists are NOT
+    enough. For the React frontend, build:
+    - A home route (`"/"`, a landing page) AND a nav bar/header (links or a menu)
+      present on every screen, linking every entity's list and its "new" page,
+      wired to the routes. The app must NEVER render blank on load: a
+      Router/Routes with no root "/" route does.
+    - Per entity: a list/table view PLUS working **Create** (a real form),
+      **Edit** (a pre-filled form), and **Delete** — Edit + Delete on each row —
+      each wired to the backend's POST / PUT / DELETE endpoints, not just the GET
+      list. A page that can only read is half-built (rule 12).
+    - Loading, empty, and error states on every data fetch.
+{stylesheet_bullet}
+    - Internal consistency: `package.json` dependencies match the imports, each
+      with a concrete semver range (`"^18.3.1"`, never `"latest"` or `"*"`); the
+      dev/build scripts actually run the app.
+    - Request/form consistency: when a field becomes server-owned, remove its
+      writable controls and client validation too, while keeping its read-only
+      display. Update shared entity/form metadata, not only a page's payload.
+    - Create/Edit forms follow the create-request schema: one control per
+      writable field, typed by the field - never every field as an untyped text
+      box, nor a raw-JSON textarea as the form: the backend answers 422 to text
+      in a number, date, email or id field, so no record could ever be created
+      from the UI. int/float -> `<input type="number">`
+      sent as a number; bool -> checkbox; date -> `type="date"`; datetime ->
+      `type="datetime-local"`; email -> `type="email"`; enum -> a `<select>` of
+      its literals; a reference to another entity -> a `<select>` filled from
+      that entity's list route, sending the chosen id.
+    AVOID these exact dead-frontend failures (all are bugs, not shortcuts):
+    - An empty or no-op form submit handler (an onSubmit that does nothing).
+      A form's submit MUST call the backend (create -> POST, edit -> PUT)
+      through the API layer, then refresh the list or navigate back. A form
+      that collects input but submits nowhere is worse than no form.
+    - Create and Edit sharing one handler keyed on a placeholder (`?edit=new`,
+      an empty id): Create MUST POST to the collection route; only an existing
+      record's id may reach PUT.
+    - A "New"/"Create" link to a path the router does not declare: it renders
+      blank. Put the form on the list page or declare that route.
+    - URLs joined without exactly one "/": every API path starts with "/", so
+      `${{base}}${{path}}` is a valid URL (a missing slash fails before any request).
+    - With Vite and JSX files that do not import React: `vite.config` without
+      `plugins: [react()]` from `@vitejs/plugin-react`. Every page then dies
+      with "React is not defined".
+""" if needs_frontend else ""
+    if builds_other:
+        crud_rule = _other_target_rule(target)
+    if has_scaffold:
+        if builds_other and previous_target is not None:
+            stack_rule = f"""\
+- **The user now wants a {target.description or "different kind of software"}, not
+  the existing {previous_target.description or previous_target.kind}.** Build it next to the existing
+  project, in the stack the user named or the standard one for it, and reuse
+  the existing domain logic and API where they fit."""
+        else:
+            stack_rule = """\
+- **Keep the existing tech stack and framework.** The scaffold below is already
+  built in a specific stack; extend it in that SAME framework. NEVER switch
+  frameworks — e.g. do NOT replace a FastAPI backend with Flask or Django, or a
+  React frontend with Vue. If the user's wording seems to imply a different
+  stack, ignore that and use the one that is already generated."""
+        role = f"""\
+You are an expert full-stack developer extending a deterministic scaffold.
+Preserve working code and verify its actual behavior; generated code is a
+starting point, not proof that the application satisfies the specification.
+
+## HARD CONSTRAINTS — breaking any of these FAILS the task
+{stack_rule}
+- **Never delete or wholesale-rewrite the generated scaffold.** Do NOT call
+  `delete_file` on any file shown below, and do NOT overwrite a generated file
+  with a from-scratch rewrite in a different design. Edit files in place; add
+  new files only for genuinely new functionality.
+- **Only ADD what the user asked for**, on top of what already exists."""
+        plan_first_step = "What does the user request imply on top of the generated scaffold?"
+    else:
+        role = """\
+You are an expert software engineer. No generator produced a scaffold for this
+request: you write the whole project, in the stack the user asked for, from the
+specification and the models below. Verify its actual behavior; a file that
+exists is not proof that the software satisfies the specification."""
+        plan_first_step = "What does the user request need, and in which stack and project layout?"
+    stable_header = f"""\
+{role}{primary_banner}
+
+## Plan before you implement
+
+State your plan ONCE, in your first turn, then execute it. Do not restate it
+before later edits - every preamble is a turn:
+1. {plan_first_step}
+2. Which generated files/components must change, and which new files and packages
+   are needed?
+3. In what order, to avoid broken imports or circular dependencies?
+4. Which model elements (classes, attributes, relationships, OCL constraints) must
+   be reflected in the result?
+
+Keep the plan short (a few lines), then proceed with surgical edits.
+
+## Rules
+
+1. **Keep changes scoped to the user request.** Don't rewrite generated files
+   or add features the user didn't ask for.
+2. **Pick the right write tool.** Start with `modify_file` for small changes to an
+   existing file. Several targeted edits to one file in the SAME turn are fine as
+   long as every `old_text` comes from your most recent read of that file. Once an
+   edit is refused, go back to one edit per turn until one lands: a batch built on
+   a stale view fails as a batch.
+   After two refused edits on one file, switch strategy: `read_file` the WHOLE
+{write_back}   repeat a rejected edit or treat a refused edit as done.
+   Use `write_file` for new files, and to replace any file you have just read
+{rewrite_scope}   you have not read this run.
+3. **The user's original specification is the behavior authority.** The models
+   define the existing structure, names and relationships; inspect them instead
+   of guessing. Preserve that structure unless completing an explicit requirement
+   needs a change. Rejected conversion expressions and generator defaults are
+   not implemented behavior, and must not override the original specification.
+   The specification OUTRANKS the model wherever the two disagree or the model
+   is silent — an initial/default value, a status vocabulary, a rule, anything
+   else. Resolve the conflict by implementing what the SPECIFICATION says, in
+   the generated code (never by editing the model — no tool does that), and
+   say so in your plan: name the model element and the spec text that decided
+   it. Do not silently ship the model's version and do not leave it open.
+4. **State machines drive code.** When a state machine governs a class
+   (see Cross-model links), generate a state field + transition guards +
+   event handlers that respect the declared transitions. Do not invent
+   states or transitions.
+5. **Object instances are seed data.** Treat the Object Model as concrete
+   examples — emit them as fixtures, seeders, or example payloads in the
+   generated code, not as new domain rules.
+6. **OCL constraints must run.** For every constraint listed under the
+   class, emit a runtime check in the language idiomatic to the target
+   (Pydantic `@field_validator`, Zod refine, or a valid local SQL CHECK).
+   Cross-record/relationship invariants need shared transactional enforcement
+   across every mutation path that can break them: create, update, link/unlink,
+   related-entity edits and deletion. SQLite CHECK constraints cannot contain
+   subqueries or refer to another table's columns. Reject invalid changes
+   atomically; do not partially persist an aggregate before validation succeeds.
+{hygiene_rule}
+8. **Read before modify** - the WHOLE function or class you intend to change, in
+   one call (read_file's description says when and how to paginate).
+9. **Be efficient. Batch tool calls in one turn.** Issue every
+   independent tool call you can in the SAME turn — read multiple files
+   in one turn, edit multiple files in one turn. Each turn is a separate
+   LLM round-trip, so sequential single edits multiply cost; the runner
+   executes batched tool calls in parallel.
+10. **Re-read only when it matters.** Don't re-read a file you have not
+    changed since you read it. After you edit a file, or after your history
+    was compacted, read it again before quoting from it - the copy in your
+    instructions and your memory of it are stale.
+11. **Check your output against the model before finishing.** Before
+    declaring done, verify that every Class's declared attributes and
+    methods appear in your output (under whatever name the target
+    language uses). If anything is missing, add it. Do not silently
+    drop attributes the LLM judges "not needed". A computed attribute belongs in
+    persisted/returned data and read-only displays, not in writable request
+    schemas or required create/edit controls. Recompute it on the mutations
+    that affect it; a separate compute action does not excuse a stale value.
+12. **Implement every explicit request FULLY — no stubs, no token mentions.**
+    When the user asks for a feature, behaviour, or styling, build it
+    completely and wire it end-to-end. A requested feature that's only
+    half-built — a form with no submit handler, an endpoint with no UI, a
+    component that's never imported/rendered, a "TODO" — is a bug. Rule 1
+    keeps you to what the user asked for; it does NOT excuse implementing
+    it shallowly. Before finishing, re-check that every feature the user
+    named actually works in the generated code.
+{styling_rule}
+14. **Authentication, when requested, is COMPLETE and wired.** Generate the
+    full flow: a registration / sign-up form AND a login form, secure
+    password hashing (bcrypt / passlib / argon2 — never plaintext), token
+    or session handling (e.g. JWT), protected routes/endpoints, and the
+    frontend forms wired to working backend auth endpoints. "Login" implies
+    the user can also CREATE AN ACCOUNT unless they say otherwise. No auth
+    stubs — a user must be able to register, then log in, end to end.
+    Never weaken authentication, password hashing, crypto, authorisation or
+    input validation to make a check or test pass: when one fails on a
+    security path, find the cause (dependency, configuration, test input)
+    and fix that.
+{crud_rule}
+{model_tools_section}"""
+
+    # What the scaffold holds is listed above; naming parts here claimed some a generator never makes.
+    request_intro = (
+        "The generator output above is your starting point. Your job is to\n"
+        "implement what the user asked for, on top of it:"
+        if has_scaffold else
+        "No generator ran. Build what the user asked for, from the specification and the models:"
+    )
+    idiom_block = f"\n{idiom_section}" if idiom_section else ""
+    models_part = f"\n{models_block}\n" if models_block else ""
+    variable_tail = f"""{SYSTEM_CACHE_SPLIT} (per run)
+{design_system}{idiom_block}{models_part}{contract_section}{inventory_section}{endpoint_section}{snapshot_section}{requirements_section}
+## User request
+
+{request_intro}
+
+> {instructions.strip()}
+{_render_gap_section(gap_tasks)}{issues_section}{runbook_block}
+When done, briefly summarize what you changed.
+"""
+
+    # Incremental-modify directive. Prepended (not woven into the
+    # cached header) so the from-scratch prompt is byte-identical when
+    # ``modify_mode`` is False — the whole point of the hard separation
+    # between the from-scratch path and the modify path.
+    modify_directive = ""
+    if modify_mode:
+        modify_directive = (
+            "You are MODIFYING an existing, working app. Preserve everything "
+            "that already works; make the smallest change that satisfies the "
+            "request; prefer `modify_file` over `write_file`; do NOT "
+            "regenerate untouched files. `write_file` on an existing file "
+            "is REJECTED in this run until you have tried two targeted "
+            "`modify_file` edits on it.\n\n"
+        )
+
+    return f"{modify_directive}{stable_header}{variable_tail}"
+
+
+# Wire-type mapping for the contract table: model type -> TypeScript type.
+_TS_TYPES = {
+    "str": "string",
+    "string": "string",
+    "uuid": "string",
+    "int": "number",
+    "integer": "number",
+    "float": "number",
+    "bool": "boolean",
+    "datetime": "string (ISO)",
+    "date": "string (ISO)",
+    "time": "string (ISO)",
+}
+
+
+def _data_contract_section(domain_model) -> str:
+    """Render the NON-NEGOTIABLE data-contract rules for the system prompt.
+
+    These four rules target the commonest façade failures in generated apps:
+    string ids parseInt'd into NaN (edit/delete broken on first click),
+    create forms sending server-owned fields, and unimplemented methods
+    answering ``{"status": "executed"}``. The wording is deliberately
+    blunt — it must land on the weakest model the pipeline serves (free
+    local qwen), not just the frontier ones. ``contract_checks.py``
+    enforces the same rules mechanically; this section is what lets the
+    model get them right the first time.
+    """
+    contract = build_data_contract(domain_model)
+    if contract is None:
+        return ""
+
+    pk_lines = []
+    for cls in sorted(contract.pk_types):
+        attr_name, type_name = contract.pk_types[cls]
+        ts = _TS_TYPES.get(type_name.lower(), type_name)
+        pk_lines.append(f"- `{cls}.{attr_name}`: **{type_name}** (TypeScript: `{ts}`)")
+    if pk_lines:
+        pk_block = (
+            "Declared identifier attributes (these types are LAW in every layer):\n"
+            + "\n".join(pk_lines)
+            + "\n\nClasses with no declared id attribute get a server-generated "
+            "integer `id`.\n"
+        )
+    else:
+        pk_block = (
+            "No class declares an id attribute — every class gets a "
+            "server-generated integer `id`.\n"
+        )
+
+    return f"""
+## Data contract — NON-NEGOTIABLE rules derived from the domain model
+
+{pk_block}
+1. **Id types are the model's types — in EVERY layer.** Path parameters,
+   SQLAlchemy columns, ForeignKey columns, Pydantic schemas, and
+   TypeScript interfaces all use the exact type above. NEVER call
+   `parseInt()`/`Number()` on a string id, never declare an `int` path
+   param for a string id, and a ForeignKey column uses the SAME type as
+   the primary key it references.
+2. **Server-owned fields.** A surrogate `id` (on a class with no declared
+   id attribute), `createdAt`/`created_at`, `updatedAt`/`updated_at`, and
+   **every attribute the model marks `is_derived`** are assigned or
+   computed by the backend. They NEVER appear in create-request schemas or
+   create forms, and the client never sends them. A derived attribute must
+   be COMPUTED — from the values the request does carry — not accepted. (A
+   declared identifier attribute, whatever its name — `isbn`, `code`, or
+   `id` itself — IS client-supplied and belongs in the create schema and
+   the create form.)
+3. **No fake success.** A modeled method you did not implement must
+   return HTTP 501 (Not Implemented) with a clear message — NEVER a fake
+   `{{"status": "executed"}}` or a silent 200. A button wired to an
+   unimplemented action must surface that error, not pretend it worked.
+4. **No junk pages.** A placeholder/empty screen (a page whose only
+   content is its own title, lorem text, or a name like `gf`) must NOT
+   become a route or a nav link — skip it entirely.
+"""
+
+
+def _render_gap_section(gap_tasks: list[str] | None) -> str:
+    """Render the optional 'Focused checklist' section.
+
+    The cheap gap-analyzer LLM call produces this list. If the call
+    failed or wasn't invoked, ``gap_tasks`` is empty and we render
+    nothing — the Phase 2 LLM plans its own work.
+    """
+    if not gap_tasks:
+        return ""
+    items = []
+    for index, task in enumerate(gap_tasks, 1):
+        text = task.get("text", "") if isinstance(task, dict) else task
+        items.append(f"  {index}. {text}")
+        if isinstance(task, dict):
+            items.extend(f"     Plan detail: {note}" for note in task.get("planning_notes", []))
+    bullets = "\n".join(items)
+    return (
+        "\n\n### Focused checklist (from gap analysis)\n"
+        "This list is loaded into the `task_list` tool (its description covers "
+        "done with evidence, blocked and add). Work through it, marking each item "
+        "done as you complete it. If an item is wrong or out of scope for the user "
+        "request, close it with task_list(action='drop', id=N, reason=...) - never "
+        "mark undone work done.\n\n"
+        f"{bullets}\n"
+    )
+
+
+def _compute_cross_model_links(
+    domain_model,
+    sm_json,
+    object_json,
+    agent_json,
+) -> dict[str, Any] | None:
+    """Heuristic cross-references between the models in the prompt.
+
+    * For each state machine, flag the class whose name is contained in
+      the state-machine name (case-insensitive substring) — a common
+      convention (``OrderStateMachine`` → ``Order``).
+    * For the object model, list which classes have instances so the LLM
+      can treat those as seed data.
+    * For the agent model, signal its presence (the agent typically wires
+      into the whole app, not any single class).
+    """
+    try:
+        class_names = [c.name for c in domain_model.get_classes()]
+    except Exception:
+        class_names = []
+
+    links: dict[str, Any] = {}
+
+    # State machine ↔ class
+    if sm_json:
+        sm_bindings = []
+        for sm in sm_json:
+            name = sm.get("name", "")
+            name_lower = name.lower()
+            match = next(
+                (c for c in class_names if c and c.lower() in name_lower and c.lower() != name_lower),
+                None,
+            )
+            if match:
+                sm_bindings.append({
+                    "state_machine": name,
+                    "governs_class": match,
+                })
+        if sm_bindings:
+            links["state_machine_bindings"] = sm_bindings
+
+    # Object model ↔ class
+    if object_json:
+        classes_with_instances = sorted({
+            o.get("class") for o in object_json.get("objects", []) if o.get("class")
+        })
+        if classes_with_instances:
+            links["classes_with_instances"] = classes_with_instances
+
+    # Agent presence
+    if agent_json:
+        links["agent_present"] = True
+
+    return links or None
+
+
+# File extensions that are never worth inlining (binary, locks, archives).
+_SNAPSHOT_SKIP_EXTENSIONS = {
+    ".png", ".jpg", ".jpeg", ".gif", ".ico", ".pdf", ".zip", ".gz",
+    ".woff", ".woff2", ".ttf", ".eot", ".pyc", ".db", ".sqlite",
+    ".lock",
+}
+_SNAPSHOT_SKIP_NAMES = {"package-lock.json", "yarn.lock", "pnpm-lock.yaml", "poetry.lock", "Cargo.lock"}
+# Minified bundles and source maps: one line can hold 100k chars of build output.
+_SNAPSHOT_SKIP_SUFFIXES = (".min.js", ".min.css", ".map")
+
+
+def is_bulk_file(fname: str) -> bool:
+    """Lock files, minified bundles, source maps and binaries: written by
+    tools, never by the model, and not worth inlining or searching."""
+    lower = fname.lower()
+    return (fname in _SNAPSHOT_SKIP_NAMES or lower.endswith(_SNAPSHOT_SKIP_SUFFIXES)
+            or os.path.splitext(lower)[1] in _SNAPSHOT_SKIP_EXTENSIONS)
+
+
+_SNAPSHOT_SKIP_DIRS = {
+    ".besser_snapshot", "node_modules", "target", "__pycache__", ".git",
+    "dist", "build", ".next", ".gradle", "venv", ".venv",
+    COMMAND_OUTPUT_DIR,
+}
+
+# Route decorators + mount/prefix/port patterns for the endpoint manifest.
+_ENDPOINT_DECORATOR_RE = re.compile(
+    r"@(?P<var>\w+)\.(?P<method>get|post|put|patch|delete|head|options)\("
+    r"\s*(?P<q>[\"'])(?P<path>.*?)(?P=q)",
+    re.IGNORECASE | re.DOTALL,
+)
+_APIROUTER_PREFIX_RE = re.compile(
+    r"APIRouter\([^)]*\bprefix\s*=\s*[\"']([^\"']*)[\"']", re.DOTALL
+)
+_INCLUDE_ROUTER_PREFIX_RE = re.compile(
+    r"include_router\(\s*(?P<ref>[\w.]+)[^)]*\bprefix\s*=\s*[\"'](?P<prefix>[^\"']*)[\"']",
+    re.DOTALL,
+)
+_UVICORN_PORT_RE = re.compile(r"uvicorn\.run\([^)]*\bport\s*=\s*(\d+)", re.DOTALL)
+_IMPORT_ALIAS_RE = re.compile(
+    r"^\s*(?:from\s+[\w.]*\brouters\s+import\s+(?P<mod1>\w+)(?:\s+as\s+(?P<alias1>\w+))?"
+    r"|import\s+[\w.]*routers\.(?P<mod2>\w+)(?:\s+as\s+(?P<alias2>\w+))?)",
+    re.MULTILINE,
+)
+_METHOD_ORDER = {"GET": 0, "POST": 1, "PUT": 2, "PATCH": 3, "DELETE": 4, "HEAD": 5, "OPTIONS": 6}
+
+
+def _norm_path(*parts: str) -> str:
+    """Join URL fragments and collapse duplicate slashes, keep leading slash.
+
+    Whitespace is collapsed and the result capped because these paths come
+    from a regex over workspace source, matched with DOTALL: a route literal
+    containing real newlines would otherwise render as its own lines inside
+    the endpoint manifest, a system-prompt block framed as the only routes
+    that exist, to be called verbatim. A URL path has no legitimate newline.
+    """
+    joined = "/".join(p.strip("/") for p in parts if p and p.strip("/"))
+    path = "/" + joined
+    # Preserve a single trailing slash if any source fragment had one.
+    if parts and parts[-1].endswith("/") and not path.endswith("/"):
+        path += "/"
+    return re.sub(r"\s+", " ", re.sub(r"/{2,}", "/", path)).strip()[:200]
+
+
+def build_endpoint_manifest(output_dir: str, max_routes: int = 250, *,
+                            response_model=None, mutation_coverage: bool = True) -> str:
+    """List the EXACT HTTP routes the generated backend serves.
+
+    The LLM-authored frontend otherwise reconstructs each URL from the router
+    file + where it is mounted and drifts — pluralizes (``/books``), adds an
+    ``/api`` prefix, or drops the trailing slash — producing runtime 404s that
+    look like a finished app. Handing it the already-served paths removes that
+    reconstruction entirely.
+
+    Parsed STATICALLY from the generated FastAPI routers (no import / no code
+    execution). Returns ``""`` when no HTTP routes are found (non-backend runs),
+    so the caller can omit the section.
+
+    ``response_model``: the domain model the routers were generated from by
+    ``router.py.j2``; adds what create/update return. ``mutation_coverage``:
+    False keeps only the request shapes of the mutation inventory.
+    """
+    port = None
+    app_prefix_by_module: dict[str, str] = {}
+    router_files: list[tuple[str, str]] = []  # (module_basename, content)
+
+    for root, dirs, files in walk_plain(output_dir):
+        dirs[:] = [d for d in dirs if d not in _SNAPSHOT_SKIP_DIRS]
+        for fname in files:
+            if not fname.endswith(".py"):
+                continue
+            fpath = os.path.join(root, fname)
+            try:
+                content = open(fpath, encoding="utf-8", errors="ignore").read()
+            except OSError:
+                continue
+
+            if port is None:
+                m = _UVICORN_PORT_RE.search(content)
+                if m:
+                    port = int(m.group(1))
+
+            # App/mount file: map each mounted router module -> its include prefix
+            # (only present if a prefix is actually set; usually none).
+            if "include_router(" in content:
+                alias_to_mod = {}
+                for im in _IMPORT_ALIAS_RE.finditer(content):
+                    mod = im.group("mod1") or im.group("mod2")
+                    alias = im.group("alias1") or im.group("alias2") or mod
+                    if mod:
+                        alias_to_mod[alias] = mod
+                for inc in _INCLUDE_ROUTER_PREFIX_RE.finditer(content):
+                    ref = inc.group("ref").split(".")[0]
+                    mod = alias_to_mod.get(ref, ref)
+                    app_prefix_by_module[mod] = inc.group("prefix")
+
+            if _ENDPOINT_DECORATOR_RE.search(content):
+                router_files.append((os.path.splitext(fname)[0], content))
+
+    # (method, path) -> collected, deduped
+    methods_by_path: dict[str, set[str]] = {}
+    for module, content in router_files:
+        rp = _APIROUTER_PREFIX_RE.search(content)
+        router_prefix = rp.group(1) if rp else ""
+        include_prefix = app_prefix_by_module.get(module, "")
+        for m in _ENDPOINT_DECORATOR_RE.finditer(content):
+            method = m.group("method").upper()
+            raw = m.group("path")
+            full = _norm_path(include_prefix, router_prefix, raw)
+            methods_by_path.setdefault(full, set()).add(method)
+
+    if not methods_by_path:
+        return ""
+
+    def _group_key(path: str) -> str:
+        segs = [s for s in path.split("/") if s and not s.startswith("{")]
+        return segs[0] if segs else path
+
+    paths = sorted(methods_by_path.keys())
+    if len(paths) > max_routes:
+        paths = paths[:max_routes]
+        truncated = len(methods_by_path) - max_routes
+    else:
+        truncated = 0
+
+    lines: list[str] = []
+    last_group = None
+    for path in sorted(paths, key=lambda p: (_group_key(p), p)):
+        group = _group_key(path)
+        if group != last_group:
+            if last_group is not None:
+                lines.append("")
+            last_group = group
+        methods = sorted(methods_by_path[path], key=lambda x: _METHOD_ORDER.get(x, 99))
+        lines.append(f"  {', '.join(methods):<20} {path}")
+
+    base_url = f"http://localhost:{port or 8000}"
+    header = (
+        "The FastAPI backend is ALREADY generated and serves only the routes below "
+        f"(base URL {base_url}); a request to any other path will 404. Call them "
+        "from the frontend verbatim: do NOT add an `/api` prefix, do NOT "
+        "pluralize entity names, and keep the trailing slash."
+    )
+    body = "\n".join(lines)
+    if truncated:
+        body += f"\n\n  ... and {truncated} more routes (same conventions)."
+    shapes = _response_shape_note(response_model) if response_model is not None else ""
+    if shapes:
+        body += f"\n\n{shapes}"
+    mutations = build_mutation_manifest(output_dir, coverage=mutation_coverage)
+    return f"{header}\n\n{body}" + (f"\n\n{mutations}" if mutations else "")
+
+
+# Generators whose FastAPI routers come from besser/generators/backend/templates/router.py.j2.
+ROUTER_TEMPLATE_GENERATORS = frozenset({"generate_fastapi_backend", "generate_web_app"})
+
+def mutation_coverage_applies(domain_model, requirements: list[dict] | None) -> bool:
+    """Whether the relationship-mutation coverage block is rendered.
+
+    ``requirements`` is the ledger plus the rejected model rules, or None when it is
+    not known (extraction failed, was not attempted, or ran before a resume). Any
+    requirement keeps the block: the extractor's ``kind`` label varies between runs
+    of one request, so it cannot decide. With a ledger known to be empty, the model
+    decides: a constraint, a rejected constraint, or a lower bound on a to-many end.
+    """
+    if requirements is None or requirements:
+        return True
+    if domain_model is None:
+        return False
+    if list(getattr(domain_model, "constraints", None) or []) or getattr(domain_model, "conversion_issues", None):
+        return True
+    return any(end.multiplicity.min > 0 and end.multiplicity.max > 1
+               for association in domain_model.associations for end in association.ends)
+
+
+def create_response_keys(domain_model) -> dict[str, list[str]]:
+    """Per class, the top-level keys of its generated create/update response; ``[]`` for the bare record.
+
+    Mirrors ``router.py.j2``: a class (or a parent) with a navigable binary end to
+    many, or a link through an association class, returns ``{"<class lowercased>":
+    record, ...id lists}``. The id lists are keyed ``<other class lowercased>_ids``
+    for an N:M end, ``<other end>_ids`` for a 1:N end or an association-class link,
+    in that order. An N:M end is keyed by its own name instead when the class links
+    to itself (both ends are listed) or has several N:M links to the same class.
+    An association class itself returns the bare record.
+    """
+    from besser.BUML.metamodel.structural import AssociationClass
+
+    by_association = {cls.association.name for cls in domain_model.get_classes()
+                      if isinstance(cls, AssociationClass)}
+    keys: dict[str, list[str]] = {}
+    for cls in domain_model.get_classes():
+        many_to_many, linked, one_to_many = [], [], []
+        if not isinstance(cls, AssociationClass):
+            for owner in [cls, *sorted(cls.all_parents(), key=lambda parent: parent.name)]:
+                for association in sorted(owner.associations, key=lambda association: association.name):
+                    ends = sorted(association.ends, key=lambda end: end.name)
+                    if len(ends) != 2:
+                        continue
+                    is_self = ends[0].type.name == ends[1].type.name
+                    if is_self:
+                        # The far end of a self-association is its collection end.
+                        own, other = (ends[1], ends[0]) if ends[0].multiplicity.max > 1 else (ends[0], ends[1])
+                    else:
+                        own, other = (ends[0], ends[1]) if ends[0].type.name == owner.name else (ends[1], ends[0])
+                    if not other.is_navigable:
+                        continue
+                    if association.name in by_association:
+                        linked.append(f"{other.name}_ids")
+                    elif own.multiplicity.max > 1 and other.multiplicity.max > 1:
+                        many_to_many.append(other)
+                        if is_self and own.is_navigable:
+                            many_to_many.append(own)
+                    elif own.multiplicity.max == 1 and other.multiplicity.max > 1:
+                        one_to_many.append(f"{other.name}_ids")
+        targets = [end.type.name for end in many_to_many]
+        many_to_many = [
+            f"{end.name}_ids" if end.type.name == cls.name or targets.count(end.type.name) > 1
+            else f"{end.type.name.lower()}_ids"
+            for end in many_to_many]
+        id_lists = list(dict.fromkeys(many_to_many + linked + one_to_many))
+        keys[cls.name] = [cls.name.lower(), *id_lists] if id_lists else []
+    return keys
+
+
+def _response_shape_note(domain_model) -> str:
+    """What the generated routers return: the actual top-level keys of each wrapped entity."""
+    from besser.BUML.metamodel.structural import AssociationClass
+
+    try:
+        keys = create_response_keys(domain_model)
+        association_classes = {cls.name for cls in domain_model.get_classes() if isinstance(cls, AssociationClass)}
+    except Exception:
+        logger.debug("Response shape derivation failed", exc_info=True)
+        return ""
+    if not keys:
+        return ""
+    wrapped = sorted(name for name, names in keys.items() if names)
+    if wrapped:
+        listed = "; ".join(f"{name} {{{', '.join(keys[name])}}}" for name in wrapped)
+        create = (f"POST and PUT return these top-level keys for {listed} - a created {wrapped[0]}'s id is "
+                  f"{{{{N.{keys[wrapped[0]][0]}.id}}}} in test_api; every other entity's POST and PUT return "
+                  "the bare record ({{N.id}}).")
+    else:
+        create = "POST and PUT return the bare record ({{N.id}} in test_api)."
+    bare = sorted(name for name, names in keys.items() if not names and name not in association_classes)
+    example = (f" (GET /{bare[0].lower()}/1/ -> {{\"{bare[0].lower()}\": {{...}}}})" if bare else "")
+    return (f"Response shapes (generated routers): {create} GET /<entity>/{{id}}/ wraps EVERY entity except an "
+            "association class under its lowercased name, also one whose POST is bare"
+            f"{example}, with the same _ids lists. List rows are flat, with an `<end>_id` column per to-one "
+            "end; ?detailed=true nests related objects.")
+
+
+def build_scaffold_snapshot(
+    output_dir: str,
+    max_file_lines: int = 150,
+    total_char_budget: int = 24_000,
+) -> str:
+    """Render the contents of small scaffold files for the system prompt.
+
+    The inventory only lists paths + sizes, while Rule 8 ("read before
+    modify") forces the LLM to spend its first 2-4 turns on read_file
+    calls against the same scaffold files. Inlining them up front — the
+    system prompt is constant across turns, so this is paid once — cuts
+    those round-trips entirely.
+
+    Files are included smallest-first, only when <= ``max_file_lines``
+    lines, under a global ``total_char_budget``. Binary / lock files and
+    dependency dirs are skipped. Returns "" when nothing qualifies.
+    """
+    candidates: list[tuple[int, str, str]] = []  # (size, rel_path, content)
+    for root, dirs, files in walk_plain(output_dir):
+        dirs[:] = [d for d in dirs if d not in _SNAPSHOT_SKIP_DIRS]
+        for fname in files:
+            if fname.startswith(".besser_") or is_bulk_file(fname):
+                continue
+            fpath = os.path.join(root, fname)
+            rel = os.path.relpath(fpath, output_dir).replace("\\", "/")
+            try:
+                size = os.path.getsize(fpath)
+                if size > total_char_budget:
+                    continue
+                with open(fpath, "r", encoding="utf-8") as fh:
+                    content = fh.read()
+            except (OSError, UnicodeDecodeError):
+                continue
+            if content.count("\n") + 1 > max_file_lines:
+                continue
+            candidates.append((size, rel, content))
+
+    if not candidates:
+        return ""
+
+    sections: list[str] = []
+    used = 0
+    skipped: list[str] = []
+    for size, rel, content in sorted(candidates):
+        block = f"### `{rel}`\n\n```\n{content}\n```\n"
+        if used + len(block) > total_char_budget:
+            skipped.append(rel)
+            continue
+        used += len(block)
+        sections.append(block)
+
+    if not sections:
+        return ""
+    if skipped:
+        sections.append(
+            "_Not shown (budget): "
+            + ", ".join(f"`{p}`" for p in skipped[:20])
+            + " — use read_file for these._\n"
+        )
+    return "\n".join(sections)
+
+
+_SYMBOL_PATTERNS = {
+    ".py": re.compile(r"^(?:async\s+)?(?:def|class)\s+(\w+)", re.M),
+    ".js": re.compile(
+        r"^export\s+(?:default\s+)?(?:async\s+)?(?:function|const|class|let)\s+(\w+)", re.M
+    ),
+}
+for _ext in (".jsx", ".ts", ".tsx", ".mjs"):
+    _SYMBOL_PATTERNS[_ext] = _SYMBOL_PATTERNS[".js"]
+_SYMBOL_CAP = 10
+
+# Inventory hygiene: an alphabetical path cap otherwise fills with .besser_*
+# records, __pycache__/*.pyc and .db files and drops real source. Junk is
+# skipped, code files sort first, and the cap is wide enough for any scaffold.
+_INVENTORY_SKIP_EXTENSIONS = {
+    ".pyc", ".pyo", ".db", ".sqlite", ".sqlite3", ".lock", ".zip", ".gz", ".tar",
+}
+_INVENTORY_MAX_FILES = 150
+
+
+def _symbol_map(path: str) -> str:
+    """``name@line`` for each top-level def/class/export, capped; ``""`` for
+    non-code files or on any read problem."""
+    pattern = _SYMBOL_PATTERNS.get(os.path.splitext(path)[1].lower())
+    if pattern is None:
+        return ""
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+            text = fh.read()
+    except OSError:
+        return ""
+    found = [
+        f"{m.group(1)}@{text.count(chr(10), 0, m.start()) + 1}"
+        for m in pattern.finditer(text)
+    ]
+    if len(found) > _SYMBOL_CAP:
+        return ", ".join(found[:_SYMBOL_CAP]) + f" (+{len(found) - _SYMBOL_CAP} more)"
+    return ", ".join(found)
+
+
+def build_inventory(output_dir: str, domain_model, generator_name: str) -> str:
+    """
+    Describe what the generator produced -- for the LLM's context.
+
+    Args:
+        output_dir: Path to the output directory.
+        domain_model: The BUML domain model, or None when the run is
+            driven by a non-class primary (state machine, agent, etc.).
+            When None, the domain-specific lines (entities, enums,
+            associations) are omitted rather than showing empty values.
+        generator_name: Name of the generator that was used.
+
+    Returns:
+        A human-readable inventory string.
+    """
+    # List files, each with its top-level symbols and their line numbers.
+    # The scaffold is not pasted whole into the prompt, so this map is how
+    # the model finds the region it needs and reads it with read_file
+    # offset/limit instead of the whole file (aider's repo map, kept to
+    # top-level names: a few hundred tokens). Code files first, so a cap
+    # can only ever drop assets and notes.
+    files: list[tuple[int, str, str]] = []
+    for root, dirs, filenames in walk_plain(output_dir):
+        dirs[:] = [d for d in dirs if d not in _SNAPSHOT_SKIP_DIRS]
+        for f in filenames:
+            ext = os.path.splitext(f)[1].lower()
+            if f.startswith(".besser_") or f in _SNAPSHOT_SKIP_NAMES:
+                continue
+            if ext in _INVENTORY_SKIP_EXTENSIONS:
+                continue
+            full = os.path.join(root, f)
+            rel = os.path.relpath(full, output_dir).replace(chr(92), '/')
+            size = os.path.getsize(full)
+            symbols = _symbol_map(full)
+            files.append((
+                0 if ext in _SYMBOL_PATTERNS else 1,
+                rel,
+                f"{rel} ({size:,} bytes)" + (f": {symbols}" if symbols else ""),
+            ))
+    files.sort()
+
+    lines = [f"Generator `{generator_name}` produced {len(files)} files:"]
+    for _, _, entry in files[:_INVENTORY_MAX_FILES]:
+        lines.append(f"  - {entry}")
+    if len(files) > _INVENTORY_MAX_FILES:
+        lines.append(f"  ... and {len(files) - _INVENTORY_MAX_FILES} more files")
+
+    if domain_model is not None:
+        try:
+            # Sorted: both are sets of id-hashed elements, so their order changes between runs.
+            class_names = sorted(c.name for c in domain_model.get_classes())
+            enum_names = sorted(e.name for e in domain_model.get_enumerations())
+            lines.append(f"\nEntities with full CRUD: {', '.join(class_names)}")
+            if enum_names:
+                lines.append(f"Enumerations: {', '.join(enum_names)}")
+            lines.append(f"Associations: {len(domain_model.associations)} relationships")
+        except Exception:
+            # Malformed / partially-constructed domain model — skip the
+            # domain-specific lines rather than spraying tracebacks into
+            # the LLM prompt.
+            pass
+
+    if generator_name == "generate_web_app":
+        lines.append("\nBackend: FastAPI with SQLAlchemy ORM + Pydantic schemas")
+        lines.append("Frontend: React + TypeScript + Vite + Tailwind CSS")
+        lines.append("Docker: docker-compose.yml + Dockerfiles")
+        # List frontend pages
+        pages = []
+        for root, dirs, filenames in walk_plain(output_dir):
+            dirs[:] = [d for d in dirs if d not in _SNAPSHOT_SKIP_DIRS]
+            for f in filenames:
+                if "/pages/" in os.path.join(root, f).replace("\\", "/") and f.endswith((".tsx", ".jsx")):
+                    pages.append(f.replace(".tsx", "").replace(".jsx", ""))
+        if pages:
+            lines.append(f"Frontend pages: {', '.join(sorted(pages))}")
+    elif generator_name == "generate_fastapi_backend":
+        lines.append("\nBackend: FastAPI with SQLAlchemy ORM + Pydantic schemas (modular)")
+        lines.append(
+            "Files: main_api.py (slim app + include_router calls), database.py "
+            "(engine/session), routers/<Class>.py (endpoints per class, @router), "
+            "sql_alchemy.py, pydantic_classes.py, bal_stdlib.py, requirements.txt"
+        )
+
+    return "\n".join(lines)

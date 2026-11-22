@@ -35,6 +35,10 @@ The filename embeds the generation type, so a ``PytorchGenerator`` invoked with
 ``generation_type="subclassing"`` produces ``pytorch_nn_subclassing.py``, and
 ``generation_type="sequential"`` produces ``pytorch_nn_sequential.py``.
 
+To forecast a time series with the network (windows over the series, seeded training,
+prediction and a backtest), use the :doc:`Time-Series Forecaster Generator <forecaster>`, which
+writes the network with the same templates.
+
 Web Modeling Editor Support
 ---------------------------
 
@@ -44,6 +48,20 @@ The backend converts the diagram into an ``NN`` metamodel instance and passes
 it to the PyTorch generator. From the editor's **Generate** menu you can choose
 between the **Subclassing** and **Sequential** variants; the diagram is
 validated through ``NN.validate()`` before code is produced.
+
+Trace Links
+-----------
+
+After ``generate()``, ``generator.traced_files["pytorch_nn_subclassing.py"]`` names the network as the source of the file and lists
+the line ranges rendered from each element that has an ``id``: a layer's definition (``layer``) and its call in the
+forward pass (``layer_forward``, the call of its activation included), a tensor operation (``tensorop``), a
+sub-network's definition (``sub_nn``, its layers inside it) and call (``sub_nn_forward``), and the dataset loading
+function (``train_dataset`` and ``test_dataset``, both over ``prepare_datasets``). The lines are those of the final
+file: the clean-up of blank lines runs on the text without the trace markers and the ranges are moved to the lines it
+keeps, so the generated code is the same with or without ids. The web editor's neural network processor gives each
+layer, tensor operation, network (container) and dataset its editor element id, so a network drawn there is traced
+by element. The ``Configuration`` (loss, optimizer, epochs) has no ``id`` in the metamodel, and the layer added to turn
+an activation or a permutation into a call has no region of its own. See :doc:`traceable_generator`.
 
 Output
 ------

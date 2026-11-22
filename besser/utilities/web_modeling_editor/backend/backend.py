@@ -11,21 +11,27 @@ The editor is available at: https://editor.besser-pearl.org
 import asyncio
 import logging
 import os
+from typing import Optional
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
 from starlette.responses import Response as StarletteResponse
 
+from besser.llm.catalog import load_model_catalog
+from besser.utilities.provenance import get_besser_version, get_build_sha
 from besser.utilities.web_modeling_editor.backend.middleware import setup_middleware
 
 # Backend constants (no circular dependency risk)
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
+    MAX_REQUEST_SIZE,
     API_VERSION,
     DEFAULT_CORS_ORIGINS,
+    EXPORT_WARNING_HEADER,
 )
 
 # Pre-load services.converters before config to avoid circular import:
@@ -55,23 +61,37 @@ from besser.utilities.web_modeling_editor.backend.services.cleanup import (
     schedule_cleanup,
 )
 
-# Deployment routers (already separate files)
-from besser.utilities.web_modeling_editor.backend.services.deployment import (
-    github_oauth_router,
-    github_deploy_router,
-)
-
 # Application routers
 from besser.utilities.web_modeling_editor.backend.routers import (
+    github_oauth,
+    github_deploy_api,
     generation_router,
     conversion_router,
+    kg_router,
     validation_router,
     deployment_router,
+    spec_driven_router,
+    telemetry_router,
+    agent_simulator_router,
+    traceability_router,
 )
+
+# Per-app state, built in the lifespan (see dependencies.py)
+from besser.utilities.web_modeling_editor.backend.services.agent_simulation import AgentSimulatorState
+from besser.utilities.web_modeling_editor.backend.services.deployment.session_store import GitHubSessions
+from besser.utilities.web_modeling_editor.backend.services.kg.validation import consistency_check_slots
+from besser.utilities.web_modeling_editor.backend.services.reverse_engineering import sdmx_import_slots
+from besser.utilities.web_modeling_editor.backend.services.validators.alloy.semantic_consistency import (
+    semantic_check_slots,
+)
+from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
+    SpecDrivenRuntime,
+)
+from besser.utilities.web_modeling_editor.backend.services.spec_driven.run_record import enable_run_log
+from besser.utilities.web_modeling_editor.backend.settings import BackendSettings, get_settings
 
 logger = logging.getLogger(__name__)
 
-MAX_REQUEST_SIZE = 50 * 1024 * 1024  # 50MB
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -96,57 +116,97 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 
-class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
-    """Reject requests that exceed MAX_REQUEST_SIZE."""
+class RequestSizeLimitMiddleware:
+    """Reject requests that exceed MAX_REQUEST_SIZE.
 
-    async def dispatch(self, request: Request, call_next):
-        content_length = request.headers.get("content-length")
-        if content_length and int(content_length) > MAX_REQUEST_SIZE:
-            return StarletteResponse("Request too large", status_code=413)
+    Pure ASGI on purpose, and not ``BaseHTTPMiddleware``. The previous
+    version read the body to enforce the cap, which consumes the receive
+    channel, and then every attempt to put it back was wrong on one
+    Starlette or the other:
 
-        # For requests without content-length or to prevent spoofing,
-        # wrap the body stream to enforce the limit
-        if request.method in ("POST", "PUT", "PATCH"):
-            body = await request.body()
-            if len(body) > MAX_REQUEST_SIZE:
-                return StarletteResponse("Request too large", status_code=413)
+    * consuming and NOT replaying deadlocks every POST on 0.27.0 - the
+      endpoint waits forever for a body that is already gone;
+    * replaying a constant ``http.request`` fixes 0.27.0 and breaks 0.36.3,
+      where ``BaseHTTPMiddleware`` polls receive again to await the client
+      disconnect, sees a second ``http.request`` and raises "Unexpected
+      message received" - a 500 on every POST;
+    * replaying then returning ``http.disconnect`` still breaks 0.36.3,
+      because that version already caches and replays the body itself, so
+      any manual ``_receive`` collides with its own machinery.
 
-        return await call_next(request)
+    `fastapi` is unpinned in this package's requirements, so a fresh build
+    takes whichever Starlette pip resolves. The size check therefore must
+    not depend on that at all - so it never reads the body. It inspects
+    ``content-length`` and otherwise counts bytes as they stream past,
+    leaving the body untouched for the application to read normally.
+    """
+
+    def __init__(self, app, max_size: Optional[int] = None):
+        self.app = app
+        self.max_size = MAX_REQUEST_SIZE if max_size is None else max_size
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            return await self.app(scope, receive, send)
+
+        headers = dict(scope.get("headers") or [])
+        declared = headers.get(b"content-length")
+        if declared:
+            try:
+                if int(declared) > self.max_size:
+                    return await StarletteResponse(
+                        "Request too large", status_code=413)(scope, receive, send)
+            except ValueError:
+                pass  # malformed header; the byte counter below still applies
+
+        seen = 0
+
+        async def counting_receive():
+            """Count what actually arrives, without holding on to it.
+
+            Covers an absent or understated ``content-length``. Once the cap
+            is passed the body is cut off with a disconnect rather than
+            streamed on: we are already past the point where a clean 413 can
+            be sent, and continuing would defeat the limit entirely.
+            """
+            nonlocal seen
+            message = await receive()
+            if message.get("type") == "http.request":
+                seen += len(message.get("body", b"") or b"")
+                if seen > self.max_size:
+                    logger.warning(
+                        "Request body exceeded %d bytes with content-length %r; "
+                        "cutting the stream", self.max_size, declared)
+                    return {"type": "http.disconnect"}
+            return message
+
+        return await self.app(scope, counting_receive, send)
 
 
 # ---------------------------------------------------------------------------
 # Startup: environment variable validation
 # ---------------------------------------------------------------------------
 
-_REQUIRED_ENV_VARS = [
-    "GITHUB_CLIENT_ID",
-    "GITHUB_CLIENT_SECRET",
-]
-
-_OPTIONAL_ENV_VARS = [
-    "SMTP_PASSWORD",
-    "OPENAI_API_KEY",
-    "BESSER_GUI_TTS_PROVIDER",
-]
-
-
 def _validate_env_vars() -> None:
-    """Check that expected environment variables are set and log diagnostics.
+    """Log a warning for each optional environment variable that is not set.
 
-    Required variables trigger ``logger.error`` when absent; optional ones
-    trigger ``logger.warning``.  The application is **not** terminated so
-    that services which do not depend on the missing variables can still
-    operate (graceful degradation).
+    None of them is needed to draw models and run generators, so the
+    application is **not** terminated: services which do not depend on the
+    missing variables keep working (graceful degradation).
     """
-    for var in _REQUIRED_ENV_VARS:
-        if not os.environ.get(var):
-            logger.error(
-                "Required environment variable %s is not set. "
-                "Features depending on it will not work.", var,
-            )
-
-    for var in _OPTIONAL_ENV_VARS:
-        if not os.environ.get(var):
+    settings = BackendSettings()
+    optional = {
+        # GitHub sign-in, push and deploy; drawing and generation work without them
+        "GITHUB_CLIENT_ID": settings.github_client_id,
+        "GITHUB_CLIENT_SECRET": settings.github_client_secret.get_secret_value(),
+        "SMTP_PASSWORD": settings.smtp_password.get_secret_value(),
+        # Not a backend setting: the code that uses it reads it.
+        "OPENAI_API_KEY": os.environ.get("OPENAI_API_KEY"),
+        # Live agent simulation returns 503 without it
+        "AGENT_SIMULATOR_API_TOKEN": settings.agent_simulator_api_token.get_secret_value(),
+    }
+    for var, value in optional.items():
+        if not value:
             logger.warning(
                 "Optional environment variable %s is not set. "
                 "Related functionality will be unavailable.", var,
@@ -154,8 +214,12 @@ def _validate_env_vars() -> None:
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI):
+async def lifespan(app: FastAPI):
     _validate_env_vars()
+    enable_run_log()
+    # A broken BESSER_MODEL_CATALOG stops startup here rather than silently
+    # dropping a provider from the key dialog.
+    load_model_catalog()
     from besser.generators.gui.tts import log_text2speech_environment
     log_text2speech_environment(logger)
 
@@ -164,14 +228,50 @@ async def lifespan(_: FastAPI):
     cleanup_old_temp_files()
     cleanup_task = schedule_cleanup()
 
+    # Routes reach this state through the dependencies in dependencies.py.
+    app.state.github_sessions = GitHubSessions.create(get_settings())
+    app.state.agent_simulator = AgentSimulatorState.create(get_settings())
+    app.state.kg_consistency_slots = consistency_check_slots()
+    app.state.sdmx_import_slots = sdmx_import_slots()
+    app.state.semantic_check_slots = semantic_check_slots()
+    runtime = SpecDrivenRuntime.create(get_settings())
+    app.state.spec_driven = runtime
+    logger.info("Spec-driven runtime started (%d run slots)", get_settings().llm_max_concurrent_runs)
+
+    # Download metadata lives beside artifacts on the persistent run volume,
+    # so a backend/container restart does not invalidate a completed result.
+    await runtime.registry.restore_persisted()
+
+    # Sweep expired spec-driven generation download entries every minute.
+    smart_gen_sweeper = asyncio.create_task(
+        runtime.registry.periodic_sweep(),
+        name="spec-driven-registry-sweeper",
+    )
+    durable_run_sweeper = asyncio.create_task(
+        runtime.durable_runs.periodic_sweep(get_settings().llm_download_ttl_seconds),
+        name="spec-driven-durable-run-sweeper",
+    )
+
     yield
 
-    # Cancel the periodic cleanup task on shutdown.
+    # Cancel background tasks on shutdown.
     cleanup_task.cancel()
+    smart_gen_sweeper.cancel()
+    durable_run_sweeper.cancel()
     try:
         await cleanup_task
     except asyncio.CancelledError:
         pass
+    try:
+        await smart_gen_sweeper
+    except asyncio.CancelledError:
+        pass
+    try:
+        await durable_run_sweeper
+    except asyncio.CancelledError:
+        pass
+    runtime.close()
+    logger.info("Spec-driven runtime stopped")
 
 
 
@@ -188,15 +288,18 @@ app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(RequestSizeLimitMiddleware)
 
 # Configure CORS middleware
-_cors_env = os.environ.get("CORS_ORIGINS", "")
+_cors_env = get_settings().cors_origins
 ALLOWED_ORIGINS = [origin.strip() for origin in _cors_env.split(",") if origin.strip()] if _cors_env else DEFAULT_CORS_ORIGINS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "X-GitHub-Session", "Content-Disposition", "Authorization"],
-    expose_headers=["Content-Disposition"],
+    # Idempotency-Key lets the spec-driven client safely retry a run start
+    # that failed at the transport layer (see spec_driven_router).
+    allow_headers=["Content-Type", "X-GitHub-Session", "Content-Disposition",
+                   "Authorization", "Idempotency-Key"],
+    expose_headers=["Content-Disposition", "X-BESSER-Run-Id", EXPORT_WARNING_HEADER],
 )
 
 # Request logging middleware (outermost – added last so it wraps everything)
@@ -204,17 +307,37 @@ setup_middleware(app)
 
 
 # Include GitHub OAuth and deployment routers
-app.include_router(github_oauth_router, prefix="/besser_api")
-app.include_router(github_deploy_router, prefix="/besser_api")
+app.include_router(github_oauth.router, prefix="/besser_api")
+app.include_router(github_deploy_api.router, prefix="/besser_api")
 
 # Include application routers
 app.include_router(generation_router.router)
 app.include_router(conversion_router.router)
+app.include_router(kg_router.router)
+app.include_router(kg_router.legacy_router)
 app.include_router(validation_router.router)
 app.include_router(deployment_router.router)
+app.include_router(spec_driven_router.router)
+app.include_router(telemetry_router.router)
+app.include_router(agent_simulator_router.router)
+app.include_router(traceability_router.router)
 
 
 # Exception handlers
+# Pydantic's ``input`` (the whole body when a model validator fails, API keys
+# included) and ``ctx`` are dropped from a 422; ``type`` / ``loc`` / ``msg`` stay.
+_REDACTED_VALIDATION_ERROR_KEYS = frozenset({"input", "ctx"})
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_error_handler(request, exc):
+    errors = [
+        {key: value for key, value in error.items() if key not in _REDACTED_VALIDATION_ERROR_KEYS}
+        for error in exc.errors()
+    ]
+    return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
+
+
 @app.exception_handler(ConversionError)
 async def conversion_error_handler(request, exc):
     return JSONResponse(status_code=400, content={"detail": str(exc)})
@@ -250,10 +373,14 @@ def get_api_root():
     return {
         "message": "BESSER Backend API",
         "version": API_VERSION,
+        "besser_version": get_besser_version(),
+        "besser_build": get_build_sha(),
         "supported_generators": list(SUPPORTED_GENERATORS.keys()),
         "endpoints": {
             "generate": "/besser_api/generate-output",
             "generate_from_project": "/besser_api/generate-output-from-project",
+            "smart_generate": "/besser_api/spec-driven/generate",
+            "download_smart": "/besser_api/spec-driven/download/{run_id}",
             "deploy": "/besser_api/deploy-app",
             "export_buml": "/besser_api/export-buml",
             "export_project": "/besser_api/export-project-as-buml",
@@ -262,7 +389,8 @@ def get_api_root():
             "validate_diagram": "/besser_api/validate-diagram",
             "csv_to_domain_model": "/besser_api/csv-to-domain-model",
             "get_json_model_from_image": "/besser_api/get-json-model-from-image",
-            "get_json_model_from_kg": "/besser_api/get-json-model-from-kg",
+            "get_json_model_from_kg": "/besser_api/get-json-model-from-kg (deprecated, use kg/import-owl + kg/to-class-diagram)",
+            "knowledge_graph": "/besser_api/kg/...",
             "transform_agent_model": "/besser_api/transform-agent-model-json",
             "recommend_agent_config_llm": "/besser_api/recommend-agent-config-llm",
             "get_agent_config_manual_mapping": "/besser_api/agent-config-manual-mapping",
@@ -273,13 +401,34 @@ def get_api_root():
     }
 
 
-# Main application entry point
-if __name__ == "__main__":
+def run(host: str = "0.0.0.0", port: int = 9000, log_level: str = "info") -> None:
+    """Serve ``app`` with uvicorn until interrupted."""
     import uvicorn
+    # Single process on purpose: the agent simulator router keeps its rate
+    # limiter, per-actor session cap and session-ownership map in memory.
+    # Adding workers would give each worker its own copy of that state.
     uvicorn.run(
         app,
-        host="0.0.0.0",
-        port=9000,
-        log_level="info"
+        host=host,
+        port=port,
+        log_level=log_level,
     )
+
+
+def main(argv: Optional[list] = None) -> None:
+    """Parse ``--host`` / ``--port`` / ``--log-level`` and run the server.
+
+    The ``besser-wme-backend`` console script goes through
+    :func:`besser.utilities.web_modeling_editor.backend.cli.main`, which adds
+    a readable message when the backend dependencies are not installed.
+    """
+    from besser.utilities.web_modeling_editor.backend.cli import build_parser
+
+    args = build_parser().parse_args(argv)
+    run(host=args.host, port=args.port, log_level=args.log_level)
+
+
+# Main application entry point
+if __name__ == "__main__":
+    main()
 #The editor is available at: https://editor.besser-pearl.org

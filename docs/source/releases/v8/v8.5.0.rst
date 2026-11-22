@@ -1,0 +1,75 @@
+Version 8.5.0
+=============
+
+Minor release: **Knowledge Graph diagrams**. Ontologies get a diagram type of
+their own: import an OWL/RDF ontology, edit it as a graph, check it against
+its OWL and SHACL constraints, and convert it into a B-UML class diagram with
+OCL constraints. Existing models and projects load as before. Two behaviour
+changes outside KG are listed under *Metamodel*.
+
+Knowledge Graph diagrams
+------------------------
+
+* **A Knowledge Graph metamodel.** ``besser.BUML.metamodel.kg`` models an
+  ontology as classes, properties, individuals and literals, with OWL axioms
+  and SHACL/OWL constraints. KG node and edge ids are the element's persistent
+  ``id``, like every other B-UML element. See
+  :doc:`/buml_language/model_types/knowledge_graph`.
+* **OWL/RDF import and export.** ``besser.BUML.notations.kg_rdf`` reads
+  ``.owl``, ``.ttl``, ``.rdf``, ``.xml``, ``.nt`` and ``.n3`` files and reports
+  every construct it had to skip as a warning. A graph exports to Turtle or
+  RDF/XML, with constraints written as OWL restrictions, SHACL shapes or both.
+* **A deterministic KG to class diagram conversion.**
+  ``besser.BUML.notations.kg_to_buml`` maps the ontology onto a class diagram
+  without an LLM. It lists the elements with no clean one-to-one B-UML
+  mapping, each with a recommended action. It runs an OWL/SHACL consistency
+  check and turns SHACL and OWL restrictions into OCL constraints. The
+  consistency check needs ``pyshacl``, available as the new ``besser[kg]``
+  extra. See :doc:`/buml_language/model_building/kg_to_buml`.
+* **In the editor.** A new *Knowledge Graph* diagram type, drawn on its own
+  canvas; large ontologies show only their highest-priority nodes, with the
+  limit on the *KG Settings* page. Import an ontology of up to 5 MB, and export
+  it as Turtle, RDF/XML, a standalone interactive HTML page or B-UML Python
+  code. *Refine KG* has three tabs: *Automatic* for the recommended actions,
+  *Consistency* for the OWL/SHACL check, and *AI* for suggestions from an LLM
+  with your own provider key, which is sent with the request and never logged
+  by the backend. The endpoints are under ``/besser_api/kg``; see
+  :doc:`/web_editor_backend`.
+* **The LLM-only conversion is renamed.** The LLM-assisted
+  ``besser.utilities.kg_to_buml`` module is now
+  ``besser.utilities.kg_llm_to_buml``, so that its name no longer collides
+  with the deterministic package. The old import path still works, with a
+  ``DeprecationWarning``, and will be removed in a later release.
+
+Metamodel
+---------
+
+* **Association end names are checked the same way whatever the build
+  order.** A class may reach only one association end of a given name,
+  counting its own ends and those of every ancestor. The same check now runs
+  when an association is created, when a generalization is set, and in
+  ``DomainModel.validate()``. Two cases change: an end reached along two
+  inheritance paths (a diamond) counts once and is no longer rejected, and a
+  clash created by adding a parent's end after the generalization, or one that
+  only a grandchild sees, is now rejected instead of slipping through.
+* **Inheritance walks terminate on cycles.** ``Class.all_parents()`` and
+  ``Class.all_specializations()`` never include the class itself, even on an
+  inheritance cycle.
+
+Other changes
+-------------
+
+* The Spec-Driven Agent's Claude client no longer sends an empty ``tools``
+  list on a text-only call. A caller can also set its own retry budget, so a
+  call made under a deadline does not retry past it.
+* The KG consistency check and the Spec-Driven Agent share one
+  ``besser.utilities.subprocess_env`` helper, which strips secrets from a
+  child process's environment.
+* New dependency: ``rdflib>=7.0.0``.
+
+Known limitations
+-----------------
+
+The modeling assistant does not support Knowledge Graph diagrams yet: it is
+hidden on a KG diagram. An ontology file dropped in the chat is still read by
+the LLM, not by the deterministic importer.

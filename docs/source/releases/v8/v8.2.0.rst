@@ -1,0 +1,150 @@
+Version 8.2.0
+=============
+
+Minor release: **OCL closure, Agent Trace attribution and lossless model
+import/export**. B-OCL gains the ``closure`` iterator, every Spec-Driven Agent
+run now records who wrote each line, and importing what BESSER exports no
+longer drops timestamps, object values, links or chart bindings. It also
+brings a round of generator fixes and security hardening. The web editor
+frontend is unchanged.
+
+B-OCL
+-----
+
+* **The** ``closure`` **iterator.** Invariants about everything reachable
+  through an association can now be written, for example "no one is their own
+  ancestor": ``self.parents->closure(parents)->excludes(self)``. Both the
+  explicit form (``->closure(p | p.parents)``) and the short form are accepted,
+  and the result is typed as in OCL 2.4: a ``Set`` of the element type, or an
+  ``OrderedSet`` for an ordered source, including the source elements. A body
+  that does not yield the element type is rejected with a clear message. See
+  :doc:`/buml_language/model_types/ocl`.
+* ``date`` **as an attribute or type name.** ``self.date`` and
+  ``oclIsTypeOf(date)`` used to fail to parse because ``date`` is a B-OCL
+  keyword. They now work, as ``size`` already did, and an attribute named
+  ``closure`` stays navigable the same way.
+* **Short-form iterator bodies bind to the iterated element.** In
+  ``self.employee->forAll(age > 16)``, ``age`` now refers to each employee, as
+  OCL specifies. Before, it was left unresolved, or silently bound to an
+  attribute of ``self`` with the same name.
+* **Honest validation results.** ``/validate-diagram`` used to report a wrong
+  "valid", or a Python error, for constraints the evaluator cannot handle
+  correctly. These now come back as "Syntax valid; not evaluated against the
+  object diagram", with the reason, under ``warnings``. This covers ``closure``,
+  loops with several iterators, nested loops that use the outer iterator,
+  ``self`` inside a loop body, and comparisons of objects or of date and time
+  values. ``X.allInstances()``, ``asSet``, ``intersection`` and ``isUnique``
+  are now built correctly.
+
+Spec-Driven Agent
+-----------------
+
+* **Who wrote which lines.** Every run ships an
+  `Agent Trace <https://agent-trace.dev/>`_ record at
+  ``.agent-trace/<run id>.json``, in the download and in the GitHub push. For
+  each line range it says whether the LLM wrote it, a BESSER generator produced
+  it, or a person edited it between runs. The ``done`` event carries an
+  ``aiShare`` summary. Attribution stays inside the workspace, survives Phase 3
+  rollbacks and continue-from-GitHub runs, and a crafted attribution file in an
+  imported repository can no longer exhaust memory. See
+  :doc:`/spec_driven_agent/runs`.
+
+Generators
+----------
+
+* **OCL invariants as SQL** ``CHECK`` **constraints.** ``SQLGenerator`` turns
+  simple invariants (``self.<attribute> <op> <literal>``, and ``and`` chains of
+  them) into ``CHECK`` constraints for every supported database. Anything it
+  cannot translate is skipped, never mistranslated. ``SQLAlchemyGenerator``
+  keeps them off by default. See :doc:`/generators/sql`.
+* **SQL without a database driver.** The SQL generator no longer needs a
+  driver installed to emit DDL, so SQL Server output works on hosts without
+  ODBC.
+* **Self-associations.** A class associated with itself (``parent`` /
+  ``children``) now gets SQLAlchemy mappers that configure. The generated
+  backend creates and updates such records correctly: a child is no longer made
+  its own parent, and ``parent`` is saved.
+* **Java.** Two associations from one class to the same type no longer
+  generate two methods with the same name; the helpers are named after the
+  role, so the code compiles.
+* **Web app with an agent.** The generated agent's database ``db1`` now points
+  at the web app's SQLite database, and the agent containers mount it.
+* **React charts and chat.** Value axes use compact numbers (``25B``),
+  tooltips use thousands separators, horizontal bar charts leave room for long
+  category names, and multi-line agent replies keep their line breaks.
+* **Neural networks.** An LSTM, GRU or RNN that returns one tensor
+  (``return_type`` ``last`` or ``full``) can now be followed directly by
+  another layer. The generated PyTorch ``train()`` and ``evaluate()`` switch
+  dropout correctly, and multi-target regression no longer trains on a
+  broadcast loss. PyTorch sequential mode refuses recurrent layers with a clear
+  message; use subclassing mode for them.
+* **BPMN export.** Flows connect correctly in Camunda, data objects and data
+  stores are drawn, and a B-UML round trip of a diagram with a data store no
+  longer fails.
+* **Terraform.** Template and write errors are reported instead of producing an
+  empty ZIP.
+
+Import and export
+-----------------
+
+* **Timestamps are kept.** Element timestamps survive the editor's B-UML
+  import and the B-UML code builder. Only timestamps that were set explicitly
+  are written, so a diagram without them still exports to identical code.
+* **Object models are kept whole.** Importing an exported object model keeps
+  enumeration and date values, objects without attribute values and
+  many-valued links. Links attach to the right association even when two
+  associations share an end name, and inherited attributes keep their type.
+* **Charts and metric cards.** A chart's data binding (class, fields, nested
+  paths, filter) and a metric card's title and filter survive export and
+  re-import.
+* **Projects.** User diagrams survive a project export and re-import, and
+  Component and Deployment diagrams get their editor defaults on import. The
+  generated GUI B-UML compiles when a screen is named after a Python keyword
+  or a transition has no target screen.
+
+Packaging
+---------
+
+* **Start the editor backend with one command.** ``besser-wme-backend``
+  (``--host``, ``--port``, default 9000) starts the web modeling editor
+  backend. If its dependencies are missing it prints the ``pip install``
+  command to run. See :doc:`/web_editor_backend`.
+* **Complete wheel.** The PyPI package now includes the editor backend, the
+  agent simulator and every generator template. Before, ``WebAppGenerator`` and
+  the React generator failed for anyone who installed BESSER from PyPI. The
+  repository's ``tests`` package is no longer installed into site-packages.
+  Building from source needs ``setuptools>=62.3``.
+
+Security
+--------
+
+* **B-UML uploads.** An uploaded B-UML file could change objects shared by
+  the whole backend, such as the built-in primitive types, and break every
+  later import for every user until a restart. Uploads now run against
+  per-load copies, and the loader refuses property accessors and writes to
+  shared objects.
+* **File paths.** Language codes in multi-language agent generation are
+  validated, so a crafted value can no longer write outside the temporary
+  folder or into ZIP entry names. The deployment router uses the shared path
+  check, and GitHub tarball imports extract with the ``data`` filter.
+
+Upgrade notes
+-------------
+
+* ``SQLGenerator`` output now includes ``CHECK`` constraints for simple OCL
+  invariants. Pass ``ocl_check_constraints=False`` to keep the previous DDL.
+  With MySQL's default case-insensitive collation, ``<> 'draft'`` also rejects
+  ``'Draft'``.
+* The generator downloads for Java, Django, Spring Boot, the FastAPI backend
+  and the web app now have descriptive names (``java_classes.zip``,
+  ``django_project.zip``, ``spring_boot_project.zip``,
+  ``fastapi_backend.zip``, ``web_app.zip``). The editor reads the name from the
+  response, so only scripts that expect ``<type>_output.zip`` are affected.
+* ``closure`` is now a B-OCL keyword. ``self.closure`` still navigates an
+  attribute of that name, but a bare ``closure`` used as an implicit-``self``
+  name or as an iterator variable no longer parses.
+* The agent containers of a generated web app mount the app's SQLite database
+  read-write, because ``DBReply`` can insert, update and delete records.
+* For contributors: CI's lint job now also reports undefined names (ruff
+  ``F821``); the LLM prompt examples under ``mockup_to_buml/llm_assistant``
+  are exempt.

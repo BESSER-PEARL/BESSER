@@ -7,22 +7,16 @@ Provides two entry points:
 """
 
 import uuid
-import re
 import ast
 from besser.BUML.metamodel.state_machine.state_machine import (
     StateMachine, CustomCodeAction,
 )
+from besser.utilities.buml_code_builder.common import _sanitize_identifier
+from besser.utilities.web_modeling_editor.backend.services.converters.element_ids import element_id_taker
 from besser.utilities.web_modeling_editor.backend.services.utils import (
     determine_connection_direction, calculate_connection_points,
     calculate_path_points, calculate_relationship_bounds
 )
-
-
-def _sanitize_identifier(name: str) -> str:
-    """Sanitize a string to be a valid Python identifier."""
-    sanitized = re.sub(r'[^a-zA-Z0-9_]', '_', name)
-    sanitized = re.sub(r'^[^a-zA-Z_]+', '', sanitized)
-    return sanitized or 'unnamed'
 
 
 def state_machine_object_to_json(sm: StateMachine) -> dict:
@@ -39,6 +33,8 @@ def state_machine_object_to_json(sm: StateMachine) -> dict:
     """
     elements = {}
     relationships = {}
+    # States, transitions and code-block bodies keep their ids (the editor's, when the machine came from it).
+    take_id = element_id_taker()
 
     default_size = {"width": 1980, "height": 640}
 
@@ -93,7 +89,7 @@ def state_machine_object_to_json(sm: StateMachine) -> dict:
             source_code = body.code
 
         if source_code:
-            code_block_id = str(uuid.uuid4())
+            code_block_id = take_id(body)
             cleaned_source = "\n".join(
                 line.rstrip() for line in source_code.splitlines() if line.strip()
             )
@@ -173,7 +169,7 @@ def state_machine_object_to_json(sm: StateMachine) -> dict:
 
     # Create state elements
     for state in sm.states:
-        state_id = str(uuid.uuid4())
+        state_id = take_id(state)
         state_id_map[state] = state_id
         state_var_map[state] = _sanitize_identifier(state.name)
 
@@ -298,7 +294,7 @@ def state_machine_object_to_json(sm: StateMachine) -> dict:
             if not dest_id:
                 continue
 
-            rel_id = str(uuid.uuid4())
+            rel_id = take_id(transition)
             source_element = elements[source_id]
             target_element = elements[dest_id]
 

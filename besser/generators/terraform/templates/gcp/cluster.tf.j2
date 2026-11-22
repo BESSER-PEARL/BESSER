@@ -25,6 +25,7 @@ provider "google" {
 {%if public_cluster.net_config == False %}
 {% set default_net = 1 %}
 {%for x in public_cluster.networks%}
+{% trace x, "network" %}
 
 {{ ns.netname | set_dict_item(x.name, default_net) }}
 resource "google_compute_network" "default-{{default_net}}" {
@@ -34,6 +35,7 @@ resource "google_compute_network" "default-{{default_net}}" {
   auto_create_subnetworks  = false
   enable_ula_internal_ipv6 = true
 }
+{% endtrace %}
 {%endfor%}
 
 
@@ -43,6 +45,7 @@ resource "google_compute_network" "default-{{default_net}}" {
 
 {% set default_subnet = 1 %}
 {%for x in public_cluster.subnets%}
+{% trace x, "subnetwork" %}
 resource "google_compute_subnetwork" "default-{{default_subnet}}" {
   name = "{{ x.name }}"
     {% set default_subnet = default_subnet + 1 %}
@@ -67,6 +70,7 @@ resource "google_compute_subnetwork" "default-{{default_subnet}}" {
   {%endfor%}
 
 }
+{% endtrace %}
 {%endfor%}
 {%else%} {#Auto Network#}
 resource "google_compute_network" "default" {

@@ -5,8 +5,9 @@ from besser.generators.gui.tts import log_text2speech_environment
 
 
 def test_openai_default_settings_are_available_and_do_not_warn_or_contact_provider(caplog):
-    with patch.dict('os.environ', {'BESSER_GUI_TTS_PROVIDER': 'openai', 'OPENAI_API_KEY': 'secret-test-key'}, clear=True), caplog.at_level(logging.INFO):
+    with patch.dict('os.environ', {'OPENAI_API_KEY': 'secret-test-key'}, clear=True), caplog.at_level(logging.INFO):
         log_text2speech_environment(logging.getLogger('tts-environment-test'))
+    assert 'Using default openai' in caplog.text
     assert 'Using default gpt-4o-mini-tts' in caplog.text
     assert 'Using default coral' in caplog.text
     assert 'Using default 1' in caplog.text

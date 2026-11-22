@@ -5,10 +5,9 @@ from .base import SpeechAudio, Text2Speech
 
 def log_text2speech_environment(logger) -> None:
     """Startup diagnostics without contacting a provider or logging credentials."""
-    provider = os.getenv("BESSER_GUI_TTS_PROVIDER", "").strip().lower()
-    if not provider:
-        # The backend's optional-env check already reports the missing selector.
-        return
+    provider = os.getenv("BESSER_GUI_TTS_PROVIDER", "").strip().lower() or "openai"
+    if not os.getenv("BESSER_GUI_TTS_PROVIDER", "").strip():
+        logger.info("BESSER_GUI_TTS_PROVIDER is not set. Using default openai.")
     if provider == "openai":
         model = os.getenv("BESSER_GUI_TTS_MODEL", "gpt-4o-mini-tts")
         defaults = {"BESSER_GUI_TTS_MODEL": "gpt-4o-mini-tts",
@@ -37,7 +36,7 @@ def log_text2speech_environment(logger) -> None:
 
 
 def create_text2speech() -> Text2Speech:
-    provider = os.getenv("BESSER_GUI_TTS_PROVIDER", "").strip().lower()
+    provider = os.getenv("BESSER_GUI_TTS_PROVIDER", "").strip().lower() or "openai"
     if provider == "openai":
         from .openai import OpenAIText2Speech
         model = os.getenv("BESSER_GUI_TTS_MODEL", "gpt-4o-mini-tts")

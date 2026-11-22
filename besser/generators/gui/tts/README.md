@@ -10,8 +10,8 @@ The platform operator chooses the provider and model in the backend environment.
 The browser cannot override the provider, service URL, voice, or credentials.
 Generation is an explicit action and never happens while typing or personalizing.
 
-At startup, a missing `BESSER_GUI_TTS_PROVIDER` triggers the standard optional
-environment warning that related functionality is unavailable. Unset settings
+OpenAI is used when `BESSER_GUI_TTS_PROVIDER` is unset or blank; an OpenAI API
+key is still required. Unset settings
 with defaults are logged at INFO with the default being used. Piper additionally
 warns when `BESSER_GUI_TTS_LANGUAGE` is absent, since explicit language requests
 then cannot be matched to the deployed voice. Invalid provider configurations
@@ -22,6 +22,7 @@ produce a warning without stopping unrelated features or logging secrets.
 Set these in the same terminal that launches the backend:
 
 ```powershell
+# Optional: OpenAI is the default when no provider is set.
 $env:BESSER_GUI_TTS_PROVIDER = "openai"
 $env:BESSER_GUI_TTS_MODEL = "gpt-4o-mini-tts"
 $env:BESSER_GUI_TTS_VOICE = "coral"

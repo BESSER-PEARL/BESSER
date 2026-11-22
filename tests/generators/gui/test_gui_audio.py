@@ -97,18 +97,30 @@ def test_provider_failure_does_not_change_the_input():
 
 def test_provider_selection_is_server_controlled(monkeypatch):
     monkeypatch.delenv('BESSER_GUI_TTS_PROVIDER', raising=False)
-    with pytest.raises(ValueError, match='BESSER_GUI_TTS_PROVIDER'): create_text2speech()
-    monkeypatch.setenv('BESSER_GUI_TTS_PROVIDER', 'openai')
     monkeypatch.setenv('OPENAI_API_KEY', 'test-key')
     monkeypatch.delenv('BESSER_GUI_TTS_MODEL', raising=False)
     provider = create_text2speech()
+    assert provider.configuration['provider'] == 'openai'
     assert provider.configuration['model'] == 'gpt-4o-mini-tts'
     assert 'test-key' not in json.dumps(provider.configuration)
+    monkeypatch.setenv('BESSER_GUI_TTS_PROVIDER', '  ')
+    assert create_text2speech().configuration['provider'] == 'openai'
+    monkeypatch.setenv('BESSER_GUI_TTS_PROVIDER', 'openai')
     monkeypatch.setenv('BESSER_GUI_TTS_MODEL', 'tts-1-hd')
     assert create_text2speech().configuration['model'] == 'tts-1-hd'
     monkeypatch.setenv('BESSER_GUI_TTS_PROVIDER', 'piper')
     monkeypatch.setenv('BESSER_GUI_TTS_MODEL', 'deployed-piper-model')
     assert isinstance(create_text2speech(), PiperText2Speech)
+    monkeypatch.setenv('BESSER_GUI_TTS_PROVIDER', 'invalid')
+    with pytest.raises(ValueError, match='BESSER_GUI_TTS_PROVIDER'):
+        create_text2speech()
+
+
+def test_default_openai_provider_requires_api_key(monkeypatch):
+    monkeypatch.delenv('BESSER_GUI_TTS_PROVIDER', raising=False)
+    monkeypatch.delenv('OPENAI_API_KEY', raising=False)
+    with pytest.raises(ValueError, match='OPENAI_API_KEY'):
+        create_text2speech()
 
 
 def test_openai_adapter_requests_mini_tts_audio_and_target_language():

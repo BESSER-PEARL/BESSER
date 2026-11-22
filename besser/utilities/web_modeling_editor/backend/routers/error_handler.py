@@ -46,6 +46,8 @@ def handle_endpoint_errors(endpoint_name: str):
         * ``GovernanceDslValidationError`` -> HTTP 422
         * ``ValidationError``  -> HTTP 400
         * ``GenerationError``  -> HTTP 500
+        * ``ValueError``       -> HTTP 400 with message
+        * ``RuntimeError``     -> HTTP 400 with message (e.g. missing API key)
         * ``UpstreamError``    -> its ``status_code`` (an external service failed)
         * ``ConfigurationError`` -> HTTP 500 (server set-up, e.g. a missing
           optional dependency), with its message
@@ -92,6 +94,9 @@ def handle_endpoint_errors(endpoint_name: str):
             except ValueError as exc:
                 logger.warning("Value error in %s: %s", endpoint_name, exc)
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
+            except RuntimeError as exc:
+                logger.warning("Runtime error in %s: %s", endpoint_name, exc)
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
             except Exception:
                 logger.exception("Unexpected error in %s", endpoint_name)
                 raise HTTPException(
@@ -127,6 +132,9 @@ def handle_endpoint_errors(endpoint_name: str):
                 raise HTTPException(status_code=504, detail=_timeout_detail(exc)) from exc
             except ValueError as exc:
                 logger.warning("Value error in %s: %s", endpoint_name, exc)
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            except RuntimeError as exc:
+                logger.warning("Runtime error in %s: %s", endpoint_name, exc)
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
             except Exception:
                 logger.exception("Unexpected error in %s", endpoint_name)

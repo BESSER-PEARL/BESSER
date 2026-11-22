@@ -12,10 +12,11 @@ logger = logging.getLogger(__name__)
 
 RECOMMENDATION_ALLOWED_VALUES = {
     "agentLanguage": ["original", "english", "french", "german", "spanish", "luxembourgish", "portuguese"],
-    "agentStyle": ["original", "formal", "informal", "friendly", "technical"],
+    "conversationalTone": ["original", "formal", "informal", "friendly", "technical"],
+    "explanationStyle": ["original", "direct", "step-by-step", "narrative"],
     "languageComplexity": ["original", "simple", "medium", "complex"],
     "sentenceLength": ["original", "concise", "verbose"],
-    "font": ["sans", "serif", "monospace", "neutral", "grotesque", "condensed"],
+    "font": ["sans", "serif", "monospace", "neutral", "grotesque", "condensed", "hyperlegible", "lexend", "dyslexia", "verdana", "fredoka"],
     "alignment": ["left", "center", "justify"],
     "color": [
         "var(--apollon-primary-contrast)",
@@ -75,7 +76,8 @@ def load_default_agent_recommendation_config() -> Dict[str, Any]:
     fallback = {
         "presentation": {
             "agentLanguage": "original",
-            "agentStyle": "original",
+            "conversationalTone": "original",
+            "explanationStyle": "original",
             "languageComplexity": "original",
             "sentenceLength": "concise",
             "interfaceStyle": {
@@ -171,7 +173,13 @@ def normalize_recommended_agent_config(
 ) -> Dict[str, Any]:
     """Normalize recommendation to a safe structured config with allowed frontend values."""
     defaults = load_default_agent_recommendation_config()
-    merged = merge_dicts(defaults, raw_config if isinstance(raw_config, dict) else {})
+    raw_config = deepcopy(raw_config) if isinstance(raw_config, dict) else {}
+    raw_presentation = raw_config.get("presentation")
+    if isinstance(raw_presentation, dict):
+        if "conversationalTone" not in raw_presentation and "agentStyle" in raw_presentation:
+            raw_presentation["conversationalTone"] = raw_presentation["agentStyle"]
+        raw_presentation.pop("agentStyle", None)
+    merged = merge_dicts(defaults, raw_config)
 
     presentation = merged.get("presentation") if isinstance(merged.get("presentation"), dict) else {}
     modality = merged.get("modality") if isinstance(merged.get("modality"), dict) else {}
@@ -207,10 +215,15 @@ def normalize_recommended_agent_config(
                 RECOMMENDATION_ALLOWED_VALUES["agentLanguage"],
                 default_presentation["agentLanguage"],
             ),
-            "agentStyle": _pick_allowed(
-                presentation.get("agentStyle"),
-                RECOMMENDATION_ALLOWED_VALUES["agentStyle"],
-                default_presentation["agentStyle"],
+            "conversationalTone": _pick_allowed(
+                presentation.get("conversationalTone"),
+                RECOMMENDATION_ALLOWED_VALUES["conversationalTone"],
+                default_presentation["conversationalTone"],
+            ),
+            "explanationStyle": _pick_allowed(
+                presentation.get("explanationStyle"),
+                RECOMMENDATION_ALLOWED_VALUES["explanationStyle"],
+                default_presentation["explanationStyle"],
             ),
             "languageComplexity": _pick_allowed(
                 presentation.get("languageComplexity"),
@@ -318,3 +331,28 @@ def normalize_recommended_agent_config(
     }
 
     return normalized
+
+
+def compute_recommended_changes(
+    default_config: Dict[str, Any],
+    recommended_config: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    """Return a flat list of fields that differ between default and recommended configs.
+
+    Each entry has the shape ``{"field": "section.key", "from": <default>, "to": <recommended>}``.
+    Only scalar leaf values are compared; nested containers (interfaceStyle, voiceStyle) are
+    expanded one level so individual sub-fields appear in the list.
+    """
+    changes: List[Dict[str, Any]] = []
+
+    def _collect(defaults: Dict[str, Any], recommended: Dict[str, Any], prefix: str) -> None:
+        for key, default_val in defaults.items():
+            rec_val = recommended.get(key)
+            path = f"{prefix}.{key}" if prefix else key
+            if isinstance(default_val, dict) and isinstance(rec_val, dict):
+                _collect(default_val, rec_val, path)
+            elif rec_val != default_val and rec_val is not None:
+                changes.append({"field": path, "from": default_val, "to": rec_val})
+
+    _collect(default_config, recommended_config, "")
+    return changes

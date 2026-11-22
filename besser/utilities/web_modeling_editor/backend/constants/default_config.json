@@ -1,7 +1,8 @@
 {
   "presentation": {
     "agentLanguage": "original",
-    "agentStyle": "original",
+    "conversationalTone": "original",
+    "explanationStyle": "original",
     "languageComplexity": "original",
     "sentenceLength": "concise",
     "interfaceStyle": {

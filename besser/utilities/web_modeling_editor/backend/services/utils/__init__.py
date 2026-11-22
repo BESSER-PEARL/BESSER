@@ -27,6 +27,7 @@ from .user_profile_utils import (
     build_user_model_node,
     build_user_model_hierarchy,
     normalize_user_model_output,
+    extract_user_profile_names,
     generate_user_profile_document,
 )
 
@@ -49,5 +50,6 @@ __all__ = [
     "build_user_model_node",
     "build_user_model_hierarchy",
     "normalize_user_model_output",
+    "extract_user_profile_names",
     "generate_user_profile_document",
 ]

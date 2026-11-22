@@ -1,4 +1,4 @@
-"""The generation service behind ``/generate-output*``, called without HTTP.
+﻿"""The generation service behind ``/generate-output*``, called without HTTP.
 
 The routes only turn a ``GeneratedOutput`` into a response, so these pin what
 the service hands them: the download's name, its bytes, ZIP or file, and the
@@ -7,7 +7,9 @@ service errors the routes map to 400.
 
 import asyncio
 import io
+import json
 import zipfile
+from types import SimpleNamespace
 
 import pytest
 
@@ -71,6 +73,38 @@ def test_a_zip_generator_gives_an_archive_with_its_provenance_file():
     names = zipfile.ZipFile(io.BytesIO(output.content.getvalue())).namelist()
     assert PROVENANCE_FILENAME in names
     assert any(name.startswith("library_site/") or name == "manage.py" for name in names)
+
+
+def test_user_diagram_with_multiple_profiles_downloads_all_json_files(tmp_path, monkeypatch):
+    model = SimpleNamespace(name='profiles')
+    monkeypatch.setattr(dispatch, 'process_object_diagram', lambda *_: model)
+
+    class FakeGenerator:
+        def __init__(self, _model, output_dir):
+            self.output_dir = output_dir
+
+        def generate(self):
+            document = {'objects': [
+                {'id': 'one', 'class': 'User', 'attributes': {'name': 'Alice'}, 'relationships': {}},
+                {'id': 'two', 'class': 'User', 'attributes': {'name': 'Bob'}, 'relationships': {}},
+            ]}
+            (tmp_path / 'profiles.json').write_text(json.dumps(document), encoding='utf-8')
+
+    output = asyncio.run(dispatch._handle_user_diagram_generation(
+        {'id': 'diagram', 'title': 'profiles', 'model': {}}, 'jsonobject',
+        SimpleNamespace(generator_class=FakeGenerator), {}, str(tmp_path),
+    )).output
+    assert output.is_zip
+    response = _download_response(output)
+
+    async def streamed_bytes():
+        return b''.join([chunk async for chunk in response.body_iterator])
+
+    payload = asyncio.run(streamed_bytes())
+    assert payload
+    with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+        assert set(archive.namelist()) == {'Alice.json', 'Bob.json'}
+        assert json.loads(archive.read('Alice.json'))['model']['name'] == 'Alice'
 
 
 def test_every_option_builder_is_a_registered_generator():

@@ -220,6 +220,8 @@ async def lifespan(app: FastAPI):
     # A broken BESSER_MODEL_CATALOG stops startup here rather than silently
     # dropping a provider from the key dialog.
     load_model_catalog()
+    from besser.generators.gui.tts import log_text2speech_environment
+    log_text2speech_environment(logger)
 
     # Run an immediate cleanup of stale temp files left from previous runs,
     # then schedule a background task that repeats every hour.
@@ -270,6 +272,7 @@ async def lifespan(app: FastAPI):
         pass
     runtime.close()
     logger.info("Spec-driven runtime stopped")
+
 
 
 # Initialize FastAPI application

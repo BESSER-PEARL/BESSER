@@ -6,6 +6,9 @@ layer. The router imports :func:`personalize_gui_page` and delegates to it.
 """
 import json
 import logging
+from copy import deepcopy
+
+from besser.generators.gui.gui_personalization import GUI_LANGUAGES, personalize_gui_text, summarize_gui_content
 
 from besser.generators.agents.agent_personalization import (
     DEFAULT_OPENAI_MODEL,
@@ -111,6 +114,8 @@ def personalize_gui_page(
     page_name: str = "page",
     model=None,
     openai_api_key=None,
+    gui_personalization=None,
+    adapt_from_profile: bool = True,
 ) -> dict:
     """Personalize a single GrapesJS page for a user profile using an LLM.
 
@@ -120,6 +125,8 @@ def personalize_gui_page(
         page_name: the page name (used in the prompt only).
         model: optional OpenAI model id; falls back to ``DEFAULT_OPENAI_MODEL``.
         openai_api_key: resolved OpenAI API key (the caller resolves it).
+        gui_personalization: explicit GUI content and presentation rules rewrite only text slots.
+        adapt_from_profile: enable the existing general profile-driven adaptation.
 
     Returns:
         ``{"components": [...], "css": [...], "model": <id>}`` — the adapted page
@@ -135,6 +142,31 @@ def personalize_gui_page(
         )
     if not isinstance(user_profile_model, dict):
         raise ValidationError("userProfileModel is required and must be a JSON object")
+    if not isinstance(adapt_from_profile, bool):
+        raise ValidationError("adaptFromProfile must be a boolean")
+    if gui_personalization is not None and not isinstance(gui_personalization, dict):
+        raise ValidationError("guiPersonalization must be a JSON object")
+    presentation = (gui_personalization or {}).get("presentation", {})
+    if not isinstance(presentation, dict):
+        raise ValidationError("guiPersonalization.presentation must be a JSON object")
+    content = (gui_personalization or {}).get("content", {})
+    if not isinstance(content, dict):
+        raise ValidationError("guiPersonalization.content must be a JSON object")
+    adapt_content = content.get("adaptContentToUserProfile", False)
+    if not isinstance(adapt_content, bool):
+        raise ValidationError("GUI adaptContentToUserProfile must be a boolean")
+    summarize_content = content.get("summarizeLongContent", False)
+    if not isinstance(summarize_content, bool):
+        raise ValidationError("GUI summarizeLongContent must be a boolean")
+    complexity = presentation.get("languageComplexity", "original")
+    language = presentation.get("language", "original")
+    sentence_length = presentation.get("sentenceLength", "original")
+    if sentence_length not in ("original", "concise", "verbose"):
+        raise ValidationError("GUI sentence length must be 'original', 'concise', or 'verbose'")
+    if language not in GUI_LANGUAGES:
+        raise ValidationError("Unsupported GUI language")
+    if complexity not in ("original", "simple"):
+        raise ValidationError("GUI text complexity must be 'original' or 'simple'")
 
     components = gui_page.get("components")
     if not isinstance(components, list):
@@ -146,9 +178,26 @@ def personalize_gui_page(
     if not isinstance(page_name, str) or not page_name.strip():
         page_name = "page"
     llm_model = model if isinstance(model, str) and model.strip() else DEFAULT_OPENAI_MODEL
+    profile_document = generate_user_profile_document(user_profile_model) if adapt_from_profile or adapt_content else None
+
+    def apply_text_rules(page):
+        try:
+            if complexity == "simple" or language != "original" or sentence_length != "original" or adapt_content:
+                page = personalize_gui_text(page, language=language, simplify=complexity == "simple",
+                                            sentence_length=sentence_length, adapt_content=adapt_content,
+                                            user_profile=profile_document, model=llm_model, openai_api_key=openai_api_key)
+            if summarize_content:
+                page = summarize_gui_content(page, model=llm_model, openai_api_key=openai_api_key)
+        except RuntimeError as error:
+            raise ValidationError(str(error)) from error
+        except (ValueError, TypeError) as error:
+            raise GenerationError(str(error)) from error
+        return {"components": page["components"], "css": page.get("css", []), "model": llm_model}
+
+    if not adapt_from_profile:
+        return apply_text_rules({"components": deepcopy(components), "css": deepcopy(css)})
 
     # Transform the user profile (UserDiagram) into its JSON object representation.
-    profile_document = generate_user_profile_document(user_profile_model)
     user_prompt = build_user_prompt(page_name, profile_document, components, css)
 
     try:
@@ -175,8 +224,7 @@ def personalize_gui_page(
     if not isinstance(personalized_css, list):
         personalized_css = []
 
-    return {
+    return apply_text_rules({
         "components": personalized_components,
         "css": personalized_css,
-        "model": llm_model,
-    }
+    })

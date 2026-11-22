@@ -62,6 +62,9 @@ from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
 from besser.utilities.web_modeling_editor.backend.services.exceptions import (
     ConversionError,
 )
+from besser.utilities.web_modeling_editor.backend.services.utils.user_profile_utils import (
+    reinject_hidden_containers,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +74,27 @@ OCL_SYNTAX_ONLY_WARNING = (
     "OCL invariants were checked for syntax only; evaluation is disabled on this server "
     "(BESSER_ENABLE_OCL_EVALUATION)."
 )
+
+
+def _user_name_attribute_errors(model: dict) -> list:
+    """Errors for user-diagram elements whose ``name`` attribute contains whitespace."""
+    elements = (model or {}).get("elements") or {}
+    errors = []
+    for element in elements.values():
+        if not isinstance(element, dict):
+            continue
+        for attr_id in element.get("attributes") or []:
+            attr = elements.get(attr_id)
+            label = attr.get("name") if isinstance(attr, dict) else None
+            if not isinstance(label, str) or "==" not in label:
+                continue
+            attr_name, value = (part.strip() for part in label.split("==", 1))
+            if attr_name == "name" and any(ch.isspace() for ch in value):
+                errors.append(
+                    f"The name attribute of element '{element.get('name', '?')}' should not contain "
+                    f"spaces (found '{value}'). Use underscores or camel case instead."
+                )
+    return errors
 
 
 @router.post("/validate-diagram", response_model=ValidationResponse)
@@ -144,8 +168,15 @@ async def validate_diagram(input_data: DiagramInput, kg_slots: KgConsistencySlot
             # The reference model is BESSER's, not the user's: its warnings are not theirs to fix,
             # and the editor asks before generating from a model with warnings.
 
-            if domain_validation.get("success", False):
-                object_model = process_object_diagram(input_data.model_dump(), buml_model)
+            # The `name` attribute is used to build identifiers, so it cannot contain
+            # spaces. Report it per element instead of the cryptic generated-name
+            # error the BUML conversion would raise.
+            name_errors = _user_name_attribute_errors(input_data.model)
+            validation_errors.extend(name_errors)
+
+            if domain_validation.get("success", False) and not name_errors:
+                preprocessed = reinject_hidden_containers(input_data.model_dump())
+                object_model = process_object_diagram(preprocessed, buml_model)
                 object_validation = object_model.validate(raise_exception=False)
                 validation_errors.extend(object_validation.get("errors", []))
                 validation_warnings.extend(object_validation.get("warnings", []))

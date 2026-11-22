@@ -216,6 +216,10 @@ Personal_Information.attributes={Personal_Information_firstName, Personal_Inform
 # Personality class attributes and methods
 
 # Goal class attributes and methods
+Goal_name: Property = Property(name="name", type=StringType)
+Goal_deadline: Property = Property(name="deadline", type=DateTimeType)
+Goal_description: Property = Property(name="description", type=StringType)
+Goal.attributes={Goal_name, Goal_deadline, Goal_description}
 
 # Accessibility class attributes and methods
 

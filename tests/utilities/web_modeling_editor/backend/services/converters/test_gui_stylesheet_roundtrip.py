@@ -99,6 +99,19 @@ def test_element_id_rules_stay_per_element():
     assert elements["plain"].css_classes == ["ds-btn"]
 
 
+def test_personalization_overlays_preserve_element_styles_and_media_rules():
+    styles = [
+        {"selectors": ["#hero"], "style": {"color": "#123456", "font-size": "18px"}},
+        {"selectors": [], "selectorsAdd": "#hero", "style": {"font-size": "22px"}},
+        {"selectors": ["#hero"], "style": {"color": "#ffffff"},
+         "mediaText": "(max-width: 600px)", "atRuleType": "media"},
+    ]
+    gui_model = process_gui_diagram(_gui_json(styles), {}, None)
+    hero = _elements(gui_model)["hero"]
+    assert hero.styling.color.text_color == "#123456"
+    assert "@media (max-width: 600px){#hero{color:#ffffff}}" in gui_model.stylesheet
+
+
 def test_id_only_gui_has_no_stylesheet():
     """A Basic CRUD GUI (id rules only) is unchanged: no stylesheet."""
     assert process_gui_diagram(_gui_json([DESIGN_STYLES[-1]]), {}, None).stylesheet == ""

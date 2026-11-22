@@ -738,10 +738,18 @@ export const TableComponent: React.FC<Props> = ({
     ...styles,
   };
 
+  // A requested font size is a minimum; retain larger widget defaults.
+  const minimumFontSize = (original: string): CSSProperties['fontSize'] => {
+    const requested = styles?.fontSize;
+    const pixels = typeof requested === "number" ? requested :
+      typeof requested === "string" && /^\d+(?:\.\d+)?px$/.test(requested.trim()) ? parseFloat(requested) : undefined;
+    return pixels === undefined ? requested ?? original : `${Math.max(parseFloat(original), pixels)}px`;
+  };
+
   const tableStyle: CSSProperties = {
     borderCollapse: "collapse",
     fontFamily: "Inter, system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
-    fontSize: "14px",
+    fontSize: minimumFontSize("14px"),
     width: "100%",
     tableLayout: "auto",
   };
@@ -816,7 +824,7 @@ export const TableComponent: React.FC<Props> = ({
   return (
     <div id={id} style={containerStyle} className={className ? `table-wrapper bsr-runtime ${className}` : "table-wrapper bsr-runtime"}>
       {title && (
-        <h3 style={{ margin: 0, color: "#1e293b", fontSize: "18px" }}>{title}</h3>
+        <h3 style={{ margin: 0, color: "#1e293b", fontSize: minimumFontSize("18px") }}>{title}</h3>
       )}
       {rowActionError && (
         <div
@@ -859,7 +867,7 @@ export const TableComponent: React.FC<Props> = ({
               borderRadius: '4px',
               fontWeight: 600,
               cursor: 'pointer',
-              fontSize: '13px',
+              fontSize: minimumFontSize('13px'),
               boxShadow: '0 1px 4px rgba(37,99,235,0.10)',
               letterSpacing: '0.01em',
               transition: 'background 0.2s',
@@ -937,7 +945,7 @@ export const TableComponent: React.FC<Props> = ({
                   border: "1px solid #fecaca",
                   borderRadius: "6px",
                   color: "#991b1b",
-                  fontSize: "14px",
+                  fontSize: minimumFontSize("14px"),
                 }}>
                   {validationError}
                 </div>
@@ -1218,7 +1226,7 @@ export const TableComponent: React.FC<Props> = ({
                           <label style={{ fontWeight: 500, color: "#334155" }}>
                             {col.label}
                             {col.required && <span style={{ color: "#ef4444", marginLeft: "4px" }}>*</span>}
-                            <span style={{ fontSize: "11px", color: "#64748b", marginLeft: "6px" }}>
+                            <span style={{ fontSize: minimumFontSize("11px"), color: "#64748b", marginLeft: "6px" }}>
                               ({selectedValues.length} selected)
                             </span>
                           </label>
@@ -1247,7 +1255,7 @@ export const TableComponent: React.FC<Props> = ({
                             background: "#f8fafc",
                           }}>
                             {options.length === 0 ? (
-                              <div style={{ padding: "8px", color: "#64748b", fontSize: "14px" }}>
+                              <div style={{ padding: "8px", color: "#64748b", fontSize: minimumFontSize("14px") }}>
                                 No options available
                               </div>
                             ) : visibleOptions.length === 0 ? (
@@ -1296,7 +1304,7 @@ export const TableComponent: React.FC<Props> = ({
                                         cursor: "pointer",
                                       }}
                                     />
-                                    <span style={{ fontSize: "14px", color: "#1e293b", fontWeight: isChecked && hasLinkFields ? 600 : 400 }}>
+                                    <span style={{ fontSize: minimumFontSize("14px"), color: "#1e293b", fontWeight: isChecked && hasLinkFields ? 600 : 400 }}>
                                       {optionLabel(option)}
                                     </span>
                                   </div>
@@ -1429,7 +1437,7 @@ export const TableComponent: React.FC<Props> = ({
                             padding: "8px 12px",
                             borderRadius: "6px",
                             border: "1px solid #cbd5f5",
-                            fontSize: "15px",
+                            fontSize: minimumFontSize("15px"),
                             color: "#1e293b",
                             background: "#f8fafc",
                           }}
@@ -1462,7 +1470,7 @@ export const TableComponent: React.FC<Props> = ({
                             padding: "8px 12px",
                             borderRadius: "6px",
                             border: "1px solid #cbd5f5",
-                            fontSize: "15px",
+                            fontSize: minimumFontSize("15px"),
                             color: "#1e293b",
                             background: "#f8fafc",
                           }}
@@ -1507,7 +1515,7 @@ export const TableComponent: React.FC<Props> = ({
                         {col.label}
                         {col.required && <span style={{ color: "#ef4444", marginLeft: "4px" }}>*</span>}
                         {col.type && col.type !== 'string' && (
-                          <span style={{ fontSize: "11px", color: "#64748b", marginLeft: "6px" }}>({col.type === 'list' ? 'comma-separated' : col.type})</span>
+                          <span style={{ fontSize: minimumFontSize("11px"), color: "#64748b", marginLeft: "6px" }}>({col.type === 'list' ? 'comma-separated' : col.type})</span>
                         )}
                       </label>
                       <input
@@ -1527,7 +1535,7 @@ export const TableComponent: React.FC<Props> = ({
                           padding: "8px 12px",
                           borderRadius: "6px",
                           border: "1px solid #cbd5f5",
-                          fontSize: "15px",
+                          fontSize: minimumFontSize("15px"),
                           color: "#1e293b",
                           background: "#f8fafc",
                         }}
@@ -1610,7 +1618,7 @@ export const TableComponent: React.FC<Props> = ({
                   borderRadius: "8px",
                   background: "#f1f5f9",
                   border: "none",
-                  fontSize: "16px",
+                  fontSize: minimumFontSize("16px"),
                   color: "#475569",
                   cursor: "pointer",
                 }}
@@ -1821,7 +1829,7 @@ export const TableComponent: React.FC<Props> = ({
             alignItems: "center",
             justifyContent: "space-between",
             gap: "12px",
-            fontSize: "13px",
+            fontSize: minimumFontSize("13px"),
             color: "#475569",
           }}
         >

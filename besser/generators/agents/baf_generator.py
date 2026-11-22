@@ -49,7 +49,9 @@ _PERSONALIZATION_CONFIG_KEYS = frozenset({
     "content",
     # Flattened presentation fields.
     "agentLanguage",
-    "agentStyle",
+    "agentStyle",  # Legacy saved configuration
+    "conversationalTone",
+    "explanationStyle",
     "languageComplexity",
     "sentenceLength",
     "interfaceStyle",

@@ -45,6 +45,7 @@ from besser.utilities.web_modeling_editor.backend.services.utils.agent_config_re
     load_default_agent_recommendation_config,
     extract_json_object,
     normalize_recommended_agent_config,
+    compute_recommended_changes,
 )
 from besser.utilities.web_modeling_editor.backend.services.utils.agent_config_manual_mapping_utils import (
     get_manual_agent_config_mapping,
@@ -134,6 +135,10 @@ async def recommend_agent_config_llm(
         "Return ONLY a JSON object with this exact shape: "
         "{presentation:{...}, modality:{...}, behavior:{...}, content:{...}, system:{...}}. "
         "Use only allowed values and keep output concise and deterministic. "
+        "Within presentation, conversationalTone controls how the agent addresses the user; "
+        "explanationStyle controls how it explains information (direct, step-by-step, or narrative). "
+        "Both preserve facts and the core message; semantic adaptation belongs to content. "
+        "Explanation style applies where useful, leaving practical answers direct. "
         "Do not include markdown, comments, or explanatory text."
     )
     user_prompt = (
@@ -160,6 +165,7 @@ async def recommend_agent_config_llm(
 
         return {
             "config": normalized_config,
+            "recommendedChanges": compute_recommended_changes(default_config, normalized_config),
             "source": "openai",
             "model": llm_model,
             "generatedAt": _utc_now_iso(),
@@ -189,6 +195,9 @@ async def personalize_gui_page(payload: Dict[str, Any] = Body(...)):
         userProfileModel: <UserDiagram UML model JSON>
         pageName: str (optional)
         model: str (optional OpenAI model id)
+        guiPersonalization: {presentation: {language: "french", languageComplexity: "simple", sentenceLength: "concise"}, content: {adaptContentToUserProfile: true, summarizeLongContent: true}} (optional)
+        adaptFromProfile: bool (optional, default true). False uses only explicit
+            text rules, without a general LLM rewrite of the page model.
 
     Returns the same ``{components, css}`` shape adapted in style and content,
     ready to be imported back into the editor as a page variant.
@@ -207,6 +216,8 @@ async def personalize_gui_page(payload: Dict[str, Any] = Body(...)):
         page_name=payload.get("pageName"),
         model=payload.get("model"),
         openai_api_key=extract_openai_api_key(payload),
+        gui_personalization=payload.get("guiPersonalization"),
+        adapt_from_profile=payload.get("adaptFromProfile", True),
     )
     return {
         "guiPage": {"components": result["components"], "css": result["css"]},
@@ -214,6 +225,23 @@ async def personalize_gui_page(payload: Dict[str, Any] = Body(...)):
         "model": result["model"],
         "generatedAt": _utc_now_iso(),
     }
+
+
+@router.post("/generate-gui-audio")
+@handle_endpoint_errors("generate_gui_audio")
+async def generate_gui_audio_endpoint(payload: Dict[str, Any] = Body(...)):
+    """Explicit design-time generation; provider and credentials come only from server env."""
+    from besser.generators.gui.tts import create_text2speech
+    from besser.generators.gui.gui_audio import generate_gui_audio
+    try:
+        provider = create_text2speech()
+        result = await asyncio.to_thread(generate_gui_audio, payload.get("guiPage"), provider, language=payload.get("language"))
+        return Response(content=json.dumps(result), media_type="application/json", headers={"Cache-Control": "no-store"})
+    except ValueError as error:
+        raise ValidationError(str(error)) from error
+    except Exception as error:
+        logger.exception("GUI audio generation failed")
+        raise GenerationError("Audio generation failed. Check the configured TTS provider and server logs.") from error
 
 
 @router.get("/agent-config-manual-mapping")
@@ -260,8 +288,12 @@ async def recommend_agent_config_mapping(
         current_config=current_config,
     )
 
+    normalized_config = recommendation["config"]
+    default_config = load_default_agent_recommendation_config()
+
     return {
-        "config": recommendation["config"],
+        "config": normalized_config,
+        "recommendedChanges": compute_recommended_changes(default_config, normalized_config),
         "matchedRules": recommendation.get("matchedRules", []),
         "signals": recommendation.get("signals", {}),
         "source": "manual_mapping",

@@ -79,6 +79,7 @@ from besser.utilities.web_modeling_editor.backend.services.generation.downloads 
     file_output,
     single_file_output,
     zip_output,
+    zip_directory,
 )
 from besser.utilities.web_modeling_editor.backend.services.governance.swarm_bindings import (
     attach_entry_role_to_agents,
@@ -91,6 +92,9 @@ from besser.utilities.web_modeling_editor.backend.services.utils.agent_generatio
 from besser.utilities.web_modeling_editor.backend.services.utils.user_profile_utils import (
     generate_user_profile_document as _generate_user_profile_document,
     normalize_user_model_output as _normalize_user_model_output,
+    extract_user_profile_names as _extract_user_profile_names,
+    extract_profile_personalization_rules as _extract_profile_personalization_rules,
+    reinject_hidden_containers as _reinject_hidden_containers,
     safe_path as _safe_path,
     user_criteria_comparators as _user_criteria_comparators,
 )
@@ -491,7 +495,7 @@ async def _handle_user_diagram_generation(
 ) -> Generation:
     """Handle user diagram generation using the preset user reference domain."""
     try:
-        object_model = process_object_diagram(json_data, user_reference_domain_model)
+        object_model = process_object_diagram(_reinject_hidden_containers(json_data), user_reference_domain_model)
     except Exception as conversion_error:
         logger.exception("Failed to convert user diagram to BUML")
         raise ValidationError(
@@ -504,9 +508,15 @@ async def _handle_user_diagram_generation(
 
     # The output is rewritten after the generator ran, so what the generator recorded no longer
     # holds: the download keeps file-level links only.
-    _normalize_user_model_output(object_model, temp_dir, _user_criteria_comparators(json_data))
-
-    return Generation(file_output(temp_dir, generator_type), (_read_of(json_data, object_model),))
+    written = _normalize_user_model_output(
+        object_model, temp_dir, _user_criteria_comparators(json_data), _extract_user_profile_names(json_data),
+        _extract_profile_personalization_rules(json_data),
+    )
+    if len(written) > 1:
+        output = GeneratedOutput(zip_directory(temp_dir), "user_object_models.zip", is_zip=True)
+    else:
+        output = file_output(temp_dir, generator_type)
+    return Generation(output, (_read_of(json_data, object_model),))
 
 
 def _extract_reference_class_diagram(json_data: dict):

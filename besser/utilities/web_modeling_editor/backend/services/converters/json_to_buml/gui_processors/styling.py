@@ -418,14 +418,36 @@ def build_style_map(styles_list) -> Dict[str, Styling]:
     Returns:
         Dictionary mapping id selectors to Styling objects
     """
-    style_map: Dict[str, Styling] = {}
+    # Several rules can target the same selector (for example the original rule
+    # of an element plus a personalization rule). Merge them like the CSS
+    # cascade instead of letting the last rule replace the others: later rules
+    # override earlier ones, but "!important" declarations always win.
+    merged_styles: Dict[str, Dict[str, Any]] = {}
+
+    def _is_important(value: Any) -> bool:
+        return isinstance(value, str) and "!important" in value
 
     for style_entry in styles_list or []:
-        if _is_element_rule(style_entry):
-            key = _selector_name(style_entry["selectors"][0])
-            style_map[key] = styling_from_css(style_entry.get("style", {}) or {})
+        if style_entry.get("state") or style_entry.get("mediaText") or style_entry.get("atRuleType"):
+            continue
+        selectors = list(style_entry.get("selectors", []) or [])
+        # Rules created by personalization list their targets in "selectorsAdd".
+        selectors_add = style_entry.get("selectorsAdd")
+        if isinstance(selectors_add, str):
+            selectors.extend(part.strip() for part in selectors_add.split(",") if part.strip())
+        style = style_entry.get("style", {}) or {}
 
-    return style_map
+        for selector in selectors:
+            key = _selector_name(selector)
+            if not re.fullmatch(r"#[\w-]+", key):
+                continue
+            target = merged_styles.setdefault(key, {})
+            for prop, value in style.items():
+                if prop in target and _is_important(target[prop]) and not _is_important(value):
+                    continue
+                target[prop] = value
+
+    return {key: styling_from_css(merged) for key, merged in merged_styles.items()}
 
 
 def build_stylesheet(styles_list: Optional[List[Dict[str, Any]]]) -> str:

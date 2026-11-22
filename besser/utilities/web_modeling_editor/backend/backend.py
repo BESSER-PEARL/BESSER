@@ -20,9 +20,6 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response as StarletteResponse
 
-import sys
-sys.path.append("C:/Users/Aaron/Documents/GitHub/BESSER")
-
 from besser.utilities.web_modeling_editor.backend.middleware import setup_middleware
 
 # Backend constants (no circular dependency risk)
@@ -70,7 +67,6 @@ from besser.utilities.web_modeling_editor.backend.routers import (
     conversion_router,
     validation_router,
     deployment_router,
-    study_router,
 )
 
 logger = logging.getLogger(__name__)
@@ -168,10 +164,6 @@ async def lifespan(_: FastAPI):
     cleanup_old_temp_files()
     cleanup_task = schedule_cleanup()
 
-    # Start the always-on default study agent (no-op unless STUDY_DEFAULT_AGENT_SRC is set).
-    from besser.utilities.web_modeling_editor.backend.routers.study_router import start_default_study_agent
-    await asyncio.to_thread(start_default_study_agent)
-
     yield
 
     # Cancel the periodic cleanup task on shutdown.
@@ -181,13 +173,6 @@ async def lifespan(_: FastAPI):
     except asyncio.CancelledError:
         pass
 
-    # Kill any running study agent so it doesn't outlive the backend.
-    from besser.utilities.web_modeling_editor.backend.routers.study_router import (
-        _kill_study_agent,
-        stop_default_study_agent,
-    )
-    _kill_study_agent()
-    stop_default_study_agent()
 
 
 # Initialize FastAPI application
@@ -227,7 +212,6 @@ app.include_router(generation_router.router)
 app.include_router(conversion_router.router)
 app.include_router(validation_router.router)
 app.include_router(deployment_router.router)
-app.include_router(study_router.router)
 
 
 # Exception handlers

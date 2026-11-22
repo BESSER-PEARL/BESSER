@@ -133,6 +133,7 @@ def zip_directory(source_dir: str) -> io.BytesIO:
                 file_path = os.path.join(root, file)
                 arc_name = os.path.relpath(file_path, source_dir)
                 zip_file.write(file_path, arc_name)
+    zip_buffer.seek(0)
     return zip_buffer
 
 

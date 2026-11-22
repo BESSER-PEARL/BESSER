@@ -1,4 +1,4 @@
-﻿# Study cleanup and development integration
+# Study cleanup and development integration
 
 This branch integrates `origin/development` at `f123a2ba` with the personalization changes.
 
@@ -20,3 +20,5 @@ This branch integrates `origin/development` at `f123a2ba` with the personalizati
 Development already contains a separate opt-in research telemetry API. It is not the study-deployment feature removed here and remains as part of development.
 
 - The backend's embedded frontend submodule follows development's pointer. The separate frontend feature branch contains the matching personalization UI and must be reviewed and merged separately.
+
+- Fixed multi-profile JSON downloads by rewinding the generated ZIP before streaming it; added HTTP regression tests for single- and multi-profile downloads.

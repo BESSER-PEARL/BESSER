@@ -95,7 +95,14 @@ def test_user_diagram_with_multiple_profiles_downloads_all_json_files(tmp_path, 
         SimpleNamespace(generator_class=FakeGenerator), {}, str(tmp_path),
     )).output
     assert output.is_zip
-    with zipfile.ZipFile(output.content) as archive:
+    response = _download_response(output)
+
+    async def streamed_bytes():
+        return b''.join([chunk async for chunk in response.body_iterator])
+
+    payload = asyncio.run(streamed_bytes())
+    assert payload
+    with zipfile.ZipFile(io.BytesIO(payload)) as archive:
         assert set(archive.namelist()) == {'Alice.json', 'Bob.json'}
         assert json.loads(archive.read('Alice.json'))['model']['name'] == 'Alice'
 

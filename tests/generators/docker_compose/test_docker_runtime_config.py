@@ -142,7 +142,7 @@ def test_deployment_route_forwards_uuid_settings_and_normalizes_profiles(monkeyp
     project = SimpleNamespace(name='Example', diagrams={'AgentDiagram': entries},
                               get_active_diagram=lambda kind: diagram)
     monkeypatch.setattr(route, 'process_deployment_diagram', lambda payload: DeploymentModel('deployment'))
-    monkeypatch.setattr(route, 'process_agent_diagram', lambda payload: Agent('SameName'))
+    monkeypatch.setattr(route, 'process_agent_diagram', lambda payload, warnings=None: Agent('SameName'))
     monkeypatch.setattr(route, 'annotate_agent_with_a2a', lambda *args: None)
 
     def normalize(config, payload, callback):

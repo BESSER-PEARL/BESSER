@@ -1223,9 +1223,14 @@ def archived_recipe_text(archive_path: str) -> Optional[str]:
         with zipfile.ZipFile(archive_path) as archive:
             info = archive.getinfo(RECIPE_FILENAME)
             if info.file_size > MAX_RUN_RECORD_BYTES:
+                logger.warning("The run recipe in %s is over %d bytes; it was not read",
+                               archive_path, MAX_RUN_RECORD_BYTES)
                 return None
             return archive.read(info).decode("utf-8-sig", errors="replace")
-    except (KeyError, OSError, zipfile.BadZipFile, zlib.error, EOFError, NotImplementedError, RuntimeError):
+    except KeyError:
+        return None
+    except (OSError, zipfile.BadZipFile, zlib.error, EOFError, NotImplementedError, RuntimeError) as exc:
+        logger.warning("Could not read the run recipe in %s: %s", archive_path, exc)
         return None
 
 
@@ -2916,10 +2921,13 @@ class SmartGenerationRunner:
                         _zip_plain_file(zf, path, name, result_path)
             # Not in the ZIP (the user's download): kept beside it for a modify run seeded from it.
             source = os.path.join(result_path, GITHUB_SOURCE_FILENAME)
-            with contextlib.suppress(OSError):
+            try:
                 if is_plain_file(source, root=result_path):
                     copy_plain_file(source, os.path.join(download_dir, GITHUB_SOURCE_FILENAME),
                                     root=result_path, dst_root=download_dir)
+            except OSError as exc:
+                logger.warning("Run %s: the GitHub source record was not kept beside the download, so an "
+                               "edit seeded from the download loses its repository: %s", self.run_id, exc)
             entry = SmartRunEntry(
                 file_path=zip_path,
                 file_name=zip_name,
@@ -3233,8 +3241,10 @@ class SmartGenerationRunner:
         try:
             done = self._t_done_payload
             if done is not None:
-                # "success" is a completed run only; the record's other finished outcomes are their own values.
-                outcome = ("incomplete" if done.get("incomplete")
+                # "success" is a completed run only; the record's other finished outcomes are their own
+                # values. A cancel is stored as cancelled (run_manager), so it is recorded as one too.
+                outcome = ("cancelled" if done.get("cancelled")
+                           else "incomplete" if done.get("incomplete")
                            else done.get("outcome") if done.get("outcome") in run_record.FINISHED_UNCLEAN
                            else "success")
             elif self._t_last_error_code:

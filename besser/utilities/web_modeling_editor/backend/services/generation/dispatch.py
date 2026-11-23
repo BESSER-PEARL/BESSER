@@ -400,7 +400,9 @@ async def _handle_deployment_project_generation(
             agent_config = entry_dict.get("config")
             if isinstance(agent_config, dict) and isinstance(agent_config.get("personalizationMapping"), list):
                 normalize_personalization_mapping(agent_config, entry_dict, _generate_user_profile_document)
-            agent_model = process_agent_diagram(entry_dict)
+            # Every agent diagram of the project is read: one this deployment does not run
+            # must not block it over a transition BAF would refuse (logged instead).
+            agent_model = process_agent_diagram(entry_dict, warnings=[])
             # The diagram's a2a:in / a2a:out tags become agent._a2a, which the
             # generator prefers over the to_/from_ state-name convention.
             annotate_agent_with_a2a(agent_model, entry_dict)

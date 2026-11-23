@@ -467,7 +467,9 @@ def collect_agents_from_diagrams(
         # treat that as the unified contract so both paths reject blank diagrams.
         if isinstance(model, dict) and not model.get("elements"):
             continue
-        agent_model = process_agent_diagram(entry_dict)
+        # Every agent diagram of the project is read, used by the GUI or not: a transition
+        # BAF would refuse is logged, not raised, so one stale diagram does not block the app.
+        agent_model = process_agent_diagram(entry_dict, warnings=[])
         if agent_model is None:
             continue
 

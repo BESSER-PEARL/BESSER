@@ -72,7 +72,7 @@ def test_transform_agent_model_json_does_not_run_user_code(tmp_path, monkeypatch
     action_marker, tool_marker = tmp_path / "action_ran", tmp_path / "tool_ran"
     monkeypatch.setattr(
         conversion_router, "process_agent_diagram",
-        lambda _json: _agent_with_user_code(action_marker, tool_marker),
+        lambda _json, warnings=None: _agent_with_user_code(action_marker, tool_marker),
     )
 
     result = asyncio.run(conversion_router.transform_agent_model_json(

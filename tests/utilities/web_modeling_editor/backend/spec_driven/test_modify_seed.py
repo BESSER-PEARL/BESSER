@@ -541,3 +541,23 @@ class TestBaseExpiredFallback:
         # The result says it is a new app, not an edit.
         assert parsed[-1]["mode"] == "create"
         assert runner._facts.mode_reason == "previous result expired, rebuilt from scratch"
+
+
+def test_an_unreadable_download_recipe_is_logged(tmp_path, caplog):
+    """An edit run compared its model with nothing and no log line said why."""
+    broken = tmp_path / "result.zip"
+    broken.write_bytes(b"not a zip")
+    with caplog.at_level("WARNING"):
+        assert runner_module.archived_recipe_text(str(broken)) is None
+    assert any("Could not read the run recipe" in r.getMessage() for r in caplog.records)
+
+
+def test_a_download_without_a_recipe_is_not_a_warning(tmp_path, caplog):
+    import zipfile
+
+    archive = tmp_path / "result.zip"
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr("app.py", "print('hi')\n")
+    with caplog.at_level("WARNING"):
+        assert runner_module.archived_recipe_text(str(archive)) is None
+    assert not caplog.records

@@ -276,7 +276,8 @@ async def export_buml(input_data: DiagramInput, settings: SettingsDep):
             )
 
         elif elements_data.get("type") == "AgentDiagram":
-            agent_model = process_agent_diagram(json_data)
+            # An export keeps a transition the agent could not run, with a logged warning.
+            agent_model = process_agent_diagram(json_data, warnings=[])
             output_file_path = os.path.join(temp_dir, "agent_buml.py")
             agent_model_to_code(agent_model, output_file_path)
             file_content = await read_file_async(output_file_path, "rb")
@@ -915,7 +916,8 @@ async def transform_agent_model_json(input_data: DiagramInput):
         # Convert to BUML model
         # The generator takes the in-memory model. Serializing it to Python and
         # importing that would run the user's code actions and tool code here.
-        agent_model = process_agent_diagram(json_data)
+        # A conversion keeps a transition the agent could not run, with a logged warning.
+        agent_model = process_agent_diagram(json_data, warnings=[])
 
         generator_info = get_generator_info("agent")
         generator_class = generator_info.generator_class

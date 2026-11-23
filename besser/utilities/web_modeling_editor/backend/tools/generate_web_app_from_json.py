@@ -89,7 +89,7 @@ def generate_web_app(json_path: Path, output_dir: Path, include_agent: bool = Tr
         if agent_diagram:
             if verbose:
                 logger.info("Detected AgentDiagram. Generating agent output.")
-            agent_model = process_agent_diagram(agent_diagram)
+            agent_model = process_agent_diagram(agent_diagram, warnings=[])
 
     output_dir.mkdir(parents=True, exist_ok=True)
     generator = WebAppGenerator(

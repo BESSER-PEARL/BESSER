@@ -301,3 +301,40 @@ def test_the_env_rule_matches_as_before_on_random_text():
     for _ in range(20_000):
         text = "".join(rng.choice(pieces) for _ in range(rng.randint(0, 14)))
         assert _env_rule_now(text) == _env_rule_before(text), repr(text)
+
+
+@pytest.mark.parametrize("text", [
+    " \n" * 32_000,
+    "\n" * 40_000,
+    "api_key" + " \n" * 32_000,
+    ("key" + " " * 50 + "\n") * 400,
+], ids=["blank-lines", "newlines", "key-then-blank-lines", "keys-without-colon"])
+def test_yaml_lines_are_redacted_in_linear_time(text):
+    """The YAML rule's indent crossed lines: each blank line was tried against all the blank after it."""
+    import time
+
+    from besser.utilities.secret_redaction import _redact_yaml_lines
+
+    started = time.perf_counter()
+    _redact_yaml_lines(text)
+    assert time.perf_counter() - started < 1
+
+
+# The YAML credential-line rule before it was made linear: the reference for its output.
+_YAML_RULE_BEFORE = r"(?m)^(\s*([A-Za-z0-9_-]+)\s*:[ \t]*)(\S[^\r\n]*)$"
+
+
+def test_the_yaml_rule_matches_as_before_on_random_text(monkeypatch):
+    import random
+    import re
+
+    from besser.utilities import secret_redaction
+
+    pieces = [" ", "\t", "\r", "\n", "\r\n", ":", ": ", " : ", "a", "x-9", "_", "#", "- ", "api_key",
+              "password", "token", "max_tokens", "value", "'v'", "changeme", "sk-" + "a" * 20, "{", "|"]
+    rng = random.Random(20261123)
+    texts = ["".join(rng.choice(pieces) for _ in range(rng.randint(0, 14))) for _ in range(20_000)]
+    now = [secret_redaction._redact_yaml_lines(text) for text in texts]
+    monkeypatch.setattr(secret_redaction, "_YAML_ASSIGNMENT_RE", re.compile(_YAML_RULE_BEFORE))
+    for text, result in zip(texts, now):
+        assert result == secret_redaction._redact_yaml_lines(text), repr(text)

@@ -452,7 +452,9 @@ def redact_literal(text: str, secret: str) -> str:
 _CREDENTIAL_KEY_RE = re.compile(
     r"(?i)(?:^|[_-])(?:api[_-]?key|token|secret|password|passwd|private[_-]?key|access[_-]?key)$"
 )
-_YAML_ASSIGNMENT_RE = re.compile(r"(?m)^(\s*([A-Za-z0-9_-]+)\s*:[ \t]*)(\S[^\r\n]*)$")
+# Linear like the .env rule: the indent stays on its line and the key and the blank after it
+# are possessive, so a run of blank lines is not tried from every line start.
+_YAML_ASSIGNMENT_RE = re.compile(r"(?m)^([^\S\n]*+([A-Za-z0-9_-]++)\s*+:[ \t]*)(\S[^\r\n]*)$")
 
 
 def _redact_yaml_lines(text: str) -> tuple[str, int]:

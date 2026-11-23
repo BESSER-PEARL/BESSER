@@ -200,6 +200,84 @@ def test_a_lab_signs_in_a_listed_login(settings, github):
     assert github.revoked == []
 
 
+# -- Members of the allowed organization ---------------------------------------------
+
+@pytest.fixture
+def org(settings, github, monkeypatch):
+    """A lab that also admits the members of BESSER-PEARL; GitHub answers the membership from ``org.members``."""
+    settings.lab_allowed_org = " BESSER-PEARL "
+
+    class Org:
+        members: dict = {"gho_new": "active"}
+        asked: list = []
+
+    base = github.handle.__func__
+
+    def handle(cls, request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/user/memberships/orgs/besser-pearl":
+            Org.asked.append(request.headers["Authorization"])
+            state = Org.members.get(request.headers["Authorization"].removeprefix("Bearer "))
+            return httpx.Response(200, json={"state": state}) if state else httpx.Response(404)
+        return base(cls, request)
+
+    monkeypatch.setattr(github, "handle", classmethod(handle))
+    return Org
+
+
+def test_the_lab_asks_github_for_the_read_org_scope_only_with_an_allowed_org(settings):
+    def scopes() -> str:
+        location = TestClient(app).get("/besser_api/github/auth/login", follow_redirects=False).headers["location"]
+        return location.partition("&scope=")[2].partition("&")[0]
+
+    assert scopes() == "repo,gist,user"
+    settings.lab_allowed_org = "BESSER-PEARL"
+    assert scopes() == "repo,gist,user,read:org"
+    settings.lab_enabled = False
+    assert scopes() == "repo,gist,user"
+
+
+def test_a_member_of_the_allowed_org_signs_in_without_being_listed_and_passes_the_gate(settings, github, org, gate):
+    github.login = "newcomer"
+
+    location = _sign_in()
+
+    session_id = location.partition("#github_session=")[2].partition("&")[0]
+    assert app.state.github_sessions.user_tokens.get(session_id)["lab_org"] == "besser-pearl"
+    assert gate.get("/lab/whoami", headers={"X-GitHub-Session": session_id}).json()["login"] == "newcomer"
+    # The organization changed since: the session was verified for another one and no longer passes.
+    settings.lab_allowed_org = "another-org"
+    assert gate.get("/lab/whoami", headers={"X-GitHub-Session": session_id}).status_code == 403
+
+
+@pytest.mark.parametrize("membership", [None, "pending"], ids=["not a member", "invited, not yet a member"])
+def test_who_is_neither_listed_nor_an_active_member_is_refused(settings, github, org, monkeypatch, membership):
+    github.login = "mallory"
+    monkeypatch.setattr(org, "members", {"gho_new": membership} if membership else {})
+
+    assert _sign_in() == f"{settings.deployment_url}?error=not_allowed#login=mallory"
+    assert _stored_sessions() == {}
+    assert github.revoked == ["gho_new"]
+
+
+def test_a_listed_login_signs_in_without_a_membership_question(settings, github, org, monkeypatch):
+    monkeypatch.setattr(org, "asked", [])
+    github.login = "octocat"
+
+    location = _sign_in()
+
+    session_id = location.partition("#github_session=")[2].partition("&")[0]
+    assert "lab_org" not in app.state.github_sessions.user_tokens.get(session_id)
+    assert org.asked == []
+
+
+def test_with_an_allowed_org_an_admin_need_not_be_on_the_list(settings):
+    settings.lab_admin_logins = "newcomer"
+    assert is_admin(settings, "Newcomer") is False
+    settings.lab_allowed_org = "BESSER-PEARL"
+    assert is_admin(settings, "Newcomer") is True
+    assert is_admin(settings, "octocat") is False
+
+
 def test_sign_in_is_unchanged_on_an_instance_that_is_not_a_lab(settings, github):
     settings.lab_enabled = False
     settings.lab_allowed_logins = ""

@@ -18,7 +18,13 @@ draft pull requests. The lab then follows the pull requests' CI and review
 comments until they are merged. Several people work at once, each change in
 its own working trees with its own conversation.
 
-Only the logins listed in ``BESSER_LAB_ALLOWED_LOGINS`` can sign in. The lab
+Only the logins listed in ``BESSER_LAB_ALLOWED_LOGINS`` and, when
+``BESSER_LAB_ALLOWED_ORG`` names a GitHub organization, its active members
+can sign in. Membership is read once, at sign-in (the lab then asks GitHub
+for the ``read:org`` scope), and kept with the session: someone removed from
+the organization keeps access until their session ends. An organization that
+restricts third-party applications must approve the lab's OAuth app, or
+GitHub refuses the question and every member is turned away. The lab
 runs on a host of its own (``scripts/lab/README.md`` sets one up) or, for one
 person, in a local container (:doc:`lab_local`). How to use it is in the web
 editor's user guide ("BESSER Lab").
@@ -821,7 +827,12 @@ another repository, which it pushes to.
    * - ``BESSER_LAB_ALLOWED_LOGINS``
      - empty
      - Comma-separated GitHub logins allowed to use the lab, ignoring case.
-       Empty allows no one. Read when the backend starts.
+       Empty allows no one from the list. Read when the backend starts.
+   * - ``BESSER_LAB_ALLOWED_ORG``
+     - empty
+     - A GitHub organization whose active members may use the lab, besides
+       the listed logins. Empty: only the listed logins. With it set, an
+       admin need not be on the list.
    * - ``BESSER_LAB_ADMIN_LOGINS``
      - empty
      - Logins among the allowed ones who may drop any change and stop any run;

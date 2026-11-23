@@ -17,7 +17,7 @@ from besser.utilities.web_modeling_editor.backend.routers.github_oauth import (
 from besser.utilities.web_modeling_editor.backend.services.deployment.session_store import (
     GitHubSessions,
 )
-from besser.utilities.web_modeling_editor.backend.services.lab.access import LabUser, is_login_allowed
+from besser.utilities.web_modeling_editor.backend.services.lab.access import LabUser, is_session_allowed
 
 
 def require_github_session(
@@ -65,14 +65,15 @@ def require_lab_user(
 
     Raises:
         HTTPException: 404 when the lab is off (its routes are mounted on every instance), 401 when the
-            session is missing or expired, 403 when the login is not on ``BESSER_LAB_ALLOWED_LOGINS``.
+            session is missing or expired, 403 when the login is neither on ``BESSER_LAB_ALLOWED_LOGINS`` nor
+            signed in as a member of ``BESSER_LAB_ALLOWED_ORG``.
     """
     if not settings.lab_enabled:
         raise HTTPException(status_code=404, detail="Not Found")
     require_github_session(github_sessions, github_session)
     session = github_sessions.user_tokens.get(github_session) or {}
     login = session.get("username")
-    if not is_login_allowed(settings, login):
+    if not is_session_allowed(settings, session):
         raise HTTPException(status_code=403, detail="This GitHub account is not allowed to use BESSER Lab.")
     return LabUser(login=login, session_id=github_session, access_token=session["access_token"])
 

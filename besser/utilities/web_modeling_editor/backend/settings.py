@@ -430,6 +430,10 @@ class BackendSettings(BaseSettings):
     lab_allowed_logins: str = Field(
         "", validation_alias="BESSER_LAB_ALLOWED_LOGINS",
         description="Comma-separated GitHub logins allowed to use the lab (case-insensitive); empty allows none.")
+    lab_allowed_org: str = Field(
+        "", validation_alias="BESSER_LAB_ALLOWED_ORG",
+        description="A GitHub organization whose members may use the lab, besides BESSER_LAB_ALLOWED_LOGINS. "
+                    "Membership is read at sign-in with the read:org scope; empty allows only the listed logins.")
     lab_workspace_root: _AbsPath = Field(
         None, validation_alias="BESSER_LAB_WORKSPACE_ROOT",
         description="Folder of the lab's working trees: base clones in base/, each change's trees in "

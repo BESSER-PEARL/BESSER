@@ -24,7 +24,11 @@ from besser.utilities.web_modeling_editor.backend.services.deployment.session_st
 )
 from besser.utilities.web_modeling_editor.backend.dependencies import GitHubSessionsDep, SettingsDep
 from besser.utilities.web_modeling_editor.backend.models.responses import ResponseModel
-from besser.utilities.web_modeling_editor.backend.services.lab.access import is_login_allowed
+from besser.utilities.web_modeling_editor.backend.services.lab.access import (
+    SESSION_ORG_KEY,
+    allowed_org,
+    is_login_allowed,
+)
 from besser.utilities.web_modeling_editor.backend.settings import BackendSettings
 
 
@@ -90,6 +94,9 @@ async def github_login(
     # Build GitHub authorization URL
     # Request permissions to manage repos and create gists
     scopes = "repo,gist,user"
+    if settings.lab_enabled and allowed_org(settings):
+        # A lab that admits an organization's members reads the membership at sign-in.
+        scopes += ",read:org"
     auth_url = (
         f"https://github.com/login/oauth/authorize"
         f"?client_id={settings.github_client_id}"
@@ -164,11 +171,17 @@ async def github_callback(code: str, state: str, settings: SettingsDep, github_s
 
         username = user_data.get("login")
 
-        # A lab instance signs in only the logins on its list; nothing of a refused sign-in is kept. The login
-        # rides in the fragment, which no server or proxy log records, for the refusal page to name it.
+        # A lab instance signs in only the logins on its list and the members of its organization; nothing of a
+        # refused sign-in is kept. The login rides in the fragment, which no server or proxy log records, for the
+        # refusal page to name it.
+        lab_org = ""
         if settings.lab_enabled and not is_login_allowed(settings, username):
-            logger.warning("BESSER Lab sign-in refused for GitHub login %r: not on BESSER_LAB_ALLOWED_LOGINS",
-                           username)
+            org = allowed_org(settings)
+            if org and await _is_org_member(access_token, org):
+                lab_org = org
+        if settings.lab_enabled and not lab_org and not is_login_allowed(settings, username):
+            logger.warning("BESSER Lab sign-in refused for GitHub login %r: not on BESSER_LAB_ALLOWED_LOGINS%s",
+                           username, f" and not a member of {allowed_org(settings)}" if allowed_org(settings) else "")
             await _revoke_github_token(settings, access_token)
             return RedirectResponse(
                 url=f"{settings.deployment_url}?error=not_allowed#login={quote(username or '', safe='')}",
@@ -181,6 +194,8 @@ async def github_callback(code: str, state: str, settings: SettingsDep, github_s
             "access_token": access_token,
             "username": username,
             "avatar_url": user_data.get("avatar_url"),
+            # What admitted a login that is not on the lab's list: checked again on every lab request.
+            **({SESSION_ORG_KEY: lab_org} if lab_org else {}),
         })
 
         # The session id rides in the fragment, which browsers never send to a server or proxy log.
@@ -256,6 +271,30 @@ async def github_logout(
         await _revoke_github_token(settings, session_data["access_token"])
 
     return {"success": True, "message": "Logged out successfully"}
+
+
+async def _is_org_member(access_token: str, org: str) -> bool:
+    """Whether the token's user is an active member of GitHub organization ``org`` (needs the ``read:org`` scope).
+
+    False on any other answer: not a member, a pending invitation, or an organization that has not approved
+    this OAuth app (GitHub answers 403), which is logged since it then refuses every member.
+    """
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"https://api.github.com/user/memberships/orgs/{quote(org, safe='')}",
+                headers={"Authorization": f"Bearer {access_token}", "Accept": "application/vnd.github+json"},
+                timeout=10,
+            )
+    except httpx.HTTPError as exc:
+        logger.warning("BESSER Lab: the membership of %s could not be read: %s", org, type(exc).__name__)
+        return False
+    if response.status_code == 200:
+        return response.json().get("state") == "active"
+    if response.status_code != 404:
+        logger.warning("BESSER Lab: GitHub answered HTTP %d for the membership of %s (has the organization "
+                       "approved this OAuth app?)", response.status_code, org)
+    return False
 
 
 async def _revoke_github_token(settings: BackendSettings, access_token: str) -> None:

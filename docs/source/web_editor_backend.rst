@@ -1165,7 +1165,8 @@ demo token are on ``BackendSettings``; the rest are on the agent's
 the table of :doc:`spec_driven_agent/lab`, "Configuration"):
 
 - Who: ``BESSER_LAB_ENABLED`` (off), ``BESSER_LAB_ALLOWED_LOGINS`` (empty: no
-  one), ``BESSER_LAB_ADMIN_LOGINS`` (empty).
+  one), ``BESSER_LAB_ALLOWED_ORG`` (empty: no organization),
+  ``BESSER_LAB_ADMIN_LOGINS`` (empty).
 - Folders: ``BESSER_LAB_WORKSPACE_ROOT`` (unset: the lab cannot start),
   ``BESSER_LAB_GIT_ROOT`` (``<workspace root>-git``), ``BESSER_LAB_STATE_DIR``
   (``<workspace root>-state``).

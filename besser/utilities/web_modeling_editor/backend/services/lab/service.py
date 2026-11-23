@@ -93,7 +93,7 @@ from besser.utilities.web_modeling_editor.backend.models.lab import (
 )
 from besser.utilities.web_modeling_editor.backend.services.deployment.github_service import GitHubService
 from besser.utilities.web_modeling_editor.backend.services.lab import diff_view, pull_requests, review
-from besser.utilities.web_modeling_editor.backend.services.lab.access import LabUser, allowed_logins, is_admin
+from besser.utilities.web_modeling_editor.backend.services.lab.access import LabUser, is_admin, listed_admin_logins
 from besser.utilities.web_modeling_editor.backend.services.lab.audit import (
     AuditEntry,
     AuditLog,
@@ -605,7 +605,7 @@ class LabService:
 
     def admins(self) -> list[str]:
         """The admin logins that are also allowed, sorted (an admin who is not allowed is warned about once)."""
-        return [login for login in sorted(allowed_logins(self.settings)) if is_admin(self.settings, login)]
+        return [login for login in listed_admin_logins(self.settings) if is_admin(self.settings, login)]
 
     def refresh_bases(self, user: LabUser) -> LabSettingsResponse:
         """Fetch every base branch now (blocking). Open changes do not move.

@@ -307,6 +307,8 @@ ROWS = [
      lambda: _env_bool("BESSER_LAB_ENABLED", False), lambda s: s.lab_enabled),
     ("lab_allowed_logins", "BESSER_LAB_ALLOWED_LOGINS", "",
      lambda: _get("BESSER_LAB_ALLOWED_LOGINS", ""), lambda s: s.lab_allowed_logins),
+    ("lab_allowed_org", "BESSER_LAB_ALLOWED_ORG", "",
+     lambda: _get("BESSER_LAB_ALLOWED_ORG", ""), lambda s: s.lab_allowed_org),
     ("lab_workspace_root", "BESSER_LAB_WORKSPACE_ROOT", None,
      lambda: _env_path("BESSER_LAB_WORKSPACE_ROOT"), lambda s: s.lab_workspace_root),
     ("lab_state_dir", "BESSER_LAB_STATE_DIR", None,

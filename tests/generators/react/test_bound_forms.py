@@ -86,7 +86,7 @@ def test_a_bound_form_posts_to_the_class_endpoint(build_app, jsx):
     assert '{"Your name"}</label>' in page and '{"Age"}</label>' in page and '{"Email"}</label>' in page
 
     block = app.file("components", "runtime", "FormBlock.tsx")
-    assert "await axios.post(url, payload);" in block
+    assert 'await apiRequest("POST", endpoint, { body: payload });' in block
     assert 'role={status.ok ? "status" : "alert"}' in block  # success/error feedback
 
 

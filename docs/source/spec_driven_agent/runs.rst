@@ -27,19 +27,102 @@ values are exposed by ``GET /besser_api/spec-driven/config``.
      - 120
      - 150
 
+Work is budgeted in executed tool calls, not in LLM turns: ``max_turns``
+allows four tool calls per turn, for the customize loop (Phase 2) and the
+repair loop (Phase 3) together, so a model that makes one call per turn gets
+the same work as one that batches four (480 calls with the default 120). The
+same multiple of turns (480) is kept only as a guard against a runaway loop.
+
+Phase 2 leaves Phase 3 a quarter of each budget: it stops with a quarter of the
+runtime cap and of the cost cap left, and, with auto-fix on, a quarter of the
+tool calls (Phase 2 may make 360 of the default 480). Phase 3 uses that share
+for its checks, the requirements judge and the repair loop (with auto-fix off,
+the time and spend shares are kept for the checks and the judge). A Phase 2
+that uses its share of any of the three hands off to validation, and its
+trace's Phase 2 ``phase_exit`` names the share in ``stop_detail`` (``time share
+used``, ``cost share used`` or ``tool-call share used``). A handed-off run
+completes only when validation finds nothing left and no checklist item is
+still open or blocked: an item no check closes is reported as not confirmed,
+not repaired, so the run is reported as handed off, never as plainly
+completed. A run cut at a share with no checklist at all (the planning pass
+failed or was skipped) is reported as handed off too, as nothing shows the work
+it was doing was finished. Only a Phase 2 that reaches the cap itself (a
+Phase 1 that ran past it, or one reply that spent past it) stops as ``timeout``
+or ``cost_cap``.
+Phase 3's time share is held back while Phase 2 runs and released when Phase 2
+returns, so the formatting between the phases has it too. The quarter is ``_PHASE3_BUDGET_SHARE``,
+sized from recorded runs: where Phase 3 repaired, it made a median quarter of
+the run's tool calls, and a quarter of the 2400 s cap covers most recorded
+validation phases.
+
+Verifying is not stalling. Phase 2 hands off early (``stop_detail`` starts
+``inspection handoff``) only after 20 tool calls in a row that changed no source
+and returned nothing new: a read of new content, a checklist or test change, or
+any other successful result not seen before (digits and UUIDs are ignored, so a
+new port, id or timestamp does not make a repeated command new; a failed call
+or a command that exits non-zero is never new). The model is first shown a
+reminder, with its open checklist items, and the handoff comes no earlier than
+the next turn; a source change starts a new stretch, with its own reminder.
+After 40 calls without a source change it is reminded to implement.
+
+The model is told what is left. When half, three quarters and nine tenths of
+Phase 2's share (of the tool calls, the time or the spend, whichever is
+furthest along) are used, a short reminder after that turn's tool results gives
+the tool calls, minutes and, for a priced model, dollars left before validation
+(and, with auto-fix on, repair) takes over, and asks the model to record what it cannot finish as
+blocked. It is never part of the system prompt, which stays byte-identical so
+the provider's prompt cache keeps serving it.
+
 When a run hits a cap it still returns whatever it has produced so far — the
 cap is surfaced as a non-terminal warning before the final result, not as a
 hard failure.
 
-The caps are checked at turn boundaries: cancellation first, then elapsed time,
-then spend — and the cost check runs *before* the next request is sent, so a
-run cannot overshoot its cap by one more billable call. A single warning is
-logged at 80% of the cost cap.
+The budgets are checked at turn boundaries: tool calls first, then
+cancellation, then elapsed time, then spend — and the cost check runs *before*
+the next request is sent, so Phase 2 cannot overshoot its share by one more
+billable call. A single warning is logged at 80% of Phase 2's cost share. While
+Phase 2 runs, its LLM calls and commands treat the start of Phase 3's time
+share as the cap.
+
+The runtime cap and cancellation also hold *inside* a turn. LLM calls and the
+agent's own commands stop 30 seconds before the cap. Every LLM call of a run (the customize and repair turns, generator
+selection, planning, model sync, requirement extraction and judging) gets as its
+timeout that time left, never more than its usual timeout, and is not started
+with less than 20 seconds left: requirements a judgment would have checked are
+reported as not checked for lack of time, an unknown rather than a failure. The
+provider SDKs apply a timeout to each wait for data, not to a whole response, so
+a streaming call is also closed when the time left runs out; its partial reply,
+a half-written tool call included, is dropped. A call stopped by the cap or a
+cancellation is reported as such, not as a provider error, and never moves the
+run to a fallback model; a provider error (an exhausted quota, an unknown model)
+stays one. Every command a run starts (``run_command``,
+the scaffold's install, the validators, the build and
+type checks) ends by the cap at the latest, and a check or a tool cut by the cap
+says so rather than reporting its own timeout. Those last 30 seconds are left to
+formatting the output and to Phase 3's checks, which start while at least 10
+seconds remain before the cap, so a repair whose turns ran out of time is still
+checked, not thrown away. Writing the recipe, report and checkpoint and packing
+the download start no command and take seconds; they may end a few seconds past
+the cap, which the watchdog's grace (``BESSER_LLM_WATCHDOG_GRACE_SECONDS``)
+covers.
+
+A cancellation — from ``POST /besser_api/spec-driven/cancel/{run_id}``, a closed
+connection, the abandonment timer or the runtime watchdog — takes effect at
+once: the command running at that moment is killed with every process it
+started (its whole sandbox on Linux, its process tree on Windows and macOS) and
+the tool reports ``Command stopped: the run was cancelled``; a streaming LLM
+response is closed and its socket shut down. A non-streaming LLM call that is
+already in flight still runs to its end, which its timeout bounds. The run then
+writes its checkpoint, recipe and report as it does at any other stop.
 
 Only the paid LLM calls count against the budget: generator selection, the
 planning pass, a modify run's model sync, the customize loop, requirement
 extraction and judging, and any Phase 3 fix turns. The deterministic scaffold, the
-validators, and the download are free.
+validators, and the download are free. A spent cost cap or an exhausted provider
+quota therefore stops only those calls: Phase 3 still runs its checks and the
+boot-and-create probe while time is left, so a defect the run left behind is
+reported as a blocker, and the requirements judge and the repair turns are
+skipped.
 
 .. _spec-driven-durable-runs:
 
@@ -52,7 +135,12 @@ increasing sequence number and stored before any subscriber sees it. That makes
 runs survive a dropped connection:
 
 - ``GET /besser_api/spec-driven/runs/{run_id}`` returns the run's lifecycle
-  metadata (never the request or the API key).
+  metadata (never the request or the API key). A run that ended in ``done`` is
+  ``succeeded`` when its run record's ``outcome`` is ``completed``, the outcome
+  itself when it is ``completed_with_blockers`` or ``completed_unverified``,
+  ``partial`` when the ``done`` event sets ``incomplete``, and ``cancelled`` or ``abandoned`` when a
+  cancel or the server's stop ended it. An event stored before the ``done`` event
+  carried ``outcome`` reads ``succeeded`` or ``partial`` as before.
 - ``GET /besser_api/spec-driven/runs/{run_id}/events?after=N`` replays every
   frame after sequence ``N`` and then follows the live producer. Native
   ``EventSource`` clients can use the ``Last-Event-ID`` header instead; the
@@ -80,8 +168,8 @@ producer is cooperatively stopped — which bounds unattended BYOK spend. A
 client polling ``events.json`` counts as present: the run is stopped only when
 no stream is open *and* no poll arrived within the grace period. When
 the event store itself fails mid-run (a full disk, a lock held past its
-timeout), or the backend stops, the run's worker is cancelled at its next turn
-boundary, and its concurrency slot is freed only once the worker has stopped;
+timeout), or the backend stops, the run's worker is cancelled (as above, the
+command it is running is stopped at once), and its concurrency slot is freed only once the worker has stopped;
 the run is recorded ``failed`` (``interrupted`` on shutdown). A
 server restart marks still-running records ``interrupted`` and ends their event
 log with a terminal ``error`` frame (code ``INTERNAL``) whose ``resumeAvailable``,
@@ -104,6 +192,68 @@ removes it. Likewise a run that fails or is cancelled after writing a
 checkpoint keeps its workspace, so an abandoned run that reports
 ``resumeAvailable: true`` can be resumed.
 
+.. _spec-driven-run-evidence:
+
+What the server keeps of a run
+------------------------------
+
+The recipe (``.besser_recipe.json``) ships in the download, so it is bounded:
+over 128 KiB it is shortened, and its ``recipe_shortened`` section counts what
+was cut and says so in ``note``, for example *kept 5 of 109 tool calls*. The run
+log (``.besser_trace.jsonl``) stays in the workspace and is deleted with it,
+after ``BESSER_LLM_DOWNLOAD_TTL_SECONDS``.
+
+The server keeps a run's full record only when the operator asks for it, by
+setting ``BESSER_INCIDENT_LOG_DIR`` (a blank value counts as unset). Each run
+started through the backend then appends to
+``<BESSER_INCIDENT_LOG_DIR>/runs/<run id>.jsonl`` as it goes, so a run that is
+cancelled or crashes keeps what it did up to then, and a shortened recipe adds
+*full record kept server-side under run <run id>* to its note. Files are kept
+``BESSER_LLM_RUN_EVIDENCE_RETENTION_DAYS`` days (30); ``0`` turns the record
+off (a negative value counts as ``0``) and then the cleanup removes nothing, so
+older files stay until the operator deletes them. A run driven from Python with
+``LLMOrchestrator`` writes none unless it passes ``run_evidence``, a callable
+that receives each record. The record is written only with the run log
+(``BESSER_LLM_ENABLE_TRACING``, on by default).
+
+**What it contains.** One JSON line for every record of the run log, with
+``phase`` added. That is personal data of the user and of what the agent read:
+
+- the first 500 characters of the user's request (in ``run_start``) and the
+  requirements read from it (in ``requirements``);
+- every file the agent wrote or edited, whole up to 64 KiB (``write_file``
+  content, ``modify_file`` old and new text);
+- up to 16 KiB of every tool result, the text the model read: the contents of
+  files it read, including files of an imported repository and files the user
+  uploaded, command and test output, API responses;
+- each tool call's turn, ``batch_index`` (its place in the turn's calls),
+  ``success``, ``status`` and ``seconds`` (how long the tool took), the
+  validation findings, the phases and their token counters, and each
+  compaction or eviction of the history.
+
+It does not contain the conversation with the LLM (the prompts and the model's
+messages).
+
+- **Caps.** Any one string is kept up to 64 KiB (its first and last 32 KiB
+  beyond that). A tool result is kept up to 16 KiB, its first and last 8 KiB.
+- **Redaction.** Every string is redacted before it is cut: first the user's
+  own key and every token or password the server holds (the LLM tiers' tokens,
+  the demo token, ...), then the rules of the run's events and of a generation
+  trace: provider tokens, private keys, ``.env``-style assignments, credentials
+  written as quoted literals in code (``apiKey = "..."``), URL passwords
+  (``https://user:password@host``), ``Authorization``, ``Cookie``,
+  ``Set-Cookie`` and ``X-...-Key`` / ``X-...-Token`` headers, token fields and
+  JWTs, and ``test_api`` header values. A tool result in JSON is redacted with
+  its text unescaped, so the line rules see real lines.
+- **Access.** A run's shell never sees the folder: the sandbox masks
+  ``BESSER_INCIDENT_LOG_DIR``. Whoever can read the folder on the host can read
+  the records.
+- **Size.** Measured on production runs, a record is about 0.2 to 1.6 MB
+  (0.7 MB on average).
+
+While a run is working, each warning its worker logs carries
+``run_id=<run id>``, as the ``spec-driven run start`` and ``run end`` lines do.
+
 .. _spec-driven-modify-mode:
 
 Modifying a previous run
@@ -113,10 +263,74 @@ A run can also be **incremental**. With ``mode: "modify"`` and a
 ``base_run_id`` naming a previous, still-downloadable run, the new run's
 workspace is seeded from that run's generated files and edited in place instead
 of being rebuilt from scratch. Phase 2 is never skipped for a modify run — you
-asked for a change, so a change is made. When the base has expired the runner
+asked for a change, so a change is made.
+
+The base's workspace is kept for ``BESSER_LLM_DOWNLOAD_TTL_SECONDS`` (3 hours by
+default) and its ZIP download for ``BESSER_LLM_ARCHIVE_TTL_SECONDS`` (24 hours).
+Once the workspace is gone, the run is seeded from the download instead: it holds
+the same source tree and the run files a later run reads (``.besser_recipe.json``,
+``.besser_attribution.json``, ``.besser_generator_output.json``,
+``.besser_api_workflows.json``), and it is
+unpacked with the checks of an uploaded archive (no path outside the workspace, no
+links, size and file-count limits; of a file's mode only its execute bits are
+kept, so ``mvnw`` or a ``*.sh`` script stays executable). The GitHub source record
+of a run started from or pushed to a repository (``.besser_github_source.json``,
+the commit and the files it held) is not in the download; it is kept beside it and
+restored, so a later push still knows which commit the files came from. It is still
+a modify run. A download that cannot be unpacked is treated like a failed copy: the
+run warns and rebuilds; one removed while being opened counts as expired. Of a ZIP
+uploaded through ``/spec-driven/import-generated-code`` only the user's files are
+used, never BESSER run records inside it.
+
+When neither is left (or the base's output was a single file, not a ZIP) the runner
 warns and falls back to normal from-scratch generation rather than failing the
-request. The editor avoids that for a project linked to GitHub: it starts the run
-from the repository instead (see :ref:`web-editor-github-coming-back`).
+request; the recipe's ``run.mode_reason`` says ``previous result expired, rebuilt
+from scratch`` and the ``done`` event's ``mode`` is ``create``. A client can learn
+this before starting: ``/preview`` with ``mode: "modify"`` and the ``base_run_id``
+returns ``base_available`` (``false`` when the run would rebuild). The editor avoids
+the rebuild for a project linked to GitHub: it starts the run from the repository
+instead (see :ref:`web-editor-github-coming-back`).
+
+The server admits two runs on the same base, and the editor makes the one that
+finishes last the base of the next edit. So the editor starts at most one run per
+project across the browser's tabs: a tab holds the project's Web Lock from the
+start of a run (or the adoption of one after a reload) until the run ends, and
+the browser drops it when the tab closes or crashes. A second tab asking for a
+run meanwhile is told the project is running in another tab. The lock is
+per browser profile: another browser or device is not covered.
+
+Validation of a modify run is proportional to its request: it keeps the previous
+run's requirement verdicts, judges only the requirements of the messages since
+that run and those whose files changed, and reports a requirement the previous run
+had left open as still open rather than as a blocker of this run, unless the new
+messages ask to finish it (see
+:ref:`requirements of a modify run <spec-driven-modify-requirements>`). The build, type-check, boot and runtime
+gates apply as in any run.
+
+The other findings are compared with the previous version the same way. The
+seed recipe's ``validation_issues`` are the previous version's findings
+(``_seed_baseline``, kept in the checkpoint), and so are the checks
+``validate_app`` runs on the tree Phase 2 starts from, unless the run already
+changed the model or the files (a model change, model sync or regeneration): a
+defect that change introduced is this run's. The seed's blockers still open
+Phase 2's issues, as ``Unresolved from the previous run:``, once: one that
+``validate_app`` reports again is listed only by ``validate_app``. In Phase 3 a
+defect the previous version already had is reported as ``open since the previous
+version: <finding>``: not confirmed, so the run is not verified, but not a
+blocker of this run and not repaired. A later modify run forwards it again.
+Findings are matched by what they test, as Phase 3 attempts compare them (a
+runtime finding by its kind, backend and route and the error seen there, any
+other with its line numbers masked), never by text alone: a new error on the
+same route is this run's. A fix run keeps the severity of a finding that matches
+its reported failure or that stops other checks from running (``application
+startup:``, ``mapper config:``, ``missing module:``, ``tsc [``, a syntax error),
+and labels nothing when the reported failure names no entity. A blocker of the kinds that say the app no longer starts,
+creates a record or builds (``application startup:``, ``mapper config:``,
+``missing module:``, ``create contract:``, ``read contract:``, ``action call:``,
+``tsc [``, ``frontend build [``) that the previous version did not have, where
+that check could run on it, is a regression to confirm: it stays a blocker, the
+recipe lists it under ``seed_regressions``, and the incomplete reason names it
+first ("New since the previous version, a regression to confirm: ...").
 
 Every run records the class diagram it was given in the run's
 ``.besser_recipe.json`` as ``model.user_model``: classes (abstract, parents,
@@ -268,9 +482,13 @@ lists each text file of the delivered tree with line ranges and who wrote them:
    * - ``unknown`` (generator)
      - Unchanged from a deterministic BESSER generator's output. ``related``
        names the generator and BESSER version
-       (``urn:besser:generator:django@<version>``). Deterministic packaging
-       fixes (the frontend build configuration, secret redaction) are
-       attributed the same way.
+       (``urn:besser:generator:django@<version>``). Files and lines the
+       harness writes itself (the ``.gitignore``, the frontend build
+       configuration, Dockerfiles, ``.dockerignore`` files and README of the
+       scaffold repair, secret redaction) are attributed the same way, under
+       the name of the step that wrote them, and so is a package manager's lock
+       file (``package-lock.json``, ``yarn.lock``, ``poetry.lock``, ...)
+       whoever ran the install (``package_manager``).
    * - ``human``
      - On a run that continues from a previous run or a GitHub import: lines a
        person changed in between.
@@ -286,7 +504,8 @@ and for this run, and per file.
 Attribution compares files, it does not replay edits: whenever a generator
 writes a file, its lines are recorded (as short hashes) in
 ``.besser_attribution.json``; at packaging time every line that differs from
-that record goes to the LLM. A line keeps its contributor however often the
+that record goes to the LLM, except the lines a harness step or a package
+manager wrote. A line keeps its contributor however often the
 file was edited, as long as the line itself is unchanged. The record holds
 hashes only, never content, and goes into the GitHub push and the download ZIP
 beside the recipe, so a continue-from-GitHub run can tell a person's edits from
@@ -361,16 +580,46 @@ keys, always in this order:
   gateways).
 - ``limits`` (``time_seconds``, ``cost_usd``, ``turns``), ``stopped_by``
   (``finished``, ``time limit``, ``cost limit``, ``turn limit``, ``provider
-  error``, ``internal error``, ``cancelled``, ``repeated edits did not land`` or
-  ``handed off to validation``), ``stop_message`` (the run card's sentence for
-  that ending, without its variable parts) and ``outcome``.
+  error``, ``internal error``, ``cancelled``, ``repeated edits did not land``,
+  ``output limit`` or ``handed off to validation``), ``stop_message`` (the run
+  card's sentence for that ending, without its variable parts) and ``outcome``.
+  ``turn limit`` means the customization loop made every tool call of the
+  budget (auto-fix off, so no share was kept) or reached the runaway guard on
+  turns; ``time limit`` and ``cost limit`` mean the cap itself, never only
+  Phase 2's share of it; ``output limit`` means the model's replies were cut off at its output limit
+  more often than the four recoveries a run allows. A handoff stays ``handed off
+  to validation`` while a checklist item is still open or blocked after
+  validation, and its ``outcome`` is then never ``completed``. A run whose
+  customization was skipped because the scaffold already covered the request
+  ended ``finished``.
 - ``warnings``: the warnings shown to the user during the run (at most eight),
   each as a fixed sentence. A warning whose text can quote an error is left out.
 - ``duration_seconds``, ``phase_seconds`` (``select``, ``generate``, ``plan``,
   ``customise``, ``validate``; ``validate`` starts with Phase 3 and includes its
   fix loop) and ``estimated_cost_usd``.
 - ``counts``: ``turns``, ``tool_calls``, ``files_written``, ``files_edited``,
-  ``blockers``.
+  ``blockers`` (the unresolved blockers the run left, also when a limit or a
+  cancel cut it short; the end log line carries the same count) and
+  ``not_confirmed`` (findings that are not confirmed, see
+  :ref:`spec-driven-not-confirmed`; never blockers; a dependency install the
+  agent left undone counts here, not in ``blockers``). A finished run whose only
+  findings are not confirmed ends ``completed``, and its ``stop_message`` says how
+  many could not be confirmed.
+- ``not_verified``: each class of checks that left no evidence on the delivered
+  app, as ``{"check", "reason", "configured_off"}`` with a fixed reason:
+  ``requirements`` (not checked against the request), ``runtime`` (never
+  started), ``records`` (no record could be created through the API) or
+  ``build`` (the frontend was never built). ``configured_off`` is true when the
+  server has that check switched off; such an entry is a property of the server
+  and changes neither the outcome nor the ``stop_message``. It is also true for
+  ``runtime`` with the reason ``no check can start this kind of backend`` (a
+  server no check starts, see :ref:`spec-driven-not-verified`): the outcome stays
+  as it is, and a run with nothing else to say gets the ``stop_message`` ``The app
+  was generated, but its runtime could not be checked: no check can start this
+  kind of backend.`` A finished run with
+  another entry and no blocker ends ``completed_unverified``, and its
+  ``stop_message`` names them: ``The app was generated, but it was not checked
+  against your request (too little time was left).``
 - ``lines``: the lines of the delivered files by author, as in the run's Agent
   Trace record: ``total``, ``generator``, ``ai``, ``human``, ``unknown``, and
   ``ai_this_run`` (the part of ``ai`` this run wrote). ``null`` when the run has
@@ -389,14 +638,16 @@ The worker logs one line when a run starts and one when it ends, with the same
 names: ``spec-driven run start run_id=... mode=... base_run_id=... key_tier=...
 model=... generator=...`` (``generator=auto`` unless the request bound one; the
 target is decided later) and ``spec-driven run end run_id=... outcome=...
-duration_seconds=... blockers=... estimated_cost_usd=... input_tokens=...
+duration_seconds=... blockers=... not_confirmed=... not_verified=... checks_off=... estimated_cost_usd=...
+input_tokens=...
 output_tokens=... cache_creation_tokens=... cache_read_tokens=... lines_total=...
 lines_generator=... lines_ai=... lines_human=... lines_unknown=...
 lines_ai_this_run=... archive_written=...``: the token counts under the recipe's
 ``usage`` names, the line counts as in ``lines``, and ``-`` for a value the run
-does not have.
-``outcome`` is ``completed``, ``completed_with_blockers``, ``cancelled``,
-``budget_stop`` or ``failed``. Neither line carries the request or the key.
+does not have (``not_verified`` and ``checks_off`` list classes, comma-separated).
+``outcome`` is ``completed``, ``completed_unverified``, ``completed_with_blockers``, ``cancelled``,
+``budget_stop`` or ``failed``. The ``done`` event carries the same ``outcome``; the run's stored
+status and its telemetry ``run_summary`` derive from it. Neither line carries the request or the key.
 They are written by the ``besser.spec_driven.runs`` logger, which the backend
 gives a handler of its own at startup: its other ``INFO`` records have none.
 
@@ -424,6 +675,25 @@ Over it, these cuts apply in order until it fits:
    each file, so the files the run changed are all still listed.
 4. Each API workflow keeps its id, each request's method and path, and its
    status.
+
+The workflow definitions are not lost to these cuts: every run also writes its
+retained workflows, whole and with their last status (only when that run was on
+the delivered tree; otherwise without one, so it is not replayed), to
+``.besser_api_workflows.json`` (at most ten, and at most 128 KiB: a workflow that
+does not fit is left out whole, with a warning). It travels with the app like the
+recipe, and a modify run reads it back (a file over the bound, or one holding an
+invalid definition, is ignored). After Phase 3 a modify run runs each workflow
+that passed on the previous version once on the delivered tree, unless the run
+kept one under the same id. One that fails now is ``regression to confirm: api
+scenario <id> passed on the previous version and fails now: ...``: not confirmed,
+never a blocker and never repaired, since the requested change may have meant it.
+None is run when the delivered tree's backend does not start (that is reported on
+its own, also when the previous version already had that failure). One whose
+backend folder the delivered tree no longer has is dropped, with a log line.
+Those that pass, or that no check could run (the backend did not boot, or the
+probe found nothing to start), are written again for the next run; one that
+failed is not. One saved without a status (its last pass was on an earlier tree
+of its run) is not replayed and is written again as it is.
 
 ``tool_calls_count`` and every other total stay true, and nothing a later reader
 uses is cut: the model, ``output_files``, ``generator_used``, ``target``,

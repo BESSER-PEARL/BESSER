@@ -11,8 +11,8 @@ starts a sandbox, ends a timeout or installs the harness's ``httpx``.
 
 They are now ``validation unverified:`` warnings, the class the
 ``ValidationIssue`` docstring reserves for this. The fix loop does not consume
-them, and they still refuse verified completion: the run reports the honest
-"unverified" outcome, neither complete nor failed.
+them and they are not counted as blockers: they are not confirmed, so the run
+reports the honest "unverified" outcome, neither verified nor failed.
 """
 
 from __future__ import annotations
@@ -29,6 +29,7 @@ from besser.spec_driven_agent.validation.issues import (
     _check_did_not_run,
     _classify_issue,
     is_completion_issue,
+    is_not_confirmed,
     unresolved_defects,
 )
 
@@ -83,8 +84,8 @@ def test_a_probe_that_did_not_run_is_an_unverified_warning(orch, monkeypatch):
     assert not [i.message for i in issues if i.severity == "blocker"]
     assert all(i.message.startswith("validation unverified:") for i in issues), issues
     assert all("did not run" in i.message for i in issues)
-    # Still an unknown that refuses verified completion, never a pass.
-    assert all(is_completion_issue(i) for i in issues)
+    # Not confirmed: never a pass, never a blocker.
+    assert all(is_not_confirmed(i) and not is_completion_issue(i) for i in issues)
     assert orch._runtime_probe_verdict == _RUNTIME_UNVERIFIED
 
 
@@ -105,7 +106,7 @@ def test_a_scenario_that_did_not_run_is_not_replayed_as_a_failure(orch, monkeypa
     assert finding.message.startswith("validation unverified:")
     assert "did not run" in finding.message and error[:30] in finding.message
     assert "fix the application" not in finding.message
-    assert is_completion_issue(finding)
+    assert is_not_confirmed(finding) and not is_completion_issue(finding)
 
 
 def test_a_scenario_that_ran_and_failed_is_still_a_blocker(orch, monkeypatch):
@@ -135,16 +136,15 @@ def test_phase3_spends_no_repair_round_on_checks_that_did_not_run(orch, monkeypa
 
     fix.assert_not_called()
     assert not [i for i in orch._validation_issues if i.message.startswith("runtime gate:")]
-    completion = [i.message for i in orch._validation_issues if is_completion_issue(i)]
-    assert completion, "a run whose runtime checks did not run is not verified complete"
-    assert unresolved_defects(completion) == [], "an unknown is not a defect"
+    assert not [i for i in orch._validation_issues if is_completion_issue(i)], "an unknown is not a blocker"
+    assert [i for i in orch._validation_issues if is_not_confirmed(i)], (
+        "a run whose runtime checks did not run is not confirmed")
 
 
 def test_a_stale_verdict_beside_a_check_that_did_not_run_stays_unverified(orch):
-    """Parity with the ``runtime unverified:`` finding this replaces: with no
-    verdict for the shipped tree, a did-not-run finding already says why, so
-    the gate does not add a "no runtime evidence" refusal that would turn an
-    unknown into an incomplete run."""
+    """With no verdict for the shipped tree, the gate's "no runtime evidence" is
+    the same unknown as the did-not-run finding beside it: not confirmed, so it
+    never turns the run incomplete (the run reports it as not verified)."""
     from besser.spec_driven_agent.validation.issues import runtime_check_unverified
 
     orch._runtime_probe_verdict = None
@@ -153,7 +153,8 @@ def test_a_stale_verdict_beside_a_check_that_did_not_run_stays_unverified(orch):
 
     orch._apply_runtime_gate()
 
-    assert orch._validation_issues == [unrun]
+    assert orch._validation_issues[0] == unrun
+    assert all(is_not_confirmed(i) and not is_completion_issue(i) for i in orch._validation_issues)
 
 
 def test_validate_app_does_not_call_an_unrun_probe_verified(orch, monkeypatch):
@@ -186,6 +187,7 @@ def test_checks_disabled_by_configuration_are_an_unverified_warning(simple_libra
     assert finding.severity == "warning"
     assert not issues[0].startswith("runtime unverified:")
     assert "disabled" in issues[0]
-    assert is_completion_issue(finding), "a disabled check still withholds 'verified'"
+    assert is_not_confirmed(finding) and not is_completion_issue(finding), (
+        "a disabled check is not confirmed, not a blocker")
     assert unresolved_defects(issues) == []
     assert orchestrator._runtime_probe_verdict is None

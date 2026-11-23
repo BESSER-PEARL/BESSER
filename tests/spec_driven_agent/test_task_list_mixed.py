@@ -8,17 +8,13 @@ and drop one the user never asked for needed up to four separate calls
 resending the whole checklist (the OpenCode shape) and WITHOUT loosening any
 gate: every verb here dispatches to the exact single-action handler
 (``_do_done`` / ``_do_add`` / ``_do_drop`` / ``_do_blocked``), so
-implementation evidence, deterministic verifiers, the
-block-after-N-attempts guard, and drop's non-empty-reason requirement all
-still apply per item, unchanged.
+deterministic verifiers and the non-empty-reason requirement of drop and
+blocked still apply per item, unchanged.
 """
 
 import pytest
 
-from besser.spec_driven_agent.agent.tool_executor import (
-    _MAX_TASK_VERIFY_ATTEMPTS,
-    ToolExecutor,
-)
+from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
 
 
 @pytest.fixture
@@ -30,15 +26,6 @@ def _mixed(executor, **kwargs):
     return executor._task_list(dict(action="mixed", **kwargs))
 
 
-def _write_evidence(executor, task_id, path="impl.py"):
-    """Real modification receipts, not acceptance proof (mirrors the helper
-    in test_task_list_batching.py, duplicated here to keep this file
-    self-contained)."""
-    content = f"task_{task_id}_done = True\n"
-    assert executor._write_file({"path": path, "content": content})["status"] == "written"
-    return [{"id": task_id, "path": path, "quote": content.strip()}]
-
-
 # ======================================================================
 # A mixed call that fully succeeds
 # ======================================================================
@@ -46,9 +33,8 @@ def _write_evidence(executor, task_id, path="impl.py"):
 
 def test_a_mixed_call_that_fully_succeeds(executor):
     executor.set_tasks(["one", "two", "three"])
-    evidence = _write_evidence(executor, 1)
 
-    result = _mixed(executor, done_ids=[1], evidence=evidence, add_texts=["discovered item"])
+    result = _mixed(executor, done_ids=[1], add_texts=["discovered item"])
 
     assert "error" not in result
     assert result["status"] == "ok"
@@ -81,8 +67,8 @@ def test_a_mixed_call_can_drop_and_block_together(executor):
 # ======================================================================
 
 
-def test_done_refused_for_missing_evidence_but_add_lands(executor):
-    executor.set_tasks(["one", "two"])
+def test_done_refused_by_a_failing_check_but_add_lands(executor):
+    executor.set_tasks([{"text": "one", "verify": lambda: False}, "two"])
 
     result = _mixed(executor, done_ids=[1], add_texts=["discovered item"])
 
@@ -116,27 +102,6 @@ def test_mixed_requires_at_least_one_verb(executor):
 
     assert "error" in result
     assert executor.open_tasks(), "nothing should have changed"
-
-
-# ======================================================================
-# The block-after-N-attempts guard must not be bypassable by routing a
-# refusal through action='mixed' instead of action='done'.
-# ======================================================================
-
-
-def test_a_refused_done_inside_a_mixed_call_still_counts_an_attempt(executor):
-    executor.set_tasks([{"text": "build the frontend", "verify": lambda: False}])
-
-    for attempt in range(1, _MAX_TASK_VERIFY_ATTEMPTS):
-        result = _mixed(executor, done_ids=[1], add_texts=[f"note {attempt}"])
-        assert executor._tasks[0]["attempts"] == attempt
-        assert result["results"]["done"]["refused"][0]["attempts"] == attempt
-        assert executor._tasks[0]["blocked"] is False
-
-    final = _mixed(executor, done_ids=[1])
-
-    assert executor._tasks[0]["blocked"] is True
-    assert final["results"]["done"]["blocked"][0]["id"] == 1
 
 
 # ======================================================================
@@ -177,41 +142,6 @@ def test_a_partially_bad_drop_list_still_reports_what_succeeded(executor):
 
 
 # ======================================================================
-# The existing=true evidence path (an already-existing implementation cited,
-# not written this run) must gate exactly as it does for action='done'.
-# ======================================================================
-
-
-def test_mixed_done_honors_the_existing_true_evidence_path(executor, tmp_path):
-    source = (
-        "# Payment is implemented\n"
-        "def register_payment(bill, db):\n"
-        "    if bill.paid:\n"
-        "        return False\n"
-        "    bill.paid = True\n"
-        "    db.commit()\n"
-        "    return True\n"
-    )
-    path = tmp_path / "payment.py"
-    path.write_text(source, encoding="utf-8")
-    executor.set_tasks(["Implement payment"])
-    evidence = [{"id": 1, "path": "payment.py", "quote": "bill.paid = True"}]
-
-    # Unread file: refused, same reason action='done' gives.
-    unread = _mixed(executor, done_ids=[1], existing=True, evidence=evidence)
-    assert unread["results"]["done"]["done_ids"] == []
-    assert "read payment.py" in unread["results"]["done"]["refused"][0]["reason"]
-
-    executor._read_file({"path": "payment.py"})
-    accepted = _mixed(executor, done_ids=[1], existing=True, evidence=evidence)
-
-    assert accepted["results"]["done"]["done_ids"] == [1]
-    assert accepted["results"]["done"]["unverified_ids"] == [1]
-    receipt = executor.unverified_tasks()[0]["implementation_evidence"][0]
-    assert receipt["origin"] == "existing"
-
-
-# ======================================================================
 # Backward compatibility: every existing single-verb call shape must behave
 # exactly as before the refactor -- checkpoints and prompts are baked for
 # these shapes.
@@ -224,14 +154,12 @@ def test_single_action_shapes_are_unaffected_by_the_refactor(executor):
     listing = executor._task_list({"action": "list"})
     assert listing["tasks"][0] == {"id": 1, "text": "one", "status": "open"}
 
-    evidence1 = _write_evidence(executor, 1)
-    done_single = executor._task_list({"action": "done", "id": 1, "evidence": evidence1})
+    done_single = executor._task_list({"action": "done", "id": 1})
     assert done_single["done_ids"] == [1]
     assert done_single["id"] == 1
     assert done_single["open_remaining"] == 2
 
-    evidence2 = _write_evidence(executor, 2, path="impl2.py")
-    done_batch = executor._task_list({"action": "done", "ids": [2], "evidence": evidence2})
+    done_batch = executor._task_list({"action": "done", "ids": [2]})
     assert done_batch["done_ids"] == [2]
     assert done_batch["id"] == 2  # a single-item ids=[...] batch still reports `id`
 
@@ -256,8 +184,5 @@ def test_the_tool_schema_advertises_mixed(executor):
     from besser.spec_driven_agent.agent.tools import VALIDATION_TOOLS
     spec = next(t for t in VALIDATION_TOOLS if t["name"] == "task_list")
 
-    assert "mixed" in spec["input_schema"]["properties"]["action"]["enum"]
-    for key in ("done_ids", "add_texts", "drop", "blocked"):
-        assert key in spec["input_schema"]["properties"], key
-    assert "done_ids" in spec["description"]
-    assert "add_texts" in spec["description"]
+    assert set(spec["input_schema"]["properties"]) == {"done", "add", "drop", "blocked"}
+    assert "one call may combine them" in spec["description"]

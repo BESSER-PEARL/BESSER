@@ -6,7 +6,7 @@ import re
 
 import pytest
 
-from besser.BUML.metamodel.structural import PrimitiveDataType
+from besser.BUML.metamodel.structural import Multiplicity, PrimitiveDataType
 from besser.BUML.metamodel.traceability.traceability import model_elements
 from besser.generators.django import DjangoGenerator
 from tests.generators.regenerable_builders import library, library_gui
@@ -20,8 +20,9 @@ def _models(with_ids: bool):
     model = library()
     gui = library_gui(model)
     if with_ids:
-        # The primitive types are shared by every model: they keep no id.
-        elements = [e for e in (*model_elements(model), *model_elements(gui)) if not isinstance(e, PrimitiveDataType)]
+        # Primitive types and the default multiplicity are shared by every model: they keep no id.
+        elements = [e for e in (*model_elements(model), *model_elements(gui))
+                    if not isinstance(e, (PrimitiveDataType, Multiplicity))]
         for count, element in enumerate(elements):
             element.id = element.id or f"el-{count}"
     return model, gui

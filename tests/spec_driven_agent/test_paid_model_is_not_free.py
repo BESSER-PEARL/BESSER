@@ -1,7 +1,6 @@
 """A paid model priced at $0 silently disables the cost cap.
 
-``is_free_local_model`` decides both the pricing tier and, at
-``orchestrator.py:587``, whether ``protect_scaffold`` is on. Its own
+``is_free_local_model`` decides the pricing tier. Its own
 docstring warns that "a false positive prices a paid model at $0 and
 SILENTLY DISABLES the cost cap" - and it was doing exactly that for four
 Mistral API models, including ``mistral-small-latest``, which is the

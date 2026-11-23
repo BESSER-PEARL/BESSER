@@ -68,6 +68,13 @@ def _bare(name: str | None) -> str | None:
     return name[:-1] if name and name.endswith("_") and len(name) > 1 else name
 
 
+def _column_type(node) -> str | None:
+    """B-UML type a column type expression names, read through ``.with_variant(...)``."""
+    while isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "with_variant":
+        node = node.func.value
+    return _COLUMN_TYPES.get(_bare(_name(node)) or "")
+
+
 def _parsed(node):
     """A string annotation (``Mapped["Optional[str]"]``) as the expression it names."""
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
@@ -267,8 +274,7 @@ def _orm_findings(module: _Module, rel: str, checks, missing: set) -> list[str]:
                 inner = field.mapped_annotation()
                 inner = _unwrap_optional(inner)[0] if inner is not None else None
                 declared = _ANNOTATION_TYPES.get(_bare(_name(inner)) or "")
-                column = (_COLUMN_TYPES.get(_bare(_name(call.args[0])) or "")
-                          if call is not None and call.args else None)
+                column = _column_type(call.args[0]) if call is not None and call.args else None
                 if was in (declared, column):
                     issues.append(
                         f"model conformance: {cls}.{attr} changed type {was} -> {now} in the "

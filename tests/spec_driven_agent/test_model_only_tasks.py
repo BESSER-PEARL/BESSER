@@ -1,7 +1,7 @@
 """A task cannot ask Phase 2 to edit the B-UML model: no tool does that.
 
-Phase 2's model tools are query-only (``query_class``, ``get_constraints_for``,
-``list_classes_with``, ``validate_model``). A recorded run (Qwen) planned
+Phase 2 reads the models from its prompt and has no tool that changes them. A
+recorded run (Qwen) planned
 three tasks phrased "add an association class ... to the
 domain model" and "add a constraint ... to the Booking class in the domain
 model". The agent understood the intent and cited ``pydantic_classes.py``, but

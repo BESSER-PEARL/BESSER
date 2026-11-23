@@ -16,7 +16,9 @@ indicate whether the entity appears in the app (not executed acceptance):
   generated create path issues its POST from a shared runtime component
   (``TableComponent``), never a literal call in the page file itself, so
   the binding — not the call site — is the signal. An abstract class is
-  created through its subclasses, so its cell is ``None`` (not expected).
+  created through its subclasses, so its cell is ``None`` (not expected);
+  so is the cell of a class a GUI model's screens offer no way to create,
+  when the screens bind at least one class.
 
 Most generated React frontends put every request behind one api module
 (``api.create('carpark', payload)`` → ``fetch(url, {method:'POST'})``),
@@ -38,7 +40,9 @@ import bisect
 import functools
 import os
 import re
+from besser.BUML.metamodel.gui import Button, ButtonActionType, Form
 from besser.spec_driven_agent.validation.constructibility import abstract_entities
+from besser.spec_driven_agent.validation.endpoint_coherence import _GENERATED_CLIENT_RE
 from besser.spec_driven_agent.validation.frontend_forms import _attr, _jsx_tags
 from besser.utilities.workspace_fs import walk_plain
 
@@ -738,6 +742,12 @@ def _client_create_calls(rel: str, source: str, files: dict[str, str],
         target = next((c for c in _resolve_import(rel, spec) if c in files), None)
         if target is None or not _POST_RE.search(files[target]):
             continue
+        if _GENERATED_CLIENT_RE.search(target):
+            typed = _typed_client_creates(binding, code, files[target])
+            if typed:
+                calls.extend(typed)
+                used_clients.add(target)
+            continue
         if target not in helper_cache:
             helper_cache[target] = {**_post_helper_paths(files[target]), **_hook_post_paths(files[target])}
         helpers = helper_cache[target]
@@ -783,6 +793,18 @@ def _client_create_calls(rel: str, source: str, files: dict[str, str],
                             and not re.search(r"\[\s*" + re.escape(whole) + r"\s*\]", code)):
                         handed.append(whole)
     return calls
+
+
+def _typed_client_creates(binding: str, code: str, client: str) -> list:
+    """Creates issued through one object of the generated typed client: ``taskApi.create(...)``
+    creates what that object's create route posts to, and no other function of it creates."""
+    block = re.search(r"export\s+const\s+" + re.escape(binding) + r"\s*=\s*\{(?P<body>[\s\S]*?)\n\};", client)
+    path = block and re.search(r"/\*\*\s*POST\s+(\S+)\s*\*/\s*create\s*:", block.group("body"))
+    if path is None:
+        return []
+    calls = re.finditer(r"(?<![\w$.])(?:\(\s*)?" + re.escape(binding) + r"(?:\s+as\s+[\w$<>\[\]]+\s*\))?"
+                        r"\s*\.\s*(?:create|bulkCreate)\s*\(", code)
+    return [[path.group(1)] for _ in calls]
 
 
 def _table_block_create_wired(content: str, cls: str) -> bool:
@@ -874,16 +896,42 @@ def _creates(args: list[str] | None, forms: list[str]) -> bool:
     return args is None or _mentions(re.sub(r"[-_\s]", "", " ".join(args)), forms)
 
 
+def _gui_creatable_classes(gui_model) -> set[str] | None:
+    """Classes a GUI model offers to create: a table with action buttons, a form
+    or a create button bound to them. None when no screen binds a class (the
+    editor's default empty GUI), which scopes nothing."""
+    creatable: set[str] = set()
+    binds_a_class = False
+    pending = [element for module in gui_model.modules or () for screen in module.screens or ()
+               for element in (getattr(screen, "view_elements", None) or ())]
+    while pending:
+        element = pending.pop()
+        pending.extend(getattr(element, "view_elements", None) or ())
+        binding = getattr(element, "data_binding", None)
+        bound = getattr(binding, "domain_concept", None)
+        entity = getattr(element, "entity_class", None)
+        binds_a_class = binds_a_class or bound is not None or entity is not None
+        if bound is not None and (getattr(element, "action_buttons", False) or isinstance(element, Form)):
+            creatable.add(bound.name)
+        if (isinstance(element, Button) and entity is not None
+                and element.actionType in (ButtonActionType.Create, ButtonActionType.Add)):
+            creatable.add(entity.name)
+    return creatable if binds_a_class else None
+
+
 def build_acceptance_matrix(
     output_dir: str,
     domain_model,
     endpoint_manifest: str = "",
     snapshot_dir: str = ".besser_snapshot",
+    gui_model=None,
 ) -> dict[str, dict[str, bool | None]] | None:
     """Compute {class name: {route, page, create}} for the workspace.
 
     A ``None`` cell is not a finding: the signal was not measured (``route`` on
-    an unparsed stack) or does not apply (``create`` of an abstract class).
+    an unparsed stack) or does not apply (``create`` of an abstract class, or,
+    with a ``gui_model`` whose screens bind a class, of a class they offer no
+    way to create).
 
     ``endpoint_manifest`` is the statically parsed route listing (from
     ``prompt_builder.build_endpoint_manifest``); pass it in when the
@@ -900,6 +948,8 @@ def build_acceptance_matrix(
     if not classes:
         return None
     abstract = set(abstract_entities(domain_model))
+    creatable = _gui_creatable_classes(gui_model) if gui_model is not None else None
+    not_created = set(classes) - creatable if creatable is not None else set()
 
     if not endpoint_manifest:
         try:
@@ -968,7 +1018,7 @@ def build_acceptance_matrix(
         and not re.search(r"</|/>", code[target])  # a closing tag: renders JSX, a component
         and re.search(r"(?<![\w$.])" + re.escape(binding) + r"\s*[.(]", code[rel])
         and not re.search(r"<\s*" + re.escape(binding) + r"\b", code[rel])
-    }
+    } | {rel for rel in by_path if _GENERATED_CLIENT_RE.search(rel)}
     create_calls = {rel: client_calls[rel] + ([] if rel in clients else _direct_create_calls(content))
                     for rel, content in frontend_files}
     # Generic pages (``EntityList entity={key}``): the create names its resource
@@ -1031,7 +1081,8 @@ def build_acceptance_matrix(
         for rel, content in frontend_files:
             # A create whose path is read off this entity's metadata entry.
             traced_create = any(_creates([value], forms) for value in traced[rel])
-            about = (_mentions(rel.rsplit("/", 1)[-1], forms) or _mentions(content, forms)
+            # An import line names a module, not the entity (`../api/generated/client` is no Client).
+            about = (_mentions(rel.rsplit("/", 1)[-1], forms) or _mentions(_IMPORT_RE.sub("", content), forms)
                      or _mentions(config_text.get(rel, ""), forms, whole_word=True) or traced_create)
             if not about:
                 continue
@@ -1044,8 +1095,10 @@ def build_acceptance_matrix(
                     or _table_block_create_wired(content, cls)):
                 create = True
                 break
-        # An abstract class is created through its subclasses: no create form is expected.
-        matrix[cls] = {"route": route, "page": page, "create": None if cls in abstract else create}
+        # An abstract class is created through its subclasses, and the GUI model
+        # scopes which classes the screens create: no create form is expected.
+        matrix[cls] = {"route": route, "page": page,
+                       "create": None if cls in abstract or cls in not_created else create}
     return matrix
 
 

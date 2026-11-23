@@ -19,6 +19,8 @@ import json
 import logging
 import os
 import re
+import socket
+import threading
 import time
 import uuid
 from abc import ABC, abstractmethod
@@ -37,7 +39,18 @@ from besser.llm.retry import (
     is_retryable_status as _is_retryable_status,
     status_code as _status_code,
 )
-from besser.spec_driven_agent.errors import InvalidApiKeyError, UpstreamLLMError
+from besser.spec_driven_agent.errors import (
+    DeadlineReached,
+    InvalidApiKeyError,
+    RequestRejectedError,
+    UpstreamLLMError,
+)
+from besser.spec_driven_agent.execution import deadline as _deadline
+from besser.spec_driven_agent.execution.deadline import (
+    CANCELLED,
+    OUT_OF_TIME,
+    current_deadline,
+)
 from besser.spec_driven_agent.providers.model_settings import (
     DEFAULT_MAX_OUTPUT_TOKENS,
     forced_tool_choice_supported,
@@ -418,6 +431,127 @@ def _resolve_max_retries(max_retries: int | None) -> int:
     return max_retries
 
 
+# ----------------------------------------------------------------------
+# The run's deadline (execution.deadline): outside a run these change nothing.
+# ----------------------------------------------------------------------
+
+def _request_options(default_timeout: float) -> dict[str, Any]:
+    """Per-request SDK options: the timeout, cut to the run's time left.
+    Raises :class:`DeadlineReached` when no call may start."""
+    deadline = current_deadline()
+    return {} if deadline is None else {"timeout": deadline.call_timeout(default_timeout)}
+
+
+def _raise_if_deadline(error: Exception) -> None:
+    """Report a failure as the run's stop when the run was cancelled, or when a
+    timeout or broken connection came with its time up: it is then neither
+    retried nor sent to a fallback model. Any other error (a quota, an unknown
+    model, a reply that does not parse) stays the provider's."""
+    if isinstance(error, DeadlineReached):
+        raise error
+    deadline = current_deadline()
+    if deadline is None or _is_auth_error(error):
+        return
+    if deadline.cancelled:
+        raise deadline.reached(CANCELLED) from None
+    if deadline.out_of_time() and _is_transport_error(error):
+        raise deadline.reached(OUT_OF_TIME) from None
+
+
+def _sleep_before_retry(seconds: float) -> None:
+    deadline = current_deadline()
+    if deadline is None:
+        time.sleep(seconds)
+        return
+    left = deadline.work_remaining()
+    if left is not None and left - seconds < _deadline.MIN_CALL_SECONDS:
+        raise deadline.reached(f"{OUT_OF_TIME}: the provider asked for a {seconds:.0f}s wait before a retry")
+    if deadline.wait(seconds):
+        raise deadline.reached(CANCELLED)
+
+
+def _stream_socket(stream):
+    """The socket under a streaming SDK response, when the HTTP stack exposes it."""
+    try:
+        return stream.response.extensions["network_stream"].get_extra_info("socket")
+    except Exception:
+        return None
+
+
+class _StreamGuard:
+    """Stops a streaming response when the run is cancelled or its work time
+    runs out. A float timeout bounds each read, not the stream, so a stream
+    that keeps sending would otherwise run past the cap. Closing a response
+    from another thread does not wake a read blocked on its socket on every
+    platform (Linux), so the socket is shut down first."""
+
+    def __init__(self, stream, deadline):
+        self._stream = stream
+        self._deadline = deadline
+        self._socket = _stream_socket(stream)
+        self._lock = threading.Lock()
+        self.reason = ""
+
+    def stop(self, reason: str) -> None:
+        with self._lock:
+            if self.reason:
+                return
+            self.reason = reason
+        if self._socket is not None:
+            try:
+                self._socket.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+        close = getattr(self._stream, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:
+                logger.debug("closing a stopped stream failed", exc_info=True)
+
+    def check(self) -> None:
+        """Raise when the stream was or must be stopped; its partial reply is dropped."""
+        deadline = self._deadline
+        left = deadline.work_remaining()
+        if not self.reason and deadline.cancelled:
+            self.stop(CANCELLED)
+        elif not self.reason and left is not None and left <= 0:
+            self.stop(OUT_OF_TIME)
+        if self.reason:
+            raise deadline.reached(self.reason)
+
+
+def _guarded(items, stream):
+    """Iterate ``items`` (read from ``stream``) under the run's deadline: a
+    cancel or the end of the work time stops the stream and raises
+    :class:`DeadlineReached`, even if it then ends without an error."""
+    deadline = current_deadline()
+    if deadline is None:
+        yield from items
+        return
+    guard = _StreamGuard(stream, deadline)
+    left = deadline.work_remaining()
+    timer = threading.Timer(max(0.0, left), guard.stop, args=(OUT_OF_TIME,)) if left is not None else None
+    if timer is not None:
+        timer.daemon = True
+        timer.start()
+    try:
+        with deadline.on_cancel(lambda: guard.stop(CANCELLED)):
+            for item in items:
+                guard.check()
+                yield item
+            guard.check()
+    except DeadlineReached:
+        raise
+    except Exception:
+        if guard.reason:
+            raise deadline.reached(guard.reason) from None
+        raise
+    finally:
+        if timer is not None:
+            timer.cancel()
+
+
 @lru_cache(maxsize=1)
 def _transport_error_types() -> tuple[type, ...]:
     """Timeout / connection failures that carry no HTTP status."""
@@ -438,6 +572,9 @@ def _transport_error_types() -> tuple[type, ...]:
 
 # A timeout already cost a full SDK timeout (300s), so cap its retries hard.
 _MAX_TRANSPORT_RETRIES = 2
+# A transport failure faster than this (refused, reset, DNS) cost almost
+# nothing, so it gets the normal retries.
+_FAST_TRANSPORT_FAILURE_SECONDS = 10.0
 
 
 def _is_transport_error(error: Exception) -> bool:
@@ -448,13 +585,16 @@ def _is_transport_error(error: Exception) -> bool:
         marker in str(error).lower() for marker in ("timed out", "timeout"))
 
 
-def _stop_retrying_transport(error: Exception, attempt: int, has_fallback: bool) -> bool:
-    """True when a timeout should not be retried again on this endpoint.
+def _stop_retrying_transport(error: Exception, attempt: int, has_fallback: bool,
+                             elapsed: float) -> bool:
+    """True when a transport failure that took ``elapsed`` seconds should not
+    be retried again on this endpoint.
 
-    With a fallback it goes there at once; without one it gets
-    ``_MAX_TRANSPORT_RETRIES`` retries, not the full budget (~25 min worst case).
+    A fast one is retried like any transient error. A slow one (a timeout can
+    take the full SDK timeout) goes to the fallback at once; without one it
+    gets ``_MAX_TRANSPORT_RETRIES`` retries, not the full budget (~25 min worst case).
     """
-    if not _is_transport_error(error):
+    if not _is_transport_error(error) or elapsed < _FAST_TRANSPORT_FAILURE_SECONDS:
         return False
     return has_fallback or attempt >= _MAX_TRANSPORT_RETRIES
 
@@ -471,6 +611,14 @@ def _is_retryable(error: Exception) -> bool:
         "rate limit", "rate_limit", "rate-limited", "ratelimited",
         "timeout", "timed out", "connection",
     ))
+
+
+def _call_failed(message: str, error: Exception) -> UpstreamLLMError:
+    """The error for a call that ended on ``error``: a
+    :class:`RequestRejectedError` when the endpoint refused this request."""
+    if _is_retryable(error) or _is_quota_exhausted(error):
+        return UpstreamLLMError(message)
+    return RequestRejectedError(message)
 
 
 def _is_model_unavailable(error: Exception) -> bool:
@@ -594,9 +742,10 @@ class ClaudeLLMClient(LLMProvider):
         timeout: float | None = None,
         max_retries: int | None = None,
     ):
+        self._timeout = timeout if timeout is not None else _DEFAULT_SDK_TIMEOUT_SECONDS
         client_kwargs: dict[str, Any] = {
             "api_key": api_key,
-            "timeout": timeout if timeout is not None else _DEFAULT_SDK_TIMEOUT_SECONDS,
+            "timeout": self._timeout,
             # Our retry loop owns retries; the SDK default (2) would multiply it.
             "max_retries": 0,
         }
@@ -746,6 +895,8 @@ class ClaudeLLMClient(LLMProvider):
         effective_model = model_override or self._model
 
         for attempt in range(self._max_retries + 1):
+            options = _request_options(self._timeout)
+            started = time.monotonic()
             try:
                 request_kwargs: dict[str, Any] = {
                     "model": effective_model,
@@ -754,6 +905,7 @@ class ClaudeLLMClient(LLMProvider):
                     "messages": (_with_message_cache(messages)
                                  if cache_prefix and cache_messages else messages),
                     **extra,
+                    **options,
                 }
                 # A text-only call (no tools) must not send an empty list.
                 if request_tools:
@@ -767,19 +919,21 @@ class ClaudeLLMClient(LLMProvider):
                     "content": normalize_tool_blocks(response.content, tools),
                 }, response)
             except Exception as e:
+                _raise_if_deadline(e)
                 last_error = self._redacted(e)
                 if (attempt < self._max_retries and _is_retryable(e)
-                        and not _stop_retrying_transport(e, attempt, False)):
+                        and not _stop_retrying_transport(
+                            e, attempt, False, time.monotonic() - started)):
                     backoff = _backoff_seconds(e, attempt)
                     logger.warning(
                         "API call failed (attempt %d/%d), retrying in %.1fs: %s",
                         attempt + 1, self._max_retries + 1, backoff, last_error,
                     )
-                    time.sleep(backoff)
+                    _sleep_before_retry(backoff)
                     continue
                 if _is_auth_error(e):
                     raise InvalidApiKeyError(f"Claude API rejected the key: {last_error}") from None
-                raise UpstreamLLMError(f"Claude API call failed: {last_error}") from None
+                raise _call_failed(f"Claude API call failed: {last_error}", e) from None
 
         raise UpstreamLLMError(f"Claude API call failed after {self._max_retries + 1} attempts: {last_error}") from None
 
@@ -793,6 +947,8 @@ class ClaudeLLMClient(LLMProvider):
         last_error = None
 
         for attempt in range(self._max_retries + 1):
+            options = _request_options(self._timeout)
+            started = time.monotonic()
             try:
                 with self._client.messages.stream(
                     model=self._model,
@@ -800,8 +956,9 @@ class ClaudeLLMClient(LLMProvider):
                     system=_with_cache_control(system),
                     messages=_with_message_cache(messages),
                     tools=_with_tool_cache(tools),
+                    **options,
                 ) as stream:
-                    for text in stream.text_stream:
+                    for text in _guarded(stream.text_stream, stream):
                         yield {"type": "text_delta", "text": text}
 
                     response = stream.get_final_message()
@@ -814,12 +971,14 @@ class ClaudeLLMClient(LLMProvider):
                 return  # Success — exit retry loop
 
             except Exception as e:
+                _raise_if_deadline(e)
                 last_error = self._redacted(e)
                 if (attempt < self._max_retries and _is_retryable(e)
-                        and not _stop_retrying_transport(e, attempt, False)):
+                        and not _stop_retrying_transport(
+                            e, attempt, False, time.monotonic() - started)):
                     backoff = _backoff_seconds(e, attempt)
                     logger.warning("Stream failed (attempt %d), retrying: %s", attempt + 1, last_error)
-                    time.sleep(backoff)
+                    _sleep_before_retry(backoff)
                     continue
                 if _is_auth_error(e):
                     raise InvalidApiKeyError(f"Claude API rejected the key: {last_error}") from None
@@ -1378,9 +1537,10 @@ class OpenAIProvider(LLMProvider):
         free_route: bool = False,
         max_retries: int | None = None,
     ):
+        self._timeout = timeout if timeout is not None else _DEFAULT_SDK_TIMEOUT_SECONDS
         client_kwargs: dict[str, Any] = {
             "api_key": api_key,
-            "timeout": timeout if timeout is not None else _DEFAULT_SDK_TIMEOUT_SECONDS,
+            "timeout": self._timeout,
             # Our retry loop owns retries; the SDK default (2) would multiply it.
             "max_retries": 0,
         }
@@ -1423,6 +1583,8 @@ class OpenAIProvider(LLMProvider):
         self._on_fallback = False
         self.fallback_reason: str | None = None
         self._warned_no_usage = False
+        # One client per run: OpenAI keeps requests with one key on one prompt cache.
+        self._prompt_cache_key = uuid.uuid4().hex
 
     # True on a vendor that only serves paid API models (Mistral, Nebius).
     _PAID_VENDOR = False
@@ -1451,6 +1613,13 @@ class OpenAIProvider(LLMProvider):
             output_tokens=(len(text) + len(arguments)) // _CHARS_PER_TOKEN,
         ), model=model)
 
+    def _add_cache_key(self, kwargs: dict[str, Any]) -> None:
+        """The run's prompt cache key, for OpenAI's own API only: a strict
+        OpenAI-compatible gateway may refuse an unknown field."""
+        if self._PAID_VENDOR or (self._base_url and not _is_official_openai_base_url(self._base_url)):
+            return
+        kwargs["extra_body"] = {**kwargs.get("extra_body", {}), "prompt_cache_key": self._prompt_cache_key}
+
     def _is_billed_route(self, base_url: str | None) -> bool:
         """Paid vendor API rather than a gateway / self-hosted endpoint."""
         return (self._PAID_VENDOR or not base_url
@@ -1470,6 +1639,15 @@ class OpenAIProvider(LLMProvider):
         call), False when no fallback is configured or it is already
         active (caller should raise).
         """
+        deadline = current_deadline()
+        reason = deadline.stop_reason() if deadline is not None else ""
+        if reason:
+            # The run ends, so no call would reach the fallback. A rejected
+            # server key that would have moved on is the run's stop, not the
+            # user's key; any other error stays the provider's.
+            if _is_auth_error(error) and self._has_fallback():
+                raise deadline.reached(reason)
+            return False
         if past_endpoint is not None:
             while (self._fallback_step < len(self._fallback_chain)
                    and self._fallback_chain[self._fallback_step][0] == past_endpoint):
@@ -1487,12 +1665,12 @@ class OpenAIProvider(LLMProvider):
         if token:
             client_kwargs["default_headers"] = {"Authorization": f"Bearer {token}"}
         logger.warning(
-            "Model %s unavailable after all retries (%s) — switching to "
-            "fallback %d/%d: %s",
+            "Model %s failed (%s) — switching to fallback %d/%d: %s",
             self._model, self._redacted(error), self._fallback_step,
             len(self._fallback_chain), fb_model,
         )
         self._client = openai_client(**client_kwargs)
+        self._timeout = _DEFAULT_SDK_TIMEOUT_SECONDS
         self._base_url = base_url
         self._model = fb_model
         self._usage.reprice(fb_model, self._is_billed_route(base_url), base_url)
@@ -1550,6 +1728,8 @@ class OpenAIProvider(LLMProvider):
         effective_model = model_override or self._model
 
         for attempt in range(self._max_retries + 1):
+            options = _request_options(self._timeout)
+            started = time.monotonic()
             try:
                 # Newer models (GPT-5+, o3+) use max_completion_tokens
                 # instead of max_tokens
@@ -1558,12 +1738,14 @@ class OpenAIProvider(LLMProvider):
                     "model": effective_model,
                     tok_key: self._request_max_tokens(model_override),
                     "messages": api_messages,
+                    **options,
                 }
                 # Per-model sampling. Empty for every model not in the
                 # registry, so the request is unchanged for those. Keyed on
                 # the model actually being called, which on a planning turn
                 # is the cheap override, not self._model.
                 kwargs.update(sampling_kwargs(effective_model))
+                self._add_cache_key(kwargs)
                 if openai_tools:
                     kwargs["tools"] = openai_tools
                     if force_tool:
@@ -1602,6 +1784,7 @@ class OpenAIProvider(LLMProvider):
                 return _openai_response_to_common(response, tools)
 
             except Exception as e:
+                _raise_if_deadline(e)
                 last_error = self._redacted(e)
                 # A daily-quota exhaustion (Command Code: "used all 100 free
                 # requests for today") cannot recover inside the retry window;
@@ -1613,34 +1796,39 @@ class OpenAIProvider(LLMProvider):
                         last_error[:200],
                     )
                 elif (attempt < self._max_retries and _is_retryable(e)
-                      and not _stop_retrying_transport(e, attempt, self._has_fallback())):
+                      and not _stop_retrying_transport(
+                          e, attempt, self._has_fallback(), time.monotonic() - started)):
                     backoff = _backoff_seconds(e, attempt)
                     logger.warning(
                         "OpenAI API call failed (attempt %d/%d), retrying in %.1fs: %s",
                         attempt + 1, self._max_retries + 1, backoff, last_error,
                     )
-                    time.sleep(backoff)
+                    _sleep_before_retry(backoff)
                     continue
+                # A failed model_override call leaves the primary as it is: its
+                # caller retries on the primary, which falls back if it must.
                 if _is_auth_error(e):
                     # Only the server-paid tiers have a fallback: there a rejected
                     # key is the server's (e.g. an expired free-tier token), and
                     # another endpoint can still serve the run. A user's own key
                     # has no fallback and fails here, loudly.
-                    if self._activate_fallback(e, past_endpoint=self._base_url):
+                    if not model_override and self._activate_fallback(
+                            e, past_endpoint=self._base_url):
                         return self.chat(
                             system, messages, tools,
                             force_tool=force_tool, model_override=model_override,
                         )
                     raise InvalidApiKeyError(f"OpenAI API rejected the key: {last_error}") from None
                 if _is_tools_unsupported_error(e):
-                    raise UpstreamLLMError(_tools_unsupported_message(self._model)) from None
-                if ((_is_retryable(e) or _is_model_unavailable(e) or _is_quota_exhausted(e))
+                    raise RequestRejectedError(_tools_unsupported_message(effective_model)) from None
+                if (not model_override
+                        and (_is_retryable(e) or _is_model_unavailable(e) or _is_quota_exhausted(e))
                         and self._activate_fallback(e)):
                     return self.chat(
                         system, messages, tools,
                         force_tool=force_tool, model_override=model_override,
                     )
-                raise UpstreamLLMError(f"OpenAI API call failed: {last_error}") from None
+                raise _call_failed(f"OpenAI API call failed: {last_error}", e) from None
 
         raise UpstreamLLMError(f"OpenAI API call failed after {self._max_retries + 1} attempts: {last_error}") from None
 
@@ -1656,12 +1844,15 @@ class OpenAIProvider(LLMProvider):
         openai_tools = _anthropic_tools_to_openai(tools) if tools else None
 
         for attempt in range(self._max_retries + 1):
+            options = _request_options(self._timeout)
+            started = time.monotonic()
             try:
                 tok_key = _openai_max_tokens_key(self._model)
                 kwargs: dict[str, Any] = {
                     "model": self._model,
                     tok_key: self._max_tokens,
                     "messages": api_messages,
+                    **options,
                     "stream": True,
                     # OpenAI omits the usage object from streaming
                     # responses by default. Without this flag, every
@@ -1675,6 +1866,7 @@ class OpenAIProvider(LLMProvider):
                 }
                 # Per-model sampling; empty for models not in the registry.
                 kwargs.update(sampling_kwargs(self._model))
+                self._add_cache_key(kwargs)
                 if openai_tools:
                     kwargs["tools"] = openai_tools
                     # gpt-5.6 reasoning models can't combine tools + reasoning
@@ -1692,7 +1884,7 @@ class OpenAIProvider(LLMProvider):
 
                 stream = self._client.chat.completions.create(**kwargs)
                 try:
-                    for chunk in stream:
+                    for chunk in _guarded(stream, stream):
                         # The served model name appears on every chunk
                         # in a stream; capture once.
                         self._usage.set_served_model(getattr(chunk, "model", None))
@@ -1770,6 +1962,7 @@ class OpenAIProvider(LLMProvider):
                 return  # Success — exit retry loop
 
             except Exception as e:
+                _raise_if_deadline(e)
                 last_error = self._redacted(e)
                 # Daily-quota exhaustion won't recover within the retry window —
                 # skip the backoff and go straight to the fallback check below.
@@ -1779,10 +1972,11 @@ class OpenAIProvider(LLMProvider):
                         last_error[:200],
                     )
                 elif (attempt < self._max_retries and _is_retryable(e)
-                      and not _stop_retrying_transport(e, attempt, self._has_fallback())):
+                      and not _stop_retrying_transport(
+                          e, attempt, self._has_fallback(), time.monotonic() - started)):
                     backoff = _backoff_seconds(e, attempt)
                     logger.warning("OpenAI stream failed (attempt %d), retrying: %s", attempt + 1, last_error)
-                    time.sleep(backoff)
+                    _sleep_before_retry(backoff)
                     continue
                 if _is_auth_error(e):
                     # As in chat(): a server-paid key falls back, a user's key fails.

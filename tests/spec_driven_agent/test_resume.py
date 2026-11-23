@@ -22,6 +22,7 @@ from besser.spec_driven_agent.state.checkpoint import (
     load_checkpoint,
 )
 from besser.spec_driven_agent.providers.llm_client import UsageTracker
+from besser.spec_driven_agent.pipeline.constants import _CALLS_PER_TURN
 from besser.spec_driven_agent.pipeline.orchestrator import DEPENDENCIES_REMOVED_NOTE, LLMOrchestrator, ValidationIssue
 from besser.spec_driven_agent.state.tracing import TRACE_FILENAME
 
@@ -244,7 +245,8 @@ def test_resume_picks_up_from_saved_turn(simple_model, tmp_path):
 
 def test_unclean_resume_keeps_checkpoint_for_a_second_resume(simple_model, tmp_path):
     """A resume can itself hit a cap; that must not destroy recovery state."""
-    first = _ScriptedClient([_tool_use("c1")])
+    # ``max_turns`` allows _CALLS_PER_TURN tool calls per turn: these scripts spend them.
+    first = _ScriptedClient([_tool_use(f"c1-{n}") for n in range(_CALLS_PER_TURN)])
     LLMOrchestrator(
         llm_client=first,
         domain_model=simple_model,
@@ -254,7 +256,7 @@ def test_unclean_resume_keeps_checkpoint_for_a_second_resume(simple_model, tmp_p
     ).run("Build a blog")
     assert load_checkpoint(str(tmp_path)) is not None
 
-    second = _ScriptedClient([_tool_use("c2")])
+    second = _ScriptedClient([_tool_use(f"c2-{n}") for n in range(_CALLS_PER_TURN)])
     second_orchestrator = LLMOrchestrator(
         llm_client=second,
         domain_model=simple_model,
@@ -449,37 +451,26 @@ def _resume_without_llm(model, tmp_path, monkeypatch, instructions="Build a blog
     return resumed
 
 
-def test_resume_accepts_evidence_for_an_edit_made_before_the_crash(simple_model, tmp_path, monkeypatch):
-    """The executor's record of successful writes was not checkpointed, so a
-    resumed run's task_list refused evidence for work done before the crash."""
+def test_resume_keeps_the_edits_an_open_item_already_had(simple_model, tmp_path, monkeypatch):
+    """The edits recorded for an item, quoted in its finding, include those made before the crash."""
     crashed = LLMOrchestrator(
         llm_client=_ScriptedClient([]), domain_model=simple_model, output_dir=str(tmp_path),
         use_streaming=False, enable_tracing=False,
     )
     crashed._project_fingerprint = crashed._compute_project_fingerprint("Build a blog")
-    crashed.executor.execute_typed("task_list", {"action": "add", "text": "Add a slug to posts"})
+    crashed.executor.execute_typed("task_list", {"action": "add", "text": "Add slugs in slug.py and urls.py"})
     written = crashed.executor.execute_typed(
         "write_file", {"path": "slug.py", "content": "def slugify(title):\n    return title.lower()\n"})
     assert "error" not in written.payload, written.payload
     crashed._save_checkpoint_for_turn(1, [{"role": "user", "content": "Build a blog"}], "Build a blog")
 
     resumed = _resume_without_llm(simple_model, tmp_path, monkeypatch)
-    result = resumed.executor.execute_typed("task_list", {
-        "action": "done", "id": 1,
-        "evidence": [{"id": 1, "path": "slug.py", "quote": "return title.lower()"}],
-    }).payload
+    assert resumed.executor.task_snapshot()[0]["written"] == ["slug.py"]
+    resumed.executor.execute_typed("write_file", {"path": "urls.py", "content": "ROUTES = []\n"})
 
-    assert "error" not in result, result
-    assert resumed.executor.task_snapshot()[0]["done"] is True
-
-    # The record names the file's contents, not just its path.
-    (tmp_path / "slug.py").write_text("def slugify(title):\n    return title.upper()\n", encoding="utf-8")
-    resumed.executor.execute_typed("task_list", {"action": "add", "text": "Upper-case slugs"})
-    refused = resumed.executor.execute_typed("task_list", {
-        "action": "done", "id": 2,
-        "evidence": [{"id": 2, "path": "slug.py", "quote": "return title.upper()"}],
-    }).payload
-    assert "no successful write matches" in refused["error"]
+    assert resumed.executor.task_snapshot()[0]["written"] == ["slug.py", "urls.py"]
+    resumed.executor.autoclose_verified_tasks()
+    assert resumed.executor.open_tasks(), "an edit never closes an item"
 
 
 def test_a_resumed_run_updates_its_history_entry(simple_model, tmp_path):
@@ -491,8 +482,9 @@ def test_a_resumed_run_updates_its_history_entry(simple_model, tmp_path):
             max_turns=max_turns, use_streaming=False, run_id="run-1",
         )
 
-    leg(_ScriptedClient([_tool_use("c1")]), 1).run("Build a blog")  # stops at the turn cap
-    leg(_ScriptedClient([_tool_use("c2", "write_file", path="notes.txt", content="x")]), 2).resume("Build a blog")
+    spend = [_tool_use(f"c{n}") for n in range(_CALLS_PER_TURN - 1)]
+    leg(_ScriptedClient([_tool_use("c0"), *spend]), 1).run("Build a blog")  # stops at the call budget
+    leg(_ScriptedClient([_tool_use("w", "write_file", path="notes.txt", content="x"), *spend]), 2).resume("Build a blog")
     assert load_checkpoint(str(tmp_path)) is not None
     leg(_ScriptedClient([_end_turn()]), 3).resume("Build a blog")
 
@@ -808,7 +800,7 @@ def test_a_resume_after_packaging_says_the_dependencies_must_be_installed_again(
 
     system = _resume_recording_the_prompt(simple_model, tmp_path)
 
-    assert DEPENDENCIES_REMOVED_NOTE in system and "install_dependencies" in DEPENDENCIES_REMOVED_NOTE
+    assert DEPENDENCIES_REMOVED_NOTE in system and "run_command" in DEPENDENCIES_REMOVED_NOTE
     assert [r for r in caplog.records if "dependencies were removed" in r.getMessage()]
 
 

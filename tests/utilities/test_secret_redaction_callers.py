@@ -96,11 +96,14 @@ def test_sanitize_config_leaves_ordinary_values_and_the_input_alone():
     assert sanitize_config(config) is not config
 
 
-def test_the_agent_transform_endpoint_logs_its_config_redacted(caplog):
+def test_the_agent_transform_endpoint_logs_its_config_redacted(caplog, monkeypatch):
     # /transform-agent-model-json logged the raw config at DEBUG, OpenAI key included.
     from fastapi.testclient import TestClient
+    from besser.utilities.web_modeling_editor.backend import backend
     from besser.utilities.web_modeling_editor.backend.backend import app
 
+    # The lifespan's cleanup sweeps the machine's temp folder and the incident log's run records.
+    monkeypatch.setattr(backend, "cleanup_old_temp_files", lambda: None)
     caplog.set_level(logging.DEBUG)
     with TestClient(app, raise_server_exceptions=False) as client:
         client.post("/besser_api/transform-agent-model-json", json={

@@ -164,17 +164,21 @@ class TestDoneEventBlockerCount:
 
 
 class TestDoneEventVerification:
-    """The three lists are an additive, always-present field on the contract."""
+    """The four lists are an additive, always-present field on the contract."""
 
-    def test_default_is_three_empty_lists(self):
+    def test_default_is_four_empty_lists(self):
         ev = DoneEvent(downloadUrl="/d/abc", fileName="a.zip", isZip=True)
         assert ev.verification.verified == []
+        assert ev.verification.foundInCode == []
         assert ev.verification.notVerified == []
         assert ev.verification.shippedUnenforced == []
-        # All three counts always present, so a client never reads undefined.
+        # All counts always present, so a client never reads undefined.
         assert ev.verification.counts.model_dump() == {
-            "verified": 0, "notVerified": 0, "shippedUnenforced": 0,
+            "verified": 0, "foundInCode": 0, "notVerified": 0, "shippedUnenforced": 0, "failed": 0,
+            "advisory": 0,
         }
+        # The done event's additive fields default to "nothing to say".
+        assert (ev.notConfirmedCount, ev.unverified, ev.unverifiedReason) == (0, False, None)
 
     def test_frame_carries_the_lists_and_what_was_run(self):
         ev = DoneEvent(

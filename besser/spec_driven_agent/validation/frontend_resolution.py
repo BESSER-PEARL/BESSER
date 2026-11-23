@@ -19,8 +19,8 @@ package, a JSX file with no React in scope and no automatic runtime
 configured. Anything needing a bundler's resolution rules (aliases,
 conditional exports, monorepo links) is skipped rather than guessed.
 
-The same pass flags a dependency whose version is "latest", "*", "x" or
-empty: the install then depends on what npm publishes that day.
+The same pass reports dependencies whose version is "latest", "*", "x", empty
+or another dist-tag: the install then depends on what npm publishes that day.
 """
 
 from __future__ import annotations
@@ -244,18 +244,22 @@ def _declared_packages(manifest: dict) -> set[str]:
 
 # Specs that name no version range: npm installs whatever is newest at build
 # time. Peer ranges are left out; "*" is a normal peer range.
-_UNPINNED_VERSIONS = {"latest", "*", "x", ""}
+_UNPINNED_VERSIONS = {"*", ""}
+# "x" or a dist-tag ("latest", "next"): a bare name that is not a version ("v1.2.3").
+_DIST_TAG = re.compile(r"(?![vV]?\d)[A-Za-z][\w.-]*\Z")
+_LOCKFILES = ("package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml")
 
 
-def _unpinned_dependencies(manifest: dict) -> list[tuple[str, str, str]]:
+def _unpinned_dependencies(manifest: dict) -> list[tuple[str, str]]:
     found = []
     for key in ("dependencies", "devDependencies", "optionalDependencies"):
         block = manifest.get(key)
         if not isinstance(block, dict):
             continue
         for name, version in block.items():
-            if isinstance(version, str) and version.strip().lower() in _UNPINNED_VERSIONS:
-                found.append((key, name, version))
+            if isinstance(version, str) and (version.strip() in _UNPINNED_VERSIONS
+                                             or _DIST_TAG.match(version.strip())):
+                found.append((name, version))
     return found
 
 
@@ -350,8 +354,9 @@ def collect_frontend_resolution_issues(output_dir: str) -> list[str]:
     bundler can still satisfy (hoisting, a workspace link, an implicit peer),
     so it carries ``frontend dependency:``, which classifies as a warning:
     recorded, not driving the repair loop (an undeclared ``axios`` can still
-    leave the page blank). A dependency with no version range is a
-    ``frontend contract:`` blocker too.
+    leave the page blank). Dependencies with no version range are one
+    ``frontend dependency:`` warning per package.json: the build is not
+    reproducible, but it installs.
     """
     workspace = os.path.realpath(output_dir)
     issues: list[str] = []
@@ -372,13 +377,16 @@ def collect_frontend_resolution_issues(output_dir: str) -> list[str]:
         rel_project = os.path.relpath(project_dir, workspace).replace("\\", "/")
         prefix = "" if rel_project == "." else rel_project + "/"
 
-        for key, package, version in _unpinned_dependencies(manifest):
+        unpinned = _unpinned_dependencies(manifest)
+        if unpinned:
+            listed = ", ".join(f"'{package}' (\"{version}\")" for package, version in unpinned)
+            lockfile = next((name for name in _LOCKFILES if name in files), None)
+            pin = (f"Pin each to the version {prefix}{lockfile} records." if lockfile else
+                   "Pin each to a range of the version you build with.")
             issues.append(
-                f"frontend contract: {prefix}package.json {key} '{package}' is "
-                f"\"{version}\", which is not a version range. npm installs whatever "
-                f"major is newest at build time; with \"latest\" the vite 8 tree crashes "
-                f"npm 10.8's install (\"Cannot read properties of null (reading "
-                f"'edgesOut')\"). Pin a concrete semver range such as \"^18.3.1\".")
+                f"frontend dependency: {prefix}package.json gives no version range for "
+                f"{listed}: every install takes whatever npm publishes that day, so the "
+                f"build is not reproducible. {pin}")
 
         missing_paths: list[tuple[str, str]] = []
         missing_packages: dict[str, str] = {}

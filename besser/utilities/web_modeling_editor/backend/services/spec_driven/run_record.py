@@ -12,12 +12,15 @@ public model label only.
 
 from __future__ import annotations
 
+import contextvars
+import functools
 import logging
 import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from besser.spec_driven_agent.state import agent_trace
+from besser.spec_driven_agent.validation.issues import RUNTIME_NOT_CHECKABLE
 from besser.utilities.provenance import get_besser_version, get_build_sha
 
 # The two lines per run. A logger of its own: the backend installs no handler for
@@ -25,14 +28,48 @@ from besser.utilities.provenance import get_besser_version, get_build_sha
 run_log = logging.getLogger("besser.spec_driven.runs")
 
 
+# The run whose worker thread is logging; None outside a run.
+_current_run_id: contextvars.ContextVar[str | None] = contextvars.ContextVar("besser_run_id", default=None)
+
+
+def with_run_id(run_id: str, func):
+    """``func``, made to log as part of run ``run_id`` on whatever thread calls it."""
+    @functools.wraps(func)
+    def call(*args, **kwargs):
+        token = _current_run_id.set(run_id)
+        try:
+            return func(*args, **kwargs)
+        finally:
+            _current_run_id.reset(token)
+    return call
+
+
+def _stamp_run_id(record: logging.LogRecord) -> bool:
+    run_id = _current_run_id.get()
+    record.run_prefix = f"run_id={run_id} " if run_id else ""
+    return True
+
+
 def enable_run_log() -> None:
-    """Write the run log to stderr, in the server's line format. Called at backend startup."""
+    """Write the run log to stderr, in the server's line format. Called at backend startup.
+
+    The package's warnings, which otherwise reach stderr bare through
+    ``logging.lastResort``, get a handler too, and name the run they belong to.
+    """
     if not any(getattr(handler, "is_run_log", False) for handler in run_log.handlers):
         handler = logging.StreamHandler()
         handler.setFormatter(logging.Formatter("%(levelname)s:     %(message)s"))
         handler.is_run_log = True
         run_log.addHandler(handler)
     run_log.setLevel(logging.INFO)
+    package_log = logging.getLogger("besser")
+    if not any(getattr(handler, "is_run_id_log", False) for handler in package_log.handlers):
+        handler = logging.StreamHandler()
+        handler.setLevel(logging.WARNING)
+        handler.addFilter(_stamp_run_id)
+        handler.setFormatter(logging.Formatter("%(levelname)s:     %(run_prefix)s%(message)s"))
+        handler.is_run_id_log = True
+        package_log.addHandler(handler)
 
 # ``mode_reason`` values.
 FRESH = "fresh project"
@@ -45,9 +82,10 @@ RESUMED = "resumed"
 FINISHED, TIME_LIMIT, COST_LIMIT, TURN_LIMIT = "finished", "time limit", "cost limit", "turn limit"
 PROVIDER_ERROR, INTERNAL_ERROR, CANCELLED = "provider error", "internal error", "cancelled"
 STUCK, HANDED_OFF = "repeated edits did not land", "handed off to validation"
+OUTPUT_LIMIT = "output limit"
 _STOP_REASONS = {"max_turns": TURN_LIMIT, "api_error": PROVIDER_ERROR, "cancelled": CANCELLED,
                  "cost_cap": COST_LIMIT, "timeout": TIME_LIMIT, "stuck_edit_loop": STUCK,
-                 "validation_required": HANDED_OFF}
+                 "validation_required": HANDED_OFF, "output_limit": OUTPUT_LIMIT}
 
 # ``stop_message``: the run card's sentence for each way a run ends, without its variable parts.
 _STOP_MESSAGES = {
@@ -59,9 +97,51 @@ _STOP_MESSAGES = {
     CANCELLED: "The run was cancelled before it finished.",
     STUCK: "The customization loop stopped because repeated edits to the same file were not landing.",
     HANDED_OFF: "The customization loop handed off to validation before finishing every requested change.",
+    OUTPUT_LIMIT: ("The model's replies were cut off at its output limit too often, so the customization "
+                   "loop stopped before finishing every requested change."),
 }
 _UNRESOLVED = ("The app was generated, but unresolved implementation or verification issues remain; "
                "it is not verified complete.")
+# A class of checks that left no evidence at all (``LLMOrchestrator.verification_gaps``),
+# as a clause of the ``stop_message``; the reason is one of the gaps' fixed phrases.
+_GAP_CLAUSES = {
+    "requirements": "it was not checked against your request ({})",
+    "runtime": "it was never started, so nothing shows it runs ({})",
+    "records": "no record could be created through its API, so nothing shows it saves data ({})",
+    "build": "its frontend was never built or type-checked ({})",
+    "checks": "its checks could not be read ({})",
+}
+
+
+# The outcomes of a run that finished without being cut short, other than ``completed``: the run
+# store's status and the telemetry outcome carry them as they are.
+FINISHED_UNCLEAN = ("completed_with_blockers", "completed_unverified")
+
+
+def as_gap(gap) -> tuple[str, str, bool]:
+    """``(class, reason, configured_off)`` of a gap given with or without its third member."""
+    kind, reason, *rest = gap
+    return str(kind), str(reason), bool(rest and rest[0])
+
+
+def run_gaps(gaps) -> list[tuple[str, str, bool]]:
+    """The gaps of this run: not the classes the server has switched off."""
+    return [gap for gap in map(as_gap, gaps or ()) if not gap[2]]
+
+
+def not_checkable(gaps) -> bool:
+    """Whether the run built a server no check can start (``RUNTIME_NOT_CHECKABLE``)."""
+    return any(kind == "runtime" and reason == RUNTIME_NOT_CHECKABLE for kind, reason, _ in map(as_gap, gaps or ()))
+
+
+def not_verified_message(gaps, *, updated: bool = False) -> Optional[str]:
+    """The sentence of a run whose classes of checks in ``gaps`` left no evidence, or None.
+    A class the server has switched off is no event of the run and is not in it. ``updated``:
+    a modify run, which updated an app rather than generating one."""
+    clauses = [_GAP_CLAUSES.get(kind, "{}").format(reason) for kind, reason, _ in run_gaps(gaps)]
+    return (f"The app was {'updated' if updated else 'generated'}, but {'; and '.join(clauses)}."
+            if clauses else None)
+
 
 # ``warnings``: a warning the user was shown, by how its fixed text starts. A
 # warning not listed here is left out: its text may quote an error.
@@ -120,6 +200,10 @@ class RunFacts:
     stop_message: Optional[str] = None
     outcome: Optional[str] = None
     blocker_count: int = 0
+    #: Findings that are not confirmed (a check that reached no conclusion); never blockers.
+    not_confirmed: int = 0
+    #: ``(class, reason, configured_off)`` of each class of checks that left no evidence at all.
+    not_verified: list = field(default_factory=list)
     estimated_cost_usd: float = 0.0
     archive_written: bool = False
     #: Lines of the delivered files per author, from the Agent Trace record; None without one.
@@ -141,7 +225,8 @@ class RunFacts:
         return {label: seconds[name] for name, label in _PHASES if name in seconds}
 
     def stop(self, *, stop_reason: str, cancelled: bool, cap_breach: bool, timed_out: bool,
-             incomplete: bool, blocker_count: int, cost: float) -> None:
+             incomplete: bool, blocker_count: int, cost: float, not_confirmed: int = 0,
+             gaps=()) -> None:
         """Record why a run that produced output ended, in the run card's fixed words."""
         if self.late_error:
             self.stopped_by = self.late_error
@@ -151,8 +236,15 @@ class RunFacts:
             self.stopped_by = TIME_LIMIT if timed_out else COST_LIMIT
         else:
             self.stopped_by = _STOP_REASONS.get(stop_reason, FINISHED)
-        self.stop_message = _STOP_MESSAGES.get(self.stopped_by) or (_UNRESOLVED if incomplete else None)
+        self.stop_message = (_STOP_MESSAGES.get(self.stopped_by) or (_UNRESOLVED if incomplete else None)
+                             or not_verified_message(gaps, updated=self.mode == "modify") or (
+            f"The app was {'updated' if self.mode == 'modify' else 'generated'}, but its runtime could not be "
+            f"checked: {RUNTIME_NOT_CHECKABLE}." if not_checkable(gaps) else None) or (
+            f"The app was generated; {not_confirmed} finding(s) could not be confirmed and are listed "
+            "for review." if not_confirmed else None))
         self.blocker_count = blocker_count
+        self.not_confirmed = not_confirmed
+        self.not_verified = [list(as_gap(gap)) for gap in gaps or ()]
         self.estimated_cost_usd = round(cost, 4)
         if self.stopped_by == CANCELLED:
             self.outcome = "cancelled"
@@ -161,7 +253,10 @@ class RunFacts:
         elif self.stopped_by in (PROVIDER_ERROR, INTERNAL_ERROR):
             self.outcome = "failed"
         else:
-            self.outcome = "completed_with_blockers" if incomplete or blocker_count else "completed"
+            self.outcome = ("completed_with_blockers" if incomplete or blocker_count
+                            # Work handed off unfinished is never plain "completed".
+                            else "completed_unverified" if run_gaps(gaps) or self.stopped_by == HANDED_OFF
+                            else "completed")
 
 
 def _files(tool_calls: list) -> tuple[int, int]:
@@ -226,7 +321,10 @@ def run_section(facts: RunFacts, orchestrator: Any, *, provider: str, models: li
             "files_written": written,
             "files_edited": edited,
             "blockers": facts.blocker_count,
+            "not_confirmed": facts.not_confirmed,
         },
+        "not_verified": [{"check": kind, "reason": reason, "configured_off": off}
+                         for kind, reason, off in facts.not_verified],
         "lines": facts.lines,
         "besser_version": get_besser_version(),
         "besser_build": get_build_sha(),
@@ -255,5 +353,8 @@ def end_line(run_id: str, facts: RunFacts, usage: Any = None) -> str:
     lines = " ".join(f"lines_{name}={(facts.lines or {}).get(name, '-')}" for name in _LINE_FIELDS)
     return (f"spec-driven run end run_id={run_id} outcome={facts.outcome or 'failed'} "
             f"duration_seconds={time.monotonic() - facts.started:.1f} blockers={facts.blocker_count} "
+            f"not_confirmed={facts.not_confirmed} "
+            f"not_verified={','.join(kind for kind, _, off in facts.not_verified if not off) or '-'} "
+            f"checks_off={','.join(kind for kind, _, off in facts.not_verified if off) or '-'} "
             f"estimated_cost_usd={facts.estimated_cost_usd:.4f} {tokens} {lines} "
             f"archive_written={str(facts.archive_written).lower()}")

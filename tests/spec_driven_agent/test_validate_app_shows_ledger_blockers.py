@@ -10,7 +10,10 @@ from besser.BUML.metamodel.structural import Class, DomainModel
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 from besser.spec_driven_agent.providers.llm_client import UsageTracker
 
-R2 = {"id": 2, "text": "Show the prices of the last 7 days", "kind": "action", "status": "unverified",
+R2 = {"id": 2, "text": "Show the prices of the last 7 days", "kind": "action", "status": "missing",
+      "evidence": "", "note": ""}
+# The judge said implemented; the citation was not located.
+R3 = {"id": 3, "text": "List the prices", "kind": "action", "status": "unverified",
       "evidence": [{"path": "backend/routers/analytics.py", "line": "@router.get('/prices/')"}], "note": ""}
 
 
@@ -26,7 +29,6 @@ def _orch(tmp_path, monkeypatch):
     orch = LLMOrchestrator(llm_client=_Client(), domain_model=DomainModel(name="M", types={Class(name="Company")}),
                            output_dir=str(tmp_path))
     monkeypatch.setattr(orch, "_collect_execution_issues", lambda: [])
-    monkeypatch.setattr(orch, "_static_frontend_issues", lambda: [])
     return orch
 
 
@@ -39,6 +41,16 @@ def test_a_held_requirement_blocker_is_reported(tmp_path, monkeypatch):
     result = orch._validate_app()
     assert result["verified"] is False and result["blocker_count"] == 1
     assert any("R2" in issue for issue in result["issues"])
+
+
+def test_a_requirement_not_confirmed_is_listed_without_a_blocker(tmp_path, monkeypatch):
+    orch = _orch(tmp_path, monkeypatch)
+    orch._requirement_verdicts = [R3]
+    orch._requirement_verdicts_key = orch._requirement_cache_key(orch._requirements_to_judge())
+    result = orch._validate_app()
+    assert result["verified"] is False and result["blocker_count"] == 0
+    assert any("R3" in issue for issue in result["issues"])
+    assert "not confirmed" in result["next_step"]
 
 
 def test_an_implemented_requirement_adds_nothing(tmp_path, monkeypatch):

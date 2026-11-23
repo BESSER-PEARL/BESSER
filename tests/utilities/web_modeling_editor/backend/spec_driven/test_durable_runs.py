@@ -10,6 +10,8 @@ import sqlite3
 import threading
 import time
 
+import pytest
+
 from besser.utilities.web_modeling_editor.backend.routers import (
     spec_driven_router as router_module,
 )
@@ -61,7 +63,7 @@ def _start(run_id: str) -> bytes:
     )
 
 
-def _done(run_id: str, *, incomplete: bool = False, blocker_count: int = 0) -> bytes:
+def _done(run_id: str, *, incomplete: bool = False, blocker_count: int = 0, cancelled: bool = False) -> bytes:
     return format_sse(
         DoneEvent(
             runId=run_id,
@@ -70,6 +72,7 @@ def _done(run_id: str, *, incomplete: bool = False, blocker_count: int = 0) -> b
             isZip=True,
             incomplete=incomplete,
             blockerCount=blocker_count,
+            cancelled=cancelled,
         )
     )
 
@@ -205,6 +208,32 @@ def test_incomplete_done_maps_to_partial_status():
         await manager.start(run_id, source())
         await manager.wait(run_id)
         assert manager.get_run(run_id).status == "partial"
+        store.close()
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("abandoned, status", [(False, "cancelled"), (True, "abandoned")])
+def test_a_cancel_that_ends_in_done_is_stored_as_cancelled_not_succeeded(abandoned, status):
+    """A run cancelled after writing files ends in ``done``; the store must not call it succeeded."""
+
+    async def exercise() -> None:
+        store = SqliteRunEventStore(":memory:")
+        manager = DurableRunManager(store)
+        run_id = ("8" if abandoned else "9") * 32
+        cancel_signal = asyncio.Event()
+
+        async def source():
+            yield _start(run_id)
+            if abandoned:
+                await cancel_signal.wait()
+            yield _done(run_id, incomplete=False, blocker_count=3, cancelled=True)
+
+        await manager.start(run_id, source(), on_abandoned=cancel_signal.set, resume_available=lambda: False,
+                            disconnect_grace_seconds=0.01 if abandoned else 60)
+        await manager.wait(run_id)
+        record = manager.get_run(run_id)
+        assert (record.status, record.terminal_event) == (status, "done")
         store.close()
 
     asyncio.run(exercise())

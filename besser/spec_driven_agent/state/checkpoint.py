@@ -86,8 +86,10 @@ class Checkpoint:
     api_scenarios: list[dict] = field(default_factory=list)
     phase: str = "phase2"
     source_revision: str = ""
-    phase2_stop_reason: str = "max_turns"
+    phase2_stop_reason: str = ""
     phase2_exited_cleanly: bool = False
+    # Phase 2 was cut at its share of a budget (``_hand_off_phase2_share``).
+    phase2_cut_at_share: bool = False
     # Scheduling/progress only, never cached validation or API success.
     repair_progress: dict = field(default_factory=dict)
     # Whole-application generators the run refuses (#666); a resume keeps them.
@@ -103,7 +105,7 @@ class Checkpoint:
     # What the workspace held when the run started (``None``: an older
     # checkpoint). The run never deletes these as files the app wrote.
     files_at_start: list[str] | None = None
-    # What ``task_list`` evidence is checked against (``ToolExecutor.evidence_snapshot``).
+    # The paths the model has seen (``ToolExecutor.evidence_snapshot``).
     write_evidence: dict = field(default_factory=dict)
     # The requirements ledger (``None``: not extracted). Phase 2 and Phase 3
     # hold the run to one list; a resume must not extract a second one.
@@ -138,6 +140,7 @@ class Checkpoint:
             "source_revision": self.source_revision,
             "phase2_stop_reason": self.phase2_stop_reason,
             "phase2_exited_cleanly": self.phase2_exited_cleanly,
+            "phase2_cut_at_share": self.phase2_cut_at_share,
             "repair_progress": self.repair_progress,
             "locked_generators": self.locked_generators,
             "target": self.target,
@@ -347,6 +350,15 @@ def save_checkpoint(
         return None
 
 
+def _phase2_stop_reason(data: dict, phase: str) -> str:
+    """The saved Phase 2 stop reason. A Phase 3 checkpoint with a clean Phase 2 exit and "max_turns"
+    loads as "completed": older runs whose Phase 2 was skipped saved that then-default."""
+    reason = str(data.get("phase2_stop_reason", ""))
+    if phase == "phase3" and data.get("phase2_exited_cleanly") is True and reason == "max_turns":
+        return "completed"
+    return reason
+
+
 def load_checkpoint(output_dir: str) -> Checkpoint | None:
     """Read and parse a checkpoint file. Returns ``None`` if missing
     or unreadable or from an incompatible schema version.
@@ -416,8 +428,9 @@ def load_checkpoint(output_dir: str) -> Checkpoint | None:
             api_scenarios=data.get("api_scenarios", []),
             phase=phase,
             source_revision=revision,
-            phase2_stop_reason=str(data.get("phase2_stop_reason", "max_turns")),
+            phase2_stop_reason=_phase2_stop_reason(data, phase),
             phase2_exited_cleanly=data.get("phase2_exited_cleanly") is True,
+            phase2_cut_at_share=data.get("phase2_cut_at_share") is True,
             repair_progress=progress,
             locked_generators=[t for t in data.get("locked_generators") or [] if isinstance(t, str)],
             target=data.get("target"),

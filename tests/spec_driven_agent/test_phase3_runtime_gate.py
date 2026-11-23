@@ -24,12 +24,10 @@ import pytest
 
 from besser.spec_driven_agent.providers.llm_client import UsageTracker
 from besser.spec_driven_agent.pipeline.orchestrator import (
-    _PHASE3_NO_PROGRESS_ROUNDS,
-    _PHASE3_PLATEAU_ROUNDS,
     LLMOrchestrator,
     ValidationIssue,
 )
-from besser.spec_driven_agent.validation.issues import _classify_issue
+from besser.spec_driven_agent.validation.issues import _classify_issue, is_not_confirmed
 
 
 class _Client:
@@ -119,50 +117,36 @@ def test_a_writing_attempt_still_gets_a_second_round(orch):
     assert attempts == 3
 
 
-def test_edits_without_a_tree_change_are_not_treated_as_nothing(orch):
+def test_edits_that_leave_the_tree_unchanged_are_treated_as_nothing(orch):
     """``edits > 0`` with an unchanged revision (the model rewrote identical
-    bytes) is not the replay case: the softer no-progress streak owns it, and
-    that streak is two rounds long."""
+    bytes) moved nothing: a re-check would read the same tree."""
     attempts, _snap, _restore = _drive(orch, [(2, False, _blockers(6))] * 5)
 
-    assert attempts == _PHASE3_NO_PROGRESS_ROUNDS == 2
+    assert attempts == 1
 
 
 # ---------------------------------------------------------------------------
-# 2. A plateau ends the loop; the unchanged-state guard cannot see one
+# 2. An attempt that edits without retiring a blocker is rolled back
 # ---------------------------------------------------------------------------
 
 def test_rounds_that_edit_without_improving_end_the_loop(orch):
     """Run mbzbzhq9: six attempts, each ending at exactly 13 blockers, the
-    120-turn cap, and a dead app.
+    120-turn cap, and a dead app. The first such attempt is rolled back now."""
+    attempts, _snap, restore = _drive(orch, [(1, True, _blockers(6))] * 8)
 
-    ``seen_states`` cannot catch this - its key includes a content hash of
-    every source file, so a different useless edit each round always reads as
-    a brand new state and the guard never fires.
-    """
-    attempts, _snap, _restore = _drive(orch, [(1, True, _blockers(6))] * 8)
-
-    assert attempts == _PHASE3_PLATEAU_ROUNDS, (
-        "a tree that keeps changing without improving must not run to the cap"
-    )
+    assert attempts == 1
+    restore.assert_called_once()
 
 
-def test_a_repair_that_exposes_the_errors_behind_an_import_keeps_going(orch):
-    """11 -> 45 -> 40 -> 35 is a repair converging, not a stall.
-
-    The plateau guard measures against the PREVIOUS round for exactly this:
-    fixing one import legitimately exposes the CRUD errors it was hiding, and
-    scoring against the best-ever tree would end the run on the exposure.
-    """
-    attempts, _snap, _restore = _drive(orch, [
+def test_a_repair_that_only_adds_blockers_is_rolled_back(orch):
+    """6 -> 45 retires none of the six it faced."""
+    attempts, _snap, restore = _drive(orch, [
         (1, True, _blockers(45)),
-        (1, True, _blockers(40)),
-        (1, True, _blockers(35)),
-        (1, True, _blockers(30)),
         (1, True, []),
     ])
 
-    assert attempts == 5
+    assert attempts == 1
+    restore.assert_called_once()
 
 
 def test_a_run_that_keeps_improving_is_not_cut_short(orch):
@@ -186,7 +170,8 @@ def test_the_best_tree_is_re_snapshotted_and_restored(orch):
 
     The old code snapshotted once, before Phase 3, and compared only the final
     state against that entry state: 6 -> 2 -> 6 ended "no worse than we began",
-    so the 2-blocker tree was thrown away silently.
+    so the 2-blocker tree was thrown away silently. The kept tree is
+    snapshotted, and the attempt that went back to 6 is rolled back to it.
     """
     attempts, snap, restore = _drive(orch, [
         (1, True, _blockers(2)),   # best
@@ -313,19 +298,17 @@ _UNSETTLED_CANCEL = (
 
 
 def test_an_unreachable_action_state_is_promoted_like_an_unverified_create(orch, monkeypatch):
-    """``action unverified:`` had no promotion at all, so it stayed a warning.
-
-    It gets the create side's scenario-rescued treatment rather than an
-    unconditional blocker: the probe legitimately cannot construct every
-    state, so a passing ``test_api`` workflow must be able to retire it.
+    """``action unverified:`` gets the create side's scenario-rescued treatment:
+    the probe legitimately cannot construct every state, so a passing ``test_api``
+    workflow must be able to retire it. Unsettled, it is not confirmed, not a blocker.
     """
     _probe_recorder(monkeypatch, orch, findings=[_UNSETTLED_CANCEL])
 
     issues = orch._collect_execution_issues()
     promoted = [i for i in issues if i.startswith("runtime unverified: action unverified:")]
 
-    assert promoted, "an unsettled action must reach the blocker-only fix loop"
-    assert _classify_issue(promoted[0]).severity == "blocker"
+    assert promoted, "an unsettled action must stay listed"
+    assert _classify_issue(promoted[0]).severity == "warning" and is_not_confirmed(promoted[0])
 
 
 def _cancel_scenario(orch, monkeypatch, response):
@@ -498,9 +481,11 @@ def test_no_runtime_evidence_at_all_is_not_a_pass(orch, monkeypatch):
 
     orch._apply_runtime_gate()
 
-    gate = [i for i in orch._validation_issues if i.message.startswith("runtime gate:")]
+    # Not a pass, and not a defect either: the run reports it as not verified.
+    gate = [i for i in orch._validation_issues if "no runtime evidence" in i.message]
     assert len(gate) == 1
-    assert "no runtime evidence" in gate[0].message
+    assert is_not_confirmed(gate[0])
+    assert orch.verification_gaps()[0][0] == "runtime"
 
 
 def test_a_business_rule_refusing_a_guessed_fixture_does_not_refuse_the_run(orch, monkeypatch):
@@ -515,6 +500,8 @@ def test_a_business_rule_refusing_a_guessed_fixture_does_not_refuse_the_run(orch
     """
     monkeypatch.setattr(orch, "_probeable_backends", lambda: ["web_app/backend"])
     orch._runtime_probe_verdict = 1  # _RUNTIME_UNVERIFIED
+    # The probe booted the app; only its guessed create was refused.
+    orch._runtime_probe_facts = (orch._workspace_revision(), [{"boot": "ok", "entities": {}}])
     unsettled = ValidationIssue(
         "blocker",
         "runtime unverified: create unverified: web_app/backend: POST /reservedroom/ - "
@@ -536,6 +523,7 @@ def test_a_failing_retained_scenario_does_not_refuse_the_run(orch, monkeypatch):
     """
     monkeypatch.setattr(orch, "_probeable_backends", lambda: ["web_app/backend"])
     orch._runtime_probe_verdict = 1  # api scenario: ranks as unsettled, not failed
+    orch._runtime_probe_facts = (orch._workspace_revision(), [{"boot": "ok", "entities": {}}])
     failing = ValidationIssue(
         "blocker", "api scenario: booking_overlap_violation failed: expected 200, got 400")
     orch._validation_issues = [failing]

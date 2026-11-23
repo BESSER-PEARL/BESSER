@@ -90,3 +90,103 @@ def test_a_distribution_named_exactly_after_a_shipped_module_still_excuses_it(tm
     _write(tmp_path, "worker/auth.py", "x = 1\n")
     _write(tmp_path, "backend/main.py", "from auth import x\n")
     assert _unresolvable_local_imports(str(tmp_path)) == []
+
+
+@pytest.mark.parametrize("handler", ["except Exception:\n        text = None\n", "except:\n        pass\n"])
+def test_a_broad_handler_around_an_import_inside_a_function_is_an_optional_import(tmp_path, handler):
+    """A deferred import under a catch-all is the app's optional fast path with a fallback after it:
+    it never runs at startup and the handler is the designed failure."""
+    _write(tmp_path, "requirements.txt", "fastapi\n")
+    _write(tmp_path, "backend/extract.py",
+           "def read(raw):\n    text = None\n    try:\n        import vendor_parser\n"
+           "        text = vendor_parser.parse(raw)\n    " + handler
+           + "    return text or raw.decode()\n")
+    assert _unresolvable_local_imports(str(tmp_path)) == []
+
+
+def test_an_unguarded_import_inside_a_function_is_still_reported(tmp_path):
+    _write(tmp_path, "requirements.txt", "fastapi\n")
+    _write(tmp_path, "backend/extract.py", "def read(raw):\n    import vendor_parser\n    return vendor_parser.parse(raw)\n")
+    problems = _unresolvable_local_imports(str(tmp_path))
+    assert len(problems) == 1 and problems[0].startswith("missing module:"), problems
+
+
+@pytest.mark.parametrize("handler", [
+    "except Exception as exc:\n        return JSONResponse({'detail': str(exc)}, status_code=500)\n",
+    "except Exception:\n        logger.exception('export failed')\n        raise\n",
+])
+def test_a_handler_that_returns_or_raises_does_not_excuse_a_forgotten_module(tmp_path, handler):
+    """Review of d5b411a20: an endpoint that answers 500 from its catch-all has no fallback,
+    so a module that was never written fails every call and must still be reported."""
+    _write(tmp_path, "backend/requirements.txt", "fastapi\n")
+    _write(tmp_path, "backend/main.py", "from fastapi import FastAPI\napp = FastAPI()\n")
+    _write(tmp_path, "backend/routers/reports.py",
+           "def export_report(report_id: int):\n    try:\n        from report_builder import build_pdf\n"
+           "        return build_pdf(report_id)\n    " + handler)
+    problems = _unresolvable_local_imports(str(tmp_path))
+    assert len(problems) == 1 and "report_builder" in problems[0], problems
+
+
+@pytest.mark.parametrize("body", [
+    "    try:\n        import vendor_parser\n    except Exception:\n        print('parser unavailable')\n"
+    "    return vendor_parser.parse(raw)\n",
+    "    try:\n        import vendor_parser\n    except Exception:\n        return vendor_parser.fallback(raw)\n",
+    "    with suppress(Exception):\n        from vendor_parser import parse\n    return parse(raw)\n",
+], ids=["after-try", "in-handler", "after-suppress"])
+def test_a_broad_guarded_import_used_outside_its_guard_is_still_reported(tmp_path, body):
+    """Used where the import may have failed, the name raises NameError on every call: not optional."""
+    _write(tmp_path, "requirements.txt", "fastapi\n")
+    _write(tmp_path, "backend/extract.py", "from contextlib import suppress\n\n\ndef read(raw):\n" + body)
+    problems = _unresolvable_local_imports(str(tmp_path))
+    assert len(problems) == 1 and problems[0].startswith("possibly missing module:"), problems
+
+
+@pytest.mark.parametrize("body", [
+    "    with suppress(Exception):\n        from vendor_parser import parse\n        return parse(raw)\n"
+    "    return raw.decode()\n",
+    "    try:\n        import vendor_parser as vp\n    except Exception:\n        pass\n"
+    "    else:\n        return vp.parse(raw)\n    return raw.decode()\n",
+], ids=["in-suppress", "in-else"])
+def test_a_broad_guarded_import_used_only_under_its_guard_is_optional(tmp_path, body):
+    _write(tmp_path, "requirements.txt", "fastapi\n")
+    _write(tmp_path, "backend/extract.py", "from contextlib import suppress\n\n\ndef read(raw):\n" + body)
+    assert _unresolvable_local_imports(str(tmp_path)) == []
+
+
+@pytest.mark.parametrize("body", [
+    "    try:\n        import vendor_json as json\n    except Exception:\n        import json\n    return json.dumps(raw)\n",
+    "    try:\n        import vendor_parser\n    except Exception:\n        vendor_parser = None\n"
+    "    if vendor_parser:\n        return vendor_parser.parse(raw)\n    return raw\n",
+    "    vp = None\n    with suppress(Exception):\n        import vendor_parser as vp\n    return vp.parse(raw) if vp else raw\n",
+    "    parse = str\n    raw = parse(raw)\n    try:\n        from vendor_parser import parse\n        raw = parse(raw)\n"
+    "    except Exception:\n        pass\n    return parse(raw)\n",
+    "    try:\n        import vendor_parser\n        raw = vendor_parser.parse(raw)\n    except Exception:\n        pass\n"
+    "    def show(vendor_parser):\n        return vendor_parser\n    return show(raw)\n",
+    "    try:\n        import vendor_parser\n        raw = vendor_parser.parse(raw)\n    except Exception:\n        pass\n"
+    "    vendor_parser = object()\n    return vendor_parser\n",
+], ids=["handler-imports-a-fallback", "handler-assigns-none", "bound-before-the-guard",
+        "local-bound-before-the-guard", "nested-function-parameter", "rebound-after-the-guard"])
+def test_a_broad_guarded_import_with_a_fallback_binding_is_optional(tmp_path, body):
+    _write(tmp_path, "requirements.txt", "fastapi\n")
+    _write(tmp_path, "backend/extract.py", "from contextlib import suppress\n\n\ndef read(raw):\n" + body)
+    assert _unresolvable_local_imports(str(tmp_path)) == []
+
+
+@pytest.mark.parametrize("body", [
+    "    try:\n        import vendor_parser\n        raw = vendor_parser.parse(raw)\n    except Exception:\n        pass\n"
+    "    finally:\n        print(vendor_parser)\n    return raw\n",
+    "    try:\n        import vendor_parser\n    except Exception:\n        pass\n    later = lambda: vendor_parser.parse(raw)\n"
+    "    return later()\n",
+    "    try:\n        import vendor_pkg.sub\n    except Exception:\n        pass\n    return vendor_pkg.sub.go(raw)\n",
+    "    try:\n        from vendor_parser import first, second\n        raw = first(raw)\n    except Exception:\n        pass\n"
+    "    return second(raw)\n",
+    # A flag set in the handler is not followed: the read is reported (a warning).
+    "    try:\n        import vendor_parser\n        found = True\n    except Exception:\n        found = False\n"
+    "    if found:\n        return vendor_parser.parse(raw)\n    return raw\n",
+], ids=["read-in-finally", "read-in-a-closure", "dotted-import-read-as-its-root", "second-name-read-after",
+        "flag-pattern"])
+def test_a_broad_guarded_import_read_where_it_may_have_failed_is_reported(tmp_path, body):
+    _write(tmp_path, "requirements.txt", "fastapi\n")
+    _write(tmp_path, "backend/extract.py", "from contextlib import suppress\n\n\ndef read(raw):\n" + body)
+    problems = _unresolvable_local_imports(str(tmp_path))
+    assert len(problems) == 1 and problems[0].startswith("possibly missing module:"), problems

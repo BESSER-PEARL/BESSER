@@ -56,10 +56,17 @@ def test_the_app_has_a_readme_that_tells_how_to_run_it(tmp_path):
     assert "agents/" not in readme
 
 
+def test_the_api_is_titled_after_the_app(tmp_path):
+    out = _generate(tmp_path, app_name="Book_Catalogue")
+
+    assert "title='Book Catalogue API'," in _read(out, "backend", "main_api.py")
+
+
 def test_without_an_app_name_the_readme_is_titled_after_the_model(tmp_path):
     out = _generate(tmp_path)
 
     assert _read(out, "README.md").startswith("# Catalogue\n")
+    assert "title='Catalogue API'," in _read(out, "backend", "main_api.py")
     assert "<title>BESSER App</title>" in _read(out, "frontend", "index.html")
 
 
@@ -133,3 +140,4 @@ def test_the_editor_passes_the_project_name(_isolate_cwd):
     with zipfile.ZipFile(io.BytesIO(generation.output.content.getvalue())) as archive:
         assert "<title>Reading List</title>" in archive.read("frontend/index.html").decode("utf-8")
         assert archive.read("README.md").decode("utf-8").startswith("# Reading List\n")
+        assert "title='Reading List API'," in archive.read("backend/main_api.py").decode("utf-8")

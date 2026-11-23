@@ -16,9 +16,10 @@ never shows up only there.
 
 ``json_container_faults`` parses the ``attr={{...}}`` containers that are
 written as strict JSON - the generated table config, where such breaks
-typically land. A container using JS object syntax (bare identifier keys,
-shorthand properties) never was JSON and is skipped; a trailing comma is legal
-TS and is not a defect.
+typically land. Parts holding anything but JSON tokens (identifier keys or
+values, template literals, operators, comments) are JavaScript, not JSON, and
+are not judged; the object and array literals nested in them still are. A
+trailing comma is legal TS and is not a defect.
 
 Calibrated to zero findings on thousands of generated and real-world files
 that esbuild parses, and a finding on every known broken one. Both callers
@@ -52,8 +53,11 @@ def supports(rel_path: str) -> bool:
     return os.path.splitext(rel_path.lower())[1] in SUPPORTED_EXTENSIONS
 
 
-def structure_error(source: str) -> tuple[str, int] | None:
-    """``(message, line)`` for the first outright delimiter fault, else ``None``."""
+def structure_error(source: str, comments: list[tuple[int, int]] | None = None) -> tuple[str, int] | None:
+    """``(message, line)`` for the first outright delimiter fault, else ``None``.
+
+    ``comments``, when given, receives the ``(start, stop)`` of every comment scanned.
+    """
     stack: list[tuple[str, int]] = []
     index, size, line = 0, len(source), 1
     last = -1  # index of the last code character, comments and whitespace skipped
@@ -69,12 +73,17 @@ def structure_error(source: str) -> tuple[str, int] | None:
         if char == "/" and index + 1 < size:
             if source[index + 1] == "/":
                 stop = source.find("\n", index)
-                index = size if stop < 0 else stop
+                stop = size if stop < 0 else stop
+                if comments is not None:
+                    comments.append((index, stop))
+                index = stop
                 continue
             if source[index + 1] == "*":
                 stop = source.find("*/", index + 2)
                 if stop < 0:
                     return ("unterminated block comment", line)
+                if comments is not None:
+                    comments.append((index, stop + 2))
                 line += source.count("\n", index, stop)
                 index = stop + 2
                 continue
@@ -116,15 +125,22 @@ def structure_error(source: str) -> tuple[str, int] | None:
 
 
 _ATTRIBUTE_OBJECT = re.compile(r"(\w+)=\{\{")
-_IDENTIFIER_KEY = re.compile(r"(?:^|[\{\[,])\s*[A-Za-z_$][\w$]*\s*:")
 _QUOTED_FIRST_KEY = re.compile(r"^\{\s*(?:\"|\})")
 _TRAILING_COMMA = re.compile(r",(\s*[\]\}])")
+# Whitespace, punctuation, a string with JSON escapes, a JSON number or literal.
+_JSON_TOKEN = re.compile(
+    r'[ \t\r\n]+|[{}\[\]:,]|"(?:[^"\\\n]|\\["\\/bfnrt]|\\u[0-9a-fA-F]{4})*"'
+    r"|-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?(?![\w$.])|(?:true|false|null)(?![\w$])")
 
 
 def json_container_faults(source: str) -> list[tuple[int, str, str]]:
     """``(line, attribute, reason)`` for JSON-written ``attr={{...}}`` that no longer parses."""
     faults: list[tuple[int, str, str]] = []
+    comments: list[tuple[int, int]] = []
+    structure_error(source, comments)
     for match in _ATTRIBUTE_OBJECT.finditer(source):
+        if any(start <= match.start() < stop for start, stop in comments):
+            continue
         opened = match.end() - 2
         closed = match_bracket(source, opened)
         if closed is None:
@@ -132,19 +148,138 @@ def json_container_faults(source: str) -> list[tuple[int, str, str]]:
         inner = source[opened + 1:closed].strip()
         if not (inner.startswith("{") and inner.endswith("}")):
             continue
-        if not _QUOTED_FIRST_KEY.match(inner) or _IDENTIFIER_KEY.search(_blank_quoted(inner)):
-            continue
-        relaxed = inner
-        while True:
-            shortened = _TRAILING_COMMA.sub(r"\1", relaxed)
-            if shortened == relaxed:
-                break
-            relaxed = shortened
-        try:
-            json.loads(relaxed)
-        except ValueError as exc:
-            faults.append((source.count("\n", 0, match.start()) + 1, match.group(1), str(exc)[:90]))
+        if not _QUOTED_FIRST_KEY.match(inner) or match_bracket(inner, 0) != len(inner) - 1:
+            continue  # not JSON-written, or a comma expression ``{...}, {...}``
+        fault = _json_fault(inner)
+        if fault:
+            message, pos = fault
+            line = inner.count("\n", 0, pos) + 1
+            column = pos - inner.rfind("\n", 0, pos)
+            reason = f"{message}: line {line} column {column} (char {pos})"[:90]
+            faults.append((source.count("\n", 0, match.start()) + 1, match.group(1), reason))
     return faults
+
+
+def _json_fault(literal: str) -> tuple[str, int] | None:
+    """``(message, offset)`` where the JSON-written parts of an object or array literal fail.
+
+    A literal that also holds JavaScript is judged with each nested literal
+    standing in as one value, once the nested literals themselves are judged,
+    and its comments as whitespace.
+    """
+    reduced = literal
+    if not _written_as_json(literal):
+        for start, stop, nested in _nested_spans(literal):
+            if nested:
+                fault = _json_fault(literal[start:stop + 1])
+                if fault:
+                    return fault[0], start + fault[1]
+            # Same length and line breaks, so the reason's position still holds.
+            blank = re.sub(r"[^\n]", " ", literal[start + 1:stop + 1])
+            reduced = reduced[:start] + ("0" if nested else " ") + blank + reduced[stop + 1:]
+        if not _written_as_json(reduced):
+            return None
+    relaxed = reduced
+    while True:
+        shortened = _TRAILING_COMMA.sub(r"\1", relaxed)
+        if shortened == relaxed:
+            break
+        relaxed = shortened
+    try:
+        json.loads(relaxed, strict=False)
+    except json.JSONDecodeError as exc:
+        return exc.msg, exc.pos
+    return None
+
+
+def _nested_spans(literal: str) -> list[tuple[int, int, bool]]:
+    """``(start, stop, nested)`` of the comments and nested literals directly in ``literal``.
+
+    A nested object or array literal counts only as a value - after ``:`` in
+    an object (not a ``):`` return type), after ``[`` or ``,`` in an array (or
+    a ``{`` after a closer there), outside parentheses. A regex literal is
+    skipped; the scan stops at a ``<`` that may open JSX.
+    """
+    found: list[tuple[int, int, bool]] = []
+    parent = previous = before = literal[0]
+    depth, index, size, last = 0, 1, len(literal) - 1, 0
+    while index < size:
+        char = literal[index]
+        stop = index
+        if char in " \t\r\n":
+            index += 1
+            continue
+        if char == "/" and literal[index + 1] in "/*":
+            closer = "\n" if literal[index + 1] == "/" else "*/"
+            stop = literal.find(closer, index + 2)
+            if stop < 0:
+                break
+            found.append((index, stop - 1 if closer == "\n" else stop + 1, False))
+            index = stop + len(closer)
+            continue
+        if char in "</" and _regex_may_follow(literal, last):
+            stop = _regex_end(literal, index) if char == "/" else None
+            if stop is None:
+                break
+            stop -= 1
+        elif char in "'\"`":
+            if char == "`":
+                end, _, error = _template_end(literal, index)
+            else:
+                end, error = _string_end(literal, index, char), None
+            if end is None or error:
+                break
+            stop = end - 1
+        elif char in "{[":
+            stop = match_bracket(literal, index)
+            if stop is None:
+                break
+            # In an array a ``{`` after a closer is a value too: no JS reads ``} {``.
+            in_array = previous in "[," or (char == "{" and previous in "}]")
+            in_object = previous == ":" and before != ")"
+            if depth == 0 and (in_object if parent == "{" else in_array):
+                found.append((index, stop, True))
+        elif char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+        before, previous, last, index = previous, literal[stop], stop, stop + 1
+    return found
+
+
+def _written_as_json(inner: str) -> bool:
+    """``inner`` holds only JSON tokens, so a JSON parse failure is a JS one too.
+
+    Any other token is a JavaScript value this check cannot judge. JS also reads
+    some JSON-token runs that JSON rejects: ``[1][0]``, ``1 -2``, a numeric,
+    computed or ``true``/``false``/``null`` key and an array hole. So a dropped
+    comma that JS reads as indexing or subtraction (``[[1] [2]]``, ``[10 -2]``)
+    is valid and passes.
+    """
+    stack: list[str] = []
+    previous = ""
+    index = 0
+    while index < len(inner):
+        match = _JSON_TOKEN.match(inner, index)
+        if match is None:
+            # A string left open on its line is broken JS too; else a JS-only escape.
+            return inner[index] == '"' and _string_end(inner, index, '"') is None
+        token, index = match.group(), match.end()
+        if token.isspace():
+            continue
+        if previous not in ("", "{", "[", ":", ",") and token[0] in "[-":
+            return False  # ``[1][0]``, ``1 -2``
+        key_position = stack[-1:] == ["{"] and previous in ("{", ",")
+        if key_position and (token == "[" or token[0] in "-0123456789tfn"):
+            return False  # computed, numeric or keyword key
+        if stack[-1:] == ["["] and token == "," and previous in ("[", ","):
+            return False  # array hole
+        if token in ("{", "["):
+            stack.append(token)
+        elif token in ("}", "]") and stack:
+            stack.pop()
+        previous = token
+    return True
 
 
 def new_syntax_error(before: str, after: str) -> tuple[str, int] | None:
@@ -357,27 +492,3 @@ def match_bracket(source: str, index: int) -> int | None:
                 return index
         index += 1
     return None
-
-
-def _blank_quoted(text: str) -> str:
-    """``text`` with the contents of every quoted run replaced by spaces."""
-    out: list[str] = []
-    index, size = 0, len(text)
-    while index < size:
-        char = text[index]
-        if char in "'\"":
-            stop = _string_end(text, index, char)
-            if stop is not None:
-                out.append(" " * (stop - index))
-                index = stop
-                continue
-        if char == "`":
-            stop, _, error = _template_end(text, index)
-            if error:
-                stop = size
-            out.append(" " * (stop - index))
-            index = stop
-            continue
-        out.append(char)
-        index += 1
-    return "".join(out)

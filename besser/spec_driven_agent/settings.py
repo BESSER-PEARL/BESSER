@@ -147,9 +147,10 @@ class AgentSettings(LLMSettings):
     llm_max_compact_threshold: _IntOrEmpty = Field(
         200_000, validation_alias="BESSER_LLM_MAX_COMPACT_THRESHOLD",
         description="Ceiling of the adaptive compaction threshold; blank is 200000.")
-    llm_history_eviction: _ExactlyOne = Field(
+    llm_history_eviction: Annotated[bool, BeforeValidator(_not_off)] = Field(
         False, validation_alias="BESSER_LLM_HISTORY_EVICTION",
-        description="Stub stale file bodies at the compaction checkpoint; on only for exactly '1'.")
+        description="Stub stale file bodies in batches and at the compaction threshold. Off unless "
+                    "set; any value but 0, false or no turns it on.")
     llm_inline_scaffold: Annotated[bool, BeforeValidator(_one_or_true)] = Field(
         False, validation_alias="BESSER_LLM_INLINE_SCAFFOLD",
         description="Inline the Phase 1 scaffold into the Phase 2 prompt (1 or true). Read per run.")
@@ -171,6 +172,12 @@ class AgentSettings(LLMSettings):
         10, validation_alias="BESSER_LLM_SHELL_SESSION_MAX",
         description="Live shell sessions per process (unset: 10; 0: each command its own sandbox). "
                     "Read per call.")
+
+    # -- Validation -------------------------------------------------------------------
+    llm_screen_check: Annotated[bool, BeforeValidator(_not_off)] = Field(
+        True, validation_alias="BESSER_LLM_SCREEN_CHECK",
+        description="Phase 3 opens every screen of a built frontend in a headless browser; off for 0, "
+                    "false or no. Read per call.")
 
     @field_validator("llm_shell_session_idle_seconds", "llm_shell_session_max", mode="before")
     @classmethod

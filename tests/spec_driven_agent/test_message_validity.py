@@ -44,6 +44,7 @@ from besser.spec_driven_agent.providers.llm_client import (
     _with_message_cache,
 )
 from besser.spec_driven_agent.state.checkpoint import _to_wire
+from besser.spec_driven_agent.state.tracing import NullTraceWriter
 
 from tests.spec_driven_agent.message_validity import (
     ANTHROPIC_MAX_CACHE_BREAKPOINTS,
@@ -228,6 +229,7 @@ class _CompactionHost:
     """The orchestrator's own ``_maybe_compact`` and thinking strip, on a stub."""
 
     _maybe_compact = LLMOrchestrator._maybe_compact
+    _compaction_reserve = LLMOrchestrator._compaction_reserve
     _drop_stale_thinking = LLMOrchestrator._drop_stale_thinking
 
     def __init__(self, output_dir: str):
@@ -238,7 +240,9 @@ class _CompactionHost:
         self.state_machines = self.object_model = self.quantum_circuit = None
         self.bpmn_model = self.nn_model = self.primary_kind = None
         self._compaction_count = 0
-        self.executor = SimpleNamespace(forget_shown_results=lambda: None)
+        self.total_turns = 0
+        self._trace = NullTraceWriter()
+        self.executor = SimpleNamespace(forget_shown_results=lambda: None, forget_full_views=lambda paths: None)
 
     def _compaction_work_state(self) -> dict:
         return {"tasks": [{"id": 1, "text": "Add login"}]}

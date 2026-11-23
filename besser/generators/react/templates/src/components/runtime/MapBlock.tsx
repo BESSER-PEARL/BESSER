@@ -26,7 +26,7 @@
 import React, { useEffect, useRef } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import axios from "axios";
+import { apiRequest } from "../../api/generated/client";
 import { useDataVersion } from "./dataVersion";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -71,13 +71,9 @@ interface LayerHandle {
 }
 
 // ── Fetch helper (shared normaliser — matches TableBlock.tsx) ─────────────────
-const BACKEND = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
-
 /** Fetches rows from a REST endpoint and normalises the response to an array. */
 async function fetchRows(endpoint: string): Promise<Record<string, unknown>[]> {
-  const url = endpoint.startsWith("/") ? BACKEND + endpoint : endpoint;
-  const res = await axios.get<unknown>(url);
-  const data = res.data;
+  const data = await apiRequest<unknown>("GET", endpoint);
   if (Array.isArray(data)) return data as Record<string, unknown>[];
   if (data && typeof data === "object") {
     for (const key of ["data", "results", "items", "records", "list"]) {

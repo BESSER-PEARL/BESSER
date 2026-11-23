@@ -548,7 +548,9 @@ What is recorded, per tab session id and participant label:
 - ``prompt`` (from the modeling agent) -- the message text (at most 2000
   characters), what the assistant did with it, and the diagram type.
 - ``run_summary`` (recorded in-process by the Spec-Driven runner, never
-  accepted over HTTP) -- outcome, duration, turns, tokens, cost, model,
+  accepted over HTTP) -- outcome (``success`` for a completed run,
+  ``completed_with_blockers`` or ``completed_unverified`` for a finished run the
+  run record calls so, ``incomplete``, or ``failed:<code>``), duration, turns, tokens, cost, model,
   validation blockers, and how many output files the generator wrote versus
   the LLM. For these runs the run trace (which includes the first 500
   characters of the instructions) is also copied to
@@ -774,8 +776,8 @@ untouched file can differ from its blob), a changed file keeps its mode,
 links and submodules are never touched, and a repository path the run could
 not hold (build and dependency output, ``*.db``, BESSER's other ``.besser_*``
 records, a scrubbed secret ``.env``) is not taken as a deletion. The records a
-run carries (``.besser_recipe.json``, ``.besser_attribution.json`` and
-``.besser_generator_output.json``) are its own: a push from a run seeded from
+run carries (``.besser_recipe.json``, ``.besser_attribution.json``,
+``.besser_generator_output.json`` and ``.besser_api_workflows.json``) are its own: a push from a run seeded from
 the repository deletes them when the run no longer has them. The push marks
 them ``linguist-generated`` in ``.gitattributes``, keeping the repository's own
 lines (and a ``linguist-generated`` setting a line already gives one of them),

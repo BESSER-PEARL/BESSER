@@ -38,12 +38,15 @@ from besser.BUML.metamodel.structural import DomainModel
 from besser.utilities.provenance import get_besser_version
 # The canonical set, shared with get_tools_for() so the advertised list and the
 # dispatch gate can never disagree about which tools are shell tools.
+from besser.spec_driven_agent.agent.history_eviction import EVICTED_EDIT_BODY, REJECTED_DRAFT_PLACEHOLDER
+from besser.spec_driven_agent.agent.runbook import backend_files, files_the_app_wrote
 from besser.spec_driven_agent.agent.tools import _SHELL_TOOLS as _SHELL_TOOL_NAMES
 from besser.spec_driven_agent.agent.tools import dumps_for_model
 from besser.spec_driven_agent.agent.tools import (
     INVALID_ARGUMENTS_KEY,
     get_all_tools_including_generators,
 )
+from besser.spec_driven_agent.execution.deadline import OUT_OF_TIME
 from besser.spec_driven_agent.execution.process import (
     COMMAND_OUTPUT_DIR,
     _safe_subprocess_env,
@@ -61,6 +64,7 @@ from besser.utilities.workspace_fs import (
 from besser.spec_driven_agent.repair.dependency_pins import pin_requirements_file
 from besser.spec_driven_agent.agent.edit_apply import (
     AmbiguousEdit,
+    _OMISSION_PHRASES,
     _strip_line_numbers,
     describe_escape_mismatch,
     elided_lines,
@@ -74,10 +78,14 @@ from besser.spec_driven_agent.agent.edit_apply import (
     stray_gutter_line,
     strip_read_display,
 )
+from besser.spec_driven_agent.planning.agent_wiring import gui_uses_agent
+from besser.spec_driven_agent.planning.gap_analyzer import task_paths
+from besser.spec_driven_agent.providers.tool_input import coerce_to_schema
 from besser.spec_driven_agent.pipeline.constants import (
     _APPLICATION_OUTPUT_DIRS,
     REGENERABLE_GENERATORS,
     WORKSPACE_SKIP_DIRS,
+    is_regenerated,
 )
 from besser.spec_driven_agent.run_report import RECIPE_FILENAME
 from besser.spec_driven_agent.state.agent_trace import TRACE_DIRNAME, record_generated_files
@@ -85,6 +93,7 @@ from besser.spec_driven_agent.state.checkpoint import CHECKPOINT_FILENAME
 from besser.spec_driven_agent.state.generator_output import store_written_files
 from besser.spec_driven_agent.state.trace_model import generator_output_record
 from besser.spec_driven_agent.validation import frontend_source
+from besser.spec_driven_agent.validation.frontend_resolution import _strip_comments
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +104,8 @@ _INPUT_SCHEMAS = {
     tool["name"]: tool["input_schema"] for tool in get_all_tools_including_generators()
 }
 
-_REGENERABLE_OUTPUT_DIRS = frozenset(_APPLICATION_OUTPUT_DIRS[name] for name in REGENERABLE_GENERATORS)
+# The folder of each regenerable generator, to its generator.
+_REGENERABLE_OUTPUT_DIRS = {_APPLICATION_OUTPUT_DIRS[name]: name for name in REGENERABLE_GENERATORS}
 
 
 # OpenCode edit.ts serializes the complete read/validate/write transaction by
@@ -118,9 +128,6 @@ def _file_lock(path: str):
 ToolExecutionStatus = Literal["ok", "error", "skipped"]
 
 
-# A task whose verifier keeps refusing is retried at most this many times;
-# unbounded retries can livelock a run until the turn cap.
-_MAX_TASK_VERIFY_ATTEMPTS = 3
 # Characters of a task's text shown when a result only needs to name the item:
 # enough to recognise it; the full text is one task_list 'list' away.
 _TASK_LABEL_CHARS = 80
@@ -255,11 +262,16 @@ class ToolExecutionResult:
     def to_json(self) -> str:
         return dumps_for_model(self.payload)
 
+# The file tools' arguments that carry code or text to match.
+_EDIT_BODY_KEYS = ("content", "old_text", "new_text")
+# task_list's earlier shape, still accepted: action=list|done|add|drop|blocked|mixed.
+_TASK_LIST_ACTION_ARGUMENTS = frozenset({"action", "id", "ids", "reason", "text", "texts", "done_ids", "add_texts"})
+_TASK_LIST_ACTION_SCHEMA = {"properties": {key: {"type": "array"} for key in ("ids", "texts", "done_ids", "add_texts")}}
+
 # Default time a shell command can run (seconds); the model may ask for up to
-# MAX_COMMAND_TIMEOUT for a long build. install_dependencies gets INSTALL_TIMEOUT.
+# MAX_COMMAND_TIMEOUT for a long build or a first install.
 COMMAND_TIMEOUT = 120
 MAX_COMMAND_TIMEOUT = 600
-INSTALL_TIMEOUT = 300
 
 # What the model sees when run_command cannot be confined. The cause and the
 # operator override go to the server log only: named here, the model tried to
@@ -336,6 +348,8 @@ _SHOWN_READS_MAX = 128
 
 # Workspace-wide findings attached to one write, per check.
 _CROSS_FILE_FINDINGS_MAX = 10
+# Files a refusal outside a fix attempt's edit scope lists.
+_SCOPE_FILES_LISTED = 25
 # Workspace paths a cross-file finding names ("backend/routers/book.py line 3",
 # "src/App.tsx:12:", "(BookCreate in backend/pydantic_classes.py)").
 _NAMED_SOURCE_PATH_RE = re.compile(r"[\w./-]+\.(?:pyi?|[cm]?[jt]sx?)\b")
@@ -542,6 +556,143 @@ def _anchored_occurrences(content: str, old_text: str) -> list[int]:
     return out
 
 
+# A column-0 TS/JS declaration and its name (none for `export default class extends X`).
+_TOP_LEVEL_DECL_RE = re.compile(
+    r"^(?:export\s+)?(?:default\s+)?(?:declare\s+)?(?:abstract\s+)?(?:async\s+)?"
+    r"(?:function\*?|class|(?:const\s+)?enum|const|let|var|interface|type)\s+"
+    r"(?!(?:extends|implements)\b)([A-Za-z_$][\w$]*)",
+    re.MULTILINE,
+)
+_EXPORT_DEFAULT_RE = re.compile(r"^export\s+default\b", re.MULTILINE)
+_ROUTE_ELEMENT_RE = re.compile(r"<Route\b")
+# `export { A } from "./a"` / `export * from "./b"`: a barrel's re-exports.
+_REEXPORT_RE = re.compile(r"^export\s+(?:type\s+)?(?:\*|\{)[^;\n]*\bfrom\b", re.MULTILINE)
+# A rewrite of a large file shorter than this share of its non-blank lines has left code out.
+_MIN_REWRITE_SHARE = 0.6
+# A range edit over at least this share of a file's non-blank lines rewrites the file,
+# so one that writes new code there is held to the rewrite rule.
+_REWRITE_SPAN_SHARE = 0.9
+# Above these sizes a rewrite of a file this run did not create must keep its code.
+_GENERATED_REWRITE_LINES = 200
+_MODIFY_RUN_REWRITE_LINES = 15
+# A line that is only a comment (`// ...`, `/* ... */`, JSX `{/* ... */}`).
+_COMMENT_ONLY_LINE_RE = re.compile(r"^\s*\{?\s*(?:/\*.*\*/|//.*?)\s*\}?\s*$")
+# Fewer lost lines beside a new "remaining unchanged" comment is an edit, not left-out code.
+_PLACEHOLDER_MIN_REPLACED = 3
+
+
+def _placeholder_comments(source: str) -> set[str]:
+    """Comment-only lines that stand in for omitted code ("remaining rows unchanged")."""
+    return {line.strip() for line in source.splitlines()
+            if _COMMENT_ONLY_LINE_RE.match(line) and any(p in line.lower() for p in _OMISSION_PHRASES)}
+
+
+def _placeholder_standing_in(before: str, after: str) -> str | None:
+    """Why a new placeholder comment stands in for code: it takes the place of at least
+    ``_PLACEHOLDER_MIN_REPLACED`` lines the rewrite has fewer copies of, or it is added
+    while a block of that many such lines is deleted elsewhere; else None."""
+    new = _placeholder_comments(after) - _placeholder_comments(before)
+    if not new:
+        return None
+    old, cur = ([line.strip() for line in text.splitlines() if line.strip()] for text in (before, after))
+    missing = Counter(old) - Counter(cur)
+    replaced, inserted, deleted = None, None, 0
+    for tag, i1, i2, j1, j2 in SequenceMatcher(None, old, cur, autojunk=False).get_opcodes():
+        lost = sum((Counter(old[i1:i2]) & missing).values())
+        comment = next((line for line in cur[j1:j2] if line in new), None)
+        if tag == "replace" and comment and lost >= _PLACEHOLDER_MIN_REPLACED:
+            replaced = replaced or f"this rewrite replaces {lost} lines with a placeholder comment ({comment[:80]})"
+        elif tag == "insert" and comment:
+            inserted = inserted or comment
+        elif tag == "delete":
+            deleted = max(deleted, lost)
+    if replaced:
+        return replaced
+    if inserted and deleted >= _PLACEHOLDER_MIN_REPLACED:
+        return f"this rewrite removes {deleted} lines and adds a placeholder comment ({inserted[:80]})"
+    return None
+
+
+class _Outline(NamedTuple):
+    """What a rewrite must keep of a source file: its top-level names (and a Python
+    class's members), and counts of the registrations a name check misses
+    (decorators, routes, module-level calls)."""
+    names: set[str]
+    counts: dict[str, int]
+
+
+def _declared_names(body: list) -> set[str]:
+    """The functions, classes and assigned names a Python block defines."""
+    names = set()
+    for node in body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+        elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            names.update(target.id for target in targets if isinstance(target, ast.Name))
+    return names
+
+
+def _outline(rel_path: str, code: str) -> _Outline | None:
+    """The outline of Python or TS/JS source; None for other files and unparsable Python."""
+    if rel_path.lower().endswith(".py"):
+        try:
+            tree = ast.parse(code)
+        except (SyntaxError, ValueError):
+            return None
+        names, decorators, calls = _declared_names(tree.body), 0, 0
+        for node in tree.body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                decorators += len(node.decorator_list)
+            if isinstance(node, ast.ClassDef):
+                names.update(f"{node.name}.{member}" for member in _declared_names(node.body))
+            elif isinstance(node, ast.Expr) and isinstance(node.value, ast.Call):
+                calls += 1
+        return _Outline(names, {"decorators": decorators, "module-level calls": calls})
+    if frontend_source.supports(rel_path):
+        code = _strip_comments(code, rel_path)
+        return _Outline(set(_TOP_LEVEL_DECL_RE.findall(code)), {
+            "`export default` statements": len(_EXPORT_DEFAULT_RE.findall(code)),
+            "<Route> elements": len(_ROUTE_ELEMENT_RE.findall(code)),
+            "re-exports": len(_REEXPORT_RE.findall(code))})
+    return None
+
+
+def _non_blank_lines(text: str) -> int:
+    return sum(1 for line in text.splitlines() if line.strip())
+
+
+def _rewrites_whole_file(before: str, replaced: str, replacement: str, times: int = 1) -> bool:
+    """True when an edit writes new code over at least ``_REWRITE_SPAN_SHARE`` of the
+    file (``replaced`` counted ``times``); a pure removal (blank replacement) is a targeted edit."""
+    return bool(replacement.strip()) and (
+        times * _non_blank_lines(replaced) >= _REWRITE_SPAN_SHARE * _non_blank_lines(before))
+
+
+def _rewrite_loss(rel_path: str, before: str, after: str) -> str:
+    """Why a whole rewrite of an existing file loses its code; ``""`` when it keeps it."""
+    old_lines, new_lines = (_non_blank_lines(text) for text in (before, after))
+    if new_lines < _MIN_REWRITE_SHARE * old_lines:
+        return (f"this rewrite has {new_lines} non-blank lines, under {_MIN_REWRITE_SHARE:.0%} "
+                f"of the file's {old_lines}")
+    old, new = _outline(rel_path, before), _outline(rel_path, after)
+    if old and new:
+        dropped = sorted(old.names - new.names)
+        if dropped:
+            shown = ", ".join(dropped[:20]) + (f" and {len(dropped) - 20} more" if len(dropped) > 20 else "")
+            return f"this rewrite drops {len(dropped)} of its declarations: {shown}"
+        for what, count in old.counts.items():
+            if new.counts[what] < count:
+                return f"this rewrite has {new.counts[what]} {what} where the file has {count}"
+    elision = find_elision(after)
+    if elision and elision[1].strip() not in elided_lines(before):
+        return f"this rewrite abbreviates code at line {elision[0]} ({elision[1].strip()[:80]})"
+    placeholder = _placeholder_standing_in(before, after)
+    if placeholder:
+        return placeholder
+    return ""
+
+
 def _new_syntax_error(rel_path: str, before: str, after: str) -> tuple[str, int] | None:
     """``(message, line)`` when ``after`` no longer parses although ``before``
     did; ``None`` otherwise (unsupported language, or already broken).
@@ -742,6 +893,7 @@ class ToolExecutor:
         gui_model: Optional GUI model.
         agent_model: Optional agent model.
         agent_config: Optional agent config dict.
+        app_name: The project's name, given to the generators that show one (web app, React).
     """
 
     def __init__(
@@ -755,14 +907,15 @@ class ToolExecutor:
         object_model: Any = None,
         bpmn_model: Any = None,
         nn_model: Any = None,
-        protect_scaffold: bool = False,
         per_write_diagnostics: bool = True,
         allow_shell: bool = False,
+        app_name: str | None = None,
     ):
         self.workspace = _normalize_path_for_comparison(os.path.realpath(workspace))
+        self.app_name = app_name
         self.allow_shell = allow_shell
-        # The run's one shell: cwd, exported env and background processes
-        # carry over between run_command calls. No process until first use.
+        # The run's one shell: exported env and background processes carry
+        # over between run_command calls; each command starts in the root. No process until first use.
         self._shell = ShellSession(self.workspace)
         # Seconds left in the run, set by the orchestrator; caps every command.
         self.time_left: Callable[[], float | None] | None = None
@@ -778,6 +931,9 @@ class ToolExecutor:
         self.nn_model = nn_model
         # Track files created by generators — used to warn if LLM overwrites them
         self._generator_files: set[str] = set()
+        # Files the running app wrote under the backend during a shell command
+        # (runbook.files_the_app_wrote): {path: [size, mtime_ns]}, left out of the output.
+        self.command_app_files: dict[str, list[int]] = {}
         # Called with each generator call's files and traced regions (the run
         # log's ``generator_output`` record); set by the orchestrator.
         self.on_generated: Callable[[dict], None] | None = None
@@ -786,11 +942,8 @@ class ToolExecutor:
         # Per generator output dir: file stamps taken just before the
         # generator ran (see _gen_dir / _track_generated_files).
         self._pre_generation: dict[str, dict[str, tuple[int, int]]] = {}
-        # Per-path targeted edit attempts (modify_file and replace_file_lines,
-        # landed or refused). Two unlock write_file on a large generator file
-        # and in a modify run - the rewrite the recovery ladder sends to after
-        # two refused edits of either kind.
-        self._edit_attempts: dict[str, int] = {}
+        # Files write_file created this run: rewritten without the loss check.
+        self._created_files: set[str] = set()
         # Consecutive failed modify_file attempts per path. Escalates the
         # error message from "not found" to "stop retyping old_text, read the
         # file".
@@ -824,12 +977,13 @@ class ToolExecutor:
         # line displayed (possibly over several windows), inlined or written in
         # full. A partial read or a one-line modify is not enough.
         self._fully_seen: set[str] = set()
+        # Files seen whole whose last whole copy eviction removed from the conversation.
+        self._evicted_views: set[str] = set()
         self._read_coverage: dict[str, tuple[str, set[int]]] = {}
         # Finding replacement text in a file is not proof that an edit happened.
         # Receipts bind the exact request to the entire successful post-write
         # state. They are intentionally not inferred from resumed file contents.
         self._edit_receipts: dict[tuple[str, str, str, bool], str] = {}
-        self._successful_writes: dict[str, str] = {}
         # A range edit names a server-issued read, not model-reconstructed old
         # code. Bind the visible lines to the resolved file and its full digest.
         # These capabilities deliberately expire on resume (read again).
@@ -837,17 +991,14 @@ class ToolExecutor:
         self._read_epoch = uuid4().hex[:12]
         # Reads per path, to catch a model crawling one file in tiny windows.
         self._read_counts: dict[str, int] = {}
+        # path -> (start, end) of its last read, 0-based end-exclusive: a crawl continues it.
+        self._last_read_spans: dict[str, tuple[int, int]] = {}
         self._read_views: dict[str, tuple[str, str, int, int]] = {}
         # Consecutive refused edits per path: the edit-recovery ladder's rung.
         self._edit_recovery: dict[str, int] = {}
         self.app_validator = None  # supplied by the orchestrator; no arbitrary command input
+        self.requirement_citer = None  # validate_app citations; supplied by the orchestrator
         self.api_tester = None
-        # When True (weak / free-tier models only), the deterministic Phase-1
-        # scaffold is IMMUTABLE to delete_file: the model may edit those files
-        # in place but cannot tear them down and rebuild in another framework.
-        # Observed with the free qwen tier deleting a whole FastAPI backend to
-        # rewrite it in Flask; capable cloud models keep full delete_file.
-        self._protect_scaffold = protect_scaffold
         self._per_write_diagnostics = per_write_diagnostics
         # Data contract from the domain model (id types, server-owned
         # fields). Every write_file/modify_file result carries the lint
@@ -865,11 +1016,9 @@ class ToolExecutor:
         # items are open.
         self._tasks: list[dict] = []
         self._autoclose_lock = threading.Lock()
-        # Edit-first guardrail for MODIFY runs (set via
-        # ``enable_modify_guard``). In a modify run every existing file
-        # is a user's working app, so whole-file rewrites are rejected
-        # until the model has demonstrably tried targeted edits — the
-        # rewrite habit is where modify-run regressions come from.
+        # MODIFY runs (set via ``enable_modify_guard``): every existing file is
+        # part of the user's working app, so a rewrite of one over
+        # _MODIFY_RUN_REWRITE_LINES must keep its code.
         self._modify_guard = False
         # Whole-application generators refused once the scaffold exists (#666).
         self._locked_generators: frozenset[str] = frozenset()
@@ -881,6 +1030,37 @@ class ToolExecutor:
         # answered with a stub. See _read_file_once; forget_shown_results.
         self._shown_reads: dict[tuple, tuple[str, str, int, int]] = {}
         self._stubbed_reads: set[tuple] = set()
+        # The files a Phase 3 fix attempt may write (None: any), and the writes
+        # outside them a call justified with ``needed_for``, for the trace.
+        self._edit_scope: set[str] | None = None
+        self.scope_widenings: list[dict] = []
+
+    def set_edit_scope(self, allowed) -> None:
+        """Limit the write tools to ``allowed`` paths and new files; None lifts the limit."""
+        self._edit_scope = None if allowed is None else set(allowed)
+
+    def _edit_scope_refusal(self, tool_name: str, rel_path: str, needed_for: str) -> dict | None:
+        """The refusal of a write outside the edit scope, or None when it may run.
+
+        A new file, or a call naming the blocker it is ``needed_for``, joins the scope.
+        """
+        scope = self._edit_scope
+        if scope is None or rel_path in scope:
+            return None
+        if needed_for or not os.path.exists(os.path.join(self.workspace, rel_path)):
+            scope.add(rel_path)
+            if needed_for:
+                self.scope_widenings.append({"tool": tool_name, "path": rel_path, "needed_for": needed_for[:300]})
+            return None
+        listed = sorted(scope)
+        shown = ", ".join(listed[:_SCOPE_FILES_LISTED]) + (
+            f" (+{len(listed) - _SCOPE_FILES_LISTED} more)" if len(listed) > _SCOPE_FILES_LISTED else "")
+        return {"error": (
+            f"{tool_name} refused: {rel_path} is outside this fix attempt. It may edit the files its "
+            f"blockers name and the files those import or that import them ({shown}), and create new "
+            f"files. If {rel_path} is needed to fix a listed blocker, resend this call with needed_for "
+            "set to that blocker."
+        )}
 
     def forget_shown_results(self) -> None:
         """The conversation no longer holds earlier tool results (compaction,
@@ -888,6 +1068,14 @@ class ToolExecutor:
         self._shown_reads.clear()
         self._stubbed_reads.clear()
         self._reported_findings.clear()
+
+    def forget_full_views(self, paths) -> None:
+        """The conversation no longer shows these files whole: write_file needs a read first."""
+        for path in map(self._rel_key, paths):
+            if path in self._fully_seen:
+                self._evicted_views.add(path)
+            self._fully_seen.discard(path)
+            self._read_coverage.pop(path, None)
 
     def close(self) -> None:
         """End the run's shell session; every process it holds is killed."""
@@ -952,8 +1140,7 @@ class ToolExecutor:
 
         An entry may be a plain string, or a dict ``{"text": ...,
         "verify": callable}``. A deterministic verifier must pass before the
-        item is verified. Without one, explicit current write evidence can
-        record implementation only; acceptance remains unverified.
+        item closes. Without one, the item closes on the model's word.
         """
         self._tasks = []
         for i, t in enumerate(tasks or []):
@@ -962,18 +1149,23 @@ class ToolExecutor:
                 verify = t.get("verify")
                 kind = t.get("kind")
                 planning_notes = [note for note in (t.get("planning_notes") or []) if isinstance(note, str)]
+                action = t.get("_action_contract")
             else:
                 text, verify = str(t).strip(), None
                 kind = None
                 planning_notes = []
+                action = None
             if text:
                 self._tasks.append(
                     {"id": len(self._tasks) + 1, "text": text,
                      "done": False, "verify": verify,
                      "verification": "unverified",
+                     "files": task_paths(text),
                      **({"kind": kind} if isinstance(kind, str) and kind else {}),
                      **({"planning_notes": planning_notes} if planning_notes else {}),
-                     "attempts": 0, "blocked": False}
+                     **({"_action_contract": list(action)} if action else {}),
+                     **({"unchecked": True} if isinstance(t, dict) and t.get("unchecked") is True else {}),
+                     "blocked": False}
                 )
 
     def autoclose_verified_tasks(self) -> list[dict]:
@@ -983,10 +1175,7 @@ class ToolExecutor:
         the harness can see the endpoint is implemented, and checklist
         bookkeeping otherwise costs more turns than the edits. Checking here
         also means a model that never learns the checklist protocol still gets
-        credit for what it built.
-
-        Only verifier-backed items qualify. An evidence-only task still needs
-        the model to cite its work, because nothing here can judge it.
+        credit for what it built. Any other item closes only on the model's word.
         """
         closed = []
         for task in self._tasks:
@@ -1009,14 +1198,35 @@ class ToolExecutor:
             closed.append({"id": task["id"], "label": _task_label(task["text"])})
         return closed
 
+    def _note_task_write(self, rel_path: str) -> None:
+        """Record an edit that changed ``rel_path`` on every open item whose text
+        names it: reported with the item, never a reason to close it."""
+        with self._autoclose_lock:
+            for task in self._tasks:
+                if (not task["done"] and rel_path in (task.get("files") or ())
+                        and rel_path not in task.setdefault("written", [])):
+                    task["written"].append(rel_path)
+
+    def task_writes(self) -> dict[int, list[str]]:
+        """Each item's recorded edits, for :meth:`restore_task_writes` after a rollback."""
+        return {t["id"]: list(t["written"]) for t in self._tasks if "written" in t}
+
+    def restore_task_writes(self, marks: dict[int, list[str]]) -> None:
+        """Forget the edits a rollback discarded: keep only those recorded at ``marks``."""
+        with self._autoclose_lock:
+            for task in self._tasks:
+                if task["id"] in marks:
+                    task["written"] = list(marks[task["id"]])
+                else:
+                    task.pop("written", None)
+
     def reopen_unverifiable_tasks(self) -> list[int]:
         """Re-run verifiers on completed items and reopen those that now fail.
 
         Restoring the pre-Phase-3 tree undoes the code but not the checklist,
         so work Phase 3 implemented would otherwise stay done/verified over
         restored stubs. Only items with a deterministic verifier can be
-        re-judged; evidence-only completions are left alone rather than
-        guessed at.
+        re-judged; other completions are left alone rather than guessed at.
         """
         reopened = []
         for task in self._tasks:
@@ -1042,10 +1252,9 @@ class ToolExecutor:
         """
         return [
             {"id": t["id"], "text": t["text"], "done": bool(t["done"]),
-             "attempts": int(t.get("attempts") or 0),
              "blocked": bool(t.get("blocked")),
              "verification": t.get("verification", "unverified"),
-             **{key: t[key] for key in ("blocked_reason", "dropped", "implementation_evidence", "planning_notes", "kind") if key in t}}
+             **{key: t[key] for key in ("blocked_reason", "dropped", "planning_notes", "kind", "written", "_action_contract", "unchecked") if key in t}}
             for t in self._tasks
         ]
 
@@ -1078,115 +1287,38 @@ class ToolExecutor:
                 "text": text,
                 "done": item.get("done") is True,
                 "verify": verifiers.get(text),
-                "attempts": int(item.get("attempts") or 0),
                 "blocked": item.get("blocked") is True,
                 "verification": item.get("verification", "unverified"),
-                **{key: item[key] for key in ("blocked_reason", "dropped", "implementation_evidence", "planning_notes", "kind") if key in item},
+                "files": task_paths(text),
+                **{key: item[key] for key in ("blocked_reason", "dropped", "planning_notes", "kind", "written", "_action_contract", "unchecked") if key in item},
             })
         self._tasks = restored
 
     def evidence_snapshot(self) -> dict:
-        """The writes and reads ``task_list`` evidence is checked against, for a checkpoint."""
-        return {
-            "successful_writes": {
-                os.path.relpath(path, self.workspace).replace("\\", "/"): digest
-                for path, digest in self._successful_writes.items()},
-            "known_paths": sorted(self._known_paths),
-        }
+        """The paths the model has seen this run, for a checkpoint."""
+        return {"known_paths": sorted(self._known_paths)}
 
     def restore_evidence(self, snapshot: dict) -> None:
-        """Restore :meth:`evidence_snapshot`: an edit made before a resume still counts.
-
-        A write is matched by the digest of the file it left, so a file changed
-        since then is still refused.
-        """
-        writes = snapshot.get("successful_writes")
-        if isinstance(writes, dict):
-            self._successful_writes.update({
-                os.path.normcase(os.path.join(self.workspace, rel)): digest
-                for rel, digest in writes.items() if isinstance(rel, str) and isinstance(digest, str)})
+        """Restore :meth:`evidence_snapshot`."""
         self._known_paths.update(p for p in snapshot.get("known_paths") or [] if isinstance(p, str))
 
     def open_tasks(self) -> list[dict]:
         """Checklist items still to do.
 
-        A BLOCKED item is excluded: its verifier has refused
-        ``_MAX_TASK_VERIFY_ATTEMPTS`` times, so leaving it open would keep the
-        run going until the turn cap for work that cannot be signed off. It is
-        reported through :meth:`blocked_tasks` instead.
+        A BLOCKED item is excluded: the model recorded it as work it cannot
+        finish, so it no longer holds the end-turn gate. It is reported through
+        :meth:`blocked_tasks` instead.
         """
         return [t for t in self._tasks if not t["done"] and not t.get("blocked")]
 
     def blocked_tasks(self) -> list[dict]:
-        """Unresolved items, explicitly blocked or refused too many times."""
+        """Unresolved items the model recorded as blocked."""
         return [t for t in self._tasks if t.get("blocked")]
 
     def unverified_tasks(self) -> list[dict]:
         """Implemented checklist items whose acceptance has not been checked."""
         return [t for t in self._tasks if t["done"] and not t.get("dropped")
                 and t.get("verification", "unverified") != "verified"]
-
-    def _task_implementation_evidence(self, task_id: int, args: dict) -> tuple[list[dict], str | None]:
-        """Validate modification evidence, never treat it as acceptance proof."""
-        evidence = args.get("evidence")
-        if not isinstance(evidence, list) or not evidence or len(evidence) > 20:
-            return [], "no verifier is attached; provide evidence=[{id, path, quote}] from actual successful writes, or mark blocked with a reason"
-        accepted = []
-        for item in evidence:
-            if not isinstance(item, dict) or _task_id(item.get("id")) != task_id:
-                continue
-            rel, quote = item.get("path"), item.get("quote")
-            if not isinstance(rel, str) or not isinstance(quote, str) or not quote.strip() or len(quote) > 4000:
-                return [], "each evidence item requires a path and a non-empty exact quote of at most 4000 characters"
-            try:
-                path = self._safe_path(rel)
-                with open_plain(path, "r", root=self.workspace, encoding="utf-8") as source:
-                    content = source.read()
-            except (ValueError, OSError, UnicodeError):
-                return [], f"evidence path is not a readable workspace file: {rel}"
-            # read_file numbers every line, so a quote copied straight out of
-            # it never matches; strip that prefix as modify_file's ladder does,
-            # or implemented tasks end up BLOCKED.
-            if quote not in content:
-                unnumbered = _strip_line_numbers(quote.splitlines())
-                if unnumbered is not None and "\n".join(unnumbered) in content:
-                    quote = "\n".join(unnumbered)
-            digest = self._content_digest(content)
-            origin = "written"
-            if self._successful_writes.get(os.path.normcase(path)) != digest:
-                if args.get("existing") is not True:
-                    return [], (f"no successful write matches the current contents of {rel}; "
-                                "if this implementation already exists, read it and submit "
-                                "existing=true with exact executable evidence (acceptance remains unverified)")
-                if os.path.relpath(path, self.workspace).replace("\\", "/") not in self._known_paths:
-                    return [], f"read {rel} before citing an existing implementation"
-                from besser.spec_driven_agent.planning.requirements_ledger import verify_evidence
-                task = next((t for t in self._tasks if t["id"] == task_id), {})
-                evidence_kind = task.get("kind")
-                if not isinstance(evidence_kind, str) or evidence_kind not in (
-                    "validation", "uniqueness", "rule", "computed", "transition", "action", "ui",
-                ):
-                    evidence_kind = "implementation"
-                checked = verify_evidence([{
-                    "id": task_id, "text": task.get("text", ""),
-                    # An untyped planning task is not necessarily an action:
-                    # unique columns, defaults and declarative UI bindings can
-                    # already implement it. Evidence is not acceptance proof.
-                    "kind": evidence_kind,
-                    "status": "implemented", "evidence": f"{rel}: {quote}",
-                }], self.workspace)
-                if not checked or checked[0]["status"] != "implemented":
-                    detail = checked[0].get("note", "") if checked else "no valid citation"
-                    return [], ("existing implementation evidence could not be verified: "
-                                f"{detail}; cite the actual implementation; acceptance remains unverified")
-                origin = "existing"
-            if quote not in content:
-                return [], f"evidence quote is not present in {rel}"
-            accepted.append({"path": os.path.relpath(path, self.workspace).replace("\\", "/"),
-                             "quote": quote, "sha256": digest, "origin": origin})
-        if not accepted:
-            return [], f"no implementation evidence supplied for task {task_id}"
-        return accepted, None
 
     @staticmethod
     def _requested_task_ids(args: dict) -> tuple[list[int], list]:
@@ -1242,6 +1374,22 @@ class ToolExecutor:
         return row
 
     def _task_list(self, args: dict) -> dict:
+        """``{done, add, drop, blocked}``, any combination; none lists the checklist.
+
+        The earlier ``action=...`` shape (``_TASK_LIST_ACTION_ARGUMENTS``) is still accepted.
+        """
+        if "action" not in args:
+            # An empty array is a field left unused: models fill every optional one.
+            verbs = {verb: args.get(field) for verb, field in (
+                ("done_ids", "done"), ("add_texts", "add"), ("drop", "drop"), ("blocked", "blocked"))
+                if args.get(field) not in (None, [])}
+            result = self._do_mixed(verbs) if verbs else self._task_list({"action": "list"})
+            # Once per result, as labels: the conversation re-sends every result.
+            result.get("results", {}).get("done", {}).pop("open_items", None)
+            result["open_items"] = [{"id": t["id"], "label": _task_label(t["text"])} for t in self.open_tasks()]
+            return result
+        # Its arrays are not in the schema, so the provider did not decode them.
+        args = coerce_to_schema(args, _TASK_LIST_ACTION_SCHEMA)
         action = args.get("action")
         if action == "list":
             return {
@@ -1262,19 +1410,24 @@ class ToolExecutor:
         return {"error": f"Unknown action '{action}'. Use list | done | add | drop | blocked | mixed."}
 
     def _do_done(self, args: dict) -> dict:
-        """action='done' — also the `done_ids`+`evidence` verb inside a mixed call."""
+        """action='done' — also the `done_ids` verb inside a mixed call.
+
+        An item with a deterministic verifier closes only when it passes; any
+        other item closes on the model's word. What nothing confirmed is
+        reported as such at validation, never as a defect.
+        """
+        if args.get("ids") is None and args.get("id") is None:
+            # The reply names closed items `done_ids`.
+            args = {**args, "ids": args.get("done_ids")}
         ids, bad = self._requested_task_ids(args)
         if not ids:
             return {"error": (
-                "action='done' requires `id` (an integer) or `ids` "
-                "(a list of integers). Use action='list' to see ids."
+                "done requires item ids (integers). Call task_list with no fields to see ids."
                 + (f" Not integers: {bad}." if bad else "")
             )}
 
         done: list[int] = []
         refused: list[dict] = []
-        blocked: list[dict] = []
-        already_blocked: list[dict] = []
         unknown: list[int] = []
         by_id = {t["id"]: t for t in self._tasks}
 
@@ -1283,48 +1436,21 @@ class ToolExecutor:
             if t is None:
                 unknown.append(task_id)
                 continue
-            was_blocked = bool(t.get("blocked"))
             if t["done"]:
                 done.append(task_id)
                 continue
             verify = t.get("verify")
-            reason = None
             if verify is not None:
                 try:
                     verified = bool(verify())
+                    reason = "its check still fails"
                 except Exception as exc:
                     verified = False
                     reason = f"verification could not run ({type(exc).__name__}): {str(exc)[:300]}"
-                if verified:
-                    t["verification"] = "verified"
-                elif reason is None:
-                    reason = "its check still fails"
-            else:
-                evidence, reason = self._task_implementation_evidence(task_id, args)
-                if reason is None:
-                    t["implementation_evidence"] = evidence
-                    t["verification"] = "unverified"
-            if reason is not None:
-                if was_blocked:
-                    # A later repair may make the check pass. Re-evaluate
-                    # it, but do not reopen another retry budget on failure.
-                    already_blocked.append({"id": task_id, "reason": t.get("blocked_reason", reason)})
+                if not verified:
+                    refused.append({"id": task_id, "reason": reason})
                     continue
-                # Bound retries, including broken/missing verifiers.
-                t["attempts"] = int(t.get("attempts") or 0) + 1
-                if t["attempts"] >= _MAX_TASK_VERIFY_ATTEMPTS:
-                    # Preserve the unresolved requirement without livelock.
-                    t["blocked"] = True
-                    t["blocked_reason"] = reason
-                    blocked.append({"id": task_id, "reason": reason})
-                else:
-                    refused.append({
-                        "id": task_id,
-                        "attempts": t["attempts"],
-                        "remaining_attempts": _MAX_TASK_VERIFY_ATTEMPTS - t["attempts"],
-                        "reason": reason,
-                    })
-                continue
+                t["verification"] = "verified"
             t["done"] = True
             t["blocked"] = False
             t.pop("blocked_reason", None)
@@ -1342,24 +1468,11 @@ class ToolExecutor:
         }
         if len(ids) == 1:
             result["id"] = ids[0]
-        if result["unverified_ids"]:
-            result["verification_note"] = "Write evidence records implementation only; requirement acceptance is still unverified."
-        if already_blocked:
-            result["already_blocked"] = already_blocked
-            if not done and not refused and not blocked and not unknown:
-                result["status"] = "blocked"
         if refused:
             result["refused"] = refused
             result["advice"] = (
-                "Do the work for the refused items, then mark them done. "
-                "You may pass several ids at once: ids=[1,2,3]."
-            )
-        if blocked:
-            result["blocked"] = blocked
-            result["advice"] = (
-                f"These items failed their check {_MAX_TASK_VERIFY_ATTEMPTS} "
-                "times and are now recorded as BLOCKED. Do NOT call task_list "
-                "for them again - move on to the remaining work."
+                "The harness re-runs these checks after every edit and closes an item "
+                "itself once its check passes: make the change rather than calling done again."
             )
         if unknown:
             result["unknown_ids"] = unknown
@@ -1369,21 +1482,8 @@ class ToolExecutor:
             # payload carries an "error" key, and the loop guards, tracing
             # and "don't re-attempt" memory all depend on seeing a call that
             # accepted nothing as one. `advice` already says what to do next.
-            parts = []
-            for item in refused:
-                parts.append(
-                    f"Task {item['id']} is NOT done - {item['reason']} "
-                    f"(attempt {item['attempts']} of {_MAX_TASK_VERIFY_ATTEMPTS})."
-                )
-            for item in blocked:
-                parts.append(
-                    f"Task {item['id']} is NOT done and is now BLOCKED "
-                    f"after {_MAX_TASK_VERIFY_ATTEMPTS} failed checks."
-                )
-            for task_id in unknown:
-                parts.append(
-                    f"No task with id {task_id}. Use action='list' to see ids."
-                )
+            parts = [f"Task {item['id']} is NOT done - {item['reason']}." for item in refused]
+            parts += [f"No task with id {task_id}. Call task_list with no fields to see ids." for task_id in unknown]
             if parts:
                 result["error"] = " ".join(parts)
         return result
@@ -1393,10 +1493,10 @@ class ToolExecutor:
         ids, bad = self._requested_task_ids(args)
         reason = str(args.get("reason") or "").strip()
         if not ids or bad or not reason:
-            return {"error": "action='blocked' requires id or ids and a non-empty reason explaining what remains unresolved."}
+            return {"error": "blocked requires an item id and a non-empty reason explaining what remains unresolved."}
         by_id = {t["id"]: t for t in self._tasks}
         if any(task_id not in by_id for task_id in ids):
-            return {"error": "Unknown task id. Use action='list' to see ids."}
+            return {"error": "Unknown task id. Call task_list with no fields to see ids."}
         for task_id in ids:
             task = by_id[task_id]
             task.pop("dropped", None)
@@ -1413,7 +1513,7 @@ class ToolExecutor:
         reason = str(args.get("reason") or "").strip()
         if task_id is None or not reason:
             return {"error": (
-                "action='drop' requires `id` (an integer) and a non-empty `reason` "
+                "drop requires an item `id` (an integer) and a non-empty `reason` "
                 "saying why the user did not ask for it."
             )}
         for t in self._tasks:
@@ -1427,7 +1527,7 @@ class ToolExecutor:
             t.pop("blocked_reason", None)
             logger.info("Checklist item %d dropped (%s): %r", task_id, reason, t["text"][:80])
             return {"status": "dropped", "id": task_id, "open": len(self.open_tasks())}
-        return {"error": f"Unknown task id {task_id}. Use action='list' to see ids."}
+        return {"error": f"Unknown task id {task_id}. Call task_list with no fields to see ids."}
 
     def _do_add(self, args: dict) -> dict:
         """action='add' — also the `add_texts` verb inside a mixed call.
@@ -1443,8 +1543,7 @@ class ToolExecutor:
         items = [t.strip() for t in raw if isinstance(t, str) and t.strip()]
         if not items:
             return {"error": (
-                "action='add' requires non-empty `text`, or `texts` with "
-                "at least one non-empty item."
+                "add requires at least one non-empty item text."
             )}
         ids: list[int] = []
         appended: set[int] = set()
@@ -1462,7 +1561,7 @@ class ToolExecutor:
                 ids.append(existing["id"])
                 continue
             new_id = max((t["id"] for t in self._tasks), default=0) + 1
-            self._tasks.append({"id": new_id, "text": text, "done": False})
+            self._tasks.append({"id": new_id, "text": text, "done": False, "files": task_paths(text)})
             ids.append(new_id)
             appended.add(new_id)
         if batched:
@@ -1484,8 +1583,8 @@ class ToolExecutor:
         Each verb here
         reuses the EXACT single-action handler that ``action='done'`` /
         ``'add'`` / ``'drop'`` / ``'blocked'`` calls, so every gate
-        (evidence, deterministic verifiers, the block-after-N-attempts guard,
-        drop's reason requirement) still applies per item, unchanged.
+        (deterministic verifiers, drop's and blocked's reason requirement)
+        still applies per item, unchanged.
 
         The response nests each verb's own result under ``results`` so a
         model can tell which parts succeeded and which were refused: a mixed
@@ -1516,9 +1615,7 @@ class ToolExecutor:
                 succeeded = True
 
         if done_ids is not None:
-            _record("done", self._do_done({
-                "ids": done_ids, "evidence": args.get("evidence"), "existing": args.get("existing"),
-            }))
+            _record("done", self._do_done({"ids": done_ids}))
 
         if add_texts is not None:
             _record("add", self._do_add({"texts": add_texts}))
@@ -1654,6 +1751,13 @@ class ToolExecutor:
                 # An optional cross-file check must not erase parser findings
                 # already collected for the successful write.
                 logger.debug("Frontend/schema write diagnostics failed", exc_info=True)
+            try:
+                from besser.spec_driven_agent.validation.api_call_shapes import collect_api_call_diagnostics
+
+                diagnostics.extend(self._cross_file_findings("api-call", rel_path, content,
+                    collect_api_call_diagnostics(self.workspace, changed_path=rel_path, content=content)))
+            except Exception:
+                logger.debug("API call shape write diagnostics failed", exc_info=True)
         if diagnostics:
             result["diagnostics"] = diagnostics
             result["diagnostic_message"] = (
@@ -1793,6 +1897,10 @@ class ToolExecutor:
                 f"{tool_name} is missing required argument(s): {', '.join(missing)}. "
                 "Nothing was done; resend the call with every required field."
             )})
+        declared = schema.get("properties") or {}
+        ignored = [name for name in arguments if name not in declared and name != "needed_for"
+                   and not (tool_name == "task_list" and "action" in arguments
+                            and name in _TASK_LIST_ACTION_ARGUMENTS)]
         arguments, problems = _normalize_arguments(schema, arguments)
         if problems:
             return ToolExecutionResult("error", {"error": (
@@ -1815,16 +1923,54 @@ class ToolExecutor:
                             "BESSER (trace, checkpoint, attribution, logs). It can be read but "
                             "not written, edited or deleted. Change the project's own files instead."
                         )})
+                    placeholder = next((key for key in _EDIT_BODY_KEYS if any(
+                        marker in str(arguments.get(key) or "")
+                        for marker in (REJECTED_DRAFT_PLACEHOLDER, EVICTED_EDIT_BODY))), None)
+                    if placeholder:
+                        return ToolExecutionResult("error", {"error": (
+                            f"{tool_name} refused: {placeholder} holds a placeholder the "
+                            "conversation shows in place of an omitted body, not code. Nothing "
+                            "was written. Read the current source and send the real text."
+                        ), "rejection_kind": "placeholder"})
+                    if tool_name != "read_file":
+                        needed_for = str(arguments.pop("needed_for", None) or "").strip()
+                        refusal = self._edit_scope_refusal(tool_name, arguments["path"], needed_for)
+                        if refusal:
+                            logger.warning("Refused %s on %s: outside the fix attempt's files",
+                                           tool_name, arguments["path"])
+                            return ToolExecutionResult("error", refusal)
                 raw_result = handler(self, arguments)
                 if file_tool and isinstance(raw_result, dict):
                     self._add_edit_recovery(tool_name, arguments, raw_result)
+                    self._pin_written_requirements(tool_name, arguments["path"], raw_result)
             payload = raw_result if isinstance(raw_result, dict) else {"result": raw_result}
+            if ignored:
+                payload["ignored_arguments"] = (
+                    f"{', '.join(ignored)} not used: {tool_name} takes "
+                    f"{', '.join(declared) or 'no arguments'}.")
             return ToolExecutionResult(self._result_status(payload), payload)
         except Exception as e:
             logger.warning("Tool %s failed: %s", tool_name, e, exc_info=True)
             return ToolExecutionResult(
                 "error", {"error": f"{tool_name} failed: {self._model_error_text(e)}"}
             )
+
+    def _pin_written_requirements(self, tool_name: str, rel_path: str, result: dict) -> None:
+        """Apply the known-incompatible pins to a requirements.txt a write tool just wrote."""
+        if (tool_name not in ("write_file", "modify_file", "replace_file_lines")
+                or os.path.basename(rel_path) != "requirements.txt" or self._result_status(result) != "ok"):
+            return
+        try:
+            pinned = pin_requirements_file(self._safe_path(rel_path), self.workspace)
+        except OSError:
+            logger.warning("dependency pin failed for %s", rel_path, exc_info=True)
+            return
+        if pinned:
+            result["pinned"] = pinned
+            result["pinned_note"] = (
+                "The file was pinned after your write, so it now differs from what you sent. "
+                "Packages installed from it earlier no longer match it: install them again "
+                "before running the app.")
 
     def _model_error_text(self, error: Exception) -> str:
         """``error`` as the model may see it: no absolute server path.
@@ -1985,8 +2131,9 @@ class ToolExecutor:
         out_dir = os.path.basename(os.path.normpath(directory))
         record_generated_files(self.workspace, written, out_dir, get_besser_version())
         if out_dir in _REGENERABLE_OUTPUT_DIRS:
-            # The base a later model change is merged against (#659).
-            store_written_files(self.workspace, out_dir, written, get_besser_version())
+            # The base a later model change is merged against (#659): the part a regeneration writes.
+            regenerated = [path for path in written if is_regenerated(_REGENERABLE_OUTPUT_DIRS[out_dir], path)]
+            store_written_files(self.workspace, out_dir, regenerated, get_besser_version())
         started = self._generation_started.pop(os.path.normpath(directory), time.time())
         if self.on_generated is not None and tool:
             try:
@@ -2040,6 +2187,8 @@ class ToolExecutor:
         "generate_sqlalchemy": (
             "To change the database: modify the create_engine() call. "
             "To add indexes: find the Column definition and add index=True. "
+            "A str column is Text, which MySQL, SQL Server and Oracle cannot index: change it to "
+            "String_(255) before adding index=True or unique=True to it. "
             "To add constraints: add __table_args__ to the class."
         ),
         "generate_fastapi_backend": (
@@ -2055,6 +2204,8 @@ class ToolExecutor:
             "endpoints in routers/<Class>.py. "
             "To add a new endpoint: add it to the appropriate routers/<Class>.py (use @router), "
             "or create a new router file and register it with include_router() in main_api.py. "
+            "A str column is Text, which MySQL, SQL Server and Oracle cannot index: change it to "
+            "String_(255) before adding index=True or unique=True to it. "
             "NEVER rewrite these files — use modify_file for surgical edits."
         ),
         "generate_django": (
@@ -2338,7 +2489,8 @@ class ToolExecutor:
             return {"error": "No GUI model available. The React generator requires a GUI model."}
         from besser.generators.react import ReactGenerator
         out = self._gen_dir("react")
-        generator = ReactGenerator(model=self.domain_model, gui_model=self.gui_model, output_dir=out)
+        generator = ReactGenerator(model=self.domain_model, gui_model=self.gui_model, output_dir=out,
+                                   app_name=self.app_name)
         generator.generate()
         return {"status": "ok", "files": self._track_generated_files(out, "generate_react", generator)}
 
@@ -2350,9 +2502,15 @@ class ToolExecutor:
             return {"error": "No GUI model available. The WebApp generator requires a GUI model."}
         from besser.generators.web_app import WebAppGenerator
         out = self._gen_dir(_APPLICATION_OUTPUT_DIRS["generate_web_app"])
+        # An agent no screen uses stays out of the web app, as on /generate-output.
+        ships_agent = gui_uses_agent(self.gui_model)
+        if self.agent_model is not None and not ships_agent:
+            logger.warning("generate_web_app: agent %s left out, no screen uses it", self.agent_model.name)
         generator = WebAppGenerator(
             model=self.domain_model, gui_model=self.gui_model, output_dir=out,
-            agent_model=self.agent_model, agent_config=self.agent_config,
+            agent_model=self.agent_model if ships_agent else None,
+            agent_config=self.agent_config if ships_agent else None,
+            app_name=self.app_name,
         )
         generator.generate()
         return {"status": "ok", "files": self._track_generated_files(out, "generate_web_app", generator)}
@@ -2441,6 +2599,14 @@ class ToolExecutor:
             if len(self._read_views) > 128:
                 del self._read_views[next(iter(self._read_views))]
         return read_id
+
+    def _whole_view_id(self, path: str, content: str) -> str | None:
+        """A live ``read_id`` that shows all of ``content`` at ``path``, or None."""
+        key, digest = os.path.normcase(path), self._content_digest(content)
+        last = content.count("\n") + (not content.endswith("\n"))
+        with self._bookkeeping_lock:
+            return next((read_id for read_id, view in reversed(self._read_views.items())
+                         if view[:2] == (key, digest) and view[2] == 1 and view[3] >= last), None)
 
     def _read_file_once(self, args: dict) -> dict:
         """read_file, except for an identical re-read of unchanged content.
@@ -2575,19 +2741,25 @@ class ToolExecutor:
             # model to crawl a file in tiny windows.
             result["total_lines"] = total_lines
 
-        # Crawling a file that fits in one read in 10-line windows can burn a
-        # third of the turn budget. Prose in the tool description does not
-        # stop it, so say it where the behaviour happens.
+        # Crawling a file in narrow windows, or in wide ones each continuing the
+        # last, can burn a third of the turn budget. Prose in the tool
+        # description does not stop it, so say it where the behaviour happens.
         rel = args["path"].replace("\\", "/").strip()
         self._read_counts[rel] = self._read_counts.get(rel, 0) + 1
         window = end - start
+        last = self._last_read_spans.get(rel)
+        self._last_read_spans[rel] = (start, end)
+        # Paging without a limit through a file larger than one read is not a crawl.
+        continues = (args.get("limit") is not None and last is not None
+                     and last[0] < start <= last[1] < end)
         if (self._read_counts[rel] >= 3 and not truncated
-                and 0 < window < 40 and total_lines > 2 * window):
+                and 0 < window and (window < 40 or continues) and total_lines > 2 * window):
             result["hint"] = (
                 f"This is read {self._read_counts[rel]} of {rel}, covering {window} "
                 f"of {total_lines} lines. Read the whole function or class you intend "
-                "to change in one call - a file this size fits in a single read. "
-                "Each narrow window costs a turn and still omits the enclosing block."
+                f"to change in one call: read_file without limit returns up to "
+                f"{MAX_FILE_READ:,} characters from offset. Each window costs a turn "
+                "and still omits the enclosing block."
             )
 
         return result
@@ -2686,8 +2858,6 @@ class ToolExecutor:
         frozen = self._frozen(args["path"])
         if frozen:
             return frozen
-        rel_path = args["path"].replace("\\", "/")
-        self._edit_attempts[rel_path] = self._edit_attempts.get(rel_path, 0) + 1
         view = self._read_views.get(args.get("read_id", ""))
         if view is None or view[0] != os.path.normcase(path):
             return {"error": "Unknown read_id for this file. Call read_file on the target region first.",
@@ -2767,6 +2937,10 @@ class ToolExecutor:
                              "read_file on the region to see what is actually there, then send "
                              "the change you meant - or mark the task blocked with a reason.",
                     "status": "no_change", "replacements": 0}
+        if _rewrites_whole_file(before, old, replacement):
+            refusal = self._rewrite_refusal(args["path"].replace("\\", "/"), path, before, after)
+            if refusal:
+                return refusal
         broke = _new_syntax_error(args["path"], before, after)
         if broke:
             message, line = broke
@@ -2786,7 +2960,7 @@ class ToolExecutor:
         after, auto_imports = self._repair_imports(args["path"], after)
         with open_plain_write(path, "w", root=self.workspace, encoding="utf-8", newline="\n") as target:
             target.write(after)
-        self._successful_writes[os.path.normcase(path)] = self._content_digest(after)
+        self._note_task_write(args["path"])
         result = {"status": "modified", "path": args["path"], "replacements": 1,
                   "matched_by": "read_bound_range", "snippet": _changed_region(before, after)}
         if stripped_numbering:
@@ -2866,64 +3040,25 @@ class ToolExecutor:
                 "file with modify_file instead."
             )}
         if os.path.isfile(path) and rel_path.strip() not in self._fully_seen:
+            if rel_path.strip() in self._evicted_views:
+                return {"error": (
+                    f"{args['path']} exists and the conversation no longer shows all of it: "
+                    "its earlier copies were omitted. Read it again with read_file before "
+                    "rewriting it, or edit it with modify_file."
+                )}
             return {"error": (
                 f"{args['path']} exists and you have read only part of it this run; "
                 "a full rewrite would drop the lines you have not seen. Read the "
                 "rest with read_file, or edit the part you read with modify_file."
             )}
 
-        # Edit-first guardrail (MODIFY runs only): every existing
-        # non-trivial file is part of the user's working app — reject a
-        # whole-file rewrite until the model has tried at least two
-        # targeted edits on it. The >= 2 relaxation is what lets the
-        # recovery ladder's rewrite step (two refused edits) run.
-        if (
-            self._modify_guard
-            and os.path.isfile(path)
-            and self._edit_attempts.get(rel_path, 0) < 2
-        ):
-            with open_plain(path, "r", root=self.workspace, encoding="utf-8", errors="ignore") as f:
-                existing_lines = f.read().count("\n") + 1
-            if existing_lines > 15:
-                return {
-                    "error": (
-                        f"'{rel_path}' already exists ({existing_lines} lines) and "
-                        "this is a MODIFY run — edit it in place with modify_file "
-                        "(exact old_text → new_text). A full rewrite risks dropping "
-                        "the customisations the app already carries. write_file "
-                        "unlocks for this file after two modify_file attempts, as "
-                        "a last resort."
-                    ),
-                }
-
-        # Size rule: a whole-file rewrite is cheapest and
-        # safest on a SMALL file (<=200 lines), which the model can reproduce
-        # faithfully after one read; it is a large file that risks dropping
-        # code. So small generated files unlock write_file immediately and
-        # large ones keep the targeted-edit requirement until two modify_file
-        # attempts have been made.
-        if rel_path in self._generator_files and os.path.isfile(path):
-            with open_plain(path, "r", root=self.workspace, encoding="utf-8") as f:
-                existing_lines = f.read().count("\n") + 1
-            if existing_lines > 200 and self._edit_attempts.get(rel_path, 0) < 2:
-                return {
-                    "error": (
-                        f"'{rel_path}' was created by a BESSER generator and is large "
-                        f"({existing_lines} lines) - too large to reproduce faithfully "
-                        "from one read. Use modify_file for targeted edits. write_file "
-                        "unlocks for this file after two modify_file attempts."
-                    ),
-                }
-            # Rewrite allowed (large file, or repeated modifies already tried) — log it
-            logger.info(
-                "Allowing rewrite of generated file: %s (%d lines, %d prior targeted edits)",
-                rel_path, existing_lines, self._edit_attempts.get(rel_path, 0),
-            )
-
         before = None
         if os.path.isfile(path):
             with open_plain(path, "r", root=self.workspace, encoding="utf-8", errors="ignore") as f:
                 before = f.read()
+            refusal = self._rewrite_refusal(rel_path, path, before, args["content"])
+            if refusal:
+                return refusal
             broke = _new_syntax_error(rel_path, before, args["content"])
             if broke:
                 msg, line_no = broke
@@ -2957,8 +3092,10 @@ class ToolExecutor:
         makedirs_plain(os.path.dirname(path), root=self.workspace)
         with open_plain_write(path, "w", root=self.workspace, encoding="utf-8") as f:
             f.write(args["content"])
+        if before is None:
+            self._created_files.add(rel_path)
         if before != args["content"]:
-            self._successful_writes[os.path.normcase(path)] = self._content_digest(args["content"])
+            self._note_task_write(args["path"])
         result = {"status": "written", "path": args["path"], "size": len(args["content"])}
         if unnumbered is not None:
             result["note"] = _GUTTER_STRIPPED_NOTE
@@ -2968,6 +3105,29 @@ class ToolExecutor:
         self._fully_seen.add(args["path"].replace("\\", "/").strip())
         self._append_write_feedback(result, rel_path, args["content"])
         return result
+
+    def _rewrite_refusal(self, rel_path: str, path: str, before: str, after: str) -> dict | None:
+        """The rewrite rule: ``after`` must keep the code of a file this run did not
+        create, when it is a generated file over 200 lines or, in a modify run, any
+        file over 15 lines. Small files and the model's own files change freely."""
+        limit = (_MODIFY_RUN_REWRITE_LINES if self._modify_guard
+                 else _GENERATED_REWRITE_LINES if rel_path in self._generator_files else None)
+        existing_lines = before.count("\n") + 1
+        if not limit or rel_path in self._created_files or existing_lines <= limit:
+            return None
+        loss = _rewrite_loss(rel_path, before, after)
+        if not loss:
+            return None
+        origin = ("was created by a BESSER generator" if rel_path in self._generator_files
+                  else "existed before this run")
+        read_id = self._whole_view_id(path, before)
+        tools = (f"modify_file, or replace_file_lines with read_id {read_id}"
+                 if read_id else "modify_file or replace_file_lines")
+        return {"error": (
+            f"'{rel_path}' {origin} ({existing_lines} lines) and {loss}. Keep that code. To remove "
+            f"code on purpose, replace only its own lines with an empty new_text ({tools}); to "
+            "rename it, edit only the line that names it."
+        ), "rejection_kind": "rewrite_loss"}
 
     def mark_known(self, paths) -> None:
         """Record files whose contents the model was shown (scaffold snapshot)."""
@@ -3075,7 +3235,6 @@ class ToolExecutor:
         if frozen:
             self._note_rejection(rel_path, old_text, new_text)
             return frozen
-        self._edit_attempts[rel_path] = self._edit_attempts.get(rel_path, 0) + 1
         with open_plain(path, "r", root=self.workspace, encoding="utf-8") as f:
             content = f.read()
         replace_all = args.get("replace_all") is True
@@ -3364,6 +3523,13 @@ class ToolExecutor:
                          "this is not evidence of completion. Read the current region for a different change.",
             }
 
+        if _rewrites_whole_file(content, old_text, new_text, occurrences if replace_all and occurrences else 1):
+            refusal = self._rewrite_refusal(rel_path, path, content, new_content)
+            if refusal:
+                self._failed_modifies[rel_path] = self._failed_modifies.get(rel_path, 0) + 1
+                self._note_rejection(rel_path, old_text, new_text)
+                return refusal
+
         # A valid file must never leave this tool unparseable.
         broke = _new_syntax_error(rel_path, content, new_content)
         if broke:
@@ -3409,14 +3575,11 @@ class ToolExecutor:
             f.write(new_content)
         digest = self._content_digest(new_content)
         self._edit_receipts[receipt_key] = digest
-        self._successful_writes[os.path.normcase(path)] = digest
+        self._note_task_write(args["path"])
         self._failed_modifies.pop(rel_path, None)
         self._last_missed_old_text.pop(rel_path, None)
         self._clear_rejections(rel_path)
         self._known_paths.add(rel_path.strip())
-        # Keeps the modify guard's "write_file unlocks after two modify_file
-        # attempts" escalation reachable.
-        self._fully_seen.add(rel_path.strip())
         result = {
             "status": "modified",
             "path": args["path"],
@@ -3434,27 +3597,12 @@ class ToolExecutor:
         self._append_write_feedback(result, rel_path, new_content)
         return result
 
-    def _scaffold_edit_route(self, rel_path: str, path: str) -> str:
-        """The write route ``_write_file`` actually permits for a generator file.
+    def _import_findings(self) -> list[str]:
+        """The workspace's Python and frontend imports that resolve to no file."""
+        from besser.spec_driven_agent.validation.frontend_resolution import collect_frontend_resolution_issues
+        from besser.spec_driven_agent.validation.python_imports import _unresolvable_local_imports
 
-        A rewrite of a generator file over 200 lines is itself refused until
-        two modify_file edits have been tried, so blanket "or write_file"
-        advice in another refusal walks the model into a second refusal.
-        """
-        try:
-            with open_plain(path, "r", root=self.workspace, encoding="utf-8", errors="ignore") as fh:
-                existing_lines = fh.read().count("\n") + 1
-        except OSError:
-            existing_lines = 0
-        if existing_lines > 200 and self._edit_attempts.get(rel_path, 0) < 2:
-            return (
-                "Edit it in place with modify_file; write_file on this file "
-                "unlocks only after two modify_file attempts."
-            )
-        return (
-            "Edit it in place with modify_file, or read it in full and "
-            "write_file it back."
-        )
+        return [*_unresolvable_local_imports(self.workspace), *collect_frontend_resolution_issues(self.workspace)]
 
     def _delete_file(self, args: dict) -> dict:
         """Delete a regular file from the workspace.
@@ -3463,7 +3611,7 @@ class ToolExecutor:
         recursively wipe a tree, and an accidental glob expansion at the
         prompt level would be catastrophic. Path traversal is blocked by
         ``_safe_path`` (same containment check used by every other file
-        tool).
+        tool). The result names the imports the delete left unresolved.
         """
         path = self._safe_path(args["path"])
         if not os.path.exists(path):
@@ -3475,25 +3623,17 @@ class ToolExecutor:
                     "delete_file only removes regular files."
                 ),
             }
-        # Scaffold protection (weak / free-tier models only): the deterministic
-        # Phase-1 scaffold is the app's foundation and must not be torn down and
-        # rebuilt in another framework. Files the model created this run are not
-        # tracked here, so it can still delete its own junk.
-        rel_path = args["path"].replace("\\", "/")
-        if self._protect_scaffold and rel_path in self._generator_files:
-            return {
-                "error": (
-                    f"Refused to delete: '{args['path']}' is part of the generated "
-                    "scaffold — the app's foundation. Do NOT remove or replace it. "
-                    f"{self._scaffold_edit_route(rel_path, path)} Keep the existing "
-                    "framework and build on top of what is already generated."
-                ),
-            }
+        unresolved_before = set(self._import_findings())
         try:
             remove_plain(path, root=self.workspace)
         except OSError as exc:
             return {"error": f"Failed to delete {args['path']}: {exc}"}
-        return {"status": "deleted", "path": args["path"]}
+        result = {"status": "deleted", "path": args["path"]}
+        still_imported = [finding for finding in self._import_findings() if finding not in unresolved_before]
+        if still_imported:
+            result["still_imported"] = still_imported[:10]
+            result["note"] = "Other files still import what was deleted: change or remove those imports."
+        return result
 
     def _search_in_files(self, args: dict) -> dict:
         """Search for a pattern across workspace files."""
@@ -3612,21 +3752,16 @@ class ToolExecutor:
         return rel
 
     def _command_timeout(self, requested: Any) -> int:
-        """The requested timeout within [1, MAX_COMMAND_TIMEOUT], or the default,
-        and never past the run's deadline."""
+        """The requested timeout within [1, MAX_COMMAND_TIMEOUT], or the default."""
         timeout = COMMAND_TIMEOUT
         if requested is not None and not isinstance(requested, bool):
             try:
                 timeout = int(float(requested))
             except (TypeError, ValueError):
                 pass
-        timeout = max(1, min(timeout, MAX_COMMAND_TIMEOUT))
-        left = self.time_left() if self.time_left else None
-        if left is not None:
-            timeout = max(1, min(timeout, int(left)))
-        return timeout
+        return max(1, min(timeout, MAX_COMMAND_TIMEOUT))
 
-    def _run_command(self, args: dict, *, adopt_state: bool = True) -> dict:
+    def _run_command(self, args: dict) -> dict:
         """
         Run a shell command in the run's shell session.
 
@@ -3639,14 +3774,16 @@ class ToolExecutor:
         - Timeout enforced per command
         - Output truncated to prevent context blow-up, full log spilled to
           the workspace when it is
-
-        ``adopt_state=False`` (install_dependencies) runs in the same session
-        without moving its directory or changing its environment.
         """
         command = args["command"]
-        working_dir = args.get("working_dir")
-        start_dir = self._safe_cwd(working_dir) if working_dir else None
-        timeout = self._command_timeout(args.get("timeout"))
+        # The workspace root unless working_dir says otherwise: a cd never carries over.
+        start_dir = self._safe_cwd(args.get("working_dir") or ".")
+        own_timeout = self._command_timeout(args.get("timeout"))
+        left = self.time_left() if self.time_left else None
+        # Never past the run's deadline; when that is what sets the timeout, a
+        # kill at the timeout is the run's stop, not the command's own limit.
+        timeout = own_timeout if left is None else max(1, min(own_timeout, int(left)))
+        cut_by_run = timeout < own_timeout
 
         # Refuse obviously-destructive or exfil commands before we hand
         # them to the shell. Returned as a normal tool error so the LLM
@@ -3660,19 +3797,19 @@ class ToolExecutor:
                 "exit_code": None,
                 "success": False,
             }
+        if left is not None and left < 1:
+            return {"error": f"Command stopped: {OUT_OF_TIME}. It was not run.",
+                    "stopped": OUT_OF_TIME, "command": command}
 
-        logger.info("Running command: %s (in %s)", command, start_dir or self._shell.cwd)
-        # Read before the outcome: relative paths resolved against a directory an earlier `cd` left.
-        carried_over = None if working_dir else self._shell.relative_cwd()
-        located = ({"ran_in": f"{carried_over} (an earlier cd still applies; not the workspace root)"}
-                   if carried_over not in (None, ".") else {})
+        logger.info("Running command: %s (in %s)", command, start_dir)
         records = {name: self._guarded_record(name) for name in _COMMAND_GUARDED_RECORDS}
+        before = backend_files(self.workspace)
         try:
             # Fail closed: a command that cannot be confined is not run.
             # Falling back to an unconfined shell would silently restore both
             # holes the sandbox exists to close.
             result = self._shell.run(command, working_dir=start_dir,
-                                     timeout=timeout, adopt_state=adopt_state)
+                                     timeout=timeout)
         except SandboxUnavailable as exc:
             logger.error("run_command refused, sandbox unavailable: %s", exc)
             return {
@@ -3687,6 +3824,8 @@ class ToolExecutor:
             return {"error": f"Failed to run command: {e}"}
 
         extra: dict = {}
+        self.command_app_files.update(
+            files_the_app_wrote(before, backend_files(self.workspace), command, self.workspace))
         restored, not_restored = self._restore_guarded_records(records)
         if restored:
             extra["run_records_restored"] = restored
@@ -3701,12 +3840,20 @@ class ToolExecutor:
                 + "; ".join(f"{name} ({why})" for name, why in sorted(not_restored.items()))
                 + ". Undo what the command did to them and do not write, move or delete .besser_* files."
             )
-        cwd = self._shell.relative_cwd()
-        if cwd != ".":
-            extra["cwd"] = cwd
         if result.notes:
             extra["notes"] = result.notes
 
+        stopped = result.stopped or (OUT_OF_TIME if result.timed_out and cut_by_run else "")
+        if stopped:
+            return {
+                "error": f"Command stopped: {stopped}. It was not run, or was killed "
+                         "with everything it started.",
+                "stopped": stopped,
+                "command": command,
+                "stdout": self._truncate(result.stdout, MAX_OUTPUT_SIZE // 2),
+                "stderr": self._truncate(result.stderr, MAX_OUTPUT_SIZE // 2, keep_tail=True),
+                **extra,
+            }
         if result.timed_out:
             # What it printed before the kill is often the reason it hung.
             survivors = (" The shell session and processes earlier commands left "
@@ -3727,7 +3874,6 @@ class ToolExecutor:
         stderr = self._truncate(raw_stderr, MAX_OUTPUT_SIZE // 2, keep_tail=True)
 
         payload = {
-            **located,
             "exit_code": result.returncode,
             "stdout": stdout,
             "stderr": stderr,
@@ -3818,91 +3964,22 @@ class ToolExecutor:
             restored.append(name)
         return restored, failed
 
-    def _install_dependencies(self, args: dict) -> dict:
-        """
-        Install project dependencies with auto-detection.
-
-        Checks for requirements.txt (pip) or package.json (npm) and runs
-        the appropriate install command.
-        """
-        working_dir = self._safe_cwd(args.get("working_dir", "."))
-        custom_command = args.get("command")
-        requirements_txt = os.path.join(working_dir, "requirements.txt")
-
-        # Pin known-incompatible pairs before pip resolves them: the rewritten
-        # file is also what ships.
-        pinned: list[str] = []
-        if os.path.isfile(requirements_txt) and self._resolves_inside(requirements_txt):
-            try:
-                pinned = pin_requirements_file(requirements_txt, self.workspace)
-            except OSError:
-                logger.warning("dependency pin failed for %s", requirements_txt, exc_info=True)
-
-        result = self._install_detected(args, working_dir, custom_command, requirements_txt)
-        if pinned:
-            result["pinned"] = pinned
-        return result
-
-    def _install_detected(self, args: dict, working_dir: str, custom_command, requirements_txt: str) -> dict:
-        if custom_command:
-            return self._run_command({"command": custom_command, "working_dir": args.get("working_dir", "."), "timeout": INSTALL_TIMEOUT},
-                                     adopt_state=False)
-
-        # Auto-detect
-        package_json = os.path.join(working_dir, "package.json")
-
-        results = []
-
-        if os.path.isfile(requirements_txt):
-            pip_cmd = f"{sys.executable} -m pip install -r requirements.txt --quiet"
-            pip_result = self._run_command({"command": pip_cmd, "working_dir": args.get("working_dir", "."), "timeout": INSTALL_TIMEOUT},
-                                           adopt_state=False)
-            results.append({"type": "pip", "result": pip_result})
-
-        if os.path.isfile(package_json):
-            npm_result = self._run_command({"command": "npm install --quiet", "working_dir": args.get("working_dir", "."), "timeout": INSTALL_TIMEOUT},
-                                           adopt_state=False)
-            results.append({"type": "npm", "result": npm_result})
-
-        if not results:
-            return {"error": "No requirements.txt or package.json found. Specify a custom install command."}
-
-        # The status classifier reads only the top level, so a failed install
-        # must surface here or the whole call is recorded as a success.
-        failed = [
-            r for r in results
-            if r["result"].get("error") is not None or r["result"].get("success") is False
-        ]
-        if failed:
-            details = []
-            for r in failed:
-                res = r["result"]
-                tail = "\n".join(str(res.get("stderr") or res.get("error") or "").strip().splitlines()[-6:])
-                details.append(f"{r['type']} install failed (exit code {res.get('exit_code')}):\n{tail}")
-            return {"installs": results, "success": False, "error": "\n\n".join(details)}
-
-        return {"installs": results}
-
     # ------------------------------------------------------------------
     # Validation tools
     # ------------------------------------------------------------------
 
-    def _validate_model(self, args: dict) -> dict:
-        err = self._require_domain_model("validate_model")
-        if err:
-            return err
-        try:
-            result = self.domain_model.validate()
-            return {"validation": result}
-        except Exception as e:
-            return {"error": f"Validation failed: {e}"}
-
     def _validate_app(self, args: dict) -> dict:
         if self.app_validator is None:
             return {"error": "Application verification is unavailable in this executor; do not claim the app was verified."}
+        citations = args.get("citations")
+        # Cited first, so the result's requirement blockers reflect the accepted citations.
+        cited = self.requirement_citer(citations) if citations and self.requirement_citer else None
         result = self.app_validator()
-        if isinstance(result, dict) and result.get("verified") is True and self._tasks:
+        if cited is not None and isinstance(result, dict):
+            result = {**result, "citations": cited}
+        if isinstance(result, dict) and result.get("blocker_count") == 0 and self._tasks:
             # The ids task_list(done) needs: without them the next turn was a task_list 'list' alone.
+            # Not only on verified: a check this server never runs withholds that on every call.
             # A copy: the orchestrator caches and re-serves its result.
             result = {**result, "open_items": [
                 {"id": t["id"], "label": _task_label(t["text"])} for t in self.open_tasks()]}
@@ -3912,145 +3989,6 @@ class ToolExecutor:
         if self.api_tester is None:
             return {"error": "API workflow verification is unavailable; do not claim workflows were tested."}
         return self.api_tester(args)
-
-    def _check_syntax(self, args: dict) -> dict:
-        path = self._safe_path(args["path"])
-        if not os.path.isfile(path):
-            return {"error": f"File not found: {args['path']}"}
-        with open_plain(path, "r", root=self.workspace, encoding="utf-8") as f:
-            source = f.read()
-        try:
-            ast.parse(source, filename=args["path"])
-            return {"status": "ok", "message": "Syntax is valid"}
-        except SyntaxError as e:
-            return {"error": f"Syntax error at line {e.lineno}: {e.msg}"}
-
-    # ------------------------------------------------------------------
-    # Model query tools
-    # ------------------------------------------------------------------
-
-    def _find_class_by_name(self, name: str):
-        """Case-sensitive class lookup in the domain model.
-
-        Returns the ``Class`` or ``None`` if not found. Used by every
-        model-query tool handler below.
-        """
-        if not self.domain_model or not name:
-            return None
-        for cls in self.domain_model.get_classes():
-            if cls.name == name:
-                return cls
-        return None
-
-    def _query_class(self, args: dict) -> dict:
-        """Return a richer view of one class than the prompt summary."""
-        name = args.get("name", "")
-        cls = self._find_class_by_name(name)
-        if cls is None:
-            return {"error": f"Class {name!r} not found in the domain model"}
-
-        from besser.spec_driven_agent.model_serializer import (
-            _attribute_entry,
-            _method_entry,
-            _type_name,
-        )
-
-        attrs = [_attribute_entry(a) for a in sorted(cls.attributes, key=lambda a: a.name)]
-        methods = [_method_entry(m) for m in sorted(cls.methods, key=lambda m: m.name)]
-
-        try:
-            parents = sorted([p.name for p in cls.parents()])
-        except Exception:
-            parents = []
-
-        try:
-            assoc_ends = []
-            for end in cls.all_association_ends():
-                assoc_ends.append({
-                    "role": end.name,
-                    "type": _type_name(end.type),
-                    "navigable": getattr(end, "is_navigable", True),
-                })
-        except Exception:
-            assoc_ends = []
-
-        return {
-            "name": cls.name,
-            "is_abstract": bool(getattr(cls, "is_abstract", False)),
-            "attributes": attrs,
-            "methods": methods,
-            "parents": parents,
-            "association_ends": assoc_ends,
-        }
-
-    def _list_classes_with(self, args: dict) -> dict:
-        """Filter the domain model's classes by a simple predicate."""
-        predicate = (args.get("predicate") or "").strip()
-        if not predicate:
-            return {"error": "predicate is required"}
-        if not self.domain_model:
-            return {"error": "No domain model loaded"}
-
-        classes = list(self.domain_model.get_classes())
-
-        # Predicate parsing — ``prefix:value`` or single keyword.
-        if ":" in predicate:
-            key, _, value = predicate.partition(":")
-            key = key.strip()
-            value = value.strip()
-        else:
-            key, value = predicate, None
-
-        def _has_constraint(cls) -> bool:
-            try:
-                return any(
-                    c for c in self.domain_model.constraints
-                    if getattr(c, "context", None) is cls
-                )
-            except Exception:
-                return False
-
-        matchers = {
-            "is_abstract": lambda c: bool(getattr(c, "is_abstract", False)),
-            "is_root": lambda c: not list(c.parents()),
-            "has_constraint": _has_constraint,
-            "has_attribute": lambda c: any(a.name == value for a in c.attributes),
-            "has_method": lambda c: any(m.name == value for m in c.methods),
-            "extends": lambda c: any(p.name == value for p in c.all_parents()),
-        }
-        if key not in matchers:
-            return {
-                "error": (
-                    f"Unknown predicate {predicate!r}. Supported: "
-                    f"{', '.join(sorted(matchers))}"
-                )
-            }
-        if key in {"has_attribute", "has_method", "extends"} and not value:
-            return {"error": f"predicate '{key}' requires a value (e.g. '{key}:name')"}
-
-        matched = sorted([c.name for c in classes if matchers[key](c)])
-        return {"predicate": predicate, "matches": matched, "count": len(matched)}
-
-    def _get_constraints_for(self, args: dict) -> dict:
-        """Return OCL / constraint expressions scoped to a given class."""
-        name = args.get("class_name", "")
-        cls = self._find_class_by_name(name)
-        if cls is None:
-            return {"error": f"Class {name!r} not found in the domain model"}
-        if not self.domain_model:
-            return {"error": "No domain model loaded"}
-
-        out = []
-        for c in self.domain_model.constraints:
-            context = getattr(c, "context", None)
-            if context is not cls:
-                continue
-            out.append({
-                "name": getattr(c, "name", ""),
-                "expression": getattr(c, "expression", ""),
-                "language": getattr(c, "language", None),
-            })
-        return {"class": name, "constraints": out, "count": len(out)}
 
     # ------------------------------------------------------------------
     # Handler dispatch table
@@ -4087,16 +4025,9 @@ class ToolExecutor:
         "delete_file": _delete_file,
         # Execution
         "run_command": _run_command,
-        "install_dependencies": _install_dependencies,
-        # Model queries
-        "query_class": _query_class,
-        "list_classes_with": _list_classes_with,
-        "get_constraints_for": _get_constraints_for,
         # Validation
-        "validate_model": _validate_model,
         "validate_app": _validate_app,
         "test_api": _test_api,
-        "check_syntax": _check_syntax,
         # Work checklist
         "task_list": _task_list,
     }

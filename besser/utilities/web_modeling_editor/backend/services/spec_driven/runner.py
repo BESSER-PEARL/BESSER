@@ -29,6 +29,8 @@ import tempfile
 import time
 import uuid
 import zipfile
+import zlib
+from collections import Counter
 from dataclasses import dataclass, replace as dataclass_replace
 from itertools import chain, zip_longest
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Iterable, Optional
@@ -64,12 +66,20 @@ from besser.spec_driven_agent.pipeline.constants import (
 )
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 from besser.spec_driven_agent.planning.model_rules import DROPPED, is_dropped_by_model_change
-from besser.spec_driven_agent.planning.requirements_ledger import render_evidence
+from besser.spec_driven_agent.planning.requirements_ledger import (
+    ABSENCE_KIND,
+    CHANGED_LATER,
+    EVIDENCE_REFUTED,
+    INHERITED,
+    NOT_PROVABLE,
+    render_evidence,
+)
 from besser.spec_driven_agent.repair.scaffold_repair import ensure_frontend_scaffold
 from besser.spec_driven_agent.agent.tools import get_available_generator_names
 from besser.spec_driven_agent.run_recap import NO_RULES_STATED
 from besser.spec_driven_agent.run_report import RECIPE_FILENAME
 from besser.spec_driven_agent.state import agent_trace
+from besser.spec_driven_agent.state.api_workflows import WORKFLOWS_FILENAME
 from besser.spec_driven_agent.state.generator_output import GENERATOR_OUTPUT_FILENAME, attach_model, stored_model
 from besser.spec_driven_agent.state.trace_model import (
     TRACE_MODEL_FILENAME,
@@ -89,10 +99,15 @@ from besser.utilities.provenance import (
     write_generation_provenance,
 )
 from besser.spec_driven_agent.validation.user_wording import (
-    Finding, plain_check, plain_reason, summary_lines, user_finding, user_sentence,
+    Finding, not_checked, plain_check, plain_reason, summary_lines, user_finding, user_sentence,
 )
 from besser.spec_driven_agent.validation.issues import (
+    JUDGMENT_DEFERRED,
+    RUNTIME_NOT_CHECKABLE,
+    _classify_issue,
     is_completion_issue,
+    is_configured_off,
+    is_not_confirmed,
     required_check_unverified,
     unresolved_defects,
 )
@@ -117,8 +132,12 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.model_ass
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import (
     telemetry,
 )
-from besser.utilities.web_modeling_editor.backend.services.spec_driven.workspace_tree import read_run_json
+from besser.utilities.web_modeling_editor.backend.services.spec_driven.workspace_tree import (
+    MAX_RUN_RECORD_BYTES,
+    read_run_json,
+)
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import run_record
+from besser.utilities.web_modeling_editor.backend.services.spec_driven import run_evidence
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.sse_events import (
     BaseSseEvent,
     CostEvent,
@@ -129,6 +148,7 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.sse_event
     PhaseEvent,
     PhaseUpdateEvent,
     StartEvent,
+    StepEvent,
     TextDeltaEvent,
     ToolCallEvent,
     VerificationCounts,
@@ -141,7 +161,7 @@ from besser.utilities.secret_redaction import (
     redact_text,
     scrub_secret_files,
 )
-from besser.utilities.web_modeling_editor.backend.settings import get_settings
+from besser.utilities.web_modeling_editor.backend.settings import get_settings, server_secrets
 
 if TYPE_CHECKING:
     from besser.utilities.web_modeling_editor.backend.services.spec_driven.runtime import (
@@ -169,9 +189,11 @@ _DOWNLOAD_DIR_RE = re.compile(
 # prefix keeps it out of every push and download.
 GITHUB_SOURCE_FILENAME = ".besser_github_source.json"
 # BESSER's own files a later run reads back, so they ride in the ZIP and the
-# GitHub push: the recipe (generator, history), the line attribution, and the
-# generator's stored output (the base a model change is merged against).
-CARRIED_RUN_FILES = (RECIPE_FILENAME, agent_trace.ATTRIBUTION_FILENAME, GENERATOR_OUTPUT_FILENAME)
+# GitHub push: the recipe (generator, history), the line attribution, the
+# generator's stored output (the base a model change is merged against), and
+# the API workflows a later modify run replays.
+CARRIED_RUN_FILES = (RECIPE_FILENAME, agent_trace.ATTRIBUTION_FILENAME, GENERATOR_OUTPUT_FILENAME,
+                     WORKFLOWS_FILENAME)
 _MAX_DOWNLOAD_MANIFEST_BYTES = 16 * 1024
 
 # Error codes a run that goes on to deliver output is shown as warnings.
@@ -325,21 +347,43 @@ _SKIPPED_CHECK_RE = re.compile(
 )
 
 # Validator prefixes from _classify_issue, split by which of the three states
-# they report. A modeled operation left as an HTTP 501 placeholder is the spec
-# stating something the delivered code does not implement; a task whose
-# verification never concluded is the opposite — unknown, not absent. Other
+# they report. A modeled operation left as an HTTP 501 placeholder, or a planned
+# change whose deterministic check fails, is something the delivered code does
+# not implement; a task nothing confirmed is the opposite — unknown, not absent. Other
 # prefixes (ruff, frontend/data contract, create contract) describe code that
 # was built and is defective, which is a different question.
-_UNENFORCED_PREFIXES = ("action contract:", "model contract:")
+_UNENFORCED_PREFIXES = ("action contract:", "model contract:", "task incomplete:")
 # The ``why`` of a requirement the check could not confirm, and of a workflow that failed. A workflow
 # is a test the agent wrote for its own code, not a rule the user stated: when it fails, the test or the
 # app may be wrong, so it is a result to look at, not a rule shipped unenforced.
 _UNCONFIRMED = "the check could not confirm it in the delivered code"
+# The ``why`` of a requirement whose cited code the check found is not an implementation of it.
+_UNSUPPORTED = "the code the check was pointed at does not do this"
+# A modify run's requirement the previous run had also left unmet.
+_OPEN_BEFORE = "open since the previous run; this request did not concern it"
+_CHANGED_LATER = "a newer message changes or removes it"
 _WORKFLOW_FAILED = ("a test the agent wrote ran against the app and failed; it is not a rule from your "
                     "request, and the test or the app may be wrong")
+# The heading of the checked-and-not-met state in BESSER_GENERATION.md: a rule missing in the
+# code, a cited implementation that does not do it.
+_NOT_MET = "Checked and not met"
+# The heading of the advisory findings: observed, blocking nothing, no verdict.
+_SEEN = "Seen, not blocking"
+# Verification levels (``requirements_ledger.with_verification_levels``) at which a call to the
+# running app exercised the requirement; ``unverified`` means only its source citation was checked.
+_RAN_LEVELS = ("verified", "api_verified")
+
+
+def _ran(verdict: dict) -> bool:
+    """Whether a call to the running app exercised an implemented verdict. Recipes written before
+    levels existed have none, and keep their old place among the verified."""
+    return verdict.get("verification", "verified") in _RAN_LEVELS
+
+
 # A judge note's citation annotation: a file path and a remark for the agent.
 _CITATION_NOTE_RE = re.compile(r"\s*\[citation [^\]]*\]")
-_UNCHECKED_PREFIXES = ("task unverified:", "runtime unverified:")
+# "agent left out:": the project's agent is not in the web app, so nothing about it was checked there.
+_UNCHECKED_PREFIXES = ("task unverified:", "runtime unverified:", "agent left out:", JUDGMENT_DEFERRED)
 
 
 def _user_facing_cost(usage: Any, cost_usd: float) -> float:
@@ -413,12 +457,18 @@ def run_changes(recipe: dict) -> dict:
     """The ``DoneEvent`` fields that say what a run changed, read from its recipe."""
     history = recipe.get("history") or []
     mode = (history[-1] if history and isinstance(history[-1], dict) else {}).get("mode")
-    changed = sorted({
+    # Distinct files: successful edit calls (a failed or refused one changed nothing, a
+    # rollback discarded a rolled-back one) and the files the model change regeneration
+    # wrote, merged, moved or removed.
+    edited = {
         (call.get("input") or {}).get("path")
         for call in recipe.get("tool_calls") or []
         if isinstance(call, dict) and call.get("tool") in _FILE_CHANGE_TOOLS
-        and isinstance((call.get("input") or {}).get("path"), str)
-    })
+        and call.get("success") is not False and not call.get("rolled_back")
+    }
+    regenerated = recipe.get("regenerated_files")
+    changed = sorted(path for path in edited | set(regenerated if isinstance(regenerated, list) else [])
+                     if isinstance(path, str))
     model_change = recipe.get("model_change") or {}
     return {
         "mode": "modify" if mode == "modify" else "create",
@@ -467,11 +517,23 @@ def run_summary_markdown(
         lines.append(f"- Run: {run.get('mode')}, {run.get('mode_reason')}; ended: {run.get('stopped_by')}")
         if run.get("models"):
             lines.append(f"- Model: {', '.join(map(one_line, run['models']))} ({run.get('key_tier')})")
+        if run.get("outcome") == "completed_unverified" and run.get("stop_message"):
+            lines.append(f"- Not verified: {one_line(run['stop_message'])}")
+        off = [gap for gap in run.get("not_verified") or [] if isinstance(gap, dict) and gap.get("configured_off")]
+        if run_record.not_checkable((gap.get("check"), gap.get("reason")) for gap in off):
+            lines.append(f"- Not checked: the app's runtime ({one_line(RUNTIME_NOT_CHECKABLE)})")
+            off = [gap for gap in off if gap.get("reason") != RUNTIME_NOT_CHECKABLE]
+        if off:
+            lines.append("- Checks off on this server: " + "; ".join(
+                f"{one_line(gap.get('check'))} ({one_line(gap.get('reason'))})" for gap in off))
     if readme:
         lines.append("- How to run it: see `README.md`")
     lines.append(
-        f"- Verification: {counts.verified} checked and working, {counts.notVerified} not checked, "
-        f"{counts.shippedUnenforced} checked and missing in the code")
+        f"- Verification: {counts.verified} confirmed by running the app's API, "
+        f"{counts.foundInCode} found in the code but not run, {counts.notVerified} not confirmed, "
+        f"{counts.shippedUnenforced} checked and not met"
+        + (f", {counts.failed} test workflow(s) ran and failed" if counts.failed else "")
+        + (f", {counts.advisory} seen, not blocking" if counts.advisory else ""))
     removed, kept = (recipe.get(key) if type(recipe.get(key)) is int else 0
                      for key in ("runtime_files_removed_count", "runtime_files_not_removed_count"))
     note = recipe.get("runtime_files_note")
@@ -480,9 +542,18 @@ def run_summary_markdown(
             f"- Left out: {removed} file(s) the app wrote while it was test-run"
             + (f"; {kept} more could not be removed and are still in the output" if kept else "")
             + (f" ({one_line(note)})" if note else ""))
+    scratch = recipe.get("scratch_files_removed")
+    if isinstance(scratch, list) and scratch:
+        lines.append("- Left out: helper script(s) the agent wrote that named the run's temporary folder: "
+                     + ", ".join(one_line(path) for path in scratch[:10]))
+    bound = recipe.get("temporary_path_files")
+    if isinstance(bound, list) and bound:
+        lines.append("- Names a temporary path: the run's folder, which does not exist after the run; "
+                     "replace it with a relative path: " + ", ".join(one_line(path) for path in bound[:10]))
     findings = {finding.sentence: finding for finding in map(user_finding, _issue_messages(recipe))}
-    for title, items, total in (("Missing in the code", verification.shippedUnenforced, counts.shippedUnenforced),
-                                ("Not checked", verification.notVerified, counts.notVerified)):
+    for title, items, total in ((_NOT_MET, verification.shippedUnenforced, counts.shippedUnenforced),
+                                ("Ran and failed", verification.failed, counts.failed),
+                                ("Not confirmed", verification.notVerified, counts.notVerified)):
         if items:
             entries = [(_summary_finding(item, findings),
                         one_line(item.what) + (f": {one_line(item.why)}" if item.why else "")) for item in items]
@@ -491,7 +562,32 @@ def run_summary_markdown(
             lines += [f"- {line}" for line in shown]
             if max(total, len(items)) > covered:
                 lines.append(f"- and {max(total, len(items)) - covered} more")
+    if verification.advisory:
+        # One line per sentence: several lint or screen findings say the same thing.
+        seen = list(Counter(one_line(item.what) for item in verification.advisory).items())
+        shown = seen[:_SUMMARY_ITEMS_PER_STATE]
+        lines += ["", f"### {_SEEN}", ""]
+        lines += [f"- {line}" + (f" ({n} findings)" if n > 1 else "") for line, n in shown]
+        rest = max(counts.advisory, len(verification.advisory)) - sum(n for _, n in shown)
+        if rest > 0:
+            lines.append(f"- and {rest} more")
     return lines
+
+
+def _verification_gaps(orchestrator: Any) -> list[tuple[str, str, bool]]:
+    """The orchestrator's ``verification_gaps``: each class of checks with no evidence at all.
+
+    Fails closed: a summary that could not be computed is itself a gap.
+    """
+    gaps = getattr(orchestrator, "verification_gaps", None)
+    if not callable(gaps):
+        return []
+    try:
+        found = gaps()
+    except Exception:
+        logger.warning("Could not tell which checks left no evidence", exc_info=True)
+        return [("checks", "the check summary could not be computed", False)]
+    return [run_record.as_gap(gap) for gap in found] if isinstance(found, list) else []
 
 
 def _issue_messages(recipe: dict) -> list[str]:
@@ -511,10 +607,10 @@ def _summary_finding(item: VerificationItem, findings: dict) -> Finding:
 
 
 def build_verification_report(recipe: dict, run_id: Optional[str] = None) -> VerificationReport:
-    """Split the recipe's own evidence into the three states a count hides.
+    """Split the recipe's own evidence into the four states a count hides.
 
-    "we checked and it works", "we could not check" and "we checked and it is
-    missing" are different results. A run that scored 11/11 and passed its
+    "we ran it and it works", "we found it in the code but did not run it",
+    "we could not check" and "we checked and it is missing" are different results. A run that scored 11/11 and passed its
     booking workflow still double-sold rooms because two OCL constraints
     failed conversion; the evidence was in the recipe, flattened into
     "21 blockers".
@@ -523,8 +619,11 @@ def build_verification_report(recipe: dict, run_id: Optional[str] = None) -> Ver
     its RequirementArtifact in the run's trace.
     """
     verified: list[VerificationItem] = []
+    found_in_code: list[VerificationItem] = []
     not_verified: list[VerificationItem] = []
     unenforced: list[VerificationItem] = []
+    failed: list[VerificationItem] = []
+    advisory: list[VerificationItem] = []
 
     if recipe.get("warning") and not any(
         recipe.get(key) for key in
@@ -563,7 +662,7 @@ def build_verification_report(recipe: dict, run_id: Optional[str] = None) -> Ver
             f"{issue.get('expression') or issue.get('original_text') or ''}"
         )
         if verdict is not None and verdict.get("status") == "implemented":
-            verified.append(_item(
+            (verified if _ran(verdict) else found_in_code).append(_item(
                 "ocl_constraint", label, what,
                 how="rejected by the OCL converter, then recovered in code: "
                     + (render_evidence(verdict.get("evidence")) or "no citation"),
@@ -603,16 +702,22 @@ def build_verification_report(recipe: dict, run_id: Optional[str] = None) -> Ver
         if status == "implemented":
             how = ("implementation cited and re-checked against the delivered "
                    f"source: {render_evidence(verdict.get('evidence')) or 'no citation'}")
-            # api_verified: the API half ran, the screens did not; the note says which.
-            level = (str(verdict.get("verification_note") or "")
-                     if verdict.get("verification") in ("unverified", "api_verified") else "")
+            # The note names the call that exercised it, or why the API or the screens did not run.
+            level = str(verdict.get("verification_note") or "")
             if level:
                 # Clip the citation, not the note: a bare "implemented" would read as checked.
                 how = f"{_clip(how, _MAX_HOW - len(_TRUNCATION_MARK) - len(level) - 2)}; {level}"
             item = _item("requirement", ident, what, how=how)
-            verified.append(item)
+            (verified if _ran(verdict) else found_in_code).append(item)
+        elif status == NOT_PROVABLE:
+            item = _item("requirement", ident, what, why=note)
+            not_verified.append(item)
+        elif status == "unverified" and verdict.get(EVIDENCE_REFUTED):
+            item = _item("requirement", ident, what, why=_UNSUPPORTED)
+            unenforced.append(item)
         elif status in ("missing", "partial"):
-            reason = ("the delivered code does not implement it" if status == "missing"
+            reason = (("the delivered app has what it excludes" if verdict.get("kind") == ABSENCE_KIND
+                       else "the delivered code does not implement it") if status == "missing"
                       else "the delivered code implements it only partly")
             note = _CITATION_NOTE_RE.sub("", note).strip()
             item = _item("requirement", ident, what, why=f"{reason}{f'; {note}' if note else ''}")
@@ -621,6 +726,9 @@ def build_verification_report(recipe: dict, run_id: Optional[str] = None) -> Ver
             # The judge's note argues about citations with the agent; the user needs the outcome.
             item = _item("requirement", ident, what, why=_UNCONFIRMED)
             not_verified.append(item)
+        if verdict.get(INHERITED) or verdict.get(CHANGED_LATER):
+            marker = _OPEN_BEFORE if verdict.get(INHERITED) else _CHANGED_LATER
+            item.why = _clip(f"{marker}: {item.why}", _MAX_WHY)
         if run_id:
             item.traceRef = traced_requirement_id(run_id, verdict)
 
@@ -645,18 +753,27 @@ def build_verification_report(recipe: dict, run_id: Optional[str] = None) -> Ver
         if status == "passed":
             verified.append(_item(
                 "api_workflow", ident, what,
-                how=f"{len(requests)} request(s) run against the app: {ran}",
+                how=f"a test the agent wrote passed: {len(requests)} request(s) run against the app: {ran}",
             ))
         elif status == "failed":
-            not_verified.append(_item("api_workflow", ident, what, why=_WORKFLOW_FAILED))
+            # An ``api scenario:`` blocker: it ran and failed, which is not "could not check",
+            # and a test the agent wrote, which is not a rule the user asked for.
+            failed.append(_item("api_workflow", ident, what, why=_WORKFLOW_FAILED))
         else:
             not_verified.append(_item("api_workflow", ident, what, why="it could not be run against the app"))
     # Workflows the agent retired as replaced by another: not run at the end, so not evidence either way.
+    # One that had failed says so: retiring it settled nothing.
     for retired in recipe.get("api_scenarios_retired") or []:
         if isinstance(retired, dict):
             ident = str(retired.get("scenario_id") or "")
-            not_verified.append(_item("api_workflow", ident, f"Test workflow '{ident}'",
-                                      why=f"the agent retired it: {retired.get('reason') or 'no reason given'}"))
+            reason = retired.get("reason") or "no reason given"
+            if retired.get("last_status") == "failed":
+                not_verified.append(_item("api_workflow", ident, f"Test workflow '{ident}' (failed, retired)",
+                                          why=f"it ran against the app and failed, then the agent retired it: "
+                                              f"{reason}"))
+            else:
+                not_verified.append(_item("api_workflow", ident, f"Test workflow '{ident}'",
+                                          why=f"the agent retired it: {reason}"))
 
     # 3b. A run that judged its requirements but never ran the app has no
     #     runtime evidence at all. Silence here reads as "it works".
@@ -686,6 +803,15 @@ def build_verification_report(recipe: dict, run_id: Optional[str] = None) -> Ver
             not_verified.append(_item("check", "", user_sentence(message)))
         elif message.startswith(_UNENFORCED_PREFIXES):
             unenforced.append(_item("requirement", "", user_sentence(message)))
+        elif is_not_confirmed(message) and not message.startswith("requirement unverified:"):
+            # Every other finding the counts call not confirmed (the runtime gate's "no runtime
+            # evidence"); requirements are listed from their verdicts above and below.
+            not_verified.append(_item("check", "", user_sentence(message)))
+        elif not is_not_confirmed(message) and (issue.get("severity") or _classify_issue(message).severity) == "warning":
+            # A plain warning (the stored severity, as blockerCount counts it): what a check could
+            # not look at is not verified; what it saw is advisory.
+            (not_verified if not_checked(message) else advisory).append(
+                _item("check", "", user_sentence(message)))
 
     # 5. The requirements ledger can fail before producing a single verdict
     #    (extraction failed, verification budget exhausted). Its finding then
@@ -694,7 +820,7 @@ def build_verification_report(recipe: dict, run_id: Optional[str] = None) -> Ver
     if not verdicts:
         for issue in recipe.get("validation_issues") or []:
             message = str((issue or {}).get("message") or "")
-            if message.startswith(("requirement unverified:", "requirement:")):
+            if message.startswith("requirement unverified:"):
                 not_verified.append(_item(
                     "check", "", "original-specification coverage", why=user_sentence(message),
                 ))
@@ -702,12 +828,18 @@ def build_verification_report(recipe: dict, run_id: Optional[str] = None) -> Ver
 
     return VerificationReport(
         verified=_capped(verified),
+        foundInCode=_capped(found_in_code),
         notVerified=_capped(not_verified),
         shippedUnenforced=_capped(unenforced),
+        failed=_capped(failed),
+        advisory=_capped(advisory),
         counts=VerificationCounts(
             verified=len(verified),
+            foundInCode=len(found_in_code),
             notVerified=len(not_verified),
             shippedUnenforced=len(unenforced),
+            failed=len(failed),
+            advisory=len(advisory),
         ),
     )
 
@@ -742,6 +874,9 @@ class SmartRunEntry:
     # endpoint prefers this over the request's projectExport so the pushed
     # buml/ stays in sync with the code. ``None`` for every other run.
     updated_project_export: Optional[dict] = None
+    # True for the ZIP a spec-driven run packaged; False for an uploaded file, whose
+    # BESSER run records are not trusted when a modify run seeds from it.
+    packaged: bool = False
 
 
 class SmartRunRegistry:
@@ -788,6 +923,7 @@ class SmartRunRegistry:
             "fileName": entry.file_name,
             "isZip": entry.is_zip,
             "createdAt": entry.created_at,
+            "packaged": entry.packaged,
         }, separators=(",", ":")), root=download_dir)
         return dataclass_replace(entry, file_path=artifact)
 
@@ -856,6 +992,10 @@ class SmartRunRegistry:
                 is_zip=bool(data["isZip"]),
                 temp_dir=workspace,
                 created_at=created_at,
+                # A manifest written before the flag: only a packaged ZIP is named after its
+                # run id, which the server draws after an upload is named.
+                packaged=data.get("packaged") is True or (
+                    "packaged" not in data and data["fileName"] == f"besser_smart_{run_id}.zip"),
             )
         except (KeyError, TypeError, ValueError):
             logger.warning("Ignoring invalid download metadata at %s", manifest_path, exc_info=True)
@@ -1031,9 +1171,67 @@ def _seed_workspace_from_base(base_dir: str, dest_dir: str) -> None:
     while deliberately KEEPING ``.besser_recipe.json`` so the orchestrator
     can replay the previous run's generator-file tags.
     """
-    from besser.spec_driven_agent.state.checkpoint import CHECKPOINT_FILENAME
-
     copytree_plain(base_dir, dest_dir, _EXCLUDED_OUTPUT_DIRS, dirs_exist_ok=True)
+    _strip_seed(dest_dir)
+
+
+def _seed_workspace_from_archive(archive_path: str, dest_dir: str, packaged: bool) -> None:
+    """Unpack a previous run's download into a fresh workspace for editing, when its
+    workspace has expired. The download holds the same tree less what the workspace
+    seed strips; when BESSER ``packaged`` it, the run files a later run reads
+    (``CARRIED_RUN_FILES``) are kept, and the GitHub source record kept beside it is
+    restored. Raises ``ValueError`` for an unsafe or oversized archive, which writes
+    nothing, and ``FileNotFoundError`` when the download is gone."""
+    from besser.utilities.web_modeling_editor.backend.services.spec_driven.github_sync import (
+        _extract_generated_zip,
+    )
+
+    try:
+        with zipfile.ZipFile(archive_path) as archive:
+            _extract_generated_zip(archive, dest_dir, keep=frozenset(CARRIED_RUN_FILES if packaged else ()))
+    except (zipfile.BadZipFile, zlib.error, EOFError, NotImplementedError, RuntimeError) as exc:
+        raise ValueError("The previous run's download could not be read.") from exc
+    _strip_seed(dest_dir)
+    download_dir = os.path.dirname(archive_path)
+    source = os.path.join(download_dir, GITHUB_SOURCE_FILENAME)
+    if packaged and is_plain_file(source, root=download_dir):
+        copy_plain_file(source, os.path.join(dest_dir, GITHUB_SOURCE_FILENAME), root=download_dir, dst_root=dest_dir)
+
+
+_BASE_EXPIRED_MESSAGE = (
+    "The previous generation has expired, so there is nothing to edit — rebuilding from scratch "
+    "instead. Re-run to seed a fresh base for future edits."
+)
+
+
+def modify_base(entry: Optional[SmartRunEntry]) -> tuple[Optional[str], Optional[str]]:
+    """What a modify run of ``entry`` seeds from: ``(workspace, None)`` while the
+    workspace is kept, then ``(None, ZIP download)`` until the download expires;
+    ``(None, None)`` when neither is left (or the download is not a ZIP)."""
+    if entry is None or not entry.temp_dir:
+        return None, None
+    if os.path.isdir(entry.temp_dir):
+        return entry.temp_dir, None
+    if entry.is_zip and is_plain_file(entry.file_path, root=run_download_dir(entry.temp_dir)):
+        return None, entry.file_path
+    return None, None
+
+
+def archived_recipe_text(archive_path: str) -> Optional[str]:
+    """The run recipe in a run's ZIP download, or None when it has none or it is too large."""
+    try:
+        with zipfile.ZipFile(archive_path) as archive:
+            info = archive.getinfo(RECIPE_FILENAME)
+            if info.file_size > MAX_RUN_RECORD_BYTES:
+                return None
+            return archive.read(info).decode("utf-8-sig", errors="replace")
+    except (KeyError, OSError, zipfile.BadZipFile, zlib.error, EOFError, NotImplementedError, RuntimeError):
+        return None
+
+
+def _strip_seed(dest_dir: str) -> None:
+    """Remove from a modify run's seed what belonged to the previous run alone."""
+    from besser.spec_driven_agent.state.checkpoint import CHECKPOINT_FILENAME
 
     # Drop the copied checkpoint (old run's mid-flight state).
     checkpoint = os.path.join(dest_dir, CHECKPOINT_FILENAME)
@@ -1114,6 +1312,7 @@ class SmartGenerationRunner:
         self._telemetry_participant = getattr(request, "telemetry_participant", None)
         self._summary_recorded = False
         self._t_orchestrator: Any = None
+        self._secret_values: tuple[str, ...] | None = None
         self._t_client: Any = None
         self._t_done_payload: Optional[dict] = None
         self._t_last_error_code: Optional[str] = None
@@ -1249,7 +1448,13 @@ class SmartGenerationRunner:
                 self._facts.outcome = "cancelled"
             elif event.code not in _WARNING_CODES:
                 self._facts.outcome = "failed"
-        return format_sse(event, secrets=(self.request.resolved_api_key(),))
+        return format_sse(event, secrets=self._secrets())
+
+    def _secrets(self) -> tuple[str, ...]:
+        """The user's own key and the server's tokens: what the stream and the run record redact literally."""
+        if self._secret_values is None:
+            self._secret_values = (self.request.resolved_api_key(), *server_secrets())
+        return self._secret_values
 
     def _run_totals(self) -> dict[str, Any]:
         """The run's cost, turns and elapsed seconds so far, as the ``cost`` event reports them."""
@@ -1376,23 +1581,13 @@ class SmartGenerationRunner:
             # ---- Incremental modify: seed from the base run --------
             if self._mode == "modify" and self._base_run_id:
                 base_entry = await self._runtime.registry.get(self._base_run_id)
-                if (
-                    base_entry is None
-                    or not base_entry.temp_dir
-                    or not os.path.isdir(base_entry.temp_dir)
-                ):
-                    # Base-expired fallback: the previous run was swept past
-                    # its TTL (or never existed). Warn — non-terminally —
+                base_dir, base_archive = modify_base(base_entry)
+                if base_dir is None and base_archive is None:
+                    # Base-expired fallback: the previous run's workspace and
+                    # download were swept (or never existed). Warn — non-terminally —
                     # and fall through to a normal from-scratch run() so the
                     # user still gets output instead of a hard failure.
-                    yield self._sse(ErrorEvent(
-                        code="INCOMPLETE",
-                        message=(
-                            "The previous generation has expired, so there is "
-                            "nothing to edit — rebuilding from scratch instead. "
-                            "Re-run to seed a fresh base for future edits."
-                        ),
-                    ))
+                    yield self._sse(ErrorEvent(code="INCOMPLETE", message=_BASE_EXPIRED_MESSAGE))
                     logger.info(
                         "smart-modify base %s expired for run %s; "
                         "falling back to from-scratch generation",
@@ -1402,11 +1597,11 @@ class SmartGenerationRunner:
                     # ``_seeded`` stays False → run_orchestrator uses run().
                 else:
                     try:
-                        await self._runtime.run_blocking(
-                            _seed_workspace_from_base,
-                            base_entry.temp_dir,
-                            self.temp_dir,
-                        )
+                        if base_dir is not None:
+                            await self._runtime.run_blocking(_seed_workspace_from_base, base_dir, self.temp_dir)
+                        else:
+                            await self._runtime.run_blocking(
+                                _seed_workspace_from_archive, base_archive, self.temp_dir, base_entry.packaged)
                         self._seeded = True
                         self._facts.mode_reason = run_record.EDIT
                         # Lines that changed since the base run (a person
@@ -1431,10 +1626,13 @@ class SmartGenerationRunner:
                             self.run_id, self._base_run_id,
                         )
                         self._reset_temp_dir_after_failed_seed()
-                        self._facts.mode, self._facts.mode_reason = "generate", run_record.BASE_NOT_COPIED
+                        # Swept while being copied: it expired, it was not unreadable.
+                        expired = not os.path.exists(base_dir or base_archive)
+                        self._facts.mode, self._facts.mode_reason = "generate", (
+                            run_record.BASE_EXPIRED if expired else run_record.BASE_NOT_COPIED)
                         yield self._sse(ErrorEvent(
                             code="INCOMPLETE",
-                            message=(
+                            message=_BASE_EXPIRED_MESSAGE if expired else (
                                 "Could not copy the previous generation — "
                                 "rebuilding from scratch instead."
                             ),
@@ -1581,6 +1779,8 @@ class SmartGenerationRunner:
             if isinstance(event, PhaseEvent):
                 # Stamped as the phase starts, not when the consumer gets to it.
                 event = event.model_copy(update=self._run_totals())
+            elif isinstance(event, StepEvent):
+                event = event.model_copy(update={"elapsedSeconds": self._run_totals()["elapsedSeconds"]})
             try:
                 loop.call_soon_threadsafe(_put_in_loop, event)
             except RuntimeError:
@@ -1690,6 +1890,10 @@ class SmartGenerationRunner:
                 # The first check's result, on the row announced above.
                 self._note_validation_counts(status)
                 _put(PhaseUpdateEvent(phase="validate", details="", message=status))
+                return
+            if tool == "__validation_step__":
+                # What Phase 3 is doing now (a check round, a judge call, a fix attempt).
+                _put(StepEvent(phase="validate", message=status))
                 return
             if tool == "gap_analysis":
                 # Sentinel emitted by gap_analyzer.analyze_gaps_via_llm
@@ -1826,6 +2030,9 @@ class SmartGenerationRunner:
             # BESSER_LLM_ENABLE_* env vars without a code change.
             enable_tracing=settings.llm_enable_tracing,
             enable_checkpointing=settings.llm_enable_checkpointing,
+            # The full record, kept server-side when the operator asks: the recipe the user gets is
+            # size-bounded.
+            run_evidence=run_evidence.for_run(self.run_id, secrets=self._secrets()),
             # Heavy per-project compilers (tsc / cargo / kotlinc) are
             # opt-in for the web deployment — they were the main driver
             # of the duration/cost regression on non-Python stacks.
@@ -1839,8 +2046,7 @@ class SmartGenerationRunner:
             # Disable the arbitrary-shell tools by default — they are
             # user-steerable RCE / secret-exfil on a shared BYOK host. OFF by
             # default (BESSER_LLM_ENABLE_SHELL_TOOLS). The agent keeps every
-            # static tool; only arbitrary `run_command`/`install_dependencies`
-            # are withheld.
+            # static tool; only arbitrary `run_command` is withheld.
             allow_shell_tools=settings.llm_enable_shell_tools,
             per_write_diagnostics=settings.llm_per_write_diagnostics,
             enable_import_smoke_check=settings.llm_enable_import_smoke_check,
@@ -1848,9 +2054,10 @@ class SmartGenerationRunner:
             # The modeling assistant's requirements, when the editor sent
             # them: the ledger is built from them instead of extracted again.
             stated_requirements=(
-                [item.model_dump(mode="json") for item in self.request.requirements]
+                [item.model_dump(mode="json", exclude_none=True) for item in self.request.requirements]
                 if self.request.requirements is not None else None
             ),
+            followup_states_nothing_new=self.request.followup_states_nothing_new,
             # Binding generator choice from an approved preview plan. A
             # bound None explicitly skips Phase 1; an unbound None auto-selects.
             target_generator=target_generator,
@@ -1885,18 +2092,17 @@ class SmartGenerationRunner:
         async def run_orchestrator() -> str:
             try:
                 if self._resume_run_id:
-                    return await self._runtime.run_blocking(
-                        orchestrator.resume, self.request.instructions
-                    )
-                if self._mode == "modify" and self._seeded:
+                    entry = orchestrator.resume
+                elif self._mode == "modify" and self._seeded:
                     # Seeded modify: edit the copied files in place.
                     # (A base-expired / failed-seed fallback left _seeded
                     # False and drops through to the from-scratch run().)
-                    return await self._runtime.run_blocking(
-                        orchestrator.modify, self.request.instructions
-                    )
+                    entry = orchestrator.modify
+                else:
+                    entry = orchestrator.run
+                # Every line the worker thread logs names the run.
                 return await self._runtime.run_blocking(
-                    orchestrator.run, self.request.instructions
+                    run_record.with_run_id(self.run_id, entry), self.request.instructions
                 )
             finally:
                 # Sentinel: tells the drain loop to stop waiting for
@@ -2005,6 +2211,15 @@ class SmartGenerationRunner:
             runtime_watchdog(), name="spec-driven-runtime-watchdog",
         )
 
+        # Every stop sets cancel_event: the cancel endpoint, a disconnect, the
+        # abandonment timer, the watchdog. This ends the LLM call or command
+        # running at that moment instead of waiting for it to return.
+        async def cancel_relay() -> None:
+            await cancel_event.wait()
+            await asyncio.to_thread(orchestrator.deadline.cancel)
+
+        relay_task = asyncio.create_task(cancel_relay(), name="spec-driven-cancel-relay")
+
         # ---- 7. Drain the queue, yielding events ----------------------
         worker_exception: Optional[BaseException] = None
         result_path: Optional[str] = None
@@ -2102,6 +2317,7 @@ class SmartGenerationRunner:
                 logger.warning("Run %s: stream ended before its worker; cancelling the worker", self.run_id)
                 cancel_event.set()
                 await asyncio.wait({worker_task})
+            await _stop_helper_task(relay_task, self.run_id)
             if aborted and not worker_task.cancelled() and worker_task.exception() is not None:
                 logger.warning("Run %s: worker failed after its stream ended: %r",
                                self.run_id, worker_task.exception())
@@ -2258,25 +2474,34 @@ class SmartGenerationRunner:
                 or stop_reason == "validation_required"
             )
 
-            # Blockers include unresolved requirement and verification issues,
-            # not only compile/startup failures.
+            # A run that raised after Phase 3 began skipped the settlement at its exit.
+            if (getattr(self, "_late_internal_error", None)
+                    and getattr(orchestrator, "phase3_started_at", None) is not None):
+                orchestrator._settle_open_setup()
+            # Blockers include requirements found missing, not only compile/startup
+            # failures; a check that reached no conclusion is not confirmed, not a blocker.
+            _final_issues = getattr(orchestrator, "_validation_issues", None) or []
             _unfixed_blockers = [
-                getattr(i, "message", str(i))
-                for i in (getattr(orchestrator, "_validation_issues", None) or [])
-                if is_completion_issue(i)
+                getattr(i, "message", str(i)) for i in _final_issues if is_completion_issue(i)
             ]
+            # (A dependency install left undone was rewritten at Phase 3 exit as checks that did not run.)
+            # A check the server has switched off is counted apart: the same on every run there.
+            _off_notes = sum(1 for i in _final_issues if is_configured_off(i))
+            _not_confirmed = sum(1 for i in _final_issues
+                                 if is_not_confirmed(i) and not is_configured_off(i)
+                                 and getattr(i, "message", i) not in assembly_warnings)
             # Assembly warnings count even if the orchestrator dropped them.
             _unfixed_blockers = list(dict.fromkeys(_unfixed_blockers + assembly_warnings))
+            _gaps = _verification_gaps(orchestrator)
 
             _late_err = getattr(self, "_late_internal_error", None)
             # Set only on a fix/modify run whose reported failure could not be
             # confirmed fixed (already a promoted blocker above); replaces the
             # generic incomplete wording.
             _fix_msg = getattr(orchestrator, "_fix_target_message", None)
-            # "Incomplete" means a known defect, not an unverified check:
-            # unverified findings stay in blockerCount but do not set the
-            # verdict. Assembly warnings carry the unverified prefix yet are a
-            # known loss (a diagram never reached the generator), so add them.
+            # "Incomplete" means a known defect that stops the app working.
+            # Assembly warnings carry the unverified prefix yet are a known
+            # loss (a diagram never reached the generator), so add them.
             _real_defects = unresolved_defects(_unfixed_blockers) + assembly_warnings
             incomplete = (
                 (not exited_cleanly)
@@ -2300,11 +2525,14 @@ class SmartGenerationRunner:
                     ))
                 else:
                     # Phase 2 finished cleanly, but Phase 3 left unfixed blockers.
+                    # A modify run names first a hard blocker its previous version did not have.
+                    _regressions = getattr(orchestrator, "_seed_regressions", None) or []
                     incomplete_reason_msg = (
                         f"The app was generated, but {len(_unfixed_blockers)} unresolved "
                         "implementation or verification issue(s) remain. "
-                        "The generated app is not verified complete. First: "
-                        + user_sentence(_unfixed_blockers[0])
+                        "The generated app is not verified complete. "
+                        + (f"New since the previous version, a regression to confirm: {user_sentence(_regressions[0])}"
+                           if _regressions else f"First: {user_sentence(_unfixed_blockers[0])}")
                     )
                     yield self._sse(ErrorEvent(
                         code="INCOMPLETE",
@@ -2324,6 +2552,12 @@ class SmartGenerationRunner:
                     "max_turns": (
                         "The customization loop reached its step limit before "
                         "finishing every requested change."
+                    ),
+                    "output_limit": (
+                        "The customization loop stopped because the model's replies "
+                        "were cut off at its output limit too often"
+                        + (f" ({api_err})" if api_err else "")
+                        + " before all requested changes were applied."
                     ),
                     "stuck_edit_loop": (
                         "The customization loop stopped because repeated edits "
@@ -2378,8 +2612,17 @@ class SmartGenerationRunner:
             self._facts.stop(
                 stop_reason=stop_reason, cancelled=cancel_event.is_set(), cap_breach=bool(_cap_breach),
                 timed_out=elapsed > effective_runtime_cap, incomplete=incomplete,
-                blocker_count=len(_unfixed_blockers) if exited_cleanly else 0, cost=final_cost,
+                blocker_count=len(_unfixed_blockers), not_confirmed=_not_confirmed, cost=final_cost,
+                gaps=_gaps,
             )
+            # A cancel can land after Phase 2 ended cleanly. It cut the run short only when Phase 3
+            # saw it and stopped; then the reason says so before anything Phase 3 left.
+            cancelled = self._facts.stopped_by == run_record.CANCELLED
+            cut_by_cancel = (cancelled and exited_cleanly
+                             and bool(getattr(orchestrator, "_phase3_interrupted", True)))
+            if cut_by_cancel:
+                incomplete = True
+                incomplete_reason_msg = " ".join(filter(None, (self._facts.stop_message, incomplete_reason_msg)))
 
             # ---- 10. Package the result and emit `done` ---------------
             try:
@@ -2388,14 +2631,36 @@ class SmartGenerationRunner:
                 )
                 done_event.incomplete = incomplete
                 done_event.incompleteReason = incomplete_reason_msg
-                done_event.cancelled = self._facts.stopped_by == run_record.CANCELLED
+                done_event.cancelled = cancelled
+                # A whole class of checks that left no evidence: reported as its own
+                # state, never as incomplete (which is for a known defect).
+                # A class the server has switched off is reported apart (``checksOff``): it is
+                # the same on every run there, so it never makes a run read "not verified".
+                _run_gaps = run_record.run_gaps(_gaps)
+                unverified = bool(_run_gaps) and not incomplete
+                done_event.unverified = unverified
+                done_event.unverifiedReason = (run_record.not_verified_message(
+                    _run_gaps, updated=self._facts.mode == "modify") if unverified else None)
+                done_event.checksOff = [kind for kind, _, off in _gaps if off]
+                done_event.outcome = self._facts.outcome
+                done_event.notConfirmedCount = _not_confirmed
+                done_event.unresolvedBlockerCount = len(_unfixed_blockers)
                 # Completed-with-blockers vs cut-short need different
                 # client framing: a run whose loop finished but left
                 # completion-blocking issues did NOT "stop early". Only set
                 # when the loop exited cleanly — a genuinely cut-short
-                # run keeps 0 so clients use their cut-short copy.
+                # run keeps 0 so clients use their cut-short copy. On a run
+                # that is not incomplete it keeps its legacy meaning for the
+                # released editors, "could not be verified": the blockers plus
+                # the findings not confirmed, and at least one per class of
+                # checks that never ran.
                 done_event.blockerCount = (
-                    len(_unfixed_blockers) if exited_cleanly else 0
+                    0 if not exited_cleanly or cut_by_cancel
+                    else len(_unfixed_blockers) if incomplete
+                    # A switched-off check's note counts here as it always has (no change for
+                    # released editors); ``checksOff`` lets new editors say it quietly.
+                    else len(_unfixed_blockers) + max(_not_confirmed + _off_notes,
+                                                      len(_run_gaps) if unverified else 0)
                 )
                 # Best-effort authorship split (generator vs. LLM) over the
                 # final tree — the headline telemetry metric. Never blocks the
@@ -2649,12 +2914,19 @@ class SmartGenerationRunner:
                     path = os.path.join(result_path, name)
                     if is_plain_entry(path) and os.path.isfile(path):
                         _zip_plain_file(zf, path, name, result_path)
+            # Not in the ZIP (the user's download): kept beside it for a modify run seeded from it.
+            source = os.path.join(result_path, GITHUB_SOURCE_FILENAME)
+            with contextlib.suppress(OSError):
+                if is_plain_file(source, root=result_path):
+                    copy_plain_file(source, os.path.join(download_dir, GITHUB_SOURCE_FILENAME),
+                                    root=result_path, dst_root=download_dir)
             entry = SmartRunEntry(
                 file_path=zip_path,
                 file_name=zip_name,
                 is_zip=True,
                 temp_dir=self.temp_dir,
                 created_at=time.time(),
+                packaged=True,
             )
 
         # Lightweight "what was generated" summary for the UI: file count and
@@ -2961,7 +3233,10 @@ class SmartGenerationRunner:
         try:
             done = self._t_done_payload
             if done is not None:
-                outcome = "incomplete" if done.get("incomplete") else "success"
+                # "success" is a completed run only; the record's other finished outcomes are their own values.
+                outcome = ("incomplete" if done.get("incomplete")
+                           else done.get("outcome") if done.get("outcome") in run_record.FINISHED_UNCLEAN
+                           else "success")
             elif self._t_last_error_code:
                 outcome = f"failed:{self._t_last_error_code}"
             elif self._t_stream_aborted:
@@ -3019,16 +3294,14 @@ class SmartGenerationRunner:
 
             turns = 0
             blockers_remaining: Optional[int] = None
+            not_confirmed: Optional[int] = None
             if orchestrator is not None:
                 turns = int(getattr(orchestrator, "total_turns", 0) or 0)
                 try:
-                    blockers_remaining = sum(
-                        1
-                        for issue in (
-                            getattr(orchestrator, "_validation_issues", None) or []
-                        )
-                        if getattr(issue, "severity", None) == "blocker"
-                    )
+                    issues = getattr(orchestrator, "_validation_issues", None) or []
+                    blockers_remaining = sum(1 for issue in issues if is_completion_issue(issue))
+                    not_confirmed = sum(1 for issue in issues
+                                        if is_not_confirmed(issue) and not is_configured_off(issue))
                 except Exception:
                     blockers_remaining = None
 
@@ -3065,6 +3338,9 @@ class SmartGenerationRunner:
                 "files_produced": int((done or {}).get("fileCount") or 0),
                 "blockers_found": self._t_blockers_found,
                 "blockers_remaining": blockers_remaining,
+                "not_confirmed": not_confirmed,
+                "not_verified": bool((done or {}).get("unverified")),
+                "checks_off": list((done or {}).get("checksOff") or []),
                 "outcome": outcome,
                 "file_split": file_split,
             }

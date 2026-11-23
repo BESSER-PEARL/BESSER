@@ -1,5 +1,8 @@
+import pytest
+
 from besser.BUML.metamodel.structural import *
 from besser.BUML.notations.action_language.ActionLanguageASTBuilder import parse_bal
+from besser.generators.action_language.PythonGenerator import bal_to_python
 from besser.generators.action_language.RESTGenerator import bal_to_rest
 
 
@@ -82,3 +85,56 @@ def test_REST_API_Generation():
     assert signature in code
     assert instance_save in code
     assert update_call in code
+
+
+NESTED_LOOPS = """def count_long(min_pages:int) -> int {
+    count = 0;
+    for(book in this.books){
+        for(other in this.books){
+            if(book.pages > min_pages){
+                count = count + 1;
+            }
+        }
+    }
+    return count;
+}"""
+
+TWO_ITERATORS = """def count_pairs() -> int {
+    count = 0;
+    for(first in this.books, second in this.books){
+        count = count + 1;
+    }
+    return count;
+}"""
+
+
+def _generate_twice(code: str, to_text):
+    """Two parses of one method, both alive, so no object identity can repeat."""
+    model = get_model()
+    library: Class = model.get_type_by_name("Library")
+    functions = [parse_bal(model, library, code) for _ in range(2)]
+    return [to_text(function, library) for function in functions]
+
+
+@pytest.mark.parametrize("to_text", [
+    lambda function, cls: bal_to_rest(function, cls.name),
+    lambda function, cls: bal_to_python(function),
+], ids=["rest", "python"])
+def test_for_loop_code_is_the_same_on_every_parse(to_text):
+    """Loop variables were named after the For node's object hash, so each
+    generation wrote different code for the same method."""
+    first, second = _generate_twice(NESTED_LOOPS, to_text)
+
+    assert first == second
+    assert "_book_seq1 = " in first
+    assert "_other_seq2 = " in first
+
+
+@pytest.mark.parametrize("to_text", [
+    lambda function, cls: bal_to_rest(function, cls.name),
+    lambda function, cls: bal_to_python(function),
+], ids=["rest", "python"])
+def test_for_loop_iterators_keep_their_written_order(to_text):
+    for code in _generate_twice(TWO_ITERATORS, to_text):
+        assigned = [line.strip().split(" = ")[0] for line in code.splitlines() if "_seq" in line]
+        assert assigned[:2] == ["_first_seq1", "_second_seq1"], code

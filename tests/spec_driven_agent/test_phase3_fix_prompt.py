@@ -142,7 +142,7 @@ def test_behaviour_sections_are_sent_only_for_behavioural_blockers(tmp_path, blo
 
 def test_a_requirement_text_is_quoted_once_and_blockers_cite_its_id(tmp_path):
     """Run t14: one rule's 875-char text was pasted 3x per prompt (ledger,
-    ``requirement:`` blocker, ``task unverified:`` blocker)."""
+    ``requirement:`` blocker, checklist blocker)."""
     from besser.spec_driven_agent.planning import requirements_ledger
     from besser.spec_driven_agent.validation.issues import _classify_issue
 
@@ -153,7 +153,7 @@ def test_a_requirement_text_is_quoted_once_and_blockers_cite_its_id(tmp_path):
                           {"id": 2, "kind": "rule", "text": "Guests can book."}]
     verdicts = [{"id": 1, "text": long_text, "kind": "rule", "status": "missing", "note": "no check found"},
                 {"id": 2, "text": "Guests can book.", "kind": "rule", "status": "partial", "note": ""}]
-    orch.executor.set_tasks([long_text])
+    orch.executor.set_tasks([{"text": long_text, "verify": lambda: False}])
     blockers = [_classify_issue(m) for m in
                 requirements_ledger.ledger_issues(verdicts) + orch._collect_task_issues()]
     assert len(blockers) == 3 and all(b.severity == "blocker" for b in blockers)
@@ -165,7 +165,7 @@ def test_a_requirement_text_is_quoted_once_and_blockers_cite_its_id(tmp_path):
     assert f"R1. {long_text}" in call["system"]
     message = _first_message(call)
     assert "- requirement: R1 is not implemented (no check found)" in message
-    assert "remains unresolved: R1 (text in the requirements ledger)." in message
+    assert "is not done: R1 (text in the requirements ledger)." in message
     assert "- requirement partial: R2; inspect" in message
 
 
@@ -184,7 +184,7 @@ def test_a_long_blocker_is_cut_with_a_marker_keeping_its_tail(tmp_path):
     assert "chars cut ...]" in bullet
     assert bullet.endswith("NameError: name 'Base' is not defined. Fix site: app/main.py line 1")
     assert len(bullet) < _FIX_PROMPT_BLOCKER_CHARS + 60
-    assert "The offending lines" in message, "excerpts still come from the full message"
+    assert "app/main.py (read_id " in message, "the file shown still comes from the full message"
 
 
 def test_validate_app_cuts_each_finding_as_the_fix_prompt_does(tmp_path, monkeypatch):

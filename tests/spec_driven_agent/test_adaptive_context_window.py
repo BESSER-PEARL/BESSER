@@ -1,8 +1,9 @@
 """Adaptive per-model compaction threshold.
 
-Resolution order: measured override -> provider catalog (exact id) ->
-known hosted windows (family substring) -> the flat default. The catalog
-is the keyless tier's ``GET /models``; every test injects it, none fetch.
+Resolution order: measured override -> known hosted windows (family
+substring) -> the flat default; a provider catalog window (exact id) may then
+lower the result, never raise it. The catalog is the tiers' ``GET /models``;
+every test injects it, none fetch.
 """
 
 import contextlib
@@ -92,15 +93,18 @@ def _bulk(target_tokens: int) -> str:
 
 class TestCatalogLayer:
 
-    def test_advertised_window_raises_the_threshold_above_the_flat_default(self, monkeypatch):
-        """A 256k model was getting the same 80k as a 1M one - ~30% of its window."""
+    def test_an_advertised_window_never_raises_the_threshold(self, monkeypatch):
+        """A free model's 256k catalog window lifted its threshold from 80k to ~180k: every turn's
+        prompt could more than double, and a recorded 120-turn run would have sent ~68% more
+        prompt tokens."""
         _install_catalog(monkeypatch, COMMAND_CODE)
-        threshold = effective_threshold("moonshotai/Kimi-K2.7-Code", reserve=RESERVE)
-        assert threshold > COMPACT_TOKEN_THRESHOLD
-        # Never the whole usable window: the count is tiktoken-approximate
-        # and the system prompt plus tool schemas ride outside ``messages``.
-        assert threshold < (256_000 - RESERVE) * c._USABLE_WINDOW_FRACTION + 1
-        assert threshold + RESERVE < 256_000
+        for model in ("moonshotai/Kimi-K2.7-Code", "inclusionai/ling-3.0-flash-sante:free"):
+            assert effective_threshold(model, reserve=RESERVE) == COMPACT_TOKEN_THRESHOLD, model
+
+    def test_a_small_advertised_window_still_lowers_it(self, monkeypatch):
+        _install_catalog(monkeypatch, {"vendor/small-model": 96_000})
+        assert effective_threshold("vendor/small-model", reserve=RESERVE) == _expected_adaptive(96_000, RESERVE)
+        assert _expected_adaptive(96_000, RESERVE) < COMPACT_TOKEN_THRESHOLD
 
     def test_million_token_window_is_capped_by_the_ceiling(self, monkeypatch):
         _install_catalog(monkeypatch, COMMAND_CODE)
@@ -256,6 +260,29 @@ class TestCatalogLayer:
         assert c._fetch_catalog() == {"m": 256_000}
 
 
+    def test_fetch_names_besser_as_its_user_agent(self, monkeypatch):
+        """A CDN in front of a gateway refuses Python's default urllib agent with a 403."""
+        monkeypatch.setenv("BESSER_FREE_LLM_BASE_URL", "https://gateway.example/v1")
+        seen: dict = {}
+
+        class _Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return b'{"data": []}'
+
+        def fake_urlopen(request, timeout=None):
+            seen["agent"] = request.get_header("User-agent")
+            return _Response()
+
+        monkeypatch.setattr(c.urllib.request, "urlopen", fake_urlopen)
+        c._fetch_catalog()
+        assert seen["agent"] and seen["agent"].startswith("BESSER")
+
 class TestKnownWindows:
     """Hosted models whose catalogs do not expose context_length (OpenAI,
     Anthropic, Mistral) resolve through the family table."""
@@ -347,16 +374,16 @@ class TestOperatorThreshold:
             _install_catalog(monkeypatch, COMMAND_CODE)
             assert c._OPERATOR_CAP is None
             assert c.effective_threshold("gpt-5.6-terra", reserve=RESERVE) == c.MAX_COMPACT_THRESHOLD
-            assert c.effective_threshold("moonshotai/Kimi-K2.7-Code", reserve=RESERVE) > c.COMPACT_TOKEN_THRESHOLD
+            assert c.effective_threshold("moonshotai/Kimi-K2.7-Code", reserve=RESERVE) == c.COMPACT_TOKEN_THRESHOLD
             assert c.effective_threshold("some-byok-model") == c.COMPACT_TOKEN_THRESHOLD
 
 
 class TestEndToEnd:
 
-    def test_wide_window_model_keeps_a_history_the_default_would_compact(
+    def test_a_wide_catalog_window_compacts_where_the_default_does(
         self, tmp_path, monkeypatch,
     ):
-        """~90k tokens: over the 80k default, under a 256k model's threshold."""
+        """~90k tokens: over the 80k default, under what a 256k window would allow."""
         _install_catalog(monkeypatch, COMMAND_CODE)
         chunk = _bulk(22_000)
         messages = [{"role": "user", "content": "build"}]
@@ -375,4 +402,4 @@ class TestEndToEnd:
             messages=list(messages), tool_calls_log=[], output_dir=str(tmp_path),
             model="moonshotai/Kimi-K2.7-Code",
         )
-        assert wide is False
+        assert wide is True

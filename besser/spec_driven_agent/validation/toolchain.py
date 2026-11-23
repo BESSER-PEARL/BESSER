@@ -21,7 +21,12 @@ import os
 import re as _re
 
 from besser.spec_driven_agent.state.checkpoint import _SNAPSHOT_DIR
-from besser.spec_driven_agent.execution.process import _safe_subprocess_env, run_bounded
+from besser.spec_driven_agent.execution.process import (
+    CommandStopped,
+    _safe_subprocess_env,
+    run_bounded,
+    timeout_cause,
+)
 from besser.spec_driven_agent.validation.issues import (
     ValidationIssue,
     _check_did_not_run,
@@ -101,7 +106,8 @@ def format_python_files(output_dir: str, rel_paths: list[str]) -> list[str]:
             timeout=_RUFF_FORMAT_TIMEOUT_SECONDS, cwd=output_dir, env=_safe_subprocess_env(),
         )
     except (subprocess.TimeoutExpired, OSError) as exc:
-        return [_check_did_not_run("ruff format", f"it could not run: {type(exc).__name__}")]
+        cause = exc.reason if isinstance(exc, CommandStopped) else type(exc).__name__
+        return [_check_did_not_run("ruff format", f"it could not run: {cause}")]
     if result.returncode != 0:
         # Exit 2 names files it could not parse; it still formats the others.
         detail = (result.stderr or result.stdout or "").strip().splitlines()[:1]
@@ -166,46 +172,6 @@ def _toolchain_commands_for(
             commands.append(cmd)
             seen.add(cmd)
     return commands
-
-
-def _build_toolchain_reminder(
-    toolchain_blockers: list[ValidationIssue], *, shell_tools: bool = True
-) -> str:
-    """High-salience reminder text for the toolchain-fix loop.
-
-    Mirrors the shape of ``_build_modify_loop_reminder`` (the
-    per-file modify-loop guard the LLM already recognises) so the
-    model treats the toolchain errors with the same urgency as a
-    rewrite-or-quit warning. The verbatim error lines are quoted
-    in the reminder so they sit in the model's working memory
-    right before its next response.
-    """
-    # Cap the reminder body so a runaway report (e.g. 100 type
-    # errors after a single missing import) doesn't blow out the
-    # context window. The prompt's blocker list carries the rest.
-    lines = [i.message for i in toolchain_blockers[:8]]
-    bulleted = "\n".join(f"  - {ln}" for ln in lines)
-    more = (
-        f"\n  - (+{len(toolchain_blockers) - 8} more in the prompt's blocker list)"
-        if len(toolchain_blockers) > 8 else ""
-    )
-    return (
-        "<system-reminder>"
-        "The generated project does not compile on its own toolchain. "
-        "The project is not deliverable until these errors are fixed:\n"
-        f"{bulleted}{more}\n\n"
-        + ("You MUST drive these to zero. After EACH edit, invoke "
-           "run_command with the appropriate toolchain check (npx tsc "
-           "--noEmit / cargo check / kotlinc) and read the output. "
-           "Only call end_turn once the toolchain reports zero errors, "
-           if shell_tools else
-           "You MUST drive these to zero. run_command is unavailable in this "
-           "run; the harness re-runs the toolchain when this attempt ends. "
-           "Only call end_turn once every reported error is fixed, ")
-        + "or after you have made a clear good-faith attempt that the "
-        "remaining errors require dependencies you cannot add."
-        "</system-reminder>"
-    )
 
 
 # How many ruff lines Phase 3 reports. Blocker-code lines are always kept
@@ -422,6 +388,7 @@ def _collect_tsc_issues(
     allow_shell_tools: bool,
     enable_toolchain_validation: bool,
     excluded_dirs: set[str],
+    without_dependencies: bool = True,
 ) -> list[str]:
     """Run ``tsc --noEmit`` for any TypeScript project in the workspace.
 
@@ -429,6 +396,8 @@ def _collect_tsc_issues(
     runs ``tsc --noEmit`` against each project root. A disabled or missing
     compiler is unverified, not a source defect for automatic repair.
     Sandboxed: a project-local tsc is package-authored code.
+    ``without_dependencies=False`` only asks for the install of a project
+    whose dependencies the agent can install, without a partial check on it.
     """
     import shutil as _shutil
     import subprocess
@@ -489,6 +458,8 @@ def _collect_tsc_issues(
         )
         if setup_allowed:
             issues.append(required_dependency_setup(f"tsc [{rel}]", rel))
+        if setup_allowed and not without_dependencies:
+            continue
         if not tsc_bin:
             if not setup_allowed:
                 issues.append(required_check_unverified(f"tsc [{rel}]", "TypeScript compiler is unavailable"))
@@ -506,8 +477,8 @@ def _collect_tsc_issues(
             issues.append(required_check_unverified(
                 f"tsc [{rel}]", str(exc)))
             continue
-        except subprocess.TimeoutExpired:
-            issues.append(required_check_unverified(f"tsc [{rel}]", "timed out after 60s"))
+        except subprocess.TimeoutExpired as exc:
+            issues.append(required_check_unverified(f"tsc [{rel}]", timeout_cause(exc, "timed out after 60s")))
             continue
         except OSError as exc:
             issues.append(
@@ -797,8 +768,8 @@ def _collect_cargo_issues(output_dir: str) -> list[str]:
             issues.append(_check_did_not_run(
                 f"cargo [{rel}]", str(exc)))
             continue
-        except subprocess.TimeoutExpired:
-            issues.append(_check_did_not_run(f"cargo [{rel}]", "timed out after 180s"))
+        except subprocess.TimeoutExpired as exc:
+            issues.append(_check_did_not_run(f"cargo [{rel}]", timeout_cause(exc, "timed out after 180s")))
             continue
         except OSError as exc:
             issues.append(
@@ -933,9 +904,9 @@ def _collect_kotlinc_issues(output_dir: str) -> list[str]:
                 [kotlinc_bin, "-nowarn", "-d", os.devnull, *kt_files],
                 timeout=180, cwd=output_dir, env=_safe_subprocess_env(),
             )
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as exc:
             # A timed-out module must not read as "compiled clean".
-            issues.append(_check_did_not_run(f"kotlinc [{module_rel}]", "timed out after 180s"))
+            issues.append(_check_did_not_run(f"kotlinc [{module_rel}]", timeout_cause(exc, "timed out after 180s")))
             continue
         except OSError as exc:
             issues.append(

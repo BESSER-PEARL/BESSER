@@ -17,10 +17,13 @@ import json
 import logging
 import os
 import time
+from collections import Counter
 
 from besser.spec_driven_agent.agent.prompt_builder import build_inventory
 from besser.spec_driven_agent.agent.tool_executor import ends_shell_session
 from besser.spec_driven_agent.errors import EmptyInstructionsError
+from besser.spec_driven_agent.execution.deadline import under_deadline
+from besser.spec_driven_agent.pipeline.phase3_repair import _RUNTIME_TARGET_RE, _finding_text
 from besser.spec_driven_agent.pipeline.regeneration import MAX_REASON_CHARS, regenerate
 from besser.spec_driven_agent.planning.model_change import (
     FULL_MODEL,
@@ -31,7 +34,13 @@ from besser.spec_driven_agent.planning.model_rules import (
     is_dropped_by_model_change,
     mark_rules_broken_by_model_change,
 )
-from besser.spec_driven_agent.planning.requirements_ledger import latest_user_message, original_request
+from besser.spec_driven_agent.planning.requirements_ledger import (
+    latest_user_message,
+    ledger_issues,
+    original_request,
+    previous_run_verdicts,
+    source_hashes,
+)
 from besser.spec_driven_agent.planning.user_request import user_request
 from besser.spec_driven_agent.planning.specification import validate_specification
 from besser.spec_driven_agent.planning.target import (
@@ -51,6 +60,7 @@ from besser.spec_driven_agent.run_recap import (
     recorded_requests,
     repo_notes,
 )
+from besser.spec_driven_agent.state.api_workflows import load_workflows, workflow_entries
 from besser.spec_driven_agent.state.trace_model import generator_output_record
 from besser.spec_driven_agent.state.tracing import (
     EVENT_PHASE_ENTER,
@@ -61,7 +71,18 @@ from besser.spec_driven_agent.state.tracing import (
     EVENT_SNAPSHOT,
     EVENT_VALIDATION_ISSUE,
 )
-from besser.spec_driven_agent.validation.issues import ValidationIssue, _check_did_not_run, unresolved_defects
+from besser.spec_driven_agent.validation.issues import (
+    OPEN_SINCE_PREVIOUS,
+    REGRESSION_TO_CONFIRM,
+    ValidationIssue,
+    _check_did_not_run,
+    _classify_issue,
+    could_not_run,
+    hidden_families,
+    is_completion_issue,
+    is_not_confirmed,
+    unresolved_defects,
+)
 from besser.spec_driven_agent.validation.model_conformance import model_conformance_issues
 from besser.spec_driven_agent.validation.user_wording import user_sentence
 from besser.utilities.workspace_fs import open_plain
@@ -69,10 +90,37 @@ from besser.utilities.workspace_fs import open_plain
 logger = logging.getLogger(__name__)
 
 
+# Never promoted to the reported failure on a fix run, and never held against it by the
+# gate. A user's report can corroborate an OBSERVATION of the running app (a guessed create
+# or action the app refused: ``create``/``action``/``runtime unverified:``), never "no
+# conclusion about the code" (a citation not located), "the check did not run", or a
+# checklist item nothing closed. The first entry is ``_FIX_TARGET_PREFIX``. Leaving the
+# screen check out is a policy choice: its findings stay warnings until calibrated.
+_NEVER_PROMOTED = (
+    "reported-failure: ",
+    "requirement unverified:",
+    "validation unverified:",
+    "task unverified:",
+    "screen:",
+    "screen warning:",
+    "screens: not run",
+)
+
+# How a seed run's forwarded blocker opens this run's issues.
+_SEED_FORWARD_PREFIX = "Unresolved from the previous run: "
+# A blocker of these kinds that the previous version did not have is a regression to confirm:
+# the app no longer starts, creates a record, or builds.
+_REGRESSION_PREFIXES = (
+    "application startup:", "mapper config:", "missing module:",
+    "create contract:", "read contract:", "action call:", "tsc [", "frontend build [",
+)
+
+
 class ModifyRunMixin:
     """modify and friends; see the module docstring."""
 
     @ends_shell_session
+    @under_deadline
     def modify(self, instructions: str) -> str:
         """Edit a seeded workspace in place instead of rebuilding it.
 
@@ -104,6 +152,9 @@ class ModifyRunMixin:
         self._instructions = instructions
 
         self._start_time = time.monotonic()
+        # The previous version, before this run's model sync and regeneration change it.
+        self._seed_source_hashes = source_hashes(self.output_dir)
+        self._previous_verdicts = self._load_previous_verdicts()
         # Before the model-sync below adds classes: a resume re-checks it
         # against the model in the request.
         self._project_fingerprint = self._compute_project_fingerprint(instructions)
@@ -123,6 +174,7 @@ class ModifyRunMixin:
         # the copied recipe BEFORE building the inventory (which needs a
         # generator name for its framing line).
         self._seed_generator_files_from_recipe()
+        self._seed_workflows = load_workflows(self.output_dir)
         # One routing call: does the request change the target, does it report a failure.
         self._route_modify_request()
         # Frame the run as editing an existing project. When the seed came
@@ -222,7 +274,7 @@ class ModifyRunMixin:
                 self._trace.write(
                     EVENT_VALIDATION_ISSUE, phase="seed_forward", message=issue,
                 )
-        self._trace.write(EVENT_PHASE_ENTER, phase="phase2_modify")
+        self._trace.write(EVENT_PHASE_ENTER, phase="phase2_modify", compact_threshold=self._compact_threshold())
         self._run_phase2(instructions, extra_issues=self._modify_scoped_issues(phase1_issues))
         self._trace.write(
             EVENT_PHASE_EXIT, phase="phase2_modify", turns=self.total_turns,
@@ -239,21 +291,17 @@ class ModifyRunMixin:
             self._save_phase3_checkpoint()
         self._trace.write(EVENT_PHASE_ENTER, phase="phase3")
         self._run_phase3_validation()
+        self._settle_open_setup()
         self._trace.write(
             EVENT_PHASE_EXIT,
             phase="phase3",
-            unresolved_blockers=sum(
-                1 for i in self._validation_issues if i.severity == "blocker"
-            ),
+            unresolved_blockers=sum(1 for i in self._validation_issues if is_completion_issue(i)),
+            not_confirmed=sum(1 for i in self._validation_issues if is_not_confirmed(i)),
             exit_reason=self._phase3_exit_reason,
         )
 
-        # -- Fix/modify success gate --------------------------------------
-        # After Phase 3, decide whether the reported failure is plausibly
-        # addressed. A matching finding still present marks the run
-        # incomplete with an honest, target-specific message instead of a
-        # clean "success / 0 blockers".
-        self._evaluate_fix_target_gate()
+        # -- Against the previous version, and the fix/modify success gate --
+        self._modify_end_checks()
 
         elapsed = time.monotonic() - self._start_time
         logger.info(
@@ -297,6 +345,144 @@ class ModifyRunMixin:
             leading = fix_seed_issues[:1] + leading
             fix_seed_issues = fix_seed_issues[1:]
         return leading + phase1_issues + self._seed_unresolved_issues + fix_seed_issues
+
+    def _modify_opening_issues(self, issues: list[str]) -> list[str]:
+        """Phase 2's opening issues of a modify run, before validate_app adds its blockers on
+        the tree Phase 2 starts from: each fact once.
+
+        The checks validate_app runs, unclipped (the probe's result is cached for its call):
+        a forwarded seed blocker they find again is left out. On a fresh run (not a resume)
+        the seed recipe's findings are the previous version's (``_seed_baseline``), and these
+        checks' too unless this run already changed the model or the tree.
+        """
+        opening = [issue.message for issue in self._verify_workspace()]
+        if self._seed_baseline is None and self._resume_messages is None:
+            change = getattr(self, "_model_change", None)
+            unchanged = (not ((change is not None and change.changes) or self._model_sync_classes)
+                         and self._seed_source_hashes == source_hashes(self.output_dir))
+            self._seed_baseline = [*(opening if unchanged else []), *self._seed_recorded_issues]
+        current = {self._seed_identity(issue) for issue in opening
+                   if _classify_issue(issue).severity == "blocker"}
+        return list(dict.fromkeys(
+            issue for issue in issues
+            if not (issue.startswith(_SEED_FORWARD_PREFIX)
+                    and self._seed_identity(issue[len(_SEED_FORWARD_PREFIX):]) in current)))
+
+    def _seed_identity(self, message: str) -> tuple:
+        """What a finding tests, as Phase 3 attempts compare them (``_blocker_key``), and for a
+        runtime finding its error too: a new error on the same route is a new finding."""
+        return (self._blocker_key(ValidationIssue("blocker", message)),
+                _finding_text(message) if _RUNTIME_TARGET_RE.match(message) else None)
+
+    def _seed_defects(self) -> list[str]:
+        """The previous version's observed defects: blockers of ``_seed_baseline`` that are no unknown."""
+        return unresolved_defects([message for message in self._seed_baseline or []
+                                   if _classify_issue(message).severity == "blocker"])
+
+    def _label_seed_findings(self, issues: list[ValidationIssue]) -> list[ValidationIssue]:
+        """A modify run's defect the previous version already had, matched by identity (not
+        text), becomes ``open since the previous version:``: listed, not a blocker, not
+        repaired. A fix run keeps the severity of a finding that matches its reported failure,
+        or that stops other checks from running (so the failure cannot be checked past it),
+        and of every finding when the failure names no entity to tell them apart."""
+        old = Counter(self._seed_identity(message) for message in self._seed_defects())
+        if not self._modify_mode or not old:
+            return issues
+        if self._is_fix_run and (self._fix_target is None or not self._fix_target.entities):
+            return issues
+        from besser.spec_driven_agent.planning.fix_target import finding_matches_target
+
+        labelled = []
+        for issue in issues:
+            if (is_completion_issue(issue) and unresolved_defects([issue])
+                    and not issue.message.startswith(self._FIX_TARGET_PREFIX)
+                    and not (self._is_fix_run and (finding_matches_target(issue.message, self._fix_target)
+                                                   or hidden_families([issue])))):
+                key = self._seed_identity(issue.message)
+                if old[key] > 0:
+                    old[key] -= 1
+                    labelled.append(ValidationIssue("warning", OPEN_SINCE_PREVIOUS + issue.message))
+                    continue
+            labelled.append(issue)
+        return labelled
+
+    def _note_seed_regressions(self) -> None:
+        """The hard blockers (no start, no create, no build) the run ends with that the
+        previous version did not have, where that check could run on it: regressions to
+        confirm (``_seed_regressions``)."""
+        if self._seed_baseline is None:
+            return
+        old = {self._seed_identity(message) for message in self._seed_defects()}
+        hidden = hidden_families(self._seed_baseline)
+        self._seed_regressions = [
+            issue.message for issue in self._validation_issues
+            if is_completion_issue(issue) and issue.message.lower().startswith(_REGRESSION_PREFIXES)
+            and self._seed_identity(issue.message) not in old and not could_not_run(issue.message, hidden)]
+        for message in self._seed_regressions:
+            logger.warning("Modify run: new since the previous version, a regression to confirm: %s",
+                           message[:300])
+            self._trace.write(EVENT_VALIDATION_ISSUE, phase="seed_regression", message=message[:1000])
+
+    def _replay_seed_workflows(self) -> None:
+        """Run each workflow that passed on the previous version once on the delivered tree,
+        unless this run kept one under its id. One that fails now is a regression to confirm,
+        never a blocker: the change may have meant it. Those that pass, and those no check
+        could run, are kept for the next run (``_carried_seed_workflows``): none runs when the
+        delivered tree's backend does not start, which is reported on its own. One whose
+        backend folder the delivered tree no longer has is dropped."""
+        if not self._seed_workflows:
+            return
+        from besser.spec_driven_agent.validation.api_probe import DID_NOT_RUN_BOOTS, probe_api_scenario
+
+        own = {record.get("scenario_id") for record in self._api_scenarios.values()}
+        runnable = (self.enable_import_smoke_check and self._checks_allowed()
+                    and ("runtime", "") not in hidden_families(self._validation_issues))
+        for workflow in self._seed_workflows:
+            if workflow["scenario_id"] in own or workflow["status"] not in ("passed", None):
+                continue
+            backend = workflow["scenario"].get("backend")
+            if backend is not None and not os.path.isdir(os.path.join(self.output_dir, backend)):
+                logger.info("Modify run: API workflow %r dropped: its backend %s is no longer in the app",
+                            workflow["scenario_id"], backend)
+                continue
+            # One saved without a status claims nothing to compare with: carried, not replayed.
+            if not runnable or workflow["status"] is None:
+                self._carried_seed_workflows.append(workflow)
+                continue
+            scenario = workflow["scenario"]
+            report = probe_api_scenario(self.output_dir, scenario["requests"], backend=scenario.get("backend"))
+            # ``not_started``: the probe found nothing to boot or failed itself, so the workflow did not run.
+            if report.get("status") == "passed" or report.get("boot") in (*DID_NOT_RUN_BOOTS, "not_started"):
+                self._carried_seed_workflows.append(workflow)
+                continue
+            detail = report.get("error") or json.dumps({
+                "assertion_failures": report.get("assertion_failures", []),
+                "request_errors": [{"path": response.get("path"), "error": response["error"]}
+                                   for response in report.get("responses", []) if response.get("error")],
+            })
+            message = (f"{REGRESSION_TO_CONFIRM}api scenario {workflow['scenario_id']} passed on the previous "
+                       f"version and fails now: {detail[:1500]}")
+            logger.warning("Modify run: %s", message[:300])
+            self._validation_issues.append(ValidationIssue("warning", message))
+            self._trace.write(EVENT_VALIDATION_ISSUE, phase="seed_workflow_replay", message=message[:1000])
+
+    def _api_workflows_to_keep(self) -> list[dict]:
+        """This run's retained workflows, then the previous version's it carried."""
+        own = workflow_entries(self._api_scenarios.values(), self._workspace_revision())
+        ids = {entry["scenario_id"] for entry in own}
+        return own + [workflow for workflow in self._carried_seed_workflows if workflow["scenario_id"] not in ids]
+
+    def _modify_end_checks(self) -> None:
+        """After Phase 3 of a modify run: compare with the previous version, then the fix gate."""
+        if not self._modify_mode:
+            return
+        self._replay_seed_workflows()
+        self._note_seed_regressions()
+        # After Phase 3, decide whether the reported failure is plausibly
+        # addressed. A matching finding still present marks the run
+        # incomplete with an honest, target-specific message instead of a
+        # clean "success / 0 blockers".
+        self._evaluate_fix_target_gate()
 
     def _render_model_change(self) -> str:
         """Every model change since the seed run, so the edit follows the new
@@ -350,7 +536,7 @@ class ModifyRunMixin:
         try:
             regeneration, reason = regenerate(
                 self.output_dir, generator, self.domain_model, self._seed_output_files,
-                change.class_renames if change else (), self._previous_domain_model)
+                change.class_renames if change else (), self._previous_domain_model, self.executor.app_name)
         except Exception as exc:
             # The run goes on as before: the agent applies the whole model change.
             logger.warning("Regenerating generated files failed", exc_info=True)
@@ -360,6 +546,10 @@ class ModifyRunMixin:
             self._trace.write(EVENT_REGENERATION, generator=generator, skipped=reason)
             return
         self._regeneration = regeneration
+        # A moved file counts once, under its new path.
+        self._regenerated_files = sorted({
+            *regeneration.written, *regeneration.merged, *regeneration.removed,
+            *(new for _, new in regeneration.moved)})
         moved_from = [old for old, _ in regeneration.moved]
         self.executor.update_generator_files(
             regeneration.written + [new for _, new in regeneration.moved], regeneration.removed + moved_from)
@@ -414,6 +604,23 @@ class ModifyRunMixin:
             lines.append(notes)
         return "\n".join(lines)
 
+    def _load_previous_verdicts(self) -> list[dict] | None:
+        """The seed recipe's requirement verdicts on the seeded tree (see
+        ``previous_run_verdicts``), and its request; None without a ledger or a recorded one.
+        Best-effort: the recipe can come from a repository anyone edited."""
+        recipe = load_recipe(self.output_dir)
+        recorded = recipe.get("requirements") if isinstance(recipe, dict) else None
+        if not self.enable_requirements_ledger or not isinstance(recorded, list) or not recorded:
+            return None
+        try:
+            verdicts = previous_run_verdicts(recorded, self.output_dir)
+        except Exception:
+            logger.warning("Seed recipe requirements unreadable; judging the whole request", exc_info=True)
+            return None
+        instructions = recipe.get("instructions")
+        self._previous_instructions = instructions if isinstance(instructions, str) else None
+        return verdicts or None
+
     def _seed_generator_files_from_recipe(self) -> None:
         """Pre-load generator-file tags from a seeded run's recipe.
 
@@ -446,6 +653,8 @@ class ModifyRunMixin:
             return
         self._seed_generator_used = recipe.get("generator_used")
         self._seed_target = self.target = Target.from_payload(recipe.get("target"))
+        if isinstance(recipe.get("routed_stack"), str):
+            self._routed, self._unsupported_stack = True, recipe["routed_stack"]
         converted = (recipe.get("model") or {}).get("converted_rules")
         if isinstance(converted, list):
             self._seed_converted_rules = set(converted)
@@ -458,12 +667,14 @@ class ModifyRunMixin:
         # contract (Phase 0 checks the current model) and the runtime gate's
         # verdict (it quotes findings forwarded on their own).
         try:
+            recorded = [i for i in recipe.get("validation_issues", [])
+                        if isinstance(i, dict) and isinstance(i.get("message"), str) and i["message"]]
+            # A defect an earlier modify run found open since its previous version is still one.
+            self._seed_recorded_issues = [i["message"].removeprefix(OPEN_SINCE_PREVIOUS) for i in recorded]
             seed_blockers = [
-                ValidationIssue("blocker", i["message"])
-                for i in recipe.get("validation_issues", [])
-                if isinstance(i, dict)
-                and i.get("severity") == "blocker"
-                and isinstance(i.get("message"), str) and i["message"]
+                ValidationIssue("blocker", i["message"].removeprefix(OPEN_SINCE_PREVIOUS))
+                for i in recorded
+                if i.get("severity") == "blocker" or i["message"].startswith(OPEN_SINCE_PREVIOUS)
             ]
             forwarded = [
                 i for i in unresolved_defects(seed_blockers)
@@ -473,8 +684,7 @@ class ModifyRunMixin:
                 logger.info(
                     "Seed run: %d of %d blocker(s) not forwarded (unknowns, model contract, runtime gate)",
                     len(seed_blockers) - len(forwarded), len(seed_blockers))
-            self._seed_unresolved_issues = [
-                f"Unresolved from the previous run: {i.message}" for i in forwarded]
+            self._seed_unresolved_issues = [f"{_SEED_FORWARD_PREFIX}{i.message}" for i in forwarded]
         except Exception:
             logger.debug("Seed recipe validation_issues malformed", exc_info=True)
         try:
@@ -505,7 +715,9 @@ class ModifyRunMixin:
         seed = self._seed_target
         routing = None
         if self._can_route():
-            routing = self._select_generator_structured(self._modify_routing_prompt(seed), [], modify=True)
+            with self._traced_llm_call("routing") as call:
+                routing = self._select_generator_structured(self._modify_routing_prompt(seed), [], modify=True)
+                call["outcome"] = "failed" if routing is None or routing.target is None else "ok"
         if routing is None or routing.target is None:
             logger.warning(
                 "Modify run: the routing call failed; keeping the existing target (%s) "
@@ -517,7 +729,8 @@ class ModifyRunMixin:
             self._record_target(routing.target)
         elif routing.changes_target:
             self._previous_target = seed
-            self._record_target(routing.target)
+            # The new target's stack replaces the seed's.
+            self._record_routing(routing)
 
     def _modify_routing_prompt(self, seed: Target | None) -> str:
         instructions = self._instructions
@@ -530,7 +743,7 @@ class ModifyRunMixin:
         except Exception:
             classes = []
         return (
-            f"User request: {user_request(instructions)}\n\n"
+            f"Conversation so far (context only): {user_request(instructions)}\n\n"
             f"Newest user message: {latest_user_message(instructions)}\n\n"
             f"{TARGET_RULES}\n{STACK_RULES}\n{MODIFY_RULES}\n\n"
             f"{existing}Model classes: {', '.join(classes) or 'none'}\n"
@@ -587,6 +800,7 @@ class ModifyRunMixin:
             "seed_llm_modified": sorted(self._seed_llm_modified),
             # The seed recipe's findings. The run's own recipe may replace it before a resume.
             "seed_unresolved_issues": self._seed_unresolved_issues,
+            "seed_baseline": self._seed_baseline,
             "seed_converted_rules": sorted(converted) if converted is not None else None,
             "seed_dropped_rules": getattr(self, "_seed_dropped_rules", []),
             "fix_target": dataclasses.asdict(self._fix_target) if self._fix_target else None,
@@ -597,6 +811,13 @@ class ModifyRunMixin:
             "model_sync_classes": self._model_sync_classes,
             "updated_project_export": self._updated_project_export,
             "model_sync_error": self._model_sync_error,
+            "seed_source_hashes": self._seed_source_hashes,
+            "regenerated_files": self._regenerated_files,
+            "previous_verdicts": self._previous_verdicts,
+            "previous_instructions": self._previous_instructions,
+            "previous_ids": sorted(self._previous_ids),
+            "follow_up_continues": self._follow_up_continues,
+            "replaced_ids": sorted(self._replaced_ids),
         }
 
     def _restore_modify_state(self, state: dict) -> None:
@@ -616,6 +837,10 @@ class ModifyRunMixin:
         self._model_change = model_change_from_dict(state.get("model_change"))
         self._seed_unresolved_issues = [
             i for i in state.get("seed_unresolved_issues") or [] if isinstance(i, str)]
+        baseline = state.get("seed_baseline")
+        self._seed_baseline = [i for i in baseline if isinstance(i, str)] if isinstance(baseline, list) else None
+        # Still the seed's file: a run writes its own when it saves its recipe.
+        self._seed_workflows = load_workflows(self.output_dir)
         converted = state.get("seed_converted_rules")
         self._seed_converted_rules = set(converted) if isinstance(converted, list) else None
         self._seed_dropped_rules = [
@@ -628,6 +853,17 @@ class ModifyRunMixin:
         export = state.get("updated_project_export")
         self._updated_project_export = export if isinstance(export, dict) else None
         self._model_sync_error = state.get("model_sync_error")
+        hashes = state.get("seed_source_hashes")
+        self._seed_source_hashes = hashes if isinstance(hashes, dict) else None
+        self._regenerated_files = [
+            p for p in state.get("regenerated_files") or [] if isinstance(p, str)]
+        verdicts = state.get("previous_verdicts")
+        self._previous_verdicts = verdicts if isinstance(verdicts, list) and verdicts else None
+        previous = state.get("previous_instructions")
+        self._previous_instructions = previous if isinstance(previous, str) else None
+        self._previous_ids = {rid for rid in state.get("previous_ids") or [] if type(rid) is int}
+        self._follow_up_continues = state.get("follow_up_continues") is True
+        self._replaced_ids = {rid for rid in state.get("replaced_ids") or [] if type(rid) is int}
 
     def _acceptance_seed_issues(self) -> list[str]:
         """Acceptance-matrix findings on the current (seed) workspace."""
@@ -636,7 +872,8 @@ class ModifyRunMixin:
                 build_acceptance_matrix,
                 matrix_issues,
             )
-            matrix = build_acceptance_matrix(self.output_dir, self.domain_model)
+            matrix = build_acceptance_matrix(self.output_dir, self.domain_model,
+                                             gui_model=self.gui_model)
             return matrix_issues(matrix)
         except Exception:
             logger.debug("Seed acceptance computation failed", exc_info=True)
@@ -681,16 +918,21 @@ class ModifyRunMixin:
         Phase 3 classification is identical). A promoted finding is
         rewritten with a stable prefix + the target descriptor so it reads
         honestly in the recipe and the end-of-run gate can identify it.
+        Then, on any modify run, the previous version's defects are
+        labelled (``_label_seed_findings``).
         """
         if not self._is_fix_run or self._fix_target is None:
-            return issues
+            return self._label_seed_findings(issues)
         from besser.spec_driven_agent.planning.fix_target import finding_matches_target
 
+        earlier = self._earlier_requirement_findings()
         promoted: list[ValidationIssue] = []
         for issue in issues:
+            # A refusal the probe observed is corroborated when it matches what the user reported.
             if (
                 issue.severity != "blocker"
-                and not issue.message.startswith(self._FIX_TARGET_PREFIX)
+                and issue.message not in earlier
+                and not issue.message.startswith(_NEVER_PROMOTED)
                 and finding_matches_target(issue.message, self._fix_target)
             ):
                 promoted.append(ValidationIssue(
@@ -700,7 +942,13 @@ class ModifyRunMixin:
                 ))
             else:
                 promoted.append(issue)
-        return promoted
+        return self._label_seed_findings(promoted)
+
+    def _earlier_requirement_findings(self) -> frozenset[str]:
+        """The ledger's findings on requirements of earlier runs: they judge those requests and
+        name their entities, so they say nothing about the failure reported now."""
+        return frozenset(message for verdict in self._requirement_verdicts if verdict["id"] in self._previous_ids
+                         for message in ledger_issues([verdict]))
 
     def _evaluate_fix_target_gate(self) -> None:
         """Decide whether the reported failure is plausibly addressed.
@@ -708,7 +956,9 @@ class ModifyRunMixin:
         Sets ``_fix_target_resolved`` / ``_fix_target_message`` from the
         FINAL Phase-3 issue list. A blocker that matches the target (either
         one we promoted or a pre-existing data-contract blocker about the
-        same entity) means the run must NOT claim a clean success.
+        same entity) means the run must NOT claim a clean success. With no
+        such finding it is ``True`` only when a check exercised the target on
+        the delivered tree (``_fix_target_exercised``), else ``None``.
 
         A soft target (no entities we could ground) is left as ``None`` —
         we neither confirm nor deny a specific defect, rather than
@@ -725,9 +975,12 @@ class ModifyRunMixin:
             return
         from besser.spec_driven_agent.planning.fix_target import finding_matches_target
 
+        earlier = self._earlier_requirement_findings()
+        # A not-confirmed observation that matches the report is the failure persisting too.
         unresolved = [
             i for i in self._validation_issues
-            if i.severity == "blocker"
+            if (is_completion_issue(i) or (is_not_confirmed(i) and not i.message.startswith(_NEVER_PROMOTED)))
+            and i.message not in earlier
             and (
                 i.message.startswith(self._FIX_TARGET_PREFIX)
                 or finding_matches_target(i.message, self._fix_target)
@@ -748,17 +1001,49 @@ class ModifyRunMixin:
                 self._fix_target.descriptor,
             )
         else:
-            self._fix_target_resolved = True
+            # No finding left is not evidence: resolved only when a check exercised the target.
+            self._fix_target_evidence = self._fix_target_exercised()
+            self._fix_target_resolved = True if self._fix_target_evidence else None
             logger.info(
-                "Fix run: reported target plausibly addressed — %s",
+                "Fix run: no finding matches the reported target %s; %s",
                 self._fix_target.descriptor,
+                self._fix_target_evidence or "no check exercised it on the delivered tree",
             )
         self._trace.write(
             EVENT_PHASE_EXIT,
             phase="fix_target_gate",
             resolved=self._fix_target_resolved,
             target=self._fix_target.descriptor,
+            evidence=self._fix_target_evidence,
         )
+
+    def _fix_target_exercised(self) -> str | None:
+        """The check that created a record of a target entity on the delivered tree, or None:
+        the boot-and-create probe, or a ``test_api`` workflow that created and read back a
+        record on the probe's route for it."""
+        from besser.spec_driven_agent.planning.mutation_inventory import route_serves
+        from besser.spec_driven_agent.validation.api_probe import confirmed_create_paths
+
+        revision = self._workspace_revision()
+        facts = getattr(self, "_runtime_probe_facts", None)
+        routes = []
+        for backend in (facts[1] if facts and facts[0] == revision else None) or []:
+            for name, entry in (backend.get("entities") or {}).items():
+                if name not in self._fix_target.entities:
+                    continue
+                if entry.get("verdict") == "created":
+                    return f"the boot-and-create probe created {name} on the delivered tree"
+                routes.append((backend.get("backend"), entry.get("path"), name))
+        for record in self._api_scenarios.values():
+            report = record["report"]
+            if record["revision"] != revision:
+                continue
+            for path in confirmed_create_paths(report):
+                for backend, route, name in routes:
+                    if backend == report.get("backend") and isinstance(route, str) and route_serves(route, path):
+                        return (f"test_api workflow {record.get('scenario_id')} created {name} "
+                                "on the delivered tree")
+        return None
 
     @staticmethod
     def _is_valid_model_name(name) -> bool:
@@ -820,7 +1105,8 @@ class ModifyRunMixin:
             return
 
         try:
-            new_classes = self._request_model_deltas(instructions)
+            with self._traced_llm_call("model_deltas"):
+                new_classes = self._request_model_deltas(instructions)
         except Exception as exc:
             logger.warning(
                 "modify: model-sync LLM call failed; proceeding without "
@@ -901,10 +1187,10 @@ class ModifyRunMixin:
                 "required": ["new_classes"],
             },
         }
-        request = user_request(instructions)
         prompt = (
-            "An existing app is being MODIFIED with this instruction:\n\n"
-            f"'{request}'\n\n"
+            "An existing app is being MODIFIED. The change is the user's newest message:\n\n"
+            f"'{latest_user_message(instructions)}'\n\n"
+            f"The conversation so far (context only):\n\n{user_request(instructions)}\n\n"
             "The app's current domain model has these classes: "
             f"{', '.join(existing) if existing else '(none)'}.\n\n"
             "List ONLY genuinely NEW domain entities the MODEL should gain "

@@ -1,30 +1,14 @@
-"""The Phase 3 stall guards must stop a dead loop without stopping a live one.
+"""The Phase 3 loop stops on a rule, not on a streak.
 
-Measured over 355 recorded runs. Those runs split cleanly in two by the commit that introduced
-the current guards, and the split is visible in the traces themselves: before
-it, 243 fix rounds that wrote nothing were followed by another round; after it,
-zero were, because the guard always ends the loop there.
-
-What the 134 runs on the current guards actually do:
-
-* 47 (35%) end on the zero-write stop, 46 (34%) on the plateau guard - 69% of
-  all runs - holding a median of 60+ of their 120 turns and $4.76 of their $5.
-* Run 053ydac9 (gpt-5.6-terra, library): the round the harness killed as
-  "cannot have moved anything" had spent its turns on ``test_api`` /
-  ``read_file`` / ``task_list`` and taken 10 blockers to 4. It wrote no source
-  because the source was already right; what it discharged were verification
-  obligations. It shipped 4 blockers with 86 turns and $4.13 unspent.
-
-What the 221 runs on the older, looser guards say the extra round is worth:
-
-* after ONE barren round, the next round wrote source 38% of the time and cut
-  the blocker count 19% of the time (n=127); after TWO, 6% and 4% (n=116).
-* after TWO consecutive non-improving rounds, the next still improved 36% of
-  the time (n=125) against a 46% no-plateau baseline; at three the payoff
-  halves (23%, n=60) and at four collapses (15%, n=107).
-
-Hence: zero writes is one no-progress round, not its own stop; two barren
-rounds still end the loop; three churning rounds still end the loop.
+The guards these tests first pinned (a no-progress streak of two, a plateau of
+three, a second round for an attempt whose edits were all refused) were
+calibrated on 355 recorded runs. On production they still let 22 repair loops
+make 52 attempts, 24 without a successful edit, and cut blockers only 21%;
+one loop went from 21 to 40 blockers. The rule now: an attempt that edits is
+kept only if it retires a blocker without adding an observed failure or blockers
+(``_attempt_not_kept``) - otherwise it is rolled back and the loop ends. An
+attempt that edits nothing continues the loop only if the evidence it added
+retired a blocker, or once after every write it tried was refused.
 """
 
 from __future__ import annotations
@@ -35,8 +19,6 @@ import pytest
 
 from besser.spec_driven_agent.errors import InvalidApiKeyError
 from besser.spec_driven_agent.pipeline.orchestrator import (
-    _PHASE3_NO_PROGRESS_ROUNDS,
-    _PHASE3_PLATEAU_ROUNDS,
     LLMOrchestrator,
     ValidationIssue,
 )
@@ -128,17 +110,15 @@ def _drive(orchestrator, rounds, entry_blockers=6, after_round=None,
 
 
 # ---------------------------------------------------------------------------
-# 1. Zero writes is not proof that nothing moved
+# 1. An attempt without an edit ends the loop, and what its evidence settled is kept
 # ---------------------------------------------------------------------------
 
 def test_a_verification_round_that_writes_no_source_is_progress(orch):
     """Run 053ydac9, replayed: fix, then a verification round that discharges
     six blockers with no write, then the round that finishes the job.
 
-    The old guard ended the run on round 2 with four blockers standing and 86
-    of 120 turns unspent, because it asked "did it write" instead of "did
-    anything move".
-    """
+    Stopping on "it wrote nothing" ended that run on round 2 with four blockers
+    standing and 86 of 120 turns unspent."""
     attempts = _drive(orch, [
         (5, True, False, _blockers(10)),    # wrote; 18 -> 10
         (0, False, True, _blockers(4)),     # verified only; 10 -> 4
@@ -146,19 +126,18 @@ def test_a_verification_round_that_writes_no_source_is_progress(orch):
     ], entry_blockers=18)
 
     assert attempts == 3
+    assert orch._phase3_exit_reason == "all blockers fixed"
 
 
-def test_revalidation_alone_can_carry_a_round(orch):
-    """Nothing written, no obligation discharged, but the re-collected
-    findings are strictly better - an earlier round's edit that only shows up
-    once a downstream check can finally run. A strictly better tree score is
-    the strongest progress evidence the harness has; it cannot be a stall."""
+def test_an_attempt_that_moved_nothing_is_not_rechecked(orch):
+    """Nothing written and no obligation discharged: a re-check would read the same tree."""
     attempts = _drive(orch, [
-        (0, False, False, _blockers(3)),    # 6 -> 3 with no write at all
+        (0, False, False, _blockers(3)),
         (1, True, False, []),
     ])
 
-    assert attempts == 2
+    assert attempts == 1
+    assert len([i for i in orch._validation_issues if i.severity == "blocker"]) == 6
 
 
 # ---------------------------------------------------------------------------
@@ -218,50 +197,42 @@ def test_the_label_reports_a_failed_call_in_the_read_only_round(orch):
         "install_dependencies x1)")
 
 
-def test_an_attempt_whose_edits_were_all_rejected_gets_one_more_round(orch):
-    """The case the replay rule must NOT catch, and the reason the zero-write
-    stop was too tight.
-
-    A third of Qwen3-30B's edit calls are refused (1818 of 5555 across the
-    corpus; gpt-5.6-terra: 5%), so "wrote nothing" is most often "tried and
-    was rejected". Those rejections are fed back into the next attempt's
-    prompt as recent-failures, so the next round is a different request - and
-    measurably so: across the pre-guard corpus the round after one wrote
-    source 57% of the time and cut the blocker count 20% (n=30), against 18%
-    / 11% for a round that only read (n=209) and 0% / 0% for prose (n=4).
-    It costs ~1.2 turns per run, and two of them in a row still end the loop.
-    """
+def test_an_attempt_whose_edits_were_all_refused_gets_one_more_round(orch):
+    """The refusals reach the next prompt, so the next round is a different request:
+    across the pre-guard corpus the round after one wrote source 57% of the time and
+    cut the blocker count 20% (n=30). Two such rounds in a row end the loop."""
     attempts = _drive(orch, [(0, False, False, _blockers(6))] * 8,
                       rejected_edits=2)
 
-    assert attempts == _PHASE3_NO_PROGRESS_ROUNDS == 2
-    assert orch._phase3_exit_reason == "no-progress streak"
+    assert attempts == 2
+    assert orch._phase3_exit_reason == (
+        "no successful edit (attempt 2 made 2 tool calls, 2 failed: modify_file x2)")
 
 
 def test_a_spent_cost_budget_still_ends_the_first_barren_round(orch):
     """Budget beats patience: the extra round is granted only while there is
-    money for it. A barren round that also exhausts the cost cap ends the loop
-    on the spot, streak counter or no streak counter."""
+    money for it. A round whose writes were all refused and that also exhausts
+    the cost cap ends the loop on the spot, streak counter or no streak counter."""
     orch.max_cost_usd = 1.0
     orch.client.usage = _MutableUsage(0.5)
 
     def spend(_attempt):
         orch.client.usage.estimated_cost = 1.0
 
-    attempts = _drive(orch, [(0, False, False, _blockers(6))] * 8, after_round=spend)
+    attempts = _drive(orch, [(0, False, False, _blockers(6))] * 8, after_round=spend, rejected_edits=1)
 
     assert attempts == 1
     assert orch._phase3_exit_reason == "cost budget exhausted"
 
 
-def test_rounds_that_churn_without_improving_still_end_the_loop(orch):
-    """Run mbzbzhq9 ran six such attempts into the 120-turn cap. The plateau
-    guard still catches it - one round later than before, which is the round
-    the corpus says improves 36% of the time."""
+def test_an_attempt_that_churns_without_retiring_anything_is_rolled_back(orch):
+    """Run mbzbzhq9 ran six such attempts into the 120-turn cap; the plateau guard
+    allowed three. Now the first one is rolled back and ends the loop."""
     attempts = _drive(orch, [(1, True, False, _blockers(6))] * 8)
 
-    assert attempts == _PHASE3_PLATEAU_ROUNDS == 3
-    assert orch._phase3_exit_reason == "plateau"
+    assert attempts == 1
+    assert orch._phase3_exit_reason == "attempt 1 reverted: it retired none of the 6 blockers it faced"
+    assert orch._phase3_rolled_back
 
 
 _CREATE_PATHS = [f"e{i}" for i in range(13)]
@@ -279,10 +250,9 @@ def _pin_probe_facts(orchestrator):
         "entities": {p: {"verdict": "unverified"} for p in _CREATE_PATHS}}])
 
 
-def test_rounds_that_retire_creates_through_evidence_alone_are_not_a_plateau(orch):
+def test_rounds_that_retire_creates_through_evidence_alone_keep_the_loop_going(orch):
     """Live, Sonnet 5.5, base-p62 (login-protected 13-class app): three
-    test_api-only rounds took 13 -> 12 -> 10 -> 4 unverified creates and the
-    loop ended on "plateau", because the score counts the probe's own facts."""
+    test_api-only rounds took 13 -> 12 -> 10 -> 4 unverified creates."""
     _pin_probe_facts(orch)
     attempts = _drive(orch, [
         (0, False, True, _unverified_creates(12)),
@@ -295,7 +265,7 @@ def test_rounds_that_retire_creates_through_evidence_alone_are_not_a_plateau(orc
     assert orch._phase3_exit_reason == "all blockers fixed"
 
 
-def test_an_evidence_round_that_retires_nothing_still_ends_the_loop(orch):
+def test_an_evidence_round_that_retires_nothing_ends_the_loop(orch):
     _pin_probe_facts(orch)
     attempts = _drive(orch, [
         (0, False, True, _unverified_creates(12)),
@@ -305,33 +275,46 @@ def test_an_evidence_round_that_retires_nothing_still_ends_the_loop(orch):
     ], entry=_unverified_creates(13), calls=[[("test_api", True)]])
 
     assert attempts == 3
-    assert orch._phase3_exit_reason.startswith("no edit attempted")
+    assert orch._phase3_exit_reason.startswith("no edit attempted (attempt 3")
 
 
-def test_evidence_rounds_that_swap_blockers_still_plateau(orch):
-    """Only a strict subset is exempt: a set that trades one finding for
-    another is not shrinking, so it still counts toward the plateau."""
+def test_evidence_rounds_that_swap_blockers_end_on_the_repeated_set(orch):
+    """Settling one finding while another appears retires a blocker, so the loop goes
+    on - until a blocker set it has already seen comes back."""
     _pin_probe_facts(orch)
-    swaps = [_unverified_creates(3)[:2] + _unverified_creates(4)[3:],  # e0, e1, e3
-             _unverified_creates(3)]                                    # e0, e1, e2
-    attempts = _drive(orch, [(0, False, True, swaps[i % 2]) for i in range(8)],
-                      entry=_unverified_creates(3), calls=[[("test_api", True)]])
+    first = [ValidationIssue("blocker", "api scenario: orders - expected 201, got 400"),
+             ValidationIssue("blocker", "api scenario: customers - expected 201, got 400")]
+    swapped = [first[0], ValidationIssue("blocker", "api scenario: invoices - expected 201, got 400")]
+    attempts = _drive(orch, [(0, False, True, [swapped, first][i % 2]) for i in range(8)],
+                      entry=first, calls=[[("test_api", True)]])
 
-    assert attempts == _PHASE3_PLATEAU_ROUNDS
-    assert orch._phase3_exit_reason == "plateau"
+    assert attempts == 2
+    assert orch._phase3_exit_reason == "repeated blocker set"
 
 
-def test_a_converging_repair_is_never_cut_short(orch):
-    """11 -> 45 -> 40 -> 35 is a repair converging, not a stall."""
+def test_a_repair_that_retires_nothing_while_exposing_more_is_rolled_back(orch):
+    """6 -> 45 retired none of the six it faced: the loop never ends with more
+    blockers than it started with."""
     attempts = _drive(orch, [
         (1, True, False, _blockers(45)),
-        (1, True, False, _blockers(40)),
-        (1, True, False, _blockers(35)),
-        (1, True, False, _blockers(30)),
+        (1, True, False, []),
+    ])
+
+    assert attempts == 1
+    assert orch._phase3_exit_reason.startswith("attempt 1 reverted")
+
+
+def test_a_repair_that_keeps_retiring_blockers_is_never_cut_short(orch):
+    attempts = _drive(orch, [
+        (1, True, False, _blockers(5)),
+        (1, True, False, _blockers(4)),
+        (1, True, False, _blockers(3)),
+        (1, True, False, _blockers(2)),
         (1, True, False, []),
     ])
 
     assert attempts == 5
+    assert orch._phase3_exit_reason == "all blockers fixed"
 
 
 # ---------------------------------------------------------------------------
@@ -452,42 +435,35 @@ def test_an_invalid_api_key_in_the_fix_loop_propagates(orch, monkeypatch):
 # 4. The rollback must rank the entry tree on the entry tree's own evidence
 # ---------------------------------------------------------------------------
 
-def test_the_rollback_ranks_the_best_tree_on_its_own_measurements(orch, monkeypatch):
+def test_the_rollback_ranks_the_tree_before_an_attempt_on_its_own_measurements(orch, monkeypatch):
     """A repair that breaks three entity creates and removes one hard blocker
     must be rolled back, not shipped.
 
-    ``_phase3_tree_score`` reads ``_runtime_probe_facts``, and by the time the
-    rollback runs those facts describe the FINAL tree. Recomputing the entry
-    score there gave both trees the same middle two components - entities not
-    created, actions not effective - so they cancelled and the comparison
-    collapsed to (boot, hard count), the component the ranking exists to
-    demote. Entry (0,0,0,3) then read as (0,3,0,3), the final tree's (0,3,0,2)
-    scored BETTER than it, and the broken tree shipped.
+    ``_phase3_tree_score`` reads ``_runtime_probe_facts``, which describe the
+    tree the probe measured last. The score of the tree before the attempt is
+    taken while that tree is on disk; recomputed afterwards it would read the
+    attempt's facts, the middle components would cancel, and the broken tree
+    (one hard blocker fewer) would score better.
     """
     state = {"attempt": 0, "rev": 0}
 
     def fix(blockers, is_first_attempt):
         state["attempt"] += 1
-        if state["attempt"] <= 2:
-            state["rev"] += 1
-        if state["attempt"] >= 2:
-            # The probe measured the tree attempt 2 produced: it still boots,
-            # but three entities can no longer be created. These facts stay
-            # current from here on, exactly as they are when the repair loop
-            # exits and the rollback runs.
-            orch._runtime_probe_facts = (f"rev-{state['rev']}", [{
-                "boot": "ok",
-                "entities": {name: {"verdict": "refused"} for name in "abc"},
-                "action_calls": [],
-            }])
-        # Attempt 3 writes nothing and touches nothing: the replay guard ends
-        # the loop there, leaving attempt 2's tree as the final one.
-        return 1 if state["attempt"] <= 2 else 0
+        state["rev"] += 1
+        # The probe measured the tree the attempt produced: it still boots,
+        # but three entities can no longer be created.
+        orch._runtime_probe_facts = (f"rev-{state['rev']}", [{
+            "boot": "ok",
+            "entities": {name: {"verdict": "refused"} for name in "abc"},
+            "action_calls": [],
+        }])
+        return 1
 
     def collect():
         if state["attempt"] == 0:
             return _blockers(3)       # entry: three hard blockers, all created
-        return _blockers(3 if state["attempt"] < 2 else 2)
+        return _blockers(2) + [ValidationIssue("blocker", f"create contract: backend: POST /{name}/ - observed "
+                                                          "a server failure (500)") for name in "abc"]
 
     restored = {}
     with patch.object(orch, "_collect_validation_issues", side_effect=collect), \
@@ -503,6 +479,8 @@ def test_the_rollback_ranks_the_best_tree_on_its_own_measurements(orch, monkeypa
         "a repair that broke three entity creates was scored as an improvement"
     )
     assert orch._phase3_rolled_back is True
+    # Attempt 1 retired a blocker, so one more attempt ran; it broke the same creates.
+    assert orch._phase3_exit_reason.startswith("attempt 2 reverted: it added an observed failure: create contract:")
 
 
 # ---------------------------------------------------------------------------
@@ -623,16 +601,19 @@ def test_a_tree_the_probe_could_not_measure_is_not_kept_over_a_measured_one(orch
     (0,0,0,0) - better than the entry tree that boots with 4 of 5 creates
     confirmed. It was re-snapshotted as the best tree and the final rollback
     check kept it, so an app that may not start shipped over one that does.
+    Now that attempt is not kept: its runtime result is worse.
 
     That finding is now a ``validation unverified:`` warning, so the hung
-    tree has no blocker at all; it must not be taken as "all blockers fixed"."""
+    tree has no blocker at all; it must not be taken as "all blockers fixed".
+    The refused create is not confirmed, not a blocker: the entry tree's
+    repair is for an observed defect beside it."""
     state = {"attempt": 0, "rev": 0}
     reports = {0: _BOOTS_ONE_CREATE_REFUSED, 1: _PROBE_TIMED_OUT}
 
     def collect():
         rev = state["rev"]
         orch._runtime_probe_facts = (f"rev-{rev}", [{"backend": "backend", **reports[rev]}])
-        return _probe_blockers(orch, reports[rev])
+        return _probe_blockers(orch, reports[rev]) + (_blockers(1) if rev == 0 else [])
 
     def fix(blockers, is_first_attempt):
         state["attempt"] += 1

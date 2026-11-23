@@ -20,6 +20,14 @@ the ``generate`` method as follows:
 The ``dbms`` parameter specifies the target database management system. 
 In this example, we use ``sqlite``, but you can also specify ``postgresql``, ``mysql``, ``mssql``, ``mariadb``, or ``oracle``.
 
+A ``str`` attribute becomes a long-text ``Text`` column: ``TEXT`` on
+PostgreSQL and SQLite (unbounded), ``TEXT`` on MySQL and MariaDB (up to 64 KB), ``VARCHAR(max)`` on
+SQL Server 2012 and later, and ``VARCHAR2(4000)`` on Oracle, where ``TEXT`` would be a ``CLOB`` that CHECK constraints,
+equality filters and sorting cannot compare. A ``str`` attribute that is the primary key or an external
+id (a unique column) becomes ``String(255)`` instead, because MySQL, SQL Server and Oracle cannot index
+these long types; foreign keys that reference it get the same type. To index or constrain another
+``str`` column as unique, give it ``String(255)`` first.
+
 Pass ``ocl_check_constraints=True`` to ``generate`` to turn the simple OCL invariants of the model
 into ``CheckConstraint`` entries in each table's ``__table_args__`` (off by default). Which invariants
 are translated is described in :ref:`sql-ocl-check-constraints`.

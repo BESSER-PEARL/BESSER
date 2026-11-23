@@ -51,13 +51,9 @@ def test_an_empty_needle_matches_nothing():
     assert _contains_word("anything at all", "") is False
 
 
-@pytest.mark.parametrize("instructions", [
-    "Build a .NET 8 minimal API for orders",
-    "Build an ASP.NET Core API",
-    "Build a Next.js app",
-])
-def test_idiom_guidance_is_selected_end_to_end(instructions):
-    assert detect_idiom_stack(instructions) is not None
+@pytest.mark.parametrize("routed_stack", [".NET 8", "ASP.NET Core", "Next.js"])
+def test_idiom_guidance_is_selected_end_to_end(routed_stack):
+    assert detect_idiom_stack(routed_stack) is not None
 
 
 def test_prose_naming_no_stack_still_selects_nothing():

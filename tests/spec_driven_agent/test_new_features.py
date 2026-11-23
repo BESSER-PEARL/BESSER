@@ -459,6 +459,17 @@ class TestFixErrorBudgets:
         assert result == "Fixed the import."
         assert orchestrator._time_left() > 1100
 
+    def test_fix_cycle_tries_again_after_an_earlier_quota_failure(self, simple_model, tmp_path):
+        """The quota can be topped up between generate() and a fix request on the same orchestrator."""
+        client = _ScriptedFixClient()
+        orchestrator = self._orchestrator(simple_model, tmp_path, client)
+        orchestrator._phase2_quota_exhausted = True   # what generate() left when its Phase 2 hit the quota
+
+        result = orchestrator.fix_error(self.ERROR)
+
+        assert len(client.cost_before_calls) == 1
+        assert result == "Fixed the import."
+
     def test_fix_cycle_makes_no_call_when_cost_cap_is_spent(self, simple_model, tmp_path):
         client = _ScriptedFixClient(spent=1.0)
         orchestrator = self._orchestrator(simple_model, tmp_path, client)

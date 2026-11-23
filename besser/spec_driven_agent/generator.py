@@ -83,8 +83,7 @@ class LLMGenerator(GeneratorInterface):
         max_cost_usd: Maximum estimated cost in USD before stopping (default: 5.0).
         max_runtime_seconds: Maximum wall-clock time in seconds (default: 1200 = 20 min).
         base_url: Custom API base URL (for gateways/proxies).
-        allow_shell_tools: Give the LLM ``run_command`` / ``install_dependencies``,
-            which execute arbitrary shell commands in the output directory.
+        allow_shell_tools: Give the LLM ``run_command``, which executes arbitrary shell commands in the output directory.
             **Off by default** — opt in only for a workspace you would run
             untrusted code in. The hosted deployment keeps this off.
         enable_toolchain_validation: Let validation shell out to ``tsc`` /
@@ -141,8 +140,7 @@ class LLMGenerator(GeneratorInterface):
         self.state_machines = state_machines
         self.quantum_circuit = quantum_circuit
         self.primary_kind = primary_kind
-        # Both OFF unless the caller asks: run_command / install_dependencies
-        # execute arbitrary shell commands in the workspace.
+        # OFF unless the caller asks: run_command executes arbitrary shell commands in the workspace.
         self.allow_shell_tools = allow_shell_tools
         self.enable_toolchain_validation = enable_toolchain_validation
         self.max_turns = max_turns

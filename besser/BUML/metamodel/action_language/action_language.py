@@ -758,16 +758,16 @@ class Iterator:
 
 
 class For(Statement):
-    def __init__(self, iterators:set[Iterator], body:Block):
+    def __init__(self, iterators:list[Iterator], body:Block):
         self.__iterators = iterators
         self.__body = body
 
     @property
-    def iterators(self) -> set[Iterator]:
+    def iterators(self) -> list[Iterator]:
         return self.__iterators
 
     @iterators.setter
-    def iterators(self, iterators: set[Iterator]):
+    def iterators(self, iterators: list[Iterator]):
         self.__iterators = iterators
 
     @property

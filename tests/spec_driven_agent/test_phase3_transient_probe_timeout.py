@@ -35,10 +35,11 @@ def orch(simple_library_book_model, tmp_path):
                            enable_tracing=False, auto_fix_issues=True)
 
 
-ONE_CREATE_REFUSED = {"boot": "ok", "action_calls": [], "entities": {
+# The entry tree boots and one create fails with a server error: an observed blocker to repair.
+ONE_CREATE_CRASHED = {"boot": "ok", "action_calls": [], "entities": {
     **{f"E{i}": {"verdict": "created", "path": f"/e{i}/"} for i in range(4)},
-    "E4": {"verdict": "rejected", "path": "/e4/",
-           "attempts": [{"outcome": "rejected", "status": 422, "body": "bad", "payload": {}}]},
+    "E4": {"verdict": "crashed", "path": "/e4/",
+           "attempts": [{"outcome": "crashed", "status": 500, "body": "boom", "payload": {}}]},
 }}
 ALL_CREATED = {"boot": "ok", "action_calls": [],
                "entities": {f"E{i}": {"verdict": "created", "path": f"/e{i}/"} for i in range(5)}}
@@ -75,7 +76,7 @@ def _run(orch, probe_reports):
 
 
 def test_a_single_probe_timeout_does_not_roll_back_a_good_repair(orch):
-    validate, restore = _run(orch, [ONE_CREATE_REFUSED, TIMED_OUT, ALL_CREATED])
+    validate, restore = _run(orch, [ONE_CREATE_CRASHED, TIMED_OUT, ALL_CREATED])
 
     restore.assert_not_called()
     assert orch._phase3_rolled_back is False
@@ -85,7 +86,7 @@ def test_a_single_probe_timeout_does_not_roll_back_a_good_repair(orch):
 
 def test_a_probe_that_times_out_twice_still_rolls_back(orch):
     # The fourth pass validates the restored entry tree.
-    validate, restore = _run(orch, [ONE_CREATE_REFUSED, TIMED_OUT, TIMED_OUT, ONE_CREATE_REFUSED])
+    validate, restore = _run(orch, [ONE_CREATE_CRASHED, TIMED_OUT, TIMED_OUT, ONE_CREATE_CRASHED])
 
     restore.assert_called_once()
     assert orch._phase3_rolled_back is True
@@ -99,7 +100,7 @@ def test_a_failed_entry_snapshot_is_not_traced_as_taken(orch):
     events = []
     orch._trace = type("Trace", (), {"write": lambda self, event, **fields: events.append((event, fields))})()
     state = {"rev": 0}
-    with patch.object(orch, "_collect_validation_issues", side_effect=lambda: _issues(orch, ONE_CREATE_REFUSED)), \
+    with patch.object(orch, "_collect_validation_issues", side_effect=lambda: _issues(orch, ONE_CREATE_CRASHED)), \
             patch.object(orch, "_create_snapshot", return_value=False), \
             patch.object(orch, "_restore_snapshot", return_value=True), \
             patch.object(orch, "_invoke_phase3_fix_loop", return_value=0), \
@@ -114,7 +115,7 @@ def test_a_failed_entry_snapshot_is_not_traced_as_taken(orch):
 def test_no_re_measurement_after_a_stop(orch):
     """Review (round 6): a cancel that lands while the repaired tree is validated
     must not buy a second full validation of that tree."""
-    reports = iter([ONE_CREATE_REFUSED, TIMED_OUT, ALL_CREATED, ONE_CREATE_REFUSED])
+    reports = iter([ONE_CREATE_CRASHED, TIMED_OUT, ALL_CREATED, ONE_CREATE_CRASHED])
     state = {"rev": 0}
     validated = []
     orch._should_continue = lambda: len(validated) < 2  # cancelled during the second pass

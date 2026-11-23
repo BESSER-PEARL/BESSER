@@ -254,6 +254,8 @@ class PageBuilderMixin:
             selector_style_map=selector_style_map,
             has_children=bool(children),
         )
+        if comp_type == "menu" or (node.get("tag") or "").lower() == "nav":
+            style = self._nav_style(style)
 
         indent_str = " " * indent
         # Continuation lines of a multi-line prop align under this component.
@@ -780,10 +782,12 @@ class PageBuilderMixin:
             row_style = self._format_prop("style", {"display": "flex", "alignItems": "center", "gap": "6px"})
             grp_style = self._format_prop("style", {"display": "flex", "flexDirection": "column", "gap": "6px"})
             lines = [f'{indent_str}<div role="radiogroup" id={json.dumps(component_id)} {grp_style}>']
+            radio_required = " required" if required else ""
             for o in options:
                 lines.append(
                     f'{indent_str}  <label {row_style}>'
-                    f'<input type="radio" name={json.dumps(component_id)} value={json.dumps(o.get("value", ""))} />'
+                    f'<input type="radio" name={json.dumps(component_id)} value={json.dumps(o.get("value", ""))}'
+                    f'{radio_required} />'
                     f' {{{json.dumps(o.get("label", ""))}}}</label>'
                 )
             lines.append(f"{indent_str}</div>")
@@ -1178,6 +1182,23 @@ class PageBuilderMixin:
     # ------------------------------------------------------------------ #
     # Style helpers for page rendering
     # ------------------------------------------------------------------ #
+    @staticmethod
+    def _nav_style(style: Dict[str, Any]) -> Dict[str, Any]:
+        """A navigation bar's fixed height becomes its minimum height, so the bar
+        grows when its items wrap on a narrow screen (``src/index.css``) instead
+        of spilling over the page. A bar that scrolls inside its height, is laid
+        out against the viewport (fixed, absolute) or is collapsed (0) keeps it."""
+        height = str(style.get("height", "")).strip()
+        if not height or height == "auto" or "minHeight" in style or re.fullmatch(r"0(\.0*)?[a-z%]*", height):
+            return style
+        if str(style.get("position", "")).strip() in ("fixed", "absolute"):
+            return style
+        if any(str(style.get(key, "visible")).strip() != "visible" for key in ("overflow", "overflowX", "overflowY")):
+            return style
+        style = {key: value for key, value in style.items() if key != "height"}
+        style["minHeight"] = height
+        return style
+
     def _compute_style(
         self,
         component_id: str,

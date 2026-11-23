@@ -1,7 +1,7 @@
 // A relationship to another class as a form edits it: a select of the related
 // class's records. Shared by the table's create/edit dialog and bound forms.
-import axios from "axios";
-import { backendUrl, extractRows } from "./bindingData";
+import { apiRequest } from "../../api/generated/client";
+import { extractRows } from "./bindingData";
 
 export interface LookupTarget {
   // The related class
@@ -15,8 +15,7 @@ export interface LookupTarget {
 
 /** The records of a class, as the options of a relationship field. */
 export const fetchLookupOptions = async (entity: string): Promise<any[]> => {
-  const response = await axios.get(backendUrl(`/${entity.toLowerCase()}/`));
-  return extractRows(response.data);
+  return extractRows(await apiRequest<unknown>("GET", `/${entity.toLowerCase()}/`));
 };
 
 // Canonical value of a related record: the target class's identifying

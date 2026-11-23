@@ -16,3 +16,14 @@ code {
   font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
     monospace;
 }
+
+/* On a phone a navigation bar and its rows wrap instead of running off the side
+   (its fixed height is generated as a min-height). Layer base: any rule of the
+   design wins, so a design that handles narrow screens itself keeps its layout. */
+@layer base {
+  @media (max-width: 640px) {
+    nav, nav > * {
+      flex-wrap: wrap;
+    }
+  }
+}

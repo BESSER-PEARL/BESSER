@@ -36,6 +36,7 @@ from besser.spec_driven_agent.state.generator_output import (  # noqa: E402
     attach_model,
     load_generator_output,
 )
+from besser.generators.sql_alchemy import SQLAlchemyGenerator  # noqa: E402
 from besser.utilities.provenance import get_besser_version  # noqa: E402
 from tests.spec_driven_agent.shelf_app import GENERATOR, generate_backend, shelf_model  # noqa: E402
 
@@ -297,7 +298,7 @@ def test_a_pending_file_does_not_disable_the_merge_next_time(app):
     second = _regenerate(app, shelf_model(isbn=True, author=True), previous_model=shelf_model(isbn=True))
 
     assert second.method == "merge", second.merge_warning
-    assert "edited by hand" not in second.merge_warning
+    assert "differs from what this BESSER generates" not in second.merge_warning
     assert "backend/main_api.py" in second.merged
 
 
@@ -389,9 +390,9 @@ def test_a_store_check_that_cannot_run_is_reported(app, monkeypatch):
     real = regeneration_module._generate
     calls = []
 
-    def first_fails(generator, model, out_dir):
+    def first_fails(generator, model, out_dir, app_name=None):
         calls.append(model)
-        return (None, "the generator failed: boom") if len(calls) == 1 else real(generator, model, out_dir)
+        return (None, "the generator failed: boom") if len(calls) == 1 else real(generator, model, out_dir, app_name)
 
     monkeypatch.setattr(regeneration_module, "_generate", first_fails)
     regeneration = _regenerate(app, shelf_model(isbn=True), previous_model=shelf_model())
@@ -435,8 +436,8 @@ def test_many_dropped_files_are_checked_in_one_pass_over_the_app(app):
 # -- a BESSER upgrade in between -------------------------------------------------------
 
 
-GENERATED = "    name: Mapped_[str] = mapped_column(String_(100))"
-OLDER = "    name: Mapped_[str] = mapped_column(String_(80))"
+GENERATED = f"    name: Mapped_[str] = mapped_column({SQLAlchemyGenerator.TYPES['str']})"
+OLDER = "    name: Mapped_[str] = mapped_column(String_(100))"
 EDIT = "    # name is shown on the badge"
 
 
@@ -506,7 +507,9 @@ def test_a_store_edited_by_hand_is_not_used(app):
 
     assert "# USER SECURITY FIX" in main.read_text(encoding="utf-8")
     assert regeneration.method == "attribution"
-    assert "edited by hand" in regeneration.merge_warning
+    # the file is named, so a generator that is not deterministic is not taken for a hand edit
+    assert ("differs from what this BESSER generates for its model, first in backend/main_api.py"
+            in regeneration.merge_warning)
 
 
 def test_a_crafted_version_never_reaches_the_note_as_text(app):

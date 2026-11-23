@@ -148,6 +148,11 @@ deprecated back-compat shims but map to a one-element list under the hood.
 README headings. The web editor passes the project's name; without it the README is titled
 after the domain model and the browser tab reads ``BESSER App``.
 
+``generate_model_output()`` writes only the output derived from the domain model alone,
+byte for byte as ``generate()`` writes it: ``backend/`` and the frontend's typed client
+``frontend/src/api/generated/``. It needs no GUI model; the Spec-Driven Agent regenerates
+that part of a web app after a model change.
+
 
 How It Works
 ------------
@@ -181,10 +186,13 @@ Generated Output Structure
    │   ├── bal_stdlib.py        # B-UML Action Language helpers
    │   ├── pydantic_classes.py  # Data validation models
    │   ├── sql_alchemy.py       # Database ORM models
+   │   ├── api_contract.json    # Every route, its body keys and response shapes
+   │   ├── API.md               # The same, as a reference
    │   ├── Dockerfile           # Backend container
    │   └── requirements.txt     # Python dependencies
    ├── frontend/
    │   ├── src/
+   │   │   ├── api/generated/   # Typed API client of the backend
    │   │   ├── components/      # React components
    │   │   ├── contexts/        # React contexts
    │   │   └── pages/           # Page components

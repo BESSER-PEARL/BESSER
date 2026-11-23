@@ -66,8 +66,9 @@ to do:
 
 A fix request runs up to 10 LLM turns. It gets a fresh ``max_runtime_seconds``
 window, but shares the run's ``max_cost_usd``: once the cap is spent it makes no
-call. When the cap, the runtime, cancellation, an API error, a truncated or
-declined reply or the turn limit stops it, ``response`` starts with
+call. A provider quota that was exhausted during the run is tried again. When
+the cap, the runtime, cancellation, an API error, a truncated or declined reply
+or the turn limit stops it, ``response`` starts with
 ``Fix cycle stopped:`` and the reason. An invalid API key raises
 ``InvalidApiKeyError``.
 
@@ -83,8 +84,8 @@ declined reply or the turn limit stops it, ``response`` starts with
 .. note::
    ``allow_shell_tools`` and ``enable_toolchain_validation`` both default to
    ``False``, on every path — library, CLI and hosted alike. A library run does
-   **not** get ``run_command`` / ``install_dependencies`` unless you ask for
-   them, and the refusal is enforced when the tool is called, not merely by
+   **not** get ``run_command`` unless you ask for
+   it, and the refusal is enforced when the tool is called, not merely by
    leaving it out of the advertised list. Opt in deliberately, and only where
    running model-authored commands on that machine is acceptable::
 
@@ -119,14 +120,16 @@ Troubleshooting a run
        delivered.
    * - ``INCOMPLETE`` warning
      - The customization loop was cut short (a provider rate-limit, the turn
-       cap, or a provider failure after files were already written). Output is
-       still returned; the ``done`` event sets ``incomplete`` so the client
-       can say so.
+       cap, or a provider failure after files were already written), or it
+       finished and validation left a defect that stops the app working, or a
+       fix run could not confirm the reported failure fixed. Output is still
+       returned; the ``done`` event sets ``incomplete`` so the client can say so.
    * - ``UPSTREAM_LLM`` error
      - The provider failed before the run wrote any file (rate limit,
        overload, timeout). Usually transient — retry. A timeout switches
        straight to the fallback model when the tier has a fallback chain;
-       otherwise it is retried twice before the run fails.
+       otherwise it is retried twice before the run fails. A connection that
+       fails within seconds is retried on the same model first.
    * - The model declined the request
      - A provider safety stop (Anthropic ``refusal``, OpenAI
        ``content_filter``) ends the customization loop with the reason and
@@ -147,9 +150,14 @@ Troubleshooting a run
    * - "It finished, but the app is broken"
      - Check ``blockerCount`` on the ``done`` event: a non-zero value means the
        run completed but Phase 3 could not repair everything it found. The
-       editor follows the event's ``incomplete`` flag: a run with
-       ``incomplete: false`` is shown as complete even when some checks could
-       not be verified, so read the recipe's findings for those.
+       editor follows the event's ``incomplete`` flag. A run with
+       ``incomplete: false`` and ``unverified: true`` was not verified: a whole
+       class of checks left no evidence, and ``unverifiedReason`` says which.
+       Findings that are not confirmed are counted in ``notConfirmedCount`` and
+       listed under ``notVerified`` in the ``verification`` report. The event's
+       ``outcome`` names how the run ended in one word: ``completed_with_blockers``
+       when a blocker remains that does not make it incomplete (a requirement
+       found missing, a failed test workflow).
    * - "What counts against my budget?"
      - Only the paid LLM calls (generator selection, the planning pass, a
        modify run's model sync, the customize loop, requirement extraction and

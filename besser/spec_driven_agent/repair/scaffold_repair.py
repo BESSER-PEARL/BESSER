@@ -536,6 +536,8 @@ def _find_vite_react_frontends(output_dir: str) -> list:
             continue
         declared = _declared(manifest)
         scripts = manifest.get("scripts") or {}
+        if not isinstance(scripts, dict):  # npm rejects it; the build check reports it
+            continue
         uses_vite = "vite" in declared or any(
             "vite" in value for value in scripts.values() if isinstance(value, str))
         if "react" in declared and uses_vite:
@@ -962,6 +964,19 @@ def _ensure_dockerignores(output_dir: str) -> list:
         if content and _write_text(os.path.join(folder, ".dockerignore"), content):
             written.append(os.path.relpath(os.path.join(folder, ".dockerignore"), output_dir).replace("\\", "/"))
     return written
+
+
+def rewritten_build_scripts(output_dir: str) -> dict:
+    """The ``scripts.build`` :func:`ensure_frontend_scaffold` would write, by frontend
+    folder relative to ``output_dir``, where it changes it. Writes nothing."""
+    rewritten = {}
+    for frontend_dir, manifest in _find_vite_react_frontends(output_dir):
+        before = (manifest.get("scripts") or {}).get("build")
+        _repair_frontend_manifest(frontend_dir, manifest)  # a fresh parse, never written
+        if manifest["scripts"]["build"] != before:
+            rel = os.path.relpath(frontend_dir, output_dir).replace("\\", "/")
+            rewritten[rel] = manifest["scripts"]["build"]
+    return rewritten
 
 
 def ensure_frontend_scaffold(output_dir: str, app_name: str = "") -> list:

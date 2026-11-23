@@ -137,3 +137,24 @@ def test_a_requirement_unverified_for_another_reason_still_gets_an_attempt(orch)
     """A located citation that proves nothing: editing the code can help there."""
     calls, _ = _run(orch, [NEAR_MATCH, NOT_PROVING])
     assert calls == 1
+
+
+def test_a_malformed_citation_beside_a_fragment_the_agent_can_complete_gets_an_attempt(orch):
+    """The fragment names its one line, which the fix agent may cite whole (validate_app citations)."""
+    citable = _verdict(7, "return [m for m in sent if AGGRESSIVE_RE.search(m.content)]", "AGGRESSIVE_RE = re.compile(")
+    [verdict] = ledger.verify_evidence([citable], orch.output_dir)
+    assert verdict[ledger.EVIDENCE_UNLOCATED] == ledger.CITATION_MALFORMED
+    assert verdict[ledger.CITED_FRAGMENT_LINES] == ["backend/services.py:3"]
+    calls, _ = _run(orch, [citable])
+    assert calls == 1
+
+
+def test_a_fragment_found_in_several_lines_gets_no_attempt_after_its_repair_round(orch):
+    """Real code the judge quoted part of, in no single line: no edit or citation can change it."""
+    with open(f"{orch.output_dir}/backend/services.py", "a", encoding="utf-8") as handle:
+        handle.write('\n\ndef detect_all(sent):\n    return [m for m in sent if AGGRESSIVE_RE.search(m.content or "")]\n')
+    fragment = _verdict(8, "AGGRESSIVE_RE.search(")
+    [verdict] = ledger.verify_evidence([fragment], orch.output_dir)
+    assert verdict[ledger.EVIDENCE_UNLOCATED] == ledger.CITATION_MALFORMED
+    calls, _ = _run(orch, [fragment])
+    assert calls == 0

@@ -5,6 +5,7 @@ Builds the system prompt that guides the LLM's behavior during Phase 2,
 including domain model context, file inventory, and scoped task lists.
 """
 
+import json
 import logging
 import os
 import re
@@ -25,8 +26,8 @@ from besser.spec_driven_agent.model_serializer import (
     to_prompt_json,
 )
 from besser.spec_driven_agent.agent.runbook import runbook_section
-from besser.spec_driven_agent.planning.model_rules import is_dropped_by_model_change
-from besser.spec_driven_agent.planning.stack_metadata import idiom_guidance_section
+from besser.spec_driven_agent.planning.model_rules import converted_rule_fingerprints, is_dropped_by_model_change
+from besser.spec_driven_agent.planning.stack_metadata import idiom_guidance_section, routed_frontend_framework
 from besser.spec_driven_agent.providers.llm_client import SYSTEM_CACHE_SPLIT
 from besser.utilities.workspace_fs import walk_plain
 from besser.spec_driven_agent.planning.target import OTHER, Target
@@ -35,36 +36,9 @@ logger = logging.getLogger(__name__)
 
 
 
-# A run needs a frontend when the scaffold has one or the user asks for one.
-# ``requests_frontend`` is also the orchestrator's frontend gate.
+# Without a decided target a run needs a frontend when the scaffold has one.
 _FRONTEND_FILE_RE = re.compile(r"\.(?:jsx?|tsx?|html|vue|svelte)\b|package\.json")
-_FRONTEND_ASK_RE = re.compile(
-    r"\b(web[ -]?app(?:lication)?s?|front[ -]?end|web ?site|"
-    r"web ?interface|single[ -]page app(?:lication)?s?|ui|"
-    r"user interface|dashboard|portal)\b")
-# A bare "app" is a UI ask too ("I want a todo app") unless the request
-# is headless or names a backend kind of app.
-_APP_ASK_RE = re.compile(r"\bapp(?:lication)?s?\b")
-_BACKEND_APP_RE = re.compile(
-    r"\brest(?:ful)? api\b|\b(?:api|fastapi|backend|back[ -]end|server|cli|"
-    r"command[ -]line|console|terminal)[ -]app(?:lication)?s?\b")
-_NO_FRONTEND_RE = re.compile(
-    r"\b(?:api|backend|back[ -]end|server)[ -]only\b|"
-    r"\b(?:only|just) (?:an? |the )?(?:rest(?:ful)? )?(?:api|backend)\b|\bheadless\b|"
-    r"\b(?:no|without(?: an?| the)?) (?:frontend|front[ -]end|ui|gui|user interface)\b")
 
-
-def requests_frontend(instructions: str | None, *, bare_app: bool = True) -> bool:
-    """True when the request asks for something users interact with.
-
-    ``bare_app=False`` for modify runs, where "the app" names the existing project.
-    """
-    low = (instructions or "").lower()
-    if _NO_FRONTEND_RE.search(low):
-        return False
-    if _FRONTEND_ASK_RE.search(low):
-        return True
-    return bare_app and bool(_APP_ASK_RE.search(low)) and not _BACKEND_APP_RE.search(low)
 
 def _other_target_rule(target: Target) -> str:
     """Rule 15 for a target that is not a web app (planning/target.py)."""
@@ -89,19 +63,6 @@ DROPPED_RULES_NOTE = (
     "just removed from the model: do not re-implement them and do not add back "
     "what they used."
 )
-
-# The model-query tools exist only with a domain model (tools._TOOL_MODEL_REQUIREMENTS).
-# Names and purpose only: each tool's own description, sent with every
-# request, already lists its predicates and return value.
-_MODEL_TOOLS_SECTION = """\
-## Tools for deeper model inspection
-
-When the JSON below is not enough, ask the model rather than re-reading or
-guessing: `query_class(name)` for one class in full, `list_classes_with(predicate)`
-to filter classes, `get_constraints_for(class_name)` for a class's OCL
-constraints (Rule 6: each one becomes a runtime validator - the generator
-does not enforce them for you).
-"""
 
 def build_system_prompt(
     domain_model,
@@ -128,6 +89,7 @@ def build_system_prompt(
     target: Target | None = None,
     previous_target: Target | None = None,
     routed_stack: str | None = None,
+    scaffold_family: str | None = None,
 ) -> str:
     """
     Build the system prompt with all available models, inventory, the user's
@@ -159,7 +121,7 @@ def build_system_prompt(
             "quantum". Used to
             frame the LLM's task (e.g. "this is a state-machine-driven
             run — emit the transition code").
-        allow_shell: Whether ``run_command`` / ``install_dependencies`` are
+        allow_shell: Whether ``run_command`` is
             in this run's tool list. Only then is the runtime-verification
             runbook rendered — a procedure built on commands the model
             cannot issue is worse than no procedure at all.
@@ -180,7 +142,10 @@ def build_system_prompt(
         previous_target: The seed's target when a modify run builds another
             kind of software; it lifts the keep-the-stack constraint.
         routed_stack: The routing answer's ``unsupported_stack``, ``None``
-            without one; picks the idiom block over the request's keywords.
+            without one; picks the idiom block and a frontend framework other
+            than React.
+        scaffold_family: The generated scaffold's family (``"fastapi"``,
+            ``"django"``), ``None`` without one.
 
     Returns:
         The full system prompt string.
@@ -237,7 +202,8 @@ def build_system_prompt(
             gui_framing = (
                 "A rough UI sketch from the editor — often auto-generated and "
                 "incomplete. Treat it as a LOOSE HINT for which screens and "
-                "fields matter, NOT a spec to reproduce literally. The domain "
+                "fields matter, NOT a spec to reproduce literally. Screens the "
+                "request names come first; then the domain "
                 "model and good UX take priority: freely restructure, merge, "
                 "add, drop, or relayout screens and components to produce a "
                 "clean app. Do NOT degrade the result just to mirror this "
@@ -373,7 +339,7 @@ def build_system_prompt(
     endpoint_section = ""
     if endpoint_manifest:
         endpoint_section = (
-            "\n## Backend REST API — the EXACT routes your frontend must call\n\n"
+            "\n## Backend REST API — the EXACT routes the generated backend serves\n\n"
             f"{endpoint_manifest}\n"
         )
 
@@ -456,13 +422,11 @@ def build_system_prompt(
         }.get(primary_kind, f"Primary model kind: {primary_kind}")
         primary_banner = f"\n> Primary input: {friendly}\n"
 
-    # Stack-specific idiom reminders, keyed on the request's wording (per run).
+    # Stack-specific idiom reminders, keyed on the routed stack (per run).
     # See stack_metadata.idiom_guidance_section for the detection + content.
     # The idiom blocks assume a web / server project.
     builds_other = target is not None and target.kind == OTHER
-    idiom_section = "" if builds_other else idiom_guidance_section(instructions, routed_stack)
-    # Named only when offered: tools.py withholds these without a domain model.
-    model_tools_section = _MODEL_TOOLS_SECTION if domain_model is not None else ""
+    idiom_section = "" if builds_other else idiom_guidance_section(routed_stack)
 
     # The HARD-CONSTRAINTS header below is deliberately forceful: weaker
     # models (e.g. the free qwen tier) ignore softer wording and delete the
@@ -505,9 +469,9 @@ def build_system_prompt(
             "13. **Styling/theme requests must actually RENDER - through the design\n"
             "    system.** Restyle by overriding `--ds-*` values (and adding rules if\n"
             "    needed) in `src/design-overrides.css`, so every designed page picks the\n"
-            "    change up; never hard-code colours in pages. Map informal colour names\n"
-            "    to hex: rose → `#f43f5e`, pink → `#ec4899`, amber/yellow → `#f59e0b` /\n"
-            "    `#eab308`, teal → `#14b8a6`, indigo → `#6366f1`, emerald → `#10b981`.\n"
+            "    change up; never hard-code colours in pages. A colour name that is not a\n"
+            "    CSS keyword (rose, amber, teal, indigo, emerald) takes its hex value:\n"
+            "    `color: rose` renders nothing, rose → `#f43f5e`.\n"
             "    A theme that's only mentioned in a comment but not visibly applied is\n"
             "    a failure."
         )
@@ -523,11 +487,9 @@ def build_system_prompt(
             "    colours or a visual theme, define them as concrete CSS — real hex\n"
             "    values or CSS variables — and apply them consistently across the UI\n"
             "    (backgrounds, buttons, headers, links, accents), not just one element.\n"
-            "    Map informal colour names to hex: rose → `#f43f5e`, pink → `#ec4899`,\n"
-            "    amber/yellow → `#f59e0b` / `#eab308`, teal → `#14b8a6`, indigo →\n"
-            "    `#6366f1`, emerald → `#10b981`. `rose`, `amber`, `teal`, `indigo` and\n"
-            "    `emerald` are not CSS colour keywords, so `color: rose` renders nothing;\n"
-            "    use the hex. A theme that's only mentioned in a comment\n"
+            "    `rose`, `amber`, `teal`, `indigo` and `emerald` are not CSS colour\n"
+            "    keywords, so `color: rose` renders nothing; use the hex value (rose →\n"
+            "    `#f43f5e`). A theme that's only mentioned in a comment\n"
             "    but not visibly applied is a failure. Aim for a clean, modern,\n"
             "    cohesive look (consistent spacing, a primary + accent colour, readable\n"
             "    contrast)."
@@ -536,36 +498,31 @@ def build_system_prompt(
             "    - One shared stylesheet applied across the whole app (cards or clean tables,\n"
             "      the look Rule 13 aims for), not unstyled browser-default HTML."
         )
-    # Rule 15 orders a React CRUD frontend; a backend-only run (no GUI, no
-    # frontend in the scaffold, none asked for) must not be told to build one.
+    # Rule 15 orders a CRUD frontend; a backend-only run (no GUI, no frontend in
+    # the scaffold, no web_app target) must not be told to build one.
     if target is not None:
         needs_frontend = target.is_web_app
     else:
         needs_frontend = (
             gui_model is not None or bool(design_system)
             or bool(_FRONTEND_FILE_RE.search(f"{inventory}\n{scaffold_snapshot}"))
-            or requests_frontend(instructions, bare_app=not modify_mode)
         )
-    crud_rule = f"""\
-15. **A domain-model app needs a COMPLETE, NAVIGABLE CRUD frontend** — unless
-    the UI is already specified by GUI screens. Read-only lists are NOT
-    enough. For the React frontend, build:
-    - A home route (`"/"`, a landing page) AND a nav bar/header (links or a menu)
-      present on every screen, linking every entity's list and its "new" page,
-      wired to the routes. The app must NEVER render blank on load: a
-      Router/Routes with no root "/" route does.
-    - Per entity: a list/table view PLUS working **Create** (a real form),
-      **Edit** (a pre-filled form), and **Delete** — Edit + Delete on each row —
-      each wired to the backend's POST / PUT / DELETE endpoints, not just the GET
-      list. A page that can only read is half-built (rule 12).
-    - Loading, empty, and error states on every data fetch.
-{stylesheet_bullet}
+    # React unless the routed stack names another frontend framework or a Django
+    # scaffold renders the pages.
+    frontend = "Django" if scaffold_family == "django" else routed_frontend_framework(routed_stack) or "React"
+    react_bullet = """\
+    - With Vite and JSX files that do not import React: `vite.config` without
+      `plugins: [react()]` from `@vitejs/plugin-react`. Every page then dies
+      with "React is not defined".
+""" if frontend == "React" else ""
+    # Server-rendered Django pages have no package.json, JSON API client or URL joining.
+    spa = frontend != "Django"
+    manifest_bullet = """\
     - Internal consistency: `package.json` dependencies match the imports, each
       with a concrete semver range (`"^18.3.1"`, never `"latest"` or `"*"`); the
       dev/build scripts actually run the app.
-    - Request/form consistency: when a field becomes server-owned, remove its
-      writable controls and client validation too, while keeping its read-only
-      display. Update shared entity/form metadata, not only a page's payload.
+""" if spa else ""
+    typed_form_bullet = """\
     - Create/Edit forms follow the create-request schema: one control per
       writable field, typed by the field - never every field as an untyped text
       box, nor a raw-JSON textarea as the form: the backend answers 422 to text
@@ -575,22 +532,67 @@ def build_system_prompt(
       `type="datetime-local"`; email -> `type="email"`; enum -> a `<select>` of
       its literals; a reference to another entity -> a `<select>` filled from
       that entity's list route, sending the chosen id.
-    AVOID these exact dead-frontend failures (all are bugs, not shortcuts):
-    - An empty or no-op form submit handler (an onSubmit that does nothing).
-      A form's submit MUST call the backend (create -> POST, edit -> PUT)
-      through the API layer, then refresh the list or navigate back. A form
-      that collects input but submits nowhere is worse than no form.
+""" if spa else ""
+    shared_handler_bullet = """\
     - Create and Edit sharing one handler keyed on a placeholder (`?edit=new`,
       an empty id): Create MUST POST to the collection route; only an existing
       record's id may reach PUT.
-    - A "New"/"Create" link to a path the router does not declare: it renders
-      blank. Put the form on the list page or declare that route.
+""" if spa else ""
+    url_join_bullet = """\
     - URLs joined without exactly one "/": every API path starts with "/", so
-      `${{base}}${{path}}` is a valid URL (a missing slash fails before any request).
-    - With Vite and JSX files that do not import React: `vite.config` without
-      `plugins: [react()]` from `@vitejs/plugin-react`. Every page then dies
-      with "React is not defined".
-""" if needs_frontend else ""
+      `${base}${path}` is a valid URL (a missing slash fails before any request).
+""" if spa else ""
+    # Django pages are wired by views and URL patterns, not by API calls and a client router.
+    if spa:
+        home_wiring = """\
+      wired to the routes. The app must NEVER render blank on load: a
+      Router/Routes with no root "/" route does."""
+        crud_wiring = """\
+      each wired to the backend's POST / PUT / DELETE endpoints, not just the GET
+      list."""
+        fetch_states = "Loading, empty, and error states on every data fetch."
+        dead_submit = """\
+    - An empty or no-op form submit handler (an onSubmit that does nothing).
+      A form's submit MUST call the backend (create -> POST, edit -> PUT)
+      through the API layer, then refresh the list or navigate back."""
+        dead_link = """\
+    - A "New"/"Create" link to a path the router does not declare: it renders
+      blank. Put the form on the list page or declare that route."""
+    else:
+        home_wiring = """\
+      wired to the URL patterns. The app must NEVER answer 404 on load: a
+      urls.py with no pattern for "/" does."""
+        crud_wiring = """\
+      each handled by a view: a form view that validates and saves the POSTed
+      form, and a delete view."""
+        fetch_states = "An empty state on every list, and form errors shown on the page."
+        dead_submit = """\
+    - A view that ignores the POSTed form. It MUST validate and save the
+      submitted form (create and edit), then redirect to the list."""
+        dead_link = """\
+    - A "New"/"Create" link to a URL no pattern matches: it answers 404.
+      Declare that pattern or put the form on the list page."""
+    crud_rule = f"""\
+15. **A domain-model app needs a COMPLETE, NAVIGABLE CRUD frontend** — unless
+    GUI screens specify the UI, or the request scopes the UI to the screens it
+    names: then build those. Read-only lists are NOT enough.
+    For the {frontend} frontend, build:
+    - A home route (`"/"`, a landing page) AND a nav bar/header (links or a menu)
+      present on every screen, linking every entity's list and its "new" page,
+{home_wiring}
+    - Per entity: a list/table view PLUS working **Create** (a real form),
+      **Edit** (a pre-filled form), and **Delete** — Edit + Delete on each row —
+{crud_wiring} A page that can only read is half-built (rule 12).
+    - {fetch_states}
+{stylesheet_bullet}
+{manifest_bullet}    - Request/form consistency: when a field becomes server-owned, remove its
+      writable controls and client validation too, while keeping its read-only
+      display. Update shared entity/form metadata, not only a page's payload.
+{typed_form_bullet}    AVOID these exact dead-frontend failures (all are bugs, not shortcuts):
+{dead_submit} A form
+      that collects input but submits nowhere is worse than no form.
+{shared_handler_bullet}{dead_link}
+{url_join_bullet}{react_bullet}""" if needs_frontend else ""
     if builds_other:
         crud_rule = _other_target_rule(target)
     if has_scaffold:
@@ -627,6 +629,31 @@ request: you write the whole project, in the stack the user asked for, from the
 specification and the models below. Verify its actual behavior; a file that
 exists is not proof that the software satisfies the specification."""
         plan_first_step = "What does the user request need, and in which stack and project layout?"
+    # Rules 4 and 5, and Rule 6's OCL part, only for models the run has; the
+    # numbers stay as they are, so references to a rule hold.
+    model_rules = [
+        """\
+4. **State machines drive code.** When a state machine governs a class
+   (see Cross-model links), generate a state field + transition guards +
+   event handlers that respect the declared transitions. Do not invent
+   states or transitions.""" if sm_json else "",
+        """\
+5. **Object instances are seed data.** Treat the Object Model as concrete
+   examples — emit them as fixtures, seeders, or example payloads in the
+   generated code, not as new domain rules.""" if object_json else "",
+        ("""\
+6. **OCL constraints must run.** For every constraint listed under the
+   class, emit a runtime check in the language idiomatic to the target
+   (Pydantic `@field_validator`, Zod refine, or a valid local SQL CHECK).
+""" if domain_model is not None and converted_rule_fingerprints(domain_model)
+            else "6. **Rules must run.**\n") + """\
+   Cross-record/relationship invariants need shared transactional enforcement
+   across every mutation path that can break them: create, update, link/unlink,
+   related-entity edits and deletion. SQLite CHECK constraints cannot contain
+   subqueries or refer to another table's columns. Reject invalid changes
+   atomically; do not partially persist an aggregate before validation succeeds.""",
+    ]
+    model_rules = "\n".join(rule for rule in model_rules if rule)
     stable_header = f"""\
 {role}{primary_banner}
 
@@ -667,24 +694,10 @@ Keep the plan short (a few lines), then proceed with surgical edits.
    the generated code (never by editing the model — no tool does that), and
    say so in your plan: name the model element and the spec text that decided
    it. Do not silently ship the model's version and do not leave it open.
-4. **State machines drive code.** When a state machine governs a class
-   (see Cross-model links), generate a state field + transition guards +
-   event handlers that respect the declared transitions. Do not invent
-   states or transitions.
-5. **Object instances are seed data.** Treat the Object Model as concrete
-   examples — emit them as fixtures, seeders, or example payloads in the
-   generated code, not as new domain rules.
-6. **OCL constraints must run.** For every constraint listed under the
-   class, emit a runtime check in the language idiomatic to the target
-   (Pydantic `@field_validator`, Zod refine, or a valid local SQL CHECK).
-   Cross-record/relationship invariants need shared transactional enforcement
-   across every mutation path that can break them: create, update, link/unlink,
-   related-entity edits and deletion. SQLite CHECK constraints cannot contain
-   subqueries or refer to another table's columns. Reject invalid changes
-   atomically; do not partially persist an aggregate before validation succeeds.
+{model_rules}
 {hygiene_rule}
 8. **Read before modify** - the WHOLE function or class you intend to change, in
-   one call (read_file's description says when and how to paginate).
+   one call; a file read without offset and limit comes back whole.
 9. **Be efficient. Batch tool calls in one turn.** Issue every
    independent tool call you can in the SAME turn — read multiple files
    in one turn, edit multiple files in one turn. Each turn is a separate
@@ -723,7 +736,7 @@ Keep the plan short (a few lines), then proceed with surgical edits.
     security path, find the cause (dependency, configuration, test input)
     and fix that.
 {crud_rule}
-{model_tools_section}"""
+"""
 
     # What the scaffold holds is listed above; naming parts here claimed some a generator never makes.
     request_intro = (
@@ -756,8 +769,7 @@ When done, briefly summarize what you changed.
             "that already works; make the smallest change that satisfies the "
             "request; prefer `modify_file` over `write_file`; do NOT "
             "regenerate untouched files. `write_file` on an existing file "
-            "is REJECTED in this run until you have tried two targeted "
-            "`modify_file` edits on it.\n\n"
+            "is refused when the rewrite drops code the file has.\n\n"
         )
 
     return f"{modify_directive}{stable_header}{variable_tail}"
@@ -860,9 +872,9 @@ def _render_gap_section(gap_tasks: list[str] | None) -> str:
     return (
         "\n\n### Focused checklist (from gap analysis)\n"
         "This list is loaded into the `task_list` tool (its description covers "
-        "done with evidence, blocked and add). Work through it, marking each item "
+        "done, blocked and add). Work through it, marking each item "
         "done as you complete it. If an item is wrong or out of scope for the user "
-        "request, close it with task_list(action='drop', id=N, reason=...) - never "
+        "request, close it with task_list(drop=[{id, reason}]) - never "
         "mark undone work done.\n\n"
         f"{bullets}\n"
     )
@@ -989,7 +1001,8 @@ def _norm_path(*parts: str) -> str:
 
 
 def build_endpoint_manifest(output_dir: str, max_routes: int = 250, *,
-                            response_model=None, mutation_coverage: bool = True) -> str:
+                            response_model=None, mutation_coverage: bool = True,
+                            use_client: bool = False) -> str:
     """List the EXACT HTTP routes the generated backend serves.
 
     The LLM-authored frontend otherwise reconstructs each URL from the router
@@ -1005,6 +1018,9 @@ def build_endpoint_manifest(output_dir: str, max_routes: int = 250, *,
     ``response_model``: the domain model the routers were generated from by
     ``router.py.j2``; adds what create/update return. ``mutation_coverage``:
     False keeps only the request shapes of the mutation inventory.
+    ``use_client``: with a generated typed client in the workspace, the section
+    leads with its functions (``api_client_section``) and lists only the
+    routes they do not cover; the checks that parse the routes leave it off.
     """
     port = None
     app_prefix_by_module: dict[str, str] = {}
@@ -1058,6 +1074,32 @@ def build_endpoint_manifest(output_dir: str, max_routes: int = 250, *,
     if not methods_by_path:
         return ""
 
+    base_url = f"http://localhost:{port or 8000}"
+    client = api_client_section(output_dir) if use_client else None
+    if client is not None:
+        client_text, covered = client
+        for path, methods in list(methods_by_path.items()):
+            methods.difference_update(m for m in list(methods) if (m, path) in covered)
+            if not methods:
+                del methods_by_path[path]
+        if methods_by_path:
+            header = (
+                f"{client_text}\n\nOther routes the backend serves (base URL {base_url}), not in the client: "
+                "call them with apiRequest. test_api takes the client's routes above and these."
+            )
+        else:
+            header = (
+                f"{client_text}\n\nThe backend serves no other routes (base URL {base_url}); "
+                "call a route you add with apiRequest. test_api takes the client's routes above."
+            )
+    else:
+        header = (
+            "The FastAPI backend is ALREADY generated and serves only the routes below "
+            f"(base URL {base_url}); a request to any other path will 404. Call them "
+            "from the frontend verbatim: do NOT add an `/api` prefix, do NOT "
+            "pluralize entity names, and keep the trailing slash."
+        )
+
     def _group_key(path: str) -> str:
         segs = [s for s in path.split("/") if s and not s.startswith("{")]
         return segs[0] if segs else path
@@ -1080,21 +1122,134 @@ def build_endpoint_manifest(output_dir: str, max_routes: int = 250, *,
         methods = sorted(methods_by_path[path], key=lambda x: _METHOD_ORDER.get(x, 99))
         lines.append(f"  {', '.join(methods):<20} {path}")
 
-    base_url = f"http://localhost:{port or 8000}"
-    header = (
-        "The FastAPI backend is ALREADY generated and serves only the routes below "
-        f"(base URL {base_url}); a request to any other path will 404. Call them "
-        "from the frontend verbatim: do NOT add an `/api` prefix, do NOT "
-        "pluralize entity names, and keep the trailing slash."
-    )
     body = "\n".join(lines)
     if truncated:
         body += f"\n\n  ... and {truncated} more routes (same conventions)."
     shapes = _response_shape_note(response_model) if response_model is not None else ""
-    if shapes:
-        body += f"\n\n{shapes}"
     mutations = build_mutation_manifest(output_dir, coverage=mutation_coverage)
-    return f"{header}\n\n{body}" + (f"\n\n{mutations}" if mutations else "")
+    return "\n\n".join(part for part in (header, body, shapes, mutations) if part)
+
+
+# The typed client the React generator writes, and its listing's share of the prompt.
+_API_CLIENT_FILE = "api/generated/client.ts"
+API_CLIENT_SECTION_CHARS = 4_000
+# The CRUD functions of a class's client object, with the route of each relative to its path P.
+_CRUD_FUNCTIONS = {
+    "list": ("list()", "GET", ""), "listDetailed": ("listDetailed()", "GET", ""),
+    "create": ("create(body)", "POST", ""), "get": ("get(id)", "GET", "{id}/"),
+    "update": ("update(id, body)", "PUT", "{id}/"), "delete": ("delete(id)", "DELETE", "{id}/"),
+    "count": ("count()", "GET", "count/"), "page": ("page({skip, limit})", "GET", "paginated/"),
+    "search": ("search(filters)", "GET", "search/"), "bulkCreate": ("bulkCreate(items)", "POST", "bulk/"),
+    "bulkDelete": ("bulkDelete(ids)", "DELETE", "bulk/"),
+}
+_ID_WORD = re.compile(r"\bid\b")
+_CRUD_LEGEND = (
+    "CRUD(id) at P: list() listDetailed() GET P; create(body) POST P; get(id) update(id, body) delete(id) "
+    "GET, PUT, DELETE P{id}/; count() GET Pcount/; page({skip, limit}) GET Ppaginated/; search(filters) "
+    "GET Psearch/; bulkCreate(items) POST and bulkDelete(ids) DELETE Pbulk/."
+)
+
+
+def _find_file(output_dir: str, suffix: str) -> str | None:
+    """The first file, in sorted walk order, whose workspace path ends with ``suffix``."""
+    for root, dirs, files in walk_plain(output_dir):
+        dirs[:] = sorted(d for d in dirs if d not in _SNAPSHOT_SKIP_DIRS)
+        for fname in sorted(files):
+            rel = os.path.relpath(os.path.join(root, fname), output_dir).replace("\\", "/")
+            if rel == suffix or rel.endswith("/" + suffix):
+                return rel
+    return None
+
+
+def api_client_section(output_dir: str, max_chars: int = API_CLIENT_SECTION_CHARS):
+    """The generated typed client, for the prompt: where it is, the rule to call the
+    backend through it, and its functions per class, read from the ``api_contract.json``
+    it was rendered from.
+
+    Returns ``(text, covered)``, ``covered`` being the ``(method, path)`` routes the listed
+    functions call; None without a client or a readable contract. Classes past
+    ``max_chars`` are counted, not listed, and their routes are not covered.
+    """
+    from besser.generators.react.api_client import client_functions, type_names
+
+    client = _find_file(output_dir, _API_CLIENT_FILE)
+    contract_path = _find_file(output_dir, "api_contract.json") if client else None
+    if contract_path is None:
+        return None
+    try:
+        with open(os.path.join(output_dir, contract_path), encoding="utf-8") as handle:
+            contract = json.load(handle)
+        functions = client_functions(contract)
+        names = type_names(contract)
+        paths = {entity["name"]: entity["path"] for entity in contract["entities"]}
+        system = [route for route in contract["routes"] if route["group"] == "system"]
+    except (OSError, ValueError, KeyError, TypeError):
+        logger.debug("api_contract.json not readable for the client section", exc_info=True)
+        return None
+    by_api: dict[str, dict[str, dict]] = {}
+    for call, route in functions.items():
+        api, function = call.split(".", 1)
+        by_api.setdefault(api, {"entity": route["entity"], "functions": {}})["functions"][function] = route
+    lines, covered, uses_crud = [], set(), False
+    for api in sorted(by_api):
+        entity, calls = by_api[api]["entity"], by_api[api]["functions"]
+        line, routes, crud = _client_line(api, entity, paths.get(entity, ""), names.get(entity, {}), calls)
+        if sum(len(item) + 1 for item in lines) + len(line) + 1 > max_chars:
+            lines.append(f"... and {len(by_api) - len(lines)} more classes, each a `<class>Api` "
+                         "object of the same shape (read client.ts).")
+            break
+        lines.append(line)
+        covered |= routes
+        uses_crud |= crud
+    if system:
+        # The client's apiSystem object calls the contract's system routes.
+        lines.append("- apiSystem: " + "; ".join(f"{r['op']}() {r['method']} {r['path']}" for r in system))
+        covered |= {(route["method"], route["path"]) for route in system}
+    folder = client.rsplit("/", 1)[0]
+    text = (
+        f"`{client}` is the frontend's typed API client, with the record and body types in "
+        f"`{folder}/types.ts`, both rendered from `{contract_path}`. Frontend code calls the backend "
+        "only through it (from `src/pages/`: `import { <class>Api, ApiError } from \"../api/generated/client\"`). "
+        "Each function returns the plain record, list or count (the response wrappers below never reach "
+        "the caller) and throws an ApiError with `status`, `message` and `fields`. Call a route you add "
+        "yourself with `apiRequest(method, path, { query, body })` from the same file; a fetch or axios "
+        "call to a route the client covers is reported. Never edit these generated files: regenerating "
+        "rewrites them.\n\n" + "\n".join(lines)
+    )
+    return (text + ("\n" + _CRUD_LEGEND if uses_crud else "")), covered
+
+
+def _client_line(api: str, entity: str, path: str, names: dict, calls: dict) -> tuple[str, set, bool]:
+    """One class's client functions: CRUD shorthand when every CRUD function sits at its usual route."""
+    crud = {function: route for function, route in calls.items() if function in _CRUD_FUNCTIONS}
+    key = next((route["path_params"] for route in crud.values() if route["path_params"]), [])
+    params = ", ".join(param["name"] for param in key)
+    id_path = "/".join("{" + param["name"] + "}" for param in key)
+    usual = bool(path) and set(crud) >= set(_CRUD_FUNCTIONS) - {"listDetailed"} and all(
+        (route["method"], route["path"]) == (method, path + suffix.replace("{id}", id_path))
+        for function, route in crud.items() for _, method, suffix in [_CRUD_FUNCTIONS[function]])
+    parts = []
+    if usual:
+        parts.append(f"CRUD({params}) at {path}")
+    else:
+        parts.extend(" ".join((_ID_WORD.sub(params or "id", _CRUD_FUNCTIONS[function][0]), route["method"],
+                               route["path"])) for function, route in crud.items())
+    # The other functions by owner (``relations.tags``, ``methods``), then by route path.
+    grouped: dict[str, dict[str, list[str]]] = {}
+    for function, route in calls.items():
+        if function in crud:
+            continue
+        owner, name = function.rsplit(".", 1)
+        args = [param["name"] for param in route["path_params"]]
+        if route["group"] == "method" and route.get("parameters"):
+            args.append("{" + ", ".join(f"{p['name']}?" for p in route["parameters"]) + "}")
+        grouped.setdefault(owner, {}).setdefault(route["path"], []).append(
+            f"{name}({', '.join(args)}) {route['method']}")
+    for owner, by_path in grouped.items():
+        parts.append(f"{owner}: " + " | ".join(f"{', '.join(fns)} {p}" for p, fns in by_path.items()))
+    body = names.get("create")
+    line = f"- {api} ({names.get('record', entity)}{f', body {body}' if body else ''}): " + "; ".join(parts)
+    return line, {(route["method"], route["path"]) for route in calls.values()}, usual
 
 
 # Generators whose FastAPI routers come from besser/generators/backend/templates/router.py.j2.
@@ -1264,10 +1419,22 @@ _SYMBOL_PATTERNS = {
     ".js": re.compile(
         r"^export\s+(?:default\s+)?(?:async\s+)?(?:function|const|class|let)\s+(\w+)", re.M
     ),
+    ".ts": re.compile(
+        r"^export\s+(?:default\s+)?(?:declare\s+)?(?:async\s+)?"
+        r"(?:function|const\s+enum|const|class|let|interface|type|enum)\s+(\w+)", re.M
+    ),
 }
-for _ext in (".jsx", ".ts", ".tsx", ".mjs"):
-    _SYMBOL_PATTERNS[_ext] = _SYMBOL_PATTERNS[".js"]
+_SYMBOL_PATTERNS[".jsx"] = _SYMBOL_PATTERNS[".mjs"] = _SYMBOL_PATTERNS[".js"]
+_SYMBOL_PATTERNS[".tsx"] = _SYMBOL_PATTERNS[".ts"]
 _SYMBOL_CAP = 10
+# Listed after the functions, constants and classes, so the cap drops types first.
+_TYPE_ONLY_KEYWORDS = ("interface", "type")
+# A component's configuration surface: the fields of its ``...Props`` / ``...Options``
+# interfaces, so a generated component is configured, not read whole or patched.
+_PROPS_INTERFACE_RE = re.compile(
+    r"^(?:export\s+)?interface\s+(\w*(?:Props|Options))\b[^{\n]*\{\n(.*?)^\}", re.M | re.S)
+_PROPS_FIELD_RE = re.compile(r"^([ \t]+)(\w+)(\?)?\s*:", re.M)
+_PROPS_CARD_CHARS = 400
 
 # Inventory hygiene: an alphabetical path cap otherwise fills with .besser_*
 # records, __pycache__/*.pyc and .db files and drops real source. Junk is
@@ -1289,13 +1456,29 @@ def _symbol_map(path: str) -> str:
             text = fh.read()
     except OSError:
         return ""
-    found = [
-        f"{m.group(1)}@{text.count(chr(10), 0, m.start()) + 1}"
-        for m in pattern.finditer(text)
-    ]
+    matches = sorted(pattern.finditer(text), key=lambda m: m.group(0).split()[-2] in _TYPE_ONLY_KEYWORDS)
+    found = [f"{m.group(1)}@{text.count(chr(10), 0, m.start()) + 1}" for m in matches]
     if len(found) > _SYMBOL_CAP:
-        return ", ".join(found[:_SYMBOL_CAP]) + f" (+{len(found) - _SYMBOL_CAP} more)"
-    return ", ".join(found)
+        symbols = ", ".join(found[:_SYMBOL_CAP]) + f" (+{len(found) - _SYMBOL_CAP} more)"
+    else:
+        symbols = ", ".join(found)
+    cards = "; ".join(_props_cards(text)) if path.lower().endswith((".ts", ".tsx")) else ""
+    if len(cards) > _PROPS_CARD_CHARS:
+        cards = cards[:_PROPS_CARD_CHARS].rsplit(",", 1)[0] + ", ...}"
+    return " | ".join(part for part in (symbols, cards) if part)
+
+
+def _props_cards(text: str) -> list[str]:
+    """``Name{field, optional?}`` for each props or options interface: its top-level fields only."""
+    cards = []
+    for match in _PROPS_INTERFACE_RE.finditer(text):
+        fields = _PROPS_FIELD_RE.findall(match.group(2))
+        if not fields:
+            continue
+        indent = min(len(spaces) for spaces, _, _ in fields)
+        names = [name + optional for spaces, name, optional in fields if len(spaces) == indent]
+        cards.append(f"{match.group(1)}{{{', '.join(names)}}}")
+    return cards
 
 
 def build_inventory(output_dir: str, domain_model, generator_name: str) -> str:
@@ -1363,6 +1546,9 @@ def build_inventory(output_dir: str, domain_model, generator_name: str) -> str:
     if generator_name == "generate_web_app":
         lines.append("\nBackend: FastAPI with SQLAlchemy ORM + Pydantic schemas")
         lines.append("Frontend: React + TypeScript + Vite + Tailwind CSS")
+        lines.append("Generated components (src/components/): configure them through the props and options "
+                     "listed above (a TableBlock's `options` are TableComponent's TableOptions); edit their "
+                     "source only to fix a defect in it.")
         lines.append("Docker: docker-compose.yml + Dockerfiles")
         # List frontend pages
         pages = []

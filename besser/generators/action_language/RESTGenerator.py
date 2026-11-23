@@ -20,7 +20,8 @@ def bal_to_rest(method: FunctionDefinition, class_name:str) -> str:
     return generator.generate(method)
 
 class RESTGenerationContext:
-    pass
+    def __init__(self):
+        self.loops = 0  # numbers each for loop's sequence variables
 
 def indent(lines):
     out = []
@@ -35,7 +36,7 @@ class BALRESTGenerator(BALVisitor[RESTGenerationContext, list[str]]):
         self.root_function = True
 
     def generate(self, node: FunctionDefinition):
-        lines = node.accept(self, None)
+        lines = node.accept(self, RESTGenerationContext())
         return "\n".join(lines)
 
     def visit_AssignTarget(self, node: AssignTarget, context: RESTGenerationContext) -> list[str]:
@@ -187,13 +188,15 @@ class BALRESTGenerator(BALVisitor[RESTGenerationContext, list[str]]):
     def visit_For(self, node: For, context: RESTGenerationContext) -> list[str]:
         lines = []
         body = []
+        context.loops += 1
+        loop = context.loops
+        first = f"_{node.iterators[0].var_name.name}_seq{loop}"
         for iterator in node.iterators:
             expr = iterator.sequence.accept(self, context)[0]
-            name = iterator.var_name.name + "_" + str(node.__hash__())
-            lines.append(f"{name} = {expr}")
-            body.append(f"{iterator.var_name.name} = {next(iter(node.iterators)).var_name.name}_{node.__hash__()}[i]")
+            lines.append(f"_{iterator.var_name.name}_seq{loop} = {expr}")
+            body.append(f"{iterator.var_name.name} = {first}[i]")
 
-        lines.append(f"for i in range(0, len({next(iter(node.iterators)).var_name.name}_{node.__hash__()})):")
+        lines.append(f"for i in range(0, len({first})):")
         body.extend(node.body.accept(self, context))
         lines.extend(indent(body))
 

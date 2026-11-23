@@ -2,26 +2,24 @@
 
 Measured across a 10-run live batch: 202 of 502 turns (40%) were
 task_list calls; the worst run spent 71 of 86 turns there, ~62 CONSECUTIVE.
-Two causes, both fixed here:
+Two causes:
 
 1. ``action='done'`` took a single ``id``, so completing N items cost N turns --
    and every turn pays a full prompt prefill, the binding cost on the
    self-hosted box.
-2. A verifier that never passes was retried forever; only the 80-turn cap broke
-   the cycle, ending that run INCOMPLETE on 317s of its 2400s budget.
+2. Closing an item was refused until the model quoted code it had written, and
+   a verifier that never passes was retried until the turn cap.
 
-The verifier itself is deliberately kept: it exists because a model once marked
-"build the frontend" done without writing a single file. A blocked item is
-therefore NOT marked done -- it is recorded, excluded from the open set so the
-run can finish, and reported.
+An item without a verifier now closes on the model's word. The verifier itself
+is deliberately kept: it exists because a model once marked "build the
+frontend" done without writing a single file. A refused item stays open, not
+done; the harness re-runs its check after every edit, and repeated refusals
+are bounded by the loop guard and Phase 2's no-progress handoff.
 """
 
 import pytest
 
-from besser.spec_driven_agent.agent.tool_executor import (
-    _MAX_TASK_VERIFY_ATTEMPTS,
-    ToolExecutor,
-)
+from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
 
 
 @pytest.fixture
@@ -33,22 +31,12 @@ def _done(executor, **kwargs):
     return executor._task_list(dict(action="done", **kwargs))
 
 
-def _record_changes(executor, ids):
-    """Real modification receipts for tests of batching, not acceptance proof."""
-    evidence = []
-    for task_id in ids:
-        path, content = f"task_{task_id}.py", f"completed_item_{task_id} = True\n"
-        assert executor._write_file({"path": path, "content": content})["status"] == "written"
-        evidence.append({"id": task_id, "path": path, "quote": content})
-    return evidence
-
-
 # ----------------------------------------------------------- batching
 
 
 def test_many_items_are_marked_done_in_one_call(executor):
     executor.set_tasks(["one", "two", "three", "four"])
-    result = _done(executor, ids=[1, 2, 3, 4], evidence=_record_changes(executor, [1, 2, 3, 4]))
+    result = _done(executor, ids=[1, 2, 3, 4])
     assert result["done_ids"] == [1, 2, 3, 4]
     assert result["open_remaining"] == 0
     assert result["verified_ids"] == []
@@ -58,7 +46,7 @@ def test_many_items_are_marked_done_in_one_call(executor):
 def test_a_single_id_still_works(executor):
     """The old shape is what existing prompts and checkpoints use."""
     executor.set_tasks(["one", "two"])
-    result = _done(executor, id=1, evidence=_record_changes(executor, [1]))
+    result = _done(executor, id=1)
     assert result["done_ids"] == [1]
     assert result["id"] == 1
     assert result["open_remaining"] == 1
@@ -67,15 +55,14 @@ def test_a_single_id_still_works(executor):
 def test_batching_is_what_the_tool_advertises(executor):
     from besser.spec_driven_agent.agent.tools import VALIDATION_TOOLS
     spec = next(t for t in VALIDATION_TOOLS if t["name"] == "task_list")
-    assert "ids" in spec["input_schema"]["properties"]
-    assert spec["input_schema"]["properties"]["ids"]["type"] == "array"
+    assert spec["input_schema"]["properties"]["done"]["type"] == "array"
     # The model only batches if the description tells it to.
-    assert "ids=[1,2,3]" in spec["description"]
+    assert "combine" in spec["description"]
 
 
 def test_unknown_and_duplicate_ids_do_not_derail_the_batch(executor):
     executor.set_tasks(["one", "two"])
-    result = _done(executor, ids=[1, 1, 99], evidence=_record_changes(executor, [1]))
+    result = _done(executor, ids=[1, 1, 99])
     assert result["done_ids"] == [1]
     assert result["unknown_ids"] == [99]
 
@@ -102,55 +89,16 @@ def test_a_failing_check_still_refuses_at_first(executor):
     assert executor.open_tasks(), "an unverified item must stay open"
 
 
-def test_retries_are_bounded_and_the_item_is_then_blocked(executor):
+def test_a_failing_check_is_refused_every_time_and_never_closed_or_blocked(executor):
+    """Refusal is the cheat guard; blocking on a count of refusals is gone."""
     executor.set_tasks([{"text": "build the frontend", "verify": lambda: False}])
-    for attempt in range(1, _MAX_TASK_VERIFY_ATTEMPTS):
+    for _ in range(5):
         result = _done(executor, id=1)
-        assert result["refused"][0]["attempts"] == attempt
-        assert "blocked" not in result
-
-    final = _done(executor, id=1)
-    assert final["blocked"][0]["id"] == 1
-    # The model must be told to stop, not invited to try again.
-    advice = final["advice"].lower()
-    assert "do not call task_list" in advice
-    assert "move on" in advice
-
-
-def test_a_blocked_item_is_not_reported_as_done(executor):
-    """Marking it done would reinstate exactly the cheat verify guards against."""
-    executor.set_tasks([{"text": "build the frontend", "verify": lambda: False}])
-    for _ in range(_MAX_TASK_VERIFY_ATTEMPTS):
-        _done(executor, id=1)
+        assert result["refused"] == [{"id": 1, "reason": "its check still fails"}]
+        assert "make the change" in result["advice"]
     task = executor._tasks[0]
-    assert task["blocked"] is True
-    assert task["done"] is False
-
-
-def test_a_blocked_item_lets_the_run_finish(executor):
-    """Left open, it kept the run going until the turn cap for work that can
-    never be signed off -- the 62-consecutive-turn livelock."""
-    executor.set_tasks([
-        {"text": "build the frontend", "verify": lambda: False},
-        "write the readme",
-    ])
-    _done(executor, id=2, evidence=_record_changes(executor, [2]))
-    for _ in range(_MAX_TASK_VERIFY_ATTEMPTS):
-        _done(executor, id=1)
-    assert executor.open_tasks() == []
-    assert [t["text"] for t in executor.blocked_tasks()] == ["build the frontend"]
-
-
-def test_the_loop_cannot_outlast_the_attempt_budget(executor):
-    """Simulates the live failure: the model keeps trying the same item."""
-    executor.set_tasks([{"text": "impossible", "verify": lambda: False}])
-    calls_that_invited_a_retry = 0
-    for _ in range(40):                      # the live run managed 62
-        result = _done(executor, id=1)
-        if result.get("refused"):
-            calls_that_invited_a_retry += 1
-    assert calls_that_invited_a_retry == _MAX_TASK_VERIFY_ATTEMPTS - 1
-    assert executor.open_tasks() == []
+    assert (task["done"], task["blocked"]) == (False, False)
+    assert executor.open_tasks() == [task]
 
 
 def test_a_check_that_starts_failing_and_then_passes_is_accepted(executor):
@@ -159,59 +107,26 @@ def test_a_check_that_starts_failing_and_then_passes_is_accepted(executor):
     executor.set_tasks([{"text": "write it", "verify": lambda: state["written"]}])
     assert _done(executor, id=1)["refused"][0]["id"] == 1
     state["written"] = True
-    assert _done(executor, id=1)["done_ids"] == [1]
-    assert executor.blocked_tasks() == []
-    # Repairs performed after automatic blocking can still satisfy the check.
-    state["written"] = False
-    executor.set_tasks([{"text": "write it", "verify": lambda: state["written"]}])
-    for _ in range(_MAX_TASK_VERIFY_ATTEMPTS):
-        _done(executor, id=1)
-    assert executor.blocked_tasks()
-    state["written"] = True
     assert _done(executor, id=1)["verified_ids"] == [1]
-    assert executor.blocked_tasks() == []
-    assert "blocked_reason" not in executor.task_snapshot()[0]
+    assert executor.open_tasks() == []
 
 
-def test_a_broken_verifier_never_wedges_the_run(executor):
+def test_a_broken_verifier_is_a_refusal_not_a_success(executor):
     def explode():
         raise RuntimeError("verifier bug")
     executor.set_tasks([{"text": "x", "verify": explode}])
-    for _ in range(_MAX_TASK_VERIFY_ATTEMPTS):
-        result = _done(executor, id=1)
-        assert result["done_ids"] == []
-        assert "error" in result
-    assert "verification could not run" in result["blocked"][0]["reason"]
-    assert executor.blocked_tasks()[0]["done"] is False
-    repeated = _done(executor, id=1)
-    assert repeated["status"] == "blocked"
-    assert repeated["done_ids"] == []
+    result = _done(executor, id=1)
+    assert result["done_ids"] == []
+    assert "verification could not run" in result["refused"][0]["reason"]
+    assert executor.open_tasks()
 
 
 # ------------------------------------------------------- crash recovery
 
 
-def test_the_attempt_count_survives_a_resume(executor, tmp_path):
-    """A resume that reset the counter would restart the livelock."""
-    executor.set_tasks([{"text": "build the frontend", "verify": lambda: False}])
-    _done(executor, id=1)
-    snapshot = executor.task_snapshot()
-    assert snapshot[0]["attempts"] == 1
-
-    resumed = ToolExecutor(workspace=str(tmp_path))
-    resumed.restore_tasks(
-        snapshot, [{"text": "build the frontend", "verify": lambda: False}])
-    assert resumed._tasks[0]["attempts"] == 1
-    # Only the remaining attempts are left, not a fresh budget.
-    for _ in range(_MAX_TASK_VERIFY_ATTEMPTS - 1):
-        _done(resumed, id=1)
-    assert resumed.blocked_tasks()
-
-
 def test_a_blocked_item_stays_blocked_across_a_resume(executor, tmp_path):
-    executor.set_tasks([{"text": "x", "verify": lambda: False}])
-    for _ in range(_MAX_TASK_VERIFY_ATTEMPTS):
-        _done(executor, id=1)
+    executor.set_tasks(["x"])
+    executor._task_list({"action": "blocked", "id": 1, "reason": "no adapter"})
     resumed = ToolExecutor(workspace=str(tmp_path))
     resumed.restore_tasks(executor.task_snapshot())
     assert resumed.blocked_tasks()
@@ -238,105 +153,32 @@ def test_an_unknown_id_is_reported_as_an_error(executor):
     assert executor._result_status(payload) == "error"
 
 
-def test_blocking_is_reported_as_an_error_exactly_once(executor):
-    """The blocking call itself failed; afterwards the item is settled, so
-    repeating it must NOT keep producing errors (that was the livelock)."""
+def test_every_refused_call_is_reported_as_an_error(executor):
     executor.set_tasks([{"text": "x", "verify": lambda: False}])
-    statuses = [executor._result_status(_done(executor, id=1)) for _ in range(6)]
-    assert statuses[:_MAX_TASK_VERIFY_ATTEMPTS] == ["error"] * _MAX_TASK_VERIFY_ATTEMPTS
-    assert set(statuses[_MAX_TASK_VERIFY_ATTEMPTS:]) == {"ok"}
+    statuses = [executor._result_status(_done(executor, id=1)) for _ in range(4)]
+    assert statuses == ["error"] * 4
 
 
 def test_a_partial_batch_counts_as_progress(executor):
     """Some work was accepted, so the turn is not a failure."""
     executor.set_tasks(["real", {"text": "unverifiable", "verify": lambda: False}])
-    payload = _done(executor, ids=[1, 2], evidence=_record_changes(executor, [1]))
+    payload = _done(executor, ids=[1, 2])
     assert payload["done_ids"] == [1]
     assert payload["refused"][0]["id"] == 2
     assert "error" not in payload
     assert executor._result_status(payload) == "ok"
 
 
-def test_unverified_completion_needs_current_write_evidence(executor, tmp_path):
+def test_an_unchecked_item_closes_on_the_models_word(executor, tmp_path):
+    """No quote of the code is asked for: the harness checks the app itself."""
     executor.set_tasks(["Implement payment"])
-    (tmp_path / "payment.py").write_text("paid = True\n", encoding="utf-8")
-    evidence = [{"id": 1, "path": "payment.py", "quote": "paid = True"}]
-    # Existing source and read-only activity do not prove this task was worked on.
-    executor._read_file({"path": "payment.py"})
-    assert _done(executor, id=1, evidence=evidence)["done_ids"] == []
-    executor._modify_file({"path": "payment.py", "old_text": "paid = True", "new_text": "paid = False"})
-    evidence[0]["quote"] = "paid = False"
-    result = _done(executor, id=1, evidence=evidence)
+    result = _done(executor, id=1)
     assert result["done_ids"] == [1]
-    assert result["verified_ids"] == []
+    assert result["verified_ids"] == [] and result["unverified_ids"] == [1]
     assert executor._task_list({"action": "list"})["tasks"][0]["status"] == "implemented"
     restored = ToolExecutor(workspace=str(tmp_path))
     restored.restore_tasks(executor.task_snapshot())
-    assert restored.unverified_tasks()[0]["implementation_evidence"] == executor.unverified_tasks()[0]["implementation_evidence"]
-
-
-def test_existing_completion_requires_read_executable_evidence(executor, tmp_path):
-    source = (
-        "# Payment is implemented\n"
-        "def register_payment(bill, db):\n"
-        "    if bill.paid:\n"
-        "        return False\n"
-        "    bill.paid = True\n"
-        "    db.commit()\n"
-        "    return True\n\n"
-        "def placeholder():\n"
-        "    raise NotImplementedError\n"
-        "\nclass Room:\n"
-        "    roomNumber = mapped_column(String(100), unique=True)\n"
-    )
-    path = tmp_path / "payment.py"
-    path.write_text(source, encoding="utf-8")
-    evidence = [{"id": 1, "path": "payment.py", "quote": "bill.paid = True"}]
-    executor.set_tasks(["Implement payment"])
-    unread = _done(executor, id=1, existing=True, evidence=evidence)
-    assert unread["done_ids"] == []
-    assert "read payment.py" in unread["refused"][0]["reason"]
-    executor._read_file({"path": "payment.py"})
-
-    for quote in ("# Payment is implemented", "raise NotImplementedError", "def placeholder():", "bill.total = 0"):
-        executor.set_tasks(["Implement payment"])
-        refused = _done(executor, id=1, existing=True, evidence=[
-            {"id": 1, "path": "payment.py", "quote": quote},
-        ])
-        assert refused["done_ids"] == [], (quote, refused)
-        assert executor.open_tasks()
-
-    executor.set_tasks(["Implement payment"])
-    accepted = _done(executor, id=1, existing=True, evidence=evidence)
-    assert accepted["done_ids"] == [1]
-    assert accepted["verified_ids"] == []
-    assert accepted["unverified_ids"] == [1], "source evidence is not behavioral acceptance"
-    receipt = executor.unverified_tasks()[0]["implementation_evidence"][0]
-    assert receipt["origin"] == "existing"
-    assert receipt["quote"] == evidence[0]["quote"]
-    assert not executor._successful_writes
-    assert path.read_text(encoding="utf-8") == source
-    # Planning prose is not automatically an action. Database declarations
-    # are existing implementation evidence, never behavioral acceptance.
-    for task in ("Enforce unique room numbers",
-                 {"text": "Enforce unique room numbers", "kind": "uniqueness"}):
-        executor.set_tasks([task])
-        accepted = _done(executor, id=1, existing=True, evidence=[{
-            "id": 1, "path": "payment.py",
-            "quote": "roomNumber = mapped_column(String(100), unique=True)",
-        }])
-        assert accepted["done_ids"] == [1], accepted
-        assert accepted["verified_ids"] == []
-        assert accepted["unverified_ids"] == [1]
-        restored = ToolExecutor(workspace=str(tmp_path))
-        restored.restore_tasks(executor.task_snapshot())
-        assert restored.task_snapshot() == executor.task_snapshot()
-    executor.set_tasks([{"text": "Implement payment", "kind": "action"}])
-    refused = _done(executor, id=1, existing=True, evidence=[{
-        "id": 1, "path": "payment.py", "quote": "roomNumber = mapped_column(String(100), unique=True)",
-    }])
-    assert refused["done_ids"] == []
-    assert "does not perform the required behaviour" in refused["refused"][0]["reason"]
+    assert restored.task_snapshot() == executor.task_snapshot()
 
 
 def test_explicit_blocked_reason_survives_listing_and_resume(executor, tmp_path):
@@ -344,7 +186,6 @@ def test_explicit_blocked_reason_survives_listing_and_resume(executor, tmp_path)
     assert "reason" in executor._task_list({"action": "blocked", "id": 1})["error"]
     result = executor._task_list({"action": "blocked", "ids": [1], "reason": "Payment adapter is unavailable"})
     assert result["blocked_ids"] == [1]
-    assert _done(executor, id=1)["done_ids"] == []
     restored = ToolExecutor(workspace=str(tmp_path))
     restored.restore_tasks(executor.task_snapshot())
     listing = restored._task_list({"action": "list"})["tasks"][0]
@@ -352,8 +193,8 @@ def test_explicit_blocked_reason_survives_listing_and_resume(executor, tmp_path)
     assert "verification" not in listing  # implied by status
     assert restored.task_snapshot()[0]["verification"] == "unverified"
     assert listing["reason"] == "Payment adapter is unavailable"
-    # An explicit block also closes only on fresh implementation evidence.
-    repaired = _done(restored, id=1, evidence=_record_changes(restored, [1]))
+    # The model may still close it once the work is done.
+    repaired = _done(restored, id=1)
     assert repaired["done_ids"] == [1]
     assert repaired["unverified_ids"] == [1]
     assert restored.blocked_tasks() == []
@@ -418,5 +259,5 @@ def test_the_tool_advertises_batched_adds(executor):
     """A capability the description does not mention is a capability unused."""
     from besser.spec_driven_agent.agent.tools import VALIDATION_TOOLS
     spec = next(t for t in VALIDATION_TOOLS if t["name"] == "task_list")
-    assert "texts" in spec["input_schema"]["properties"], spec["input_schema"]["properties"].keys()
-    assert "texts" in spec["description"]
+    assert spec["input_schema"]["properties"]["add"]["type"] == "array"
+    assert "add appends items" in spec["description"]

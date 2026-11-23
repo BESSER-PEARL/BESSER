@@ -100,8 +100,44 @@ def test_the_runtime_wires_the_button_to_the_table_dialog_and_row(build_app):
     assert "await axios.delete(fullUrl);" in table
 
     button = app.file("components", "runtime", "CrudButton.tsx")
-    assert "runTableAction(tableId, action)" in button
+    assert "runTableAction(tableId, action, false, confirmed)" in button
     assert "window.confirm(confirmMessage)" in button
+
+
+def test_delete_asks_for_confirmation_only_once_a_row_is_selected(build_app, run_ts, ts_function):
+    """The prompt came first, so a user confirmed a delete and only then read
+    "Select a row in the table first"."""
+    app = build_app(CLASSES, {"Books": [_table(), _crud_button("delete", "Remove", table="table-books", confirm=True)]})
+    run_action = ts_function(app.file("contexts", "TableContext.tsx"), "  const runTableAction = (")
+    handle_click = ts_function(app.file("components", "runtime", "CrudButton.tsx"), "  const handleClick = () => {")
+
+    clicks = run_ts(
+        "type TableActionName = string;\n"
+        "const log: string[] = [];\n"
+        "let selectedRows: Record<string, any> = {};\n"
+        "const tableActions = { current: { books: { create: () => log.push('create'),"
+        " edit: () => log.push('edit'), remove: () => log.push('remove') } } as Record<string, any> };\n"
+        "const pendingActions = { current: {} as Record<string, any> };\n"
+        + run_action
+        + "\nlet answer = true;\n"
+        "const window = { confirm: (_message: string) => { log.push('confirm'); return answer; } };\n"
+        "const navigate = (_path: string) => log.push('navigate');\n"
+        "let message: string | null = null;\n"
+        "const setMessage = (next: string | null) => { message = next; };\n"
+        "function click(tableId: string, row: any, reply: boolean) {\n"
+        "  const action = 'delete', confirmMessage = 'Delete this book?';\n"
+        "  const targetPath: string | undefined = undefined, entity: string | undefined = undefined;\n"
+        "  log.length = 0; message = null; answer = reply; selectedRows = row ? { [tableId]: row } : {};\n"
+        + handle_click
+        + "\n  handleClick();\n  return { log: [...log], message };\n}\n"
+        "console.log(JSON.stringify([click('books', null, true), click('books', { id: 1 }, false),"
+        " click('books', { id: 1 }, true), click('other', null, true)]));\n")
+
+    nothing_selected, declined, confirmed, other_page = clicks
+    assert nothing_selected == {"log": [], "message": "Select a row in the table first."}
+    assert declined == {"log": ["confirm"], "message": None}
+    assert confirmed == {"log": ["confirm", "remove"], "message": None}
+    assert other_page == {"log": [], "message": "The table for this action is not on this page."}
 
 
 def test_a_create_button_without_a_table_on_its_page_opens_the_table_page(build_app, jsx):

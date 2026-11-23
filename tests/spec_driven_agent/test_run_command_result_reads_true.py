@@ -1,14 +1,12 @@
 """A run_command result must not read as done when part of the line did not run.
 
-The shell keeps the directory of an earlier ``cd``, and ``a; b`` returns the
-exit code of ``b``. A cleanup run from the wrong directory came back
-``exit_code: 0, success: true`` with the failure only in stderr and the
-directory in the last field of the result.
+``a; b`` returns the exit code of ``b``. A cleanup run from the wrong
+directory came back ``exit_code: 0, success: true`` with the failure only in
+stderr.
 """
 
 from __future__ import annotations
 
-import os
 from unittest.mock import patch
 
 import pytest
@@ -28,26 +26,6 @@ def _run(executor, command, *, returncode=0, stderr="", **args):
     result = ShellResult(returncode=returncode, stdout="", stderr=stderr)
     with patch(_RUN, return_value=result):
         return executor._run_command({"command": command, **args})
-
-
-def test_a_command_started_in_a_carried_over_directory_says_so_first(tmp_path):
-    executor = _executor(tmp_path)
-    os.makedirs(tmp_path / "frontend")
-    executor._shell.cwd = str(tmp_path / "frontend")
-
-    result = _run(executor, "python seed.py")
-
-    assert next(iter(result)) == "ran_in", "the directory must be read before the outcome"
-    assert result["ran_in"].startswith("frontend")
-    assert "cd" in result["ran_in"]
-
-
-def test_a_command_in_the_workspace_root_or_an_explicit_directory_has_no_such_field(tmp_path):
-    executor = _executor(tmp_path)
-    os.makedirs(tmp_path / "frontend")
-
-    assert "ran_in" not in _run(executor, "python seed.py")
-    assert "ran_in" not in _run(executor, "npm test", working_dir="frontend")
 
 
 @pytest.mark.parametrize("command", [

@@ -550,7 +550,8 @@ What is recorded, per tab session id and participant label:
 - ``run_summary`` (recorded in-process by the Spec-Driven runner, never
   accepted over HTTP) -- outcome (``success`` for a completed run,
   ``completed_with_blockers`` or ``completed_unverified`` for a finished run the
-  run record calls so, ``incomplete``, or ``failed:<code>``), duration, turns, tokens, cost, model,
+  run record calls so, ``incomplete``, ``cancelled`` for a run cancelled after it wrote
+  files, or ``failed:<code>``), duration, turns, tokens, cost, model,
   validation blockers, and how many output files the generator wrote versus
   the LLM. For these runs the run trace (which includes the first 500
   characters of the instructions) is also copied to

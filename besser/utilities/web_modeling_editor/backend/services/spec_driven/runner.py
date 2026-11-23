@@ -3233,8 +3233,10 @@ class SmartGenerationRunner:
         try:
             done = self._t_done_payload
             if done is not None:
-                # "success" is a completed run only; the record's other finished outcomes are their own values.
-                outcome = ("incomplete" if done.get("incomplete")
+                # "success" is a completed run only; the record's other finished outcomes are their own
+                # values. A cancel is stored as cancelled (run_manager), so it is recorded as one too.
+                outcome = ("cancelled" if done.get("cancelled")
+                           else "incomplete" if done.get("incomplete")
                            else done.get("outcome") if done.get("outcome") in run_record.FINISHED_UNCLEAN
                            else "success")
             elif self._t_last_error_code:

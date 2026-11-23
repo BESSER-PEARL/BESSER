@@ -365,10 +365,26 @@ class TestReportEndpoint:
         ).text.strip().splitlines()
         header = rows[0].split(",")
         p3 = dict(zip(header, next(r for r in rows if r.startswith("P3,")).split(",")))
-        assert header[-2:] == ["completed_with_blockers", "completed_unverified"]
+        assert header[-3:-1] == ["completed_with_blockers", "completed_unverified"]
         assert (p3["runs"], p3["completed_with_blockers"], p3["completed_unverified"]) == (
             "3", "2", "1",
         )
+
+    def test_report_counts_cancelled_runs(self, report_env):
+        """A run whose done event says cancelled had no column and was counted as unknown."""
+        telemetry.record_event("s4", "P4", "run_summary", {"outcome": "cancelled"})
+        headers = {"X-Telemetry-Token": self.TOKEN}
+        text = asyncio.run(_get_report(headers=headers, params={"participant": "P4"})).text
+        assert "0 not verified / 1 cancelled" in text
+        assert "| Not verified | Cancelled |" in text
+        rows = asyncio.run(
+            _get_report(headers=headers, params={"format": "csv", "participant": "P4"})
+        ).text.strip().splitlines()
+        header = rows[0].split(",")
+        # Appended: the earlier columns keep their positions.
+        assert header[-1] == "cancelled" and header[:6] == [
+            "participant", "sessions", "prompts", "agent_actions", "runs", "success"]
+        assert dict(zip(header, rows[1].split(",")))["cancelled"] == "1"
 
     def test_participant_filter(self, report_env):
         response = asyncio.run(_get_report(
@@ -545,6 +561,20 @@ class TestRunSummaryEmission:
         runner = SmartGenerationRunner(_telemetry_request(), runtime=current_runtime())
         frames = asyncio.run(_collect_frames(runner))
         assert _parse_frame(frames[-1])["event"] == "done"
+
+    @pytest.mark.parametrize("done", [
+        # Cancelled during packaging: Phase 3 had finished, so nothing marks the run incomplete.
+        {"cancelled": True, "incomplete": False, "outcome": "cancelled"},
+        # Cancelled during Phase 3's last round.
+        {"cancelled": True, "incomplete": True, "outcome": "cancelled"},
+    ], ids=["during-packaging", "during-phase-3"])
+    def test_a_cancelled_done_is_recorded_as_cancelled(self, telemetry_env, done):
+        """The run store keeps such a run as cancelled; telemetry recorded "success" or "incomplete"."""
+        runner = SmartGenerationRunner(_telemetry_request(), runtime=current_runtime())
+        runner._t_done_payload = done
+        runner._record_run_summary()
+        summaries = [e for e in _read_events(telemetry_env, "study-sess-1") if e["kind"] == "run_summary"]
+        assert [s["payload"]["outcome"] for s in summaries] == ["cancelled"]
 
 
 # ---------------------------------------------------------------------

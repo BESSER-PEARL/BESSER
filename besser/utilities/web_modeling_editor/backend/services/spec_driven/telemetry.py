@@ -296,7 +296,7 @@ def read_events(participant: Optional[str] = None) -> list[dict]:
 
 # Run outcomes the report has a column for; any other value counts as unknown.
 _COUNTED_OUTCOMES = (
-    "success", "incomplete", "completed_with_blockers", "completed_unverified",
+    "success", "incomplete", "completed_with_blockers", "completed_unverified", "cancelled",
 )
 
 
@@ -455,7 +455,8 @@ def _render_markdown(stats: dict[str, _ParticipantStats]) -> str:
                 f"{outcomes.get('incomplete', 0)} incomplete / "
                 f"{outcomes.get('failed', 0)} failed / "
                 f"{outcomes.get('completed_with_blockers', 0)} with blockers / "
-                f"{outcomes.get('completed_unverified', 0)} not verified"
+                f"{outcomes.get('completed_unverified', 0)} not verified / "
+                f"{outcomes.get('cancelled', 0)} cancelled"
             ),
             f"- Average run duration: {round(s.avg_duration, 1)} s",
             f"- Total LLM turns: {s.total_turns}",
@@ -480,9 +481,9 @@ def _render_markdown(stats: dict[str, _ParticipantStats]) -> str:
         "",
         "| Participant | Sessions | Prompts | Runs | Success | Incomplete | "
         "Failed | Avg duration (s) | Tokens | Gen untouched % | "
-        "Gen LLM-modified % | LLM-authored % | With blockers | Not verified |",
+        "Gen LLM-modified % | LLM-authored % | With blockers | Not verified | Cancelled |",
         "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- "
-        "| --- | --- |",
+        "| --- | --- | --- |",
     ]
     for participant, s in stats.items():
         outcomes = s.outcome_counts
@@ -495,7 +496,8 @@ def _render_markdown(stats: dict[str, _ParticipantStats]) -> str:
             f"| {split['generator_llm_modified_pct']} "
             f"| {split['llm_authored_pct']} "
             f"| {outcomes.get('completed_with_blockers', 0)} "
-            f"| {outcomes.get('completed_unverified', 0)} |"
+            f"| {outcomes.get('completed_unverified', 0)} "
+            f"| {outcomes.get('cancelled', 0)} |"
         )
     lines.append("")
     return "\n".join(lines)
@@ -509,7 +511,7 @@ _CSV_COLUMNS = [
     "llm_authored", "generator_untouched_pct", "generator_llm_modified_pct",
     "llm_authored_pct", "delivery_events", "friction_events",
     # Appended, so the columns above keep their positions.
-    "completed_with_blockers", "completed_unverified",
+    "completed_with_blockers", "completed_unverified", "cancelled",
 ]
 
 
@@ -532,6 +534,7 @@ def _render_csv(stats: dict[str, _ParticipantStats]) -> str:
             sum(s.delivery.values()), s.friction,
             outcomes.get("completed_with_blockers", 0),
             outcomes.get("completed_unverified", 0),
+            outcomes.get("cancelled", 0),
         ])
     return buffer.getvalue()
 

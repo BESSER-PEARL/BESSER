@@ -603,6 +603,89 @@ def test_auto_transition_next_to_another_transition_is_rejected():
         process_agent_diagram(diagram)
 
 
+def _transitions_of(agent, state_name):
+    state = next(s for s in agent.states if s.name == state_name)
+    return sorted(t.dest.name for t in state.transitions)
+
+
+def test_an_export_drops_an_intent_transition_that_names_no_intent_with_a_warning(caplog):
+    """One stale transition in a saved project blocked its export and web-app generation."""
+    diagram = _live_testing_diagram()
+    diagram["model"]["relationships"]["r-intent"]["predefined"]["intentName"] = ""
+    warnings = []
+    with caplog.at_level("WARNING"):
+        agent = process_agent_diagram(diagram, warnings=warnings)
+    assert _transitions_of(agent, "ask") == ["think"]
+    assert len(warnings) == 1 and "names no intent" in warnings[0] and "left out" in warnings[0]
+    assert any("names no intent" in record.getMessage() for record in caplog.records)
+
+
+def test_an_export_keeps_an_auto_transition_beside_another_with_a_warning():
+    diagram = _live_testing_diagram()
+    diagram["model"]["relationships"]["r-auto"] = _transition(
+        "r-auto", "s-ask", "s-files", transitionType="predefined", predefined={"predefinedType": "auto"})
+    warnings = []
+    agent = process_agent_diagram(diagram, warnings=warnings)
+    assert _transitions_of(agent, "ask") == ["files", "files", "think"]
+    assert [w for w in warnings if "'auto' transition" in w and "next to" in w]
+
+
+def test_warnings_mode_still_raises_every_other_error():
+    diagram = _live_testing_diagram()
+    del diagram["model"]["components"]["gui-1"]
+    with pytest.raises(ValueError, match="GUIReplyAction references GUI 'signup'"):
+        process_agent_diagram(diagram, warnings=[])
+
+
+def test_a_project_with_a_stale_agent_transition_exports_as_buml():
+    """``/export-project-as-buml`` answered an error for the whole project."""
+    import asyncio
+
+    import httpx
+    from httpx._transports.asgi import ASGITransport
+
+    from besser.utilities.web_modeling_editor.backend.backend import app
+
+    diagram = _live_testing_diagram()
+    diagram["model"]["relationships"]["r-intent"]["predefined"]["intentName"] = ""
+    project = {"id": "p-1", "type": "Project", "name": "StaleAgent", "description": "",
+               "createdAt": "2026-11-23T00:00:00Z", "currentDiagramType": "AgentDiagram",
+               "currentDiagramIndices": {"AgentDiagram": 0},
+               "diagrams": {"AgentDiagram": [{"id": "agent-1", **diagram}]}}
+
+    async def post():
+        async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+            return await client.post("/besser_api/export-project-as-buml", json=project)
+
+    response = asyncio.run(post())
+    assert response.status_code == 200, response.text
+    assert "LiveAgent" in response.text
+
+
+def test_the_project_agents_of_a_web_app_tolerate_a_stale_transition():
+    """Web-app generation and deployment read every agent diagram of the project."""
+    from besser.utilities.web_modeling_editor.backend.services.utils.agent_generation_utils import (
+        collect_agents_from_diagrams,
+    )
+
+    diagram = _live_testing_diagram()
+    diagram["model"]["relationships"]["r-intent"]["predefined"]["intentName"] = ""
+    agents, _, _ = collect_agents_from_diagrams([{"id": "agent-1", **diagram}], default_config={})
+    assert [a.name for a in agents] == ["LiveAgent"]
+
+
+def test_agent_generation_still_refuses_a_stale_transition(tmp_path):
+    """Where the agent is built (agent generation, the simulator) the rule stays an error."""
+    import asyncio
+
+    from besser.utilities.web_modeling_editor.backend.services.generation.agents import generate_agent_output
+
+    diagram = _live_testing_diagram()
+    diagram["model"]["relationships"]["r-intent"]["predefined"]["intentName"] = ""
+    with pytest.raises(ValueError, match="names no intent"):
+        asyncio.run(generate_agent_output(diagram))
+
+
 def test_custom_condition_code_is_wired_under_its_generated_name(tmp_path):
     """Two custom conditions with the same authored function name must not collide, and the
     transition must reference a function that exists."""

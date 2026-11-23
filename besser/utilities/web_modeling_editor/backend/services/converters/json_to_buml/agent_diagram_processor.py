@@ -4,6 +4,7 @@ Agent diagram processing for converting JSON to BUML format.
 
 import logging
 import operator
+from typing import Optional
 
 from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.condition_code import (
     rename_condition_function,
@@ -354,7 +355,16 @@ def _build_body_from_action_elements(body_name, action_element_ids, elements,
     return body if action_added else None
 
 
-def process_agent_diagram(json_data):
+def process_agent_diagram(json_data, warnings: Optional[list] = None):
+    """Build the B-UML ``Agent`` of an agent diagram's JSON, validated.
+
+    Pass a ``warnings`` list where the agent is exported or converted rather than
+    run: two transitions BAF cannot run are then reported there (and logged)
+    instead of raising. A ``when_intent_matched`` transition naming no intent is
+    dropped, and an ``auto`` transition beside another transition of its state is
+    kept. Agent generation and the simulator pass none, so both raise.
+    """
+    first_warning = len(warnings) if warnings is not None else 0
     # Extract language from config if present
     config = json_data.get('config') or {}
     lang_value = config.get('language', '')
@@ -879,12 +889,15 @@ def process_agent_diagram(json_data):
                         ).go_to(target_state)
                         transition_count += 1
                     else:
-                        raise ValueError(
+                        message = (
                             f"Transition from '{source_state.name}' to '{target_state.name}' is "
                             "'when_intent_matched' but names no intent. Select the intent that "
                             "triggers it, or use 'auto' to continue without waiting, or "
                             "'when_no_intent_matched' for a fallback transition."
                         )
+                        if warnings is None:
+                            raise ValueError(message)
+                        warnings.append(f"{message} It was left out.")
 
                 elif condition_name == "when_no_intent_matched":
                     source_state.when_no_intent_matched().go_to(target_state)
@@ -1094,6 +1107,10 @@ def process_agent_diagram(json_data):
             agent.set_default_llm(default_llm_name_cfg)
 
     # Validate the agent model at build time so all callers get validation for free
-    agent.validate(raise_exception=True)
+    agent.validate(raise_exception=True, check_auto_transitions=warnings is None)
+    if warnings is not None:
+        warnings.extend(agent.auto_transition_problems())
+        for message in warnings[first_warning:]:
+            logger.warning("Agent '%s': %s", agent.name, message)
 
     return agent

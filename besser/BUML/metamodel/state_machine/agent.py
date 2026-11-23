@@ -2539,12 +2539,15 @@ class Agent(StateMachine):
         self._gui_models[gui_id] = gui_model
         return gui_model
 
-    def validate(self, raise_exception: bool = True) -> dict:
+    def validate(self, raise_exception: bool = True, check_auto_transitions: bool = True) -> dict:
         """
         Validate the agent model according to agent constraints.
 
         Args:
             raise_exception (bool): If True, raise ValueError when validation fails.
+            check_auto_transitions (bool): If False, leave out the rule of
+                :meth:`auto_transition_problems`, for a model that is exported or
+                converted rather than run.
 
         Returns:
             dict: Validation result with success flag, errors, and warnings.
@@ -2554,7 +2557,8 @@ class Agent(StateMachine):
 
         self._validate_state_intent_name_collisions(errors)
         self._validate_transition_intent_references(errors)
-        self._validate_auto_transitions(errors)
+        if check_auto_transitions:
+            errors.extend(self.auto_transition_problems())
         self._validate_reasoning_primitives(errors, warnings)
         self._validate_llm_references(errors, warnings)
         self._validate_gui_references(errors)
@@ -2592,12 +2596,13 @@ class Agent(StateMachine):
                 f"State and intent names must be different. '{display_name}' is used by both a state and an intent."
             )
 
-    def _validate_auto_transitions(self, errors: list[str]):
+    def auto_transition_problems(self) -> list[str]:
         """An `auto` transition must be the only transition of its state (BAF raises
         ``ConflictingAutoTransitionError`` otherwise): it fires unconditionally, so a second
         one could not be told apart from the first and any other transition could never run.
         A state shared by several flows should use conditional transitions (e.g. a custom
-        condition) instead."""
+        condition) instead. Returns one message per state that breaks the rule."""
+        errors: list[str] = []
         for state in self.states:
             auto_destinations = []
             for transition in state.transitions:
@@ -2620,6 +2625,7 @@ class Agent(StateMachine):
                     "the only transition of its state. Use 'when_no_intent_matched' for \"anything else\", "
                     "or remove the 'auto' transition."
                 )
+        return errors
 
     def _validate_transition_intent_references(self, errors: list[str]):
         """Ensure intent-matching transitions only reference intents defined in the agent."""

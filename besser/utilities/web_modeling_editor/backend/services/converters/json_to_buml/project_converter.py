@@ -263,7 +263,8 @@ def json_to_buml_project(project):
 
     # ── Process ALL AgentDiagrams ─────────────────────────────────────
     for agent_diag in diagrams.get("AgentDiagram", []):
-        agent_model = process_agent_diagram(agent_diag.model_dump())
+        # An export keeps a transition the agent could not run, with a logged warning.
+        agent_model = process_agent_diagram(agent_diag.model_dump(), warnings=[])
         model_list.append(agent_model)
         # Index by diagram UUID so an agentic task's agent_diagram_ref resolves.
         if getattr(agent_diag, "id", None):

@@ -252,7 +252,9 @@ How the model shapes these endpoints:
   the clash).
 * A required **text attribute** (a ``str`` that is not optional) refuses an
   empty or whitespace-only value with ``422``; the value is stored as sent.
-  An optional one accepts any value. A ``str`` attribute is stored as
+  ``PUT`` takes the same schema as ``POST``, so a record stored blank before
+  this rule (by an app generated before 8.11.0) is updated only with the
+  field filled. An optional one accepts any value. A ``str`` attribute is stored as
   long text: unbounded on PostgreSQL and SQLite, up to 64 KB on MySQL, 4000
   characters on Oracle (see :doc:`alchemy`).
 * A ``DELETE`` that would leave another record without a link it requires is

@@ -15,6 +15,7 @@ import uuid
 from types import SimpleNamespace
 
 import pytest
+from pydantic import ValidationError
 from pydantic import SecretStr
 
 from besser.spec_driven_agent.errors import InvalidApiKeyError
@@ -159,8 +160,8 @@ def session_script(monkeypatch):
     state = {"script": None}
     clients: list = []
 
-    def fake_client(provider, *, api_key=None, model=None):
-        clients.append({"provider": provider, "api_key": api_key, "model": model})
+    def fake_client(provider, *, api_key=None, model=None, base_url=None):
+        clients.append({"provider": provider, "api_key": api_key, "model": model, "base_url": base_url})
         return FakeClient()
 
     monkeypatch.setattr(runner_module, "create_llm_client", fake_client)
@@ -187,7 +188,7 @@ async def start_run(lab, runtime, settings, request, user=USER):
     """What the route does: reserve the run id, let the service start the run, build the runner."""
     run_id = uuid.uuid4().hex
     cancel_event = await runtime.active_runs.reserve(run_id)
-    ticket = lab.begin_run(request.changeId, run_id, user.login)
+    ticket = lab.begin_run(request.changeId, run_id, user.login, own_key=request.llm is not None)
     return LabRunner(request, user=user, lab=lab, runtime=runtime, settings=settings, ticket=ticket,
                      cancel_event=cancel_event)
 
@@ -289,7 +290,8 @@ def test_the_session_gets_the_labs_wiring(lab, draft, spec_driven_runtime, lab_s
     run_id, _ = run_lab(lab, spec_driven_runtime, lab_settings,
                         message(draft, issue={"repo": "besser", "number": 744}))
 
-    assert session_script.clients == [{"provider": "anthropic", "api_key": LAB_KEY, "model": "claude-test"}]
+    assert session_script.clients == [{"provider": "anthropic", "api_key": LAB_KEY, "model": "claude-test",
+                                       "base_url": None}]
     [session] = session_script.sessions
     wiring = session.wiring
     assert session.workspace is lab.workspace
@@ -540,7 +542,7 @@ def test_a_refused_key_is_invalid_key_and_gives_the_run_back(
 
 
 def test_a_client_that_cannot_be_built_is_invalid_key(lab, draft, spec_driven_runtime, lab_settings, monkeypatch):
-    def no_client(provider, *, api_key=None, model=None):
+    def no_client(provider, *, api_key=None, model=None, base_url=None):
         raise ValueError("No API key for anthropic")
 
     monkeypatch.setattr(runner_module, "create_llm_client", no_client)
@@ -588,6 +590,62 @@ def test_the_lab_key_never_reaches_the_stream(lab, draft, spec_driven_runtime, l
     _, frames = run_lab(lab, spec_driven_runtime, lab_settings, message(draft))
 
     assert LAB_KEY not in b"".join(frames).decode()
+
+
+# -- The user's own key ------------------------------------------------------------------------------------
+
+USER_KEY = "sk-user-own-key-123456"
+
+
+def test_a_message_with_the_users_key_runs_on_it_and_keeps_it_out_of_everything_written(
+        lab, draft, spec_driven_runtime, lab_settings, session_script):
+    lab_settings.lab_plan_llm_model = "lab-plan-model"
+
+    def script(session, text):
+        session.callbacks.on_text(f"the key is {USER_KEY}")
+        return plan_outcome(draft)
+
+    sessions = session_script(script)
+    request = message(draft, llm={"provider": "openai", "api_key": USER_KEY, "llm_model": "gpt-test"})
+    _, frames = run_lab(lab, spec_driven_runtime, lab_settings, request)
+
+    assert session_script.clients == [{"provider": "openai", "api_key": USER_KEY, "model": "gpt-test", "base_url": None}]
+    # The lab's plan model belongs to the lab's key: a user's key plans on the user's model.
+    assert sessions[0].wiring["plan_model"] is None
+    start = events(frames)[0]
+    assert (start["provider"], start["llmModel"]) == ("openai", "gpt-test")
+    assert lab.change_detail(draft.id).runs[0].model == "gpt-test"
+    # The key is in no frame, no file of the lab's state and not in the request's own text form.
+    assert USER_KEY not in b"".join(frames).decode()
+    for folder, _, files in os.walk(lab.workspace.state_dir):
+        for name in files:
+            with open(os.path.join(folder, name), encoding="utf-8", errors="replace") as handle:
+                assert USER_KEY not in handle.read(), name
+    assert USER_KEY not in repr(request) and USER_KEY not in request.model_dump_json()
+    # Paid by its owner: the month's spending did not move.
+    assert lab.budget.meters(USER.login).user.spentUsd == 0.0
+
+
+def test_a_custom_endpoint_is_refused_unless_the_deploy_allows_it(
+        lab, draft, spec_driven_runtime, lab_settings, session_script):
+    session_script(lambda session, text: plan_outcome(draft))
+    lab_settings.llm_allow_custom_base_url = False
+    request = message(draft, llm={"provider": "openai", "api_key": USER_KEY, "base_url": "http://10.0.0.5:8000/v1"})
+    _, frames = run_lab(lab, spec_driven_runtime, lab_settings, request)
+
+    assert events(frames)[-1]["code"] == "BAD_REQUEST" and session_script.clients == []
+    assert_free(lab, draft)
+
+
+@pytest.mark.parametrize("llm", [
+    {"provider": "anthropic", "api_key": "   "},
+    {"provider": "free", "api_key": USER_KEY},
+    {"provider": "openai", "api_key": USER_KEY, "llm_model": "bad model"},
+    {"provider": "openai", "api_key": USER_KEY, "base_url": "file:///etc/passwd"},
+])
+def test_a_malformed_user_key_is_refused_by_the_request(draft, llm):
+    with pytest.raises(ValidationError):
+        message(draft, llm=llm)
 
 
 # -- The class diagram the steps follow ---------------------------------------------------------------

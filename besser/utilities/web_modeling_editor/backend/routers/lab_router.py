@@ -10,6 +10,7 @@ The handlers parse the request and call ``LabService``; what runs git or reads f
 
 # No ``from __future__ import annotations``: FastAPI resolves the endpoints' annotations at import.
 import asyncio
+import functools
 import contextlib
 import uuid
 from typing import Annotated, Any, Iterator, Optional
@@ -169,7 +170,8 @@ async def lab_message(body: LabMessageRequest, user: LabUserDep, lab: LabService
     if cancel_event is None:  # a fresh UUID is never taken
         raise HTTPException(status_code=409, detail="Generated run ID is already active")
     try:
-        ticket = await _call(lab.begin_run, body.changeId, run_id, user.login)
+        ticket = await _call(functools.partial(lab.begin_run, body.changeId, run_id, user.login,
+                                              own_key=body.llm is not None))
     except HTTPException:
         await runtime.active_runs.release(run_id, cancel_event)
         raise

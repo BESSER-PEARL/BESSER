@@ -70,6 +70,7 @@ def lab_env(lab_layout, tmp_path, monkeypatch):  # noqa: F811 - lab_layout is th
         "BESSER_LAB_STATE_DIR": lab_layout.state_dir,
         "BESSER_LAB_MAX_CONCURRENT_RUNS": "2",
         "BESSER_LAB_BASE_REFRESH_MINUTES": "0",
+        "BESSER_LAB_LLM_API_KEY": "sk-lab-test-key",
         "DEPLOYMENT_URL": LAB_ORIGIN,
         "OAUTH_SESSIONS_PATH": str(stores / "oauth" / "states.enc"),
         "USER_TOKENS_PATH": str(stores / "tokens" / "sessions.enc"),
@@ -278,6 +279,37 @@ def test_a_spent_user_month_refuses_with_user_cap(lab_env):
 
     refused("user_cap", service.begin_run, service.workspace.create_draft(owner="ana").id, "r1", "ana")
     service.begin_run(service.workspace.create_draft(owner="ben").id, "r2", "ben")
+
+
+def test_a_run_on_the_users_own_key_reserves_nothing_and_is_not_counted_towards_the_caps(lab_env):
+    service = make_service(lab_env.workspace())
+    service.audit.append(AuditEntry(at=time.time(), login="ana", action="run", cost_usd=74.9))
+    change = service.workspace.create_draft(owner="ana")
+    refused("user_cap", service.begin_run, change.id, "r1", "ana")
+
+    ticket = service.begin_run(change.id, "r2", "ana", own_key=True)
+    assert (ticket.own_key, ticket.cost_cap_usd) == (True, service.settings.lab_max_cost_usd)
+    assert service.budget.meters("ana").user.reservedUsd == 0.0
+    service.end_run(ticket, status="done", record=record("r2", "ana", usd=3.0), done=None, error=None)
+
+    # Its cost is in the audit log and on the change, and the month's spending did not move.
+    line = service.audit.entries(service.audit.current_month())[-1]
+    assert (line.action, line.cost_usd, line.own_key) == ("run", 3.0, True)
+    assert service.budget.meters("ana").user.spentUsd == pytest.approx(74.9)
+    assert service.change_detail(change.id).cost.usd == pytest.approx(3.0)
+    # A reloaded log does not count it either.
+    assert AuditLog(service.workspace.state_dir).spent("ana") == pytest.approx(74.9)
+
+
+def test_a_lab_without_a_key_runs_only_on_the_users_own(lab_env, monkeypatch):
+    monkeypatch.delenv("BESSER_LAB_LLM_API_KEY")
+    service = make_service(lab_env.workspace())
+    change = service.workspace.create_draft(owner="ana")
+    assert service.home(user("ana")).labKey is False
+
+    refusal = refused("state", service.begin_run, change.id, "r1", "ana")
+    assert "no API key of its own" in refusal.message
+    assert service.begin_run(change.id, "r2", "ana", own_key=True).own_key is True
 
 
 def test_a_spent_lab_month_refuses_with_instance_cap(lab_env):

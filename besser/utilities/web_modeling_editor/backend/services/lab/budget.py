@@ -41,6 +41,11 @@ class LabBudget:
         self._lock = threading.Lock()
         self._reserved: dict[str, float] = {}
 
+    @property
+    def per_run_usd(self) -> float:
+        """The cost cap of one run; a run on the user's own key gets it without a reservation."""
+        return self._per_run
+
     def reserve(self, login: str) -> float:
         """Reserve the cost cap of a run of ``login`` and return it.
 

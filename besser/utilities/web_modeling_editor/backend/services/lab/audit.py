@@ -91,13 +91,15 @@ class AuditEntry:
     model: str = ""
     seconds: Optional[float] = None
     detail: str = ""
+    #: a run paid with the user's own key: recorded, and not counted towards the monthly caps
+    own_key: bool = False
 
     def to_line(self) -> dict[str, Any]:
         """The JSON line: the fields in camelCase, with the line version ``v``."""
         return {"v": AUDIT_LINE_VERSION, "at": self.at, "login": self.login, "action": self.action,
                 "changeId": self.change_id, "runId": self.run_id, "step": self.step, "costUsd": self.cost_usd,
                 "stopReason": self.stop_reason, "model": self.model, "seconds": self.seconds,
-                "detail": self.detail}
+                "detail": self.detail, "ownKey": self.own_key}
 
     @classmethod
     def from_line(cls, line: dict[str, Any]) -> "AuditEntry":
@@ -105,12 +107,13 @@ class AuditEntry:
         return cls(at=float(line["at"]), login=str(line["login"]), action=str(line["action"]),
                    change_id=line.get("changeId"), run_id=line.get("runId"), step=line.get("step"),
                    cost_usd=line.get("costUsd"), stop_reason=line.get("stopReason"), model=line.get("model", ""),
-                   seconds=line.get("seconds"), detail=line.get("detail", ""))
+                   seconds=line.get("seconds"), detail=line.get("detail", ""),
+                   own_key=bool(line.get("ownKey", False)))
 
     @property
     def spent_usd(self) -> float:
         """What this entry counts towards the monthly caps."""
-        return float(self.cost_usd or 0.0) if self.action == "run" else 0.0
+        return float(self.cost_usd or 0.0) if self.action == "run" and not self.own_key else 0.0
 
 
 class AuditLog:

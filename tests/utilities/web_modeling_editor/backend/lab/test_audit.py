@@ -42,6 +42,7 @@ def test_an_entry_is_one_line_in_its_utc_month_file(tmp_path):
     assert _lines(tmp_path / "audit" / "2026-11.jsonl") == [{
         "v": 1, "at": NOV_15, "login": "ana", "action": "run", "changeId": "a1b2c3d4e5f6", "runId": "r" * 32,
         "step": "build", "costUsd": 1.82, "stopReason": "completed", "model": "m", "seconds": 12.0, "detail": "",
+        "ownKey": False,
     }]
 
 

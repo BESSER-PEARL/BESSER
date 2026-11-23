@@ -193,6 +193,21 @@ cap. Under 0.25 USD left, a run, and a new change, is refused (``user_cap``
 or ``instance_cap``, naming the date the month ends). The header's meter
 shows what the user's runs cost this month.
 
+**A user's own key.** The header's key chip opens the editor's key dialog
+(provider, key, model). A saved key stays in that browser tab
+(``sessionStorage``) and is sent in the body of each message of that user
+(``llm`` of ``POST /lab/message``): the run then uses that provider, key and
+model for both steps, is paid by its owner, reserves nothing and is not held
+back by the monthly caps. Its cost is still recorded on the change and in
+the audit log (``ownKey``), where it does not count towards the caps; the
+per-run cap still applies. The key is passed to the LLM client only: it is
+in no thread, record or log line, and it is redacted from the stream. A
+custom endpoint (the dialog's "Local") is refused unless
+``BESSER_LLM_ALLOW_CUSTOM_BASE_URL`` is set, as for the Spec-Driven Agent.
+Without ``BESSER_LAB_LLM_API_KEY`` the lab has no key of its own
+(``labKey`` false on ``GET /lab/home``): every run needs the user's, and a
+message without one is refused (``state``).
+
 **Audit log.** ``audit/<YYYY-MM>.jsonl``, one append-only file per UTC month,
 records who did what to which change: ``change_created``, ``change_opened``,
 ``run`` (step, cost, model, stop reason, time), ``run_refused``,
@@ -848,8 +863,8 @@ another repository, which it pushes to.
      - Model of the plan step, same provider; unset, ``BESSER_LAB_LLM_MODEL``.
    * - ``BESSER_LAB_LLM_API_KEY``
      - unset
-     - The server's API key for that provider. Users never send a key of
-       their own.
+     - The lab's own API key for that provider, used by runs whose user
+       saved no key of their own. Unset: every run needs the user's key.
    * - ``BESSER_LAB_MAX_COST_USD``
      - ``5.0``
      - Cost cap of one run, in US dollars.

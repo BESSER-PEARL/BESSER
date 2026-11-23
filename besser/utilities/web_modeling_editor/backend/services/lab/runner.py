@@ -170,7 +170,14 @@ class LabRunner:
         self._runtime = runtime
         self._settings = settings
         self._cancel_event = cancel_event
-        self._api_key = settings.lab_llm_api_key.get_secret_value()
+        # The user's own key when the request brings one, else the lab's. Passed to the LLM client only.
+        own = request.llm
+        self._provider = own.provider if own else settings.lab_llm_provider
+        self._api_key = (own.api_key if own else settings.lab_llm_api_key).get_secret_value()
+        self._model = own.llm_model if own else settings.lab_llm_model
+        self._base_url = own.base_url if own else None
+        # The lab's plan model belongs to the lab's provider and key; a user's key plans on the user's model.
+        self._plan_model = None if own else settings.lab_plan_llm_model
         self._client: Any = None
         self._turns = 0
         self._started_at = time.monotonic()
@@ -235,9 +242,8 @@ class LabRunner:
             logger.exception("BESSER Lab run %s: its end could not be recorded", self.run_id)
 
     def _model_name(self, step: str) -> str:
-        settings = self._settings
-        model = settings.lab_llm_model or default_model(settings.lab_llm_provider) or ""
-        return (settings.lab_plan_llm_model or model) if step == "plan" else model
+        model = self._model or default_model(self._provider) or ""
+        return (self._plan_model or model) if step == "plan" else model
 
     # -- Helpers -----------------------------------------------------------------------------------------------
 
@@ -325,17 +331,25 @@ class LabRunner:
 
     async def _frames(self) -> AsyncIterator[bytes]:
         settings = self._settings
-        provider = settings.lab_llm_provider
+        provider = self._provider
         await self._runtime.run_blocking(self._record_start)
         yield self._sse(StartEvent(
-            runId=self.run_id, provider=provider, llmModel=settings.lab_llm_model or default_model(provider) or "",
+            runId=self.run_id, provider=provider, llmModel=self._model or default_model(provider) or "",
             maxCost=self.ticket.cost_cap_usd, maxRuntime=int(settings.lab_max_runtime_seconds)))
 
+        # The same gate as the Spec-Driven Agent: the server opens a user-supplied URL only where the deploy
+        # allows it. The gateways' endpoints come from the server's model catalog, never from the request.
+        base_url = None if provider in ("pia", "gateway") else self._base_url
+        if base_url and not settings.llm_allow_custom_base_url:
+            yield self._fail("BAD_REQUEST", "Custom LLM endpoints (local) are disabled on this lab. Pick another "
+                                            "provider for your key.")
+            return
         try:
             self._client = await self._runtime.run_blocking(
-                create_llm_client, provider, api_key=self._api_key or None, model=settings.lab_llm_model)
+                create_llm_client, provider, api_key=self._api_key or None, model=self._model, base_url=base_url)
         except ValueError as exc:  # InvalidApiKeyError included
-            yield self._fail("INVALID_KEY", f"The lab's LLM key was refused: {exc}")
+            whose = "Your API key" if self.request.llm else "The lab's LLM key"
+            yield self._fail("INVALID_KEY", f"{whose} was refused: {exc}")
             return
         message, action = self.request.message, self.request.action
         if self.request.review is not None:
@@ -397,7 +411,7 @@ class LabRunner:
                                  login=self._user.login)
         session = LabSession(self._lab.workspace, client=self._client, environments=self._lab.environments,
                              limits=limits, callbacks=callbacks, sandbox_policy=self._lab.sandbox_policy(),
-                             github_reader=reader, memory=self._lab.memory, plan_model=settings.lab_plan_llm_model)
+                             github_reader=reader, memory=self._lab.memory, plan_model=self._plan_model)
         issue = self.request.issue
         issues = [IssueRef(issue.repo, issue.number)] if issue is not None else []
 

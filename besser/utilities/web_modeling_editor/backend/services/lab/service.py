@@ -176,6 +176,8 @@ class LabRunTicket:
     started_at: float
     #: "plan" or "build" once the run has decided its step (the runner sets it); shown on the home's runs
     step: Optional[str] = None
+    #: the run is paid with the user's own key: nothing was reserved, and its cost does not count towards the caps
+    own_key: bool = False
 
 
 @dataclass
@@ -275,18 +277,29 @@ class LabService:
 
     # -- Runs ----------------------------------------------------------------------------------------------------
 
-    def begin_run(self, change_id: str, run_id: str, login: str) -> LabRunTicket:
+    def has_own_key(self) -> bool:
+        """Whether the lab has an LLM key of its own (``BESSER_LAB_LLM_API_KEY``)."""
+        return bool(self.settings.lab_llm_api_key.get_secret_value().strip())
+
+    def begin_run(self, change_id: str, run_id: str, login: str, *, own_key: bool = False) -> LabRunTicket:
         """Let run ``run_id`` of ``login`` start on the change: its lock, a run slot, its cost cap reserved.
 
+        ``own_key``: the run is paid with the user's own key. It reserves nothing and is not held back by the
+        monthly caps; its cost cap is the per-run cap.
+
         Raises:
-            LabRefusal: ``not_found``; ``state`` for a closed change; ``change_busy`` naming who holds it;
-                ``runs_full`` at ``BESSER_LAB_MAX_CONCURRENT_RUNS``; ``user_cap`` or ``instance_cap``. Each
-                refusal is written to the audit log (``run_refused``).
+            LabRefusal: ``not_found``; ``state`` for a closed change, or when the lab has no key of its own and
+                the run brings none; ``change_busy`` naming who holds it; ``runs_full`` at
+                ``BESSER_LAB_MAX_CONCURRENT_RUNS``; ``user_cap`` or ``instance_cap``. Each refusal is written
+                to the audit log (``run_refused``).
         """
         try:
             change = self._change(change_id)
             if change.status == "closed":
                 raise LabRefusal("state", f'Change "{change.title}" is closed: start a new change to go on.')
+            if not own_key and not self.has_own_key():
+                raise LabRefusal("state", "This lab has no API key of its own. Add your own key, then send "
+                                          "the message again.")
             with self._lock:
                 self._refuse_if_held(change_id)
                 cap = self.settings.lab_max_concurrent_runs
@@ -295,9 +308,9 @@ class LabService:
                                         for hold in self._runs.values())
                     raise LabRefusal("runs_full", f"{len(self._runs)} of {cap} lab runs are in progress "
                                                   f"({running}). Try again when one ends.")
-                cost_cap = self.budget.reserve(login)
+                cost_cap = self.budget.per_run_usd if own_key else self.budget.reserve(login)
                 ticket = LabRunTicket(change_id=change_id, run_id=run_id, login=login, cost_cap_usd=cost_cap,
-                                      started_at=time.time())
+                                      started_at=time.time(), own_key=own_key)
                 hold = _Hold(login=login, what="run", title=change.title, ticket=ticket,
                              was_draft=change.status == "draft")
                 self._holds[change_id] = self._runs[run_id] = hold
@@ -326,8 +339,9 @@ class LabService:
             self._logged("its audit line", lambda: self.audit.append(AuditEntry(
                 at=time.time(), login=ticket.login, action="run", change_id=change_id, run_id=ticket.run_id,
                 step=record.step, cost_usd=record.usd, stop_reason=record.stopReason, model=record.model,
-                seconds=record.elapsedSeconds)))
-            self.budget.settle(ticket.login, ticket.cost_cap_usd, record.usd)
+                seconds=record.elapsedSeconds, own_key=ticket.own_key)))
+            if not ticket.own_key:
+                self.budget.settle(ticket.login, ticket.cost_cap_usd, record.usd)
             if done is not None:
                 self._logged("its last run", lambda: self._remember(change_id, done))
             hold = self._runs.get(ticket.run_id)
@@ -368,7 +382,7 @@ class LabService:
             bases=self._bases(), runs=LabRunsView(inProgress=self._runs_in_progress(),
                                                   cap=self.settings.lab_max_concurrent_runs),
             meters=self.budget.meters(user.login), previewSlots=self._preview_slots(),
-            linkMode=self.environments.mode, memory=self._memory_info())
+            linkMode=self.environments.mode, memory=self._memory_info(), labKey=self.has_own_key())
 
     def changes(self) -> LabChangesResponse:
         """Open changes and drafts, last updated first, then the newest :data:`CLOSED_CHANGES_LISTED` closed."""

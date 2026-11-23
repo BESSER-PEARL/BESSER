@@ -10,13 +10,14 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal, Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr, field_validator
 
 from besser.spec_driven_agent.lab.contracts import ChangeKind
 from besser.spec_driven_agent.lab.memory import MAX_BODY_CHARS, MAX_TITLE_CHARS
 from besser.spec_driven_agent.planning.specification import MAX_SPECIFICATION_CHARS
 from besser.utilities.web_modeling_editor.backend.models.project import ProjectInput
 from besser.utilities.web_modeling_editor.backend.models.responses import ResponseModel
+from besser.utilities.web_modeling_editor.backend.models.spec_driven import _LLM_MODEL_NAME_RE
 
 LabStep = Literal["plan", "build"]
 LabStopReason = Literal["completed", "cancelled", "timeout", "cost_cap", "max_turns", "api_error"]
@@ -73,6 +74,44 @@ class LabReviewTask(BaseModel):
     commentIds: list[str] = Field(default_factory=list, max_length=_MAX_REVIEW_COMMENTS)
 
 
+class LabLlmKey(BaseModel):
+    """The signed-in user's own LLM key for one run, as the editor's key dialog stores it.
+
+    ``api_key`` is a ``SecretStr``: it is passed to the LLM client and nowhere else (not the thread, the audit
+    log or a run record). A run that carries one is paid by its owner and does not count towards the lab's
+    monthly caps. ``pia`` and ``gateway`` take their endpoint from the server's model catalog.
+    """
+
+    provider: Literal["anthropic", "openai", "mistral", "nebius", "pia", "gateway"]
+    api_key: SecretStr
+    llm_model: Optional[str] = Field(default=None, max_length=120)
+    #: An OpenAI-compatible endpoint (the dialog's "Local"); refused unless the deploy allows custom endpoints.
+    base_url: Optional[str] = Field(default=None, max_length=500)
+
+    @field_validator("api_key")
+    @classmethod
+    def _key_is_not_blank(cls, value: SecretStr) -> SecretStr:
+        if not value.get_secret_value().strip():
+            raise ValueError("api_key is empty")
+        return value
+
+    @field_validator("llm_model")
+    @classmethod
+    def _model_name(cls, value: Optional[str]) -> Optional[str]:
+        value = (value or "").strip()
+        if value and not _LLM_MODEL_NAME_RE.match(value):
+            raise ValueError("llm_model must contain only letters, digits, dashes, dots, underscores, colons or slashes")
+        return value or None
+
+    @field_validator("base_url")
+    @classmethod
+    def _http_url(cls, value: Optional[str]) -> Optional[str]:
+        value = (value or "").strip()
+        if value and not value.lower().startswith(("http://", "https://")):
+            raise ValueError("base_url must be an http:// or https:// URL")
+        return value or None
+
+
 class LabMessageRequest(BaseModel):
     """Body of ``POST /besser_api/lab/message``: a message to one change, which runs its next step."""
 
@@ -87,6 +126,8 @@ class LabMessageRequest(BaseModel):
     review: Optional[LabReviewTask] = None
     #: The issue the change starts from; its text is put in the plan's first message.
     issue: Optional[LabIssueRef] = None
+    #: The user's own key; null runs on the lab's key (``LabHomeResponse.labKey``).
+    llm: Optional[LabLlmKey] = None
 
 
 class LabPullRequestRequest(BaseModel):
@@ -390,6 +431,8 @@ class LabHomeResponse(ResponseModel):
     #: How change environments share the stores: ``hardlink`` means in-place writes can reach other changes.
     linkMode: LabLinkMode
     memory: LabMemoryInfo
+    #: Whether the lab has an LLM key of its own; false means every run needs the user's (``LabMessageRequest.llm``).
+    labKey: bool
 
 
 # -- Changes and their thread --------------------------------------------------------------------------

@@ -89,6 +89,8 @@ PREFIX = "create contract:"
 UNVERIFIED_PREFIX = "create unverified:"
 ACTION_PREFIX = "action call:"
 ACTION_UNVERIFIED_PREFIX = "action unverified:"
+# A record the probe created whose item or collection route then answered 5xx.
+READ_PREFIX = "read contract:"
 # A warning (issues.py default): account records anyone can change in an app with its own login.
 OPEN_ACCOUNT_PREFIX = "open account writes:"
 
@@ -381,6 +383,8 @@ def _issues_from_report(report: dict, rel: str) -> list[str]:
                 "aggregate-creation workflow (such as nested creation), retaining the rule"
             )
         issues.append(text)
+    for name, entry in sorted(entities.items()):
+        issues.extend(_read_issue_text(name, entry, read, rel) for read in entry.get("reads") or [])
     for entry in report.get("unprobed_creates") or []:
         issues.append(
             f"{UNVERIFIED_PREFIX} {rel}: POST {entry['path']} - its body {entry['schema']} is no table's own and "
@@ -399,6 +403,33 @@ def _issues_from_report(report: dict, rel: str) -> list[str]:
                 f"{OPEN_ACCOUNT_PREFIX} {rel}: {taken['route']} let one logged-in account change "
                 f"{', '.join(taken['fields'])} of another {entry['table']} record")
     return issues
+
+
+def _read_issue_text(name: str, entry: dict, read: dict, rel: str) -> str:
+    """Render one read of a created record that did not answer 2xx (see ``_read_back``).
+
+    Only a 5xx is an observed failure: an item route may refuse another caller and a
+    list may need a query parameter, so any other answer leaves the create unverified.
+    """
+    status, route = read.get("status"), read["route"]
+    body = (read.get("body") or "")[:_BODY_CHARS]
+    if not isinstance(status, int) or status >= 500:
+        text = (
+            f"{READ_PREFIX} {rel}: GET {route} - observed a server failure reading {name} after the "
+            f"probe created one ({status}: {body}). Every screen or client that lists or opens a "
+            f"{name} gets this error. Handle the read without an unhandled server failure"
+        )
+        site = read.get("site")
+        if site:
+            text += f". Fix site: {site['function']} in {rel}/{site['file']} line {site['line']}"
+        return text
+    return (
+        f"{UNVERIFIED_PREFIX} {rel}: POST {entry['path']} - the {name} it created could not be read "
+        f"back: GET {route} answered {status} ({body}). This does not prove the endpoint is broken. "
+        f"To settle it, one test_api scenario must POST {entry['path']} with valid specification-based "
+        "fixtures (logging in first where the API requires it) and then GET that record by its id; "
+        "a create that is not read back stays unverified"
+    )
 
 
 def _action_issue_text(entry: dict, rel: str) -> str:
@@ -626,6 +657,10 @@ def _association_link_schema(schema: dict, schemas: dict, _depth: int = 0) -> di
     return None
 
 
+# Required fields of these formats take increasing days in declared order.
+_DATE_FORMATS = ("date", "date-time")
+
+
 def _sample(field: str, schema: dict, day_offset: int, *,
             entity: str = "entity", ordinal: int = 1, unique: bool = False):
     """Best-effort fixture, never a claim of business-valid input.
@@ -642,7 +677,10 @@ def _sample(field: str, schema: dict, day_offset: int, *,
         if fmt == "date":
             return (_dt.date.today() + _dt.timedelta(days=day_offset)).isoformat()
         if fmt == "date-time":
-            return (_dt.datetime.now() + _dt.timedelta(days=day_offset)).isoformat()
+            # Not now: the input is quoted in findings that repair attempts compare.
+            # The day keeps declared order (start before end), the minute keeps instances distinct.
+            noon = _dt.datetime.combine(_dt.date.today() + _dt.timedelta(days=day_offset), _dt.time(12))
+            return (noon + _dt.timedelta(minutes=ordinal)).isoformat()
         if fmt == "time":
             return "12:00:00"
         if "email" in low or fmt == "email":
@@ -743,7 +781,7 @@ def _build_payload(schema: dict, schemas: dict, relationships: dict, ids: dict,
     """Minimal payload: required fields only, relationships from created ids."""
     props = schema.get("properties", {})
     required = [f for f in props if f in set(schema.get("required", []))]
-    date_fields = [f for f in required if _resolve(props[f], schemas).get("format") == "date"]
+    date_fields = [f for f in required if _resolve(props[f], schemas).get("format") in _DATE_FORMATS]
     payload: dict = {}
     unresolved: list = []
     for field in required:
@@ -796,7 +834,7 @@ def _build_payload(schema: dict, schemas: dict, relationships: dict, ids: dict,
 def _variants(schema: dict, schemas: dict):
     yield ("base",)
     props = schema.get("properties", {})
-    if sum(_resolve(props.get(f, {}), schemas).get("format") == "date"
+    if sum(_resolve(props.get(f, {}), schemas).get("format") in _DATE_FORMATS
            for f in schema.get("required", [])) > 1:
         yield ("dates",)
     for field in schema.get("required", []):
@@ -846,14 +884,14 @@ def _routes(app):
     return iter_route_contexts(routes)
 
 
-def _handler_site(app, path: str, entity: str) -> dict | None:
-    """The function serving ``POST path``, and inside it the line that
+def _handler_site(app, path: str, entity: str, method: str = "POST") -> dict | None:
+    """The function serving ``method path``, and inside it the line that
     constructs ``entity`` - the place the fix goes. ``also`` lists the other
     lines of that file constructing the entity (a bulk route, typically),
     which need the same change."""
     import inspect
     for route in _routes(app):
-        if getattr(route, "path", None) != path or "POST" not in (getattr(route, "methods", None) or ()):
+        if getattr(route, "path", None) != path or method not in (getattr(route, "methods", None) or ()):
             continue
         fn = inspect.unwrap(route.endpoint)
         try:
@@ -1022,6 +1060,60 @@ def _read_routes(spec: dict, creates: dict) -> dict:
                 found[entity] = candidate
                 break
     return found
+
+
+async def _read_back(app, client, spec: dict, schemas: dict, auth: dict, entity: str, create_path: str,
+                     item_route: str | None, record_id) -> list[dict]:
+    """GET the record the probe just created through the collection route OpenAPI declares
+    on its create path and through its item route. Returned: a read that answered 5xx, with
+    its fix site, and the item read when it did not answer 2xx and the collection did not
+    list the record either. A read refused 401/403 before the probe logged in is retried
+    after logging in, as a refused create is."""
+    routes = []
+    if "{" not in create_path and "get" in (spec.get("paths", {}).get(create_path) or {}):
+        routes.append((create_path, False))
+    if item_route and item_route.count("{") == 1:
+        routes.append((item_route, True))
+    unexpected, listed = [], False
+    for route, item in routes:
+        url = re.sub(r"\{[^/{}]+\}", str(record_id), route, count=1)
+
+        async def get(url=url):
+            try:
+                response = await client.get(url)
+                return response, response.status_code, response.text or ""
+            except Exception as exc:  # the app raised: a server would answer 500
+                return None, "EXC", f"{type(exc).__name__}: {exc}"
+
+        response, status, text = await get()
+        if status in (401, 403) and not auth:
+            auth.update(refused=f"GET {route}", anonymous_status=status)
+            record, retried = await _log_in(client, spec, schemas, get)
+            auth.update(record)
+            if retried is not None:
+                response, status, text = retried
+        crashed = not isinstance(status, int) or status >= 500
+        answered = not crashed and 200 <= status < 300
+        if not item and answered:
+            listed = _lists_record(response, record_id)
+        if crashed or (item and not answered and not listed):
+            read = {"route": route, "status": status, "body": text[:_BODY_CHARS]}
+            if crashed:
+                read["site"] = _handler_site(app, route, entity, method="GET")
+            unexpected.append(read)
+    return unexpected
+
+
+def _lists_record(response, record_id) -> bool:
+    """Whether a collection answer (a list, or an object holding one) has the record ``record_id``."""
+    try:
+        body = response.json()
+    except ValueError:
+        return False
+    rows = (body if isinstance(body, list) else
+            [row for value in body.values() if isinstance(value, list) for row in value] if isinstance(body, dict)
+            else [])
+    return any(str(_extract_id(row)) == str(record_id) for row in rows)
 
 
 def _count_routes(spec: dict, creates: dict) -> dict:
@@ -1933,6 +2025,14 @@ def _probe_cwd() -> dict:
                     schemas[schema_name], schemas, orm.get(entity, {}), ids, subclasses, ("base",))
                 entities[entity] = {"path": path, "verdict": "unresolved", "unresolved": unresolved}
 
+            read_routes = _read_routes(spec, creates)
+            for entity, entry in entities.items():
+                if entry["verdict"] == "created" and ids.get(entity) is not None:
+                    reads = await _read_back(app, client, spec, schemas, auth, entity, entry["path"],
+                                             read_routes.get(entity), ids[entity])
+                    if reads:
+                        entry["reads"] = reads
+
             actions, action_calls, ordinal = await _probe_actions(
                 app, spec, request, read_state, schemas, orm, subclasses, unique_fields,
                 creates, entities, ids, ordinal, _load_model_actions())
@@ -1950,8 +2050,6 @@ def _probe_cwd() -> dict:
                     schemas[schema_name], schemas, orm.get(table, {}), ids, subclasses, ("base",),
                     entity=table, ordinal=ordinal, unique_fields=unique_fields.get(table, frozenset()))
                 return new_id, payload
-
-            read_routes = _read_routes(spec, creates)
 
             async def read_back(table, record_id):
                 """The record as the app serves it to the probe, or None."""

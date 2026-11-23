@@ -64,7 +64,13 @@ NOT_CONFIRMED_PREFIXES = (
     "validation unverified:",
     # A checklist item no check and no ``task_list`` close settled.
     "task unverified:",
+    # A modify run's defect the previous version already had, and a workflow that passed on
+    # the previous version and fails now (``modify_run.py``): not this run's to repair.
+    "open since the previous version:",
+    "regression to confirm:",
 )
+OPEN_SINCE_PREVIOUS = "open since the previous version: "
+REGRESSION_TO_CONFIRM = "regression to confirm: "
 
 # The judge said implemented, but the code it cited is not an implementation (a
 # stub, a no-op validator, a comment or import, a declaration where behaviour is
@@ -146,6 +152,7 @@ FINDING_FAMILIES = (
     ("mapper config:", ("runtime",)),
     ("create contract:", ("runtime", "dependent")),
     ("action call:", ("runtime", "dependent")),
+    ("read contract:", ("runtime", "dependent")),
     ("api scenario:", ("runtime",)),
     ("requirement", ("judge",)),
     ("task ", ("judge",)),
@@ -190,10 +197,11 @@ def finding_families(message: str) -> set[tuple[str, str]]:
 
 
 def hidden_families(issues: list) -> set[tuple[str, str]]:
-    """The check families that could not run on the tree ``issues`` (warnings included) describe."""
+    """The check families that could not run on the tree ``issues`` (warnings included) describe.
+    A finding labelled as open since the previous version hides what it hid unlabelled."""
     hidden = set()
     for issue in issues:
-        message = str(getattr(issue, "message", issue))
+        message = str(getattr(issue, "message", issue)).removeprefix(OPEN_SINCE_PREVIOUS)
         lower = message.lower()
         for prefix, family in HIDDEN_BY:
             key = _family_key(family, message) if lower.startswith(prefix) else None
@@ -280,6 +288,10 @@ _DID_NOT_RUN_NOTE_RE = _re.compile(
     r"^validation: (?P<check>.+?) did not run \((?P<reason>.*)\) - its checks were SKIPPED", _re.S)
 
 
+# The reason of a ``runtime`` class no check can cover: the run built a server none starts.
+RUNTIME_NOT_CHECKABLE = "no check can start this kind of backend"
+
+
 def runtime_check_unverified(check: str, reason: str) -> str:
     """A runtime check that did not run: an unknown no source edit can settle."""
     return (
@@ -301,7 +313,7 @@ def required_dependency_setup(check: str, project: str) -> str:
     return (
         f"verification setup: {check} requires installed project dependencies. "
         f"Toolchain and shell tools are enabled and npm is available. Use "
-        f"install_dependencies with working_dir={project!r} to install the declared "
+        f"run_command with working_dir={project!r} and timeout=300 to install the declared "
         "dependencies, then call validate_app to run the required checks. "
         "Do not edit application code solely to satisfy this verification prerequisite."
     )
@@ -326,13 +338,24 @@ def is_configured_off(issue) -> bool:
 
 # The reason a check carries once the dependency install it needed was left undone.
 DEPENDENCIES_NOT_INSTALLED = "its project dependencies were not installed"
-_SETUP_CHECK_RE = _re.compile(r"^verification setup: (?P<check>.+?) requires installed project dependencies")
+_SETUP_CHECK_RE = _re.compile(r"^verification setup: (?P<check>.+?) requires installed project dependencies"
+                               r"(?:.*?working_dir=(?P<project>'[^']*'|\"[^\"]*\"))?")
 
 
 def dependencies_not_installed(setup: str) -> str:
     """A ``verification setup:`` still open when the run ends: the checks behind it did not run."""
     match = _SETUP_CHECK_RE.match(setup)
     return required_check_unverified(match["check"] if match else "a check", DEPENDENCIES_NOT_INSTALLED)
+
+
+def dependency_setup_not_run(setup: str) -> str:
+    """A ``verification setup:`` before the final check: a check waiting for the install it names."""
+    match = _SETUP_CHECK_RE.match(setup)
+    project = match["project"] if match and match["project"] else "the project folder"
+    return required_check_unverified(
+        match["check"] if match else "a check",
+        f"its project dependencies are not installed; run npm install with run_command, "
+        f"working_dir={project}, timeout=300, to run it")
 
 
 def is_completion_issue(issue: ValidationIssue) -> bool:
@@ -455,8 +478,9 @@ def _classify_issue(message: str) -> ValidationIssue:
     #
     # ``action call:`` is the action-endpoint twin of ``create contract:`` -
     # constructibility.py observed a 500 from a handler it invoked. It must be
-    # a blocker, or the blocker-only fix loop never consumes it.
-    if lower.startswith(("create contract:", "action call:")):
+    # a blocker, or the blocker-only fix loop never consumes it. ``read contract:`` is
+    # a 5xx reading back a record the probe created.
+    if lower.startswith(("create contract:", "action call:", "read contract:")):
         return ValidationIssue("blocker", text)
 
     # A collector's "+N more ... truncated" note is a count, not a defect; it

@@ -88,6 +88,8 @@ class Checkpoint:
     source_revision: str = ""
     phase2_stop_reason: str = ""
     phase2_exited_cleanly: bool = False
+    # Phase 2 was cut at its share of a budget (``_hand_off_phase2_share``).
+    phase2_cut_at_share: bool = False
     # Scheduling/progress only, never cached validation or API success.
     repair_progress: dict = field(default_factory=dict)
     # Whole-application generators the run refuses (#666); a resume keeps them.
@@ -138,6 +140,7 @@ class Checkpoint:
             "source_revision": self.source_revision,
             "phase2_stop_reason": self.phase2_stop_reason,
             "phase2_exited_cleanly": self.phase2_exited_cleanly,
+            "phase2_cut_at_share": self.phase2_cut_at_share,
             "repair_progress": self.repair_progress,
             "locked_generators": self.locked_generators,
             "target": self.target,
@@ -427,6 +430,7 @@ def load_checkpoint(output_dir: str) -> Checkpoint | None:
             source_revision=revision,
             phase2_stop_reason=_phase2_stop_reason(data, phase),
             phase2_exited_cleanly=data.get("phase2_exited_cleanly") is True,
+            phase2_cut_at_share=data.get("phase2_cut_at_share") is True,
             repair_progress=progress,
             locked_generators=[t for t in data.get("locked_generators") or [] if isinstance(t, str)],
             target=data.get("target"),

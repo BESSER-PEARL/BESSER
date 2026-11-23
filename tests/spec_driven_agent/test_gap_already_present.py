@@ -3,9 +3,7 @@ Phase-2 gap analyser, extending ``_drop_present_enumerations``'s proven
 pattern (match on model evidence, never on task wording) to:
 
   * ``_drop_present_attributes``       - an attribute the model already
-    declares on the named class (drop when the ask is pure declaration,
-    annotate when it also asks for derived behaviour the model does not
-    encode).
+    declares on the named class (always annotate, never drop).
   * ``_note_present_regex_validations`` - a validation the model already
     carries as a successfully-converted OCL ``self.<attr>.matches(regex)``
     invariant (always annotate, never drop).
@@ -161,24 +159,31 @@ def _hotel_model() -> DomainModel:
 
 class TestDropPresentAttributes:
 
-    def test_pure_declaration_of_a_present_attribute_is_dropped(self):
-        task = (
-            "Add a 'extraCharges' attribute to the ReservedRoom class to "
-            "store per-room extra charges, enabling Requirement R79."
-        )
-        assert _drop_present_attributes([task], _hotel_model()) == []
+    @pytest.mark.parametrize("task", [
+        "Add a 'extraCharges' attribute to the ReservedRoom class to "
+        "store per-room extra charges, enabling Requirement R79.",
+        # Two attributes named together are both matched.
+        "In the SQL Alchemy model in web_app/backend/sql_alchemy.py, "
+        "add the 'agreedPrice' and 'extraCharges' attributes to the "
+        "ReservedRoom class, with type float.",
+        # A matching type word does not block the match.
+        "Add the 'settled' attribute to Bill as a boolean, as required by R50.",
+    ])
+    def test_a_declaration_of_a_present_attribute_is_annotated_not_dropped(self, task):
+        [noted] = _drop_present_attributes([task], _hotel_model())
+        assert noted.startswith(task)
+        assert "already declares this attribute" in noted
 
-    def test_two_attributes_named_together_are_both_matched_and_dropped(self):
-        task = (
-            "In the SQL Alchemy model in web_app/backend/sql_alchemy.py, "
-            "add the 'agreedPrice' and 'extraCharges' attributes to the "
-            "ReservedRoom class, with type float."
-        )
-        assert _drop_present_attributes([task], _hotel_model()) == []
-
-    def test_matching_type_word_does_not_block_the_drop(self):
-        task = "Add the 'settled' attribute to Bill as a boolean, as required by R50."
-        assert _drop_present_attributes([task], _hotel_model()) == []
+    @pytest.mark.parametrize("task", [
+        "Add a 'maxOccupancy' attribute to the Room class and display it in the room list page.",
+        "Add the 'maxOccupancy' attribute to the Room create form so users can enter it.",
+    ])
+    def test_screen_work_on_a_present_attribute_is_kept(self, task):
+        """Naming an attribute the model has does not make the screen work present:
+        a task that also asks for a list column or a form field was dropped."""
+        [noted] = _drop_present_attributes([task], _hotel_model())
+        assert noted.startswith(task)
+        assert "do not re-add the field" in noted
 
     def test_conflicting_type_word_blocks_the_drop(self):
         """A type word that disagrees with the model names a real gap
@@ -205,7 +210,7 @@ class TestDropPresentAttributes:
         [noted] = _drop_present_attributes([task], model)
         assert task in noted, "the requirement itself must survive"
         assert "already declares this attribute" in noted
-        assert "focus on the requested BEHAVIOUR" in noted
+        assert "do not re-add the field" in noted
 
     @pytest.mark.parametrize("task", [
         "Add a unique constraint on the 'maxOccupancy' attribute of the Room class "

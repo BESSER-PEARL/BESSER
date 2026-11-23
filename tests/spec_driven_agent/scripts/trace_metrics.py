@@ -24,6 +24,25 @@ Columns:
   blockers left at the end of the run stand in for them;
 * ``lossy`` - tool calls whose recorded input was cut (``<<truncated`` in the
   run log, keys dropped in a recipe): such a call cannot be replayed as made.
+
+A second table gives, per run and phase (P2, P3 repair turns, and the calls
+outside the loop), fresh input, cache-read, cache-write and output tokens, cost,
+the cache hit ratio, the cache misses, and the seconds the loop's model calls
+and tool batches took. A loop turn's tokens are the difference of two
+``cost_update`` records less the ``llm_call`` records between them. A record
+belongs to the run its run id names, also when it precedes that run's
+``run_start`` (a modify run routes before it); a resumed run (a second
+``run_start`` with the same run id) continues its run, on a new client whose
+token counters restart while its cost was seeded with the spend so far. A cache
+miss is a turn that read under 0.9 of the previous turn's prompt from the cache
+although the history was not rewritten: same conversation, no ``compaction`` or
+``eviction`` record, a prompt that did not shrink by 1% or more. A turn that
+read under 0.9 of its own, smaller prompt with no such record is listed apart,
+as history rewritten without a record (on a log older than those records, a
+compaction); the split is a heuristic. A run that never reports a cache read or
+write shows ``unknown``: its provider may not report them. Totals over all runs
+follow, each run counted once. Dollar figures follow the price catalog of the
+day; compare tokens.
 """
 
 from __future__ import annotations
@@ -43,6 +62,9 @@ _CUT_MARKER = "<<truncated"
 _CUT_RE = re.compile(r"\n?<<truncated \d+ of \d+ chars, sha256 [0-9a-f]+>>$")
 _TRACE_SUFFIXES = (".trace.jsonl", ".besser_trace.jsonl")
 _RECIPE_SUFFIXES = (".recipe.json", ".besser_recipe.json")
+_COUNTERS = ("input_tokens", "cache_read_tokens", "cache_creation_tokens", "output_tokens")
+CACHE_MISS_SHARE = 0.9
+SHRINK_NOISE = 0.01     # a prompt that shrank by less is read as unchanged
 
 
 @dataclass
@@ -55,6 +77,27 @@ class Call:
     error: str = ""
     attempt: int | None = None
     lossy: bool = False
+    batch_index: int | None = None
+
+
+@dataclass
+class Turn:
+    """One loop request: its tokens and cost, and the seconds of its model call and tool batch."""
+    turn: int
+    phase: str | None
+    fresh: int
+    cache_read: int
+    cache_write: int
+    output: int
+    cost: float
+    # The first request of a conversation, or the first after its history was rewritten.
+    new_context: bool = False
+    model_seconds: float | None = None
+    tool_seconds: float = 0.0
+
+    @property
+    def prompt(self) -> int:
+        return self.fresh + self.cache_read + self.cache_write
 
 
 @dataclass
@@ -64,6 +107,10 @@ class Run:
     calls: list[Call] = field(default_factory=list)
     blockers_at_end: list[str] | None = None
     calls_dropped: int = 0      # a recipe over its size budget drops calls
+    turns: list[Turn] = field(default_factory=list)
+    aux: list[tuple[str, dict]] = field(default_factory=list)    # (purpose, llm_call payload)
+    wall_seconds: float | None = None
+    started: bool = False       # its run_start was read
 
 
 def _is_cut(value) -> bool:
@@ -90,9 +137,86 @@ def _error_of(payload: dict) -> str:
         return match.group(1) if match else ""
 
 
+class _Meter:
+    """Reads a run's turns, calls outside the loop and seconds from its run-log records."""
+
+    def __init__(self, run: Run):
+        self.run = run
+        self.counted = dict.fromkeys(_COUNTERS, 0)      # cumulative counters at the last cost_update
+        self.counted_cost = 0.0
+        self.outside = dict.fromkeys(_COUNTERS, 0)      # llm_call deltas since then
+        self.outside_cost = 0.0
+        self.new_context = True
+        self.started: float | None = None
+        self.answered: float | None = None
+        self.first_ts: float | None = None
+        self.wall_before = 0.0      # seconds of the parts of the run before a resume
+
+    def read(self, kind: str, payload: dict, ts: float | None, phase: str | None) -> None:
+        if kind == "run_start" and payload.get("resumed"):
+            # A new client: its token counters restart; its cost was seeded with the spend so far.
+            self.counted = dict.fromkeys(_COUNTERS, 0)
+            self.counted_cost += self.outside_cost
+            self.outside, self.outside_cost = dict.fromkeys(_COUNTERS, 0), 0.0
+            self.wall_before, self.first_ts = self.run.wall_seconds or 0.0, None
+        if ts is not None:
+            if self.first_ts is None:
+                self.first_ts = ts
+            self.run.wall_seconds = self.wall_before + ts - self.first_ts
+        if kind in ("compaction", "eviction") or (kind == "phase_enter" and (
+                str(payload.get("phase", "")).startswith("phase2") or payload.get("phase") == "phase3_fix_attempt")):
+            self.new_context = True
+        elif kind == "llm_call":
+            self.run.aux.append((str(payload.get("purpose") or "other"), payload))
+            for key in _COUNTERS:
+                self.outside[key] += int(payload.get(key) or 0)
+            self.outside_cost += float(payload.get("cost_usd") or 0)
+        elif kind == "turn_start":
+            self.started, self.answered = ts, None
+        elif kind in ("turn_end", "cost_update") and self.answered is None:
+            self.answered = ts
+        if kind == "cost_update":
+            self._turn(payload, phase)
+        elif kind == "tool_call" and ts is not None and self.answered is not None and self.run.turns \
+                and self.run.turns[-1].turn == int(payload.get("turn") or 0):
+            last = self.run.turns[-1]
+            last.tool_seconds = max(last.tool_seconds, ts - self.answered)
+
+    def _turn(self, payload: dict, phase: str | None) -> None:
+        counters = {key: int(payload.get(key) or 0) for key in _COUNTERS}
+        cost = float(payload.get("estimated_cost_usd") or 0)
+        delta = {key: max(counters[key] - self.counted[key] - self.outside[key], 0) for key in _COUNTERS}
+        self.run.turns.append(Turn(
+            turn=int(payload.get("turn") or 0), phase=phase, fresh=delta["input_tokens"],
+            cache_read=delta["cache_read_tokens"], cache_write=delta["cache_creation_tokens"],
+            output=delta["output_tokens"], cost=max(cost - self.counted_cost - self.outside_cost, 0.0),
+            new_context=self.new_context,
+            model_seconds=None if None in (self.started, self.answered) else self.answered - self.started,
+        ))
+        self.counted, self.counted_cost = counters, cost
+        self.outside, self.outside_cost = dict.fromkeys(_COUNTERS, 0), 0.0
+        self.new_context = False
+
+
+def _in_model_order(calls: list[Call]) -> list[Call]:
+    """A turn's parallel calls are logged as each finishes; ``batch_index`` gives the model's order."""
+    ordered: list[Call] = []
+    start = 0
+    for end in range(1, len(calls) + 1):
+        if end == len(calls) or calls[end].turn != calls[start].turn:
+            group = calls[start:end]
+            if all(call.batch_index is not None for call in group):
+                group.sort(key=lambda call: call.batch_index)
+            ordered.extend(group)
+            start = end
+    return ordered
+
+
 def read_trace(path: str) -> list[Run]:
-    """One :class:`Run` per ``run_start`` in a run log."""
+    """One :class:`Run` per run id in a run log. A modify run writes its routing and model-sync
+    ``llm_call`` records before its ``run_start``; a resume continues the run it resumes."""
     runs: list[Run] = []
+    meter: _Meter | None = None
     phase, attempt = None, None
     with open(path, encoding="utf-8") as handle:
         for line in handle:
@@ -101,10 +225,17 @@ def read_trace(path: str) -> list[Run]:
             except ValueError:
                 continue
             kind, payload = event.get("event"), event.get("payload") or {}
-            if kind == "run_start" or not runs:
-                runs.append(Run(source=path, run_id=str(event.get("run_id") or "")))
+            ts = event.get("ts") if isinstance(event.get("ts"), (int, float)) else None
+            run_id = str(event.get("run_id") or "")
+            if kind == "run_start" or not runs or (run_id and run_id != runs[-1].run_id):
+                same = bool(runs) and runs[-1].run_id == run_id
+                if not (same and (payload.get("resumed") or not runs[-1].started)):
+                    runs.append(Run(source=path, run_id=run_id))
+                    meter = _Meter(runs[-1])
                 phase, attempt = None, None
                 if kind == "run_start":
+                    runs[-1].started = True
+                    meter.read(kind, payload, ts, phase)
                     continue
             if kind == "phase_enter":
                 name = payload.get("phase", "")
@@ -116,14 +247,18 @@ def read_trace(path: str) -> list[Run]:
                     phase, attempt = "phase3_validation", None
             elif kind == "tool_call":
                 raw = payload.get("input") if isinstance(payload.get("input"), dict) else {}
+                index = payload.get("batch_index")
                 runs[-1].calls.append(Call(
                     turn=int(payload.get("turn") or 0), phase=phase, tool=payload.get("tool", ""),
                     input=_uncut(raw), success=bool(payload.get("success")),
                     error="" if payload.get("success") else _error_of(payload),
-                    attempt=attempt, lossy=_is_cut(raw),
+                    attempt=attempt, lossy=_is_cut(raw), batch_index=index if isinstance(index, int) else None,
                 ))
-            elif kind == "phase_exit" and payload.get("phase") == "phase3":
+            meter.read(kind, payload, ts, phase)
+            if kind == "phase_exit" and payload.get("phase") == "phase3":
                 phase, attempt = None, None
+    for run in runs:
+        run.calls = _in_model_order(run.calls)
     return runs
 
 
@@ -269,11 +404,106 @@ def metrics(run: Run) -> dict:
     }
 
 
+def _phase_of(turn: Turn) -> str:
+    return "P3" if turn.phase and turn.phase.startswith("phase3") else "P2"
+
+
+def _misses(run: Run) -> tuple[list[tuple[Turn, int]] | None, list[tuple[Turn, int]]]:
+    """(turn, previous prompt) of the turns that read under 0.9 of the prefix they share with the
+    previous request from the cache, with no compaction or eviction record: those whose prompt did
+    not shrink by ``SHRINK_NOISE`` or more (misses; None when the run reports no cache at all), and
+    those whose prompt shrank more (a rewrite of the history that wrote no record, or a log older
+    than those records)."""
+    if not any(turn.cache_read or turn.cache_write for turn in run.turns):
+        return None, []
+    flagged = [(turn, previous.prompt) for previous, turn in zip(run.turns, run.turns[1:])
+               if not turn.new_context and turn.cache_read < CACHE_MISS_SHARE * min(turn.prompt, previous.prompt)]
+    unchanged = [row[0].prompt >= (1 - SHRINK_NOISE) * row[1] for row in flagged]
+    return ([row for row, same in zip(flagged, unchanged) if same],
+            [row for row, same in zip(flagged, unchanged) if not same])
+
+
+def cache_misses(run: Run) -> list[Turn] | None:
+    """Loop turns that read under 0.9 of an unchanged prefix from the cache (None: cache unknown)."""
+    misses, _ = _misses(run)
+    return None if misses is None else [turn for turn, _ in misses]
+
+
+def unrecorded_rewrites(run: Run) -> list[Turn]:
+    """Loop turns whose prompt shrank and that read little from the cache, with no record of a rewrite."""
+    return [turn for turn, _ in _misses(run)[1]]
+
+
+def _tokens(rows) -> dict:
+    """Token and cost sums of loop turns (``Turn``) or of ``llm_call`` payloads."""
+    sums = {"fresh": 0, "cache_read": 0, "cache_write": 0, "output": 0, "cost": 0.0}
+    for row in rows:
+        if isinstance(row, Turn):
+            values = (row.fresh, row.cache_read, row.cache_write, row.output, row.cost)
+        else:
+            values = (*(int(row.get(key) or 0) for key in _COUNTERS), float(row.get("cost_usd") or 0))
+        for key, value in zip(sums, values):
+            sums[key] += value
+    return sums
+
+
+def usage(run: Run) -> dict:
+    """Tokens, cost and seconds of a run, per loop phase and per purpose of the calls outside the loop."""
+    phases: dict[str, dict] = {}
+    for name in ("P2", "P3"):
+        turns = [turn for turn in run.turns if _phase_of(turn) == name]
+        if turns:
+            phases[name] = {"turns": len(turns), **_tokens(turns),
+                            "model_seconds": sum(turn.model_seconds or 0.0 for turn in turns),
+                            "tool_seconds": sum(turn.tool_seconds for turn in turns)}
+    purposes: dict[str, dict] = {}
+    for purpose in dict.fromkeys(purpose for purpose, _ in run.aux):
+        calls = [payload for name, payload in run.aux if name == purpose]
+        purposes[purpose] = {"calls": len(calls), **_tokens(calls)}
+    read = sum(turn.cache_read for turn in run.turns)
+    prompts = sum(turn.prompt for turn in run.turns)
+    known = _misses(run)[0] is not None
+    return {"phases": phases, "purposes": purposes, "misses": cache_misses(run),
+            "cache_hit": read / prompts if known and prompts else None, "wall_seconds": run.wall_seconds}
+
+
+def unique(runs: list[Run]) -> list[Run]:
+    """Each run once: a modify run's workspace carries the run log of the runs before it."""
+    seen: set[str] = set()
+    kept = []
+    for run in runs:
+        if run.run_id and run.run_id in seen:
+            continue
+        seen.add(run.run_id)
+        kept.append(run)
+    return kept
+
+
+def totals(runs: list[Run]) -> dict:
+    """Loop tokens and the calls outside the loop over every run, each counted once."""
+    runs = unique(runs)
+    turns = [turn for run in runs for turn in run.turns]
+    purposes: dict[str, dict] = {}
+    for run in runs:
+        for purpose, row in usage(run)["purposes"].items():
+            total = purposes.setdefault(purpose, dict.fromkeys(row, 0))
+            for key, value in row.items():
+                total[key] += value
+    misses = [turn for run in runs for turn in cache_misses(run) or []]
+    rewrites = [turn for run in runs for turn in unrecorded_rewrites(run)]
+    return {"runs": len(runs), "turns": len(turns), **_tokens(turns),
+            "loop_input": sum(turn.prompt for turn in turns), "purposes": purposes,
+            "misses": len(misses), "miss_fresh": sum(turn.fresh for turn in misses),
+            "unrecorded_rewrites": len(rewrites), "rewrite_fresh": sum(turn.fresh for turn in rewrites)}
+
+
 def _fmt(value, pattern="{:.2f}") -> str:
     return "-" if value is None else pattern.format(value)
 
 
 def _label(run: Run, index: int, count: int) -> str:
+    if run.run_id:
+        return run.run_id[:8]
     match = re.search(r"besser_llm_([0-9a-f]{8})", run.source)
     label = match.group(1) if match else os.path.basename(run.source)
     return f"{label}#{index + 1}" if count > 1 else label
@@ -304,21 +534,78 @@ def report(runs: list[Run]) -> str:
             if m["blockers_by_prefix"]:
                 details.append(f"- {label} blockers at end: " + ", ".join(
                     f"{prefix} {n}" for prefix, n in m["blockers_by_prefix"].most_common()))
-    return "\n".join(lines + [""] + details)
+    return "\n".join(lines + [""] + details + [""] + usage_report(runs))
+
+
+def _n(value) -> str:
+    return f"{value:,}"
+
+
+def usage_report(runs: list[Run]) -> list[str]:
+    """The token, cost, cache and seconds table, its details and the totals (see the module docstring)."""
+    lines = ["| run | phase | turns/calls | fresh in | cache read | cache write | output | cost $ | cache hit "
+             "| misses | model s | tools s |",
+             "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    details: list[str] = []
+    by_source: dict[str, list[Run]] = {}
+    for run in runs:
+        by_source.setdefault(run.source, []).append(run)
+    for source_runs in by_source.values():
+        for index, run in enumerate(source_runs):
+            label = _label(run, index, len(source_runs))
+            figures = usage(run)
+            misses, rewrites = _misses(run)
+            for name, row in figures["phases"].items():
+                prompts = row["fresh"] + row["cache_read"] + row["cache_write"]
+                hit, missed = "unknown", "unknown"
+                if misses is not None:
+                    hit = f"{row['cache_read'] / prompts:.0%}" if prompts else "-"
+                    missed = str(sum(_phase_of(turn) == name for turn, _ in misses))
+                lines.append(f"| {label} | {name} | {row['turns']} | {_n(row['fresh'])} | {_n(row['cache_read'])} "
+                             f"| {_n(row['cache_write'])} | {_n(row['output'])} | {row['cost']:.4f} | {hit} "
+                             f"| {missed} | {row['model_seconds']:.0f} | {row['tool_seconds']:.0f} |")
+            if figures["purposes"]:
+                outside = _tokens(payload for _, payload in run.aux)
+                lines.append(f"| {label} | outside the loop | {len(run.aux)} | {_n(outside['fresh'])} "
+                             f"| {_n(outside['cache_read'])} | {_n(outside['cache_write'])} "
+                             f"| {_n(outside['output'])} | {outside['cost']:.4f} | - | - | - | - |")
+                details.append(f"- {label} outside the loop: " + "; ".join(
+                    f"{purpose} {row['calls']} call(s), {_n(row['fresh'] + row['cache_read'] + row['cache_write'])} "
+                    f"in, ${row['cost']:.4f}" for purpose, row in figures["purposes"].items()))
+            for title, rows in (("cache misses", misses), ("history rewritten without a compaction or eviction "
+                                                           "record", rewrites)):
+                if rows:
+                    details.append(f"- {label} {title} (turn: fresh, cache read, previous prompt): " + "; ".join(
+                        f"{turn.turn}: {_n(turn.fresh)} fresh, {_n(turn.cache_read)} read after a "
+                        f"{_n(previous)}-token prompt" for turn, previous in rows))
+            if figures["wall_seconds"] is not None and run.turns:
+                model = sum(row["model_seconds"] for row in figures["phases"].values())
+                tools = sum(row["tool_seconds"] for row in figures["phases"].values())
+                details.append(f"- {label} seconds: wall {figures['wall_seconds']:.0f}, loop model calls "
+                               f"{model:.0f}, loop tools {tools:.0f}, other {figures['wall_seconds'] - model - tools:.0f}")
+    total = totals(runs)
+    loop_input = total["loop_input"]
+    summary = [
+        f"Totals over {total['runs']} run(s), {total['turns']} loop turns: loop input {_n(loop_input)} "
+        f"(fresh {_n(total['fresh'])}, cache read {_n(total['cache_read'])}"
+        + (f" = {total['cache_read'] / loop_input:.1%}" if loop_input else "")
+        + f", cache write {_n(total['cache_write'])}), output {_n(total['output'])}, cost ${total['cost']:.4f}; "
+        f"cache misses {total['misses']} turn(s), {_n(total['miss_fresh'])} fresh tokens; history rewritten "
+        f"without a record {total['unrecorded_rewrites']} turn(s), {_n(total['rewrite_fresh'])} fresh tokens.",
+    ]
+    if total["purposes"]:
+        summary.append("Outside the loop: " + "; ".join(
+            f"{purpose} {row['calls']} call(s), {_n(row['fresh'] + row['cache_read'] + row['cache_write'])} in, "
+            f"{_n(row['output'])} out, ${row['cost']:.4f}"
+            for purpose, row in sorted(total["purposes"].items(), key=lambda item: -item[1]["fresh"])))
+    return lines + [""] + details + [""] + summary
 
 
 def main(argv: list[str]) -> int:
     if not argv:
         print(__doc__)
         return 2
-    runs: list[Run] = []
-    seen: set[str] = set()
-    # A modify run's workspace carries the run log of the runs before it.
-    for run in (run for path in argv for run in load_runs(path)):
-        if run.run_id and run.run_id in seen:
-            continue
-        seen.add(run.run_id)
-        runs.append(run)
+    runs = unique([run for path in argv for run in load_runs(path)])
     if not runs:
         print("no run log or recipe found")
         return 1

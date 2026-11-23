@@ -16,6 +16,7 @@ from besser.BUML.metamodel.structural import (
 )
 import besser.spec_driven_agent.pipeline.orchestrator as orchestrator_module
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
+from besser.spec_driven_agent.planning.target import WEB_APP, Target
 from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
 
 
@@ -235,15 +236,15 @@ def test_modify_guard_off_by_default(tmp_path):
     assert result["status"] == "written"
 
 
-def test_modify_guard_blocks_rewrite_of_existing_file(tmp_path):
+def test_modify_guard_blocks_a_lossy_rewrite_of_existing_file(tmp_path):
     _existing_file(tmp_path)
     executor = ToolExecutor(workspace=str(tmp_path))
-    executor._read_file({"path": "app.py"})     # seen: it is the MODIFY-run guard that fires
+    executor._read_file({"path": "app.py"})     # seen: it is the MODIFY-run rule that fires
     executor.enable_modify_guard()
     result = json.loads(executor.execute("write_file", {
         "path": "app.py", "content": "rewritten",
     }))
-    assert "MODIFY run" in result["error"]
+    assert "existed before this run" in result["error"]
     assert "modify_file" in result["error"]
     # File untouched.
     assert (tmp_path / "app.py").read_text(encoding="utf-8").startswith("line0")
@@ -264,28 +265,28 @@ def test_modify_guard_allows_new_and_trivial_files(tmp_path):
     assert tiny["status"] == "written"
 
 
-def test_modify_guard_unlocks_after_two_targeted_edits(tmp_path):
+def test_modify_guard_does_not_unlock_after_two_targeted_edits(tmp_path):
+    """Edits are not a read: the rewrite still needs the whole file shown, and its code kept."""
     _existing_file(tmp_path)
     executor = ToolExecutor(workspace=str(tmp_path))
     executor.enable_modify_guard()
     # NB: the fixture writes line0..line29, so a bare "line1" also matches
-    # line10-line19 (11 occurrences). _modify_file now refuses a short
-    # ambiguous anchor rather than silently editing whichever came first, so
-    # these anchors carry their line ending to be unique - which is exactly
-    # the guidance the tool description gives the model.
+    # line10-line19 (11 occurrences); the anchors carry their line ending.
     for old, new_text in (("line1\n", "line1_edited\n"),
                           ("line2\n", "line2_edited\n")):
         r = json.loads(executor.execute("modify_file", {
             "path": "app.py", "old_text": old, "new_text": new_text,
         }))
         assert r["status"] == "modified", r
-    # Valid Python: a rewrite that would leave a parseable
-    # .py file unparseable is refused, and "rewritten as last resort" is not
-    # Python.
-    result = json.loads(executor.execute("write_file", {
-        "path": "app.py", "content": "rewritten = 'as last resort'\n",
+    unread = json.loads(executor.execute("write_file", {
+        "path": "app.py", "content": "rewritten = 'from memory'\n",
     }))
-    assert result["status"] == "written", result
+    assert "read only part" in unread["error"], unread
+    executor._read_file({"path": "app.py"})
+    lossy = json.loads(executor.execute("write_file", {
+        "path": "app.py", "content": "rewritten = 'from memory'\n",
+    }))
+    assert "existed before this run" in lossy["error"], lossy
 
 
 def test_modify_run_enables_the_guard(tmp_path, monkeypatch):
@@ -311,15 +312,22 @@ def test_webapp_ask_without_frontend_seeds_deterministic_task(tmp_path, monkeypa
     )
     (tmp_path / "backend").mkdir()
     (tmp_path / "backend" / "main.py").write_text("x = 1\n", encoding="utf-8")
-    client = _ScriptedClient([_end_turn(), _end_turn(), _end_turn()])
+    client = _RecordingClient([_end_turn(), _end_turn(), _end_turn()])
     orch = _make_orch(tmp_path, client)
     orch._instructions = "Build a library management web app"
+    orch.target = Target(WEB_APP, "web app", True)
 
     orch._run_phase2("Build a library management web app", extra_issues=[])
 
     # Deterministic VERIFIED task seeded -> extended nudge cap (2+2)
-    # because a verified task cannot be cheat-marked done.
+    # because a verified task cannot be cheat-marked done. The missing frontend is
+    # also a blocker: its first report is free, each unchanged repeat spends a
+    # nudge, and it hands off only once the nudges are spent.
     assert orch._end_turn_task_nudges == 4
+    assert orch._phase2_stop_reason == "validation_required" and client.chat_calls == 6
+    nudges = [sent[-1]["content"][0]["text"] for sent in client.sent[1:]]
+    # Only the last nudge warns that the next unchanged end_turn hands off.
+    assert ["hands the run to validation" in text for text in nudges] == [False] * 4 + [True]
     tasks = orch.executor._tasks
     assert any("React frontend" in t["text"] for t in tasks)
     # And the cheat-proofing itself: done is refused while no frontend.
@@ -361,3 +369,32 @@ def test_a_never_passing_check_cannot_hold_phase2_open(tmp_path, monkeypatch):
     assert client.chat_calls == 2 * (cap + 1)
     assert orch._phase2_stop_reason == "completed"
     assert [t["text"] for t in orch.executor.open_tasks()] == ["Build the frontend"]
+
+
+def test_changing_blockers_leave_a_checked_item_its_nudges(tmp_path, monkeypatch):
+    """A blocker report that changes every turn costs a machine-checked open item
+    none of its nudges: they all remain once the blockers are gone."""
+    monkeypatch.setattr(orchestrator_module, "analyze_gaps_via_llm", lambda **kwargs: [])
+    monkeypatch.setattr(LLMOrchestrator, "_deterministic_gap_tasks",
+                        lambda self: [{"text": "Add the order route", "verify": lambda: False}])
+    calls = []
+
+    def fake_validate(self):
+        # Call 0 is Phase 2's opening findings; calls 1-4 are end_turns that each
+        # see a different blocker on a changed tree, later ones see none.
+        n = len(calls)
+        calls.append(n)
+        issues = [f"Syntax error in backend/m{n}.py"] if 1 <= n <= 4 else []
+        return {"issues": issues, "blocker_count": len(issues)}
+
+    monkeypatch.setattr(LLMOrchestrator, "_validate_app", fake_validate)
+    monkeypatch.setattr(LLMOrchestrator, "_workspace_revision", lambda self: str(len(calls)))
+    client = _ScriptedClient([])
+    orch = _make_orch(tmp_path, client)
+
+    orch._run_phase2("build it", extra_issues=[])
+
+    cap = orch._MAX_TASK_NUDGES + 2
+    assert orch._end_turn_task_nudges == cap
+    assert client.chat_calls == 4 + cap + 1
+    assert orch._phase2_stop_reason == "completed"

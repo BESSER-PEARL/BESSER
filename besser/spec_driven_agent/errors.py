@@ -16,6 +16,12 @@ class UpstreamLLMError(RuntimeError):
     """The provider API failed after retries (5xx, rate limit, timeout)."""
 
 
+class RequestRejectedError(UpstreamLLMError):
+    """The provider answered and refused this request (a 4xx other than the
+    key, a rate limit or a quota): the same request cannot succeed, a changed
+    one may."""
+
+
 class DeadlineReached(Exception):
     """An LLM call was not started, or was cut, because the run was cancelled
     or its time is up. Not a provider failure: it is never retried and never

@@ -1,6 +1,6 @@
 import React, { CSSProperties, useEffect, useState } from "react";
 import { apiRequest } from "../../api/generated/client";
-import { extractRows } from "./bindingData";
+import { extractRows, parseFilterExpression } from "./bindingData";
 import { TableComponent } from "../table/TableComponent";
 
 export interface TableBlockProps {
@@ -45,7 +45,8 @@ export const TableBlock: React.FC<TableBlockProps> = ({
         col.column_type === "lookup" || col.columnType === "lookup" || (col.association_class ?? col.associationClass)
       )
     );
-    const hasNestedFields = isNestedField(dataBinding?.label_field) || isNestedField(dataBinding?.data_field);
+    const hasNestedFields = isNestedField(dataBinding?.label_field) || isNestedField(dataBinding?.data_field)
+      || Boolean(parseFilterExpression(dataBinding?.filter_expression || dataBinding?.filter)?.hasNestedFields);
     const detailed = hasLookupColumns || hasLookupFormColumns || hasNestedFields;
 
     apiRequest<unknown>("GET", endpoint, { query: detailed ? { detailed: true } : undefined })
@@ -56,7 +57,8 @@ export const TableBlock: React.FC<TableBlockProps> = ({
         setTableData([]);
       })
       .finally(() => setLoading(false));
-  }, [dataBinding?.endpoint, dataBinding?.label_field, dataBinding?.data_field, options?.columns]);
+  }, [dataBinding?.endpoint, dataBinding?.label_field, dataBinding?.data_field, dataBinding?.filter,
+      dataBinding?.filter_expression, options?.columns]);
 
   if (loading) return <div id={id} className={className}>Loading data...</div>;
   if (error) return <div id={id} className={className}>{error}</div>;

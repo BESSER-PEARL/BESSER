@@ -13,7 +13,8 @@ def bal_to_python(method: FunctionDefinition) -> str:
     return generator.generate(method)
 
 class PythonGenerationContext:
-    pass
+    def __init__(self):
+        self.loops = 0  # numbers each for loop's sequence variables
 
 def indent(lines):
     out = []
@@ -113,13 +114,15 @@ class BALPythonGenerator(BALVisitor[PythonGenerationContext, list[str]]):
     def visit_For(self, node: For, context: PythonGenerationContext) -> list[str]:
         lines = []
         body = []
+        context.loops += 1
+        loop = context.loops
+        first = f"_{node.iterators[0].var_name.name}_seq{loop}"
         for iterator in node.iterators:
             expr = iterator.sequence.accept(self, context)[0]
-            name = iterator.var_name.name + "_" + str(node.__hash__())
-            lines.append(f"{name} = {expr}")
-            body.append(f"{iterator.var_name.name} = {next(iter(node.iterators)).var_name.name}_{node.__hash__()}[i]")
+            lines.append(f"_{iterator.var_name.name}_seq{loop} = {expr}")
+            body.append(f"{iterator.var_name.name} = {first}[i]")
 
-        lines.append(f"for i in range(0, len({next(iter(node.iterators)).var_name.name}_{node.__hash__()})):")
+        lines.append(f"for i in range(0, len({first})):")
         body.extend(node.body.accept(self, context))
         lines.extend(indent(body))
 

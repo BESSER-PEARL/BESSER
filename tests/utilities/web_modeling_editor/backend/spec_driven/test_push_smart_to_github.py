@@ -533,6 +533,7 @@ class TestMarkGenerated:
             "# mine\n* text=auto\n.besser_attribution.json linguist-generated=false\n"
             "/.besser_recipe.json linguist-generated=true\n"
             "/.besser_generator_output.json linguist-generated=true\n"
+            "/.besser_api_workflows.json linguist-generated=true\n"
         )
 
     def test_without_records_or_a_repo_file_no_file_is_written(self, tmp_path):

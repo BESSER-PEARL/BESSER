@@ -128,7 +128,7 @@ _TOOL_DETAIL_MAX_CHARS = 160
 # make a run readable afterwards.
 _TOOL_DETAIL_KEYS = (
     "path", "file_path", "filename", "target", "action", "id", "ids",
-    "text", "command", "pattern", "query", "class_name", "generator",
+    "done", "add", "drop", "blocked", "text", "command", "pattern", "query", "class_name", "generator",
 )
 
 
@@ -197,7 +197,7 @@ def _tool_call_detail(tool_name: str, tool_input: object, blocks_in_turn: int) -
 
 # Tools that are read-only and shouldn't count for loop detection
 _READONLY_TOOLS = frozenset({
-    "read_file", "list_files", "search_in_files", "check_syntax", "validate_app", "test_api",
+    "read_file", "list_files", "search_in_files", "validate_app", "test_api",
     # Checklist bookkeeping — marking several items done back-to-back is
     # exactly what the end_turn gate asks for, never a stuck loop.
     "task_list",
@@ -230,8 +230,13 @@ _MAX_TOOLCHAIN_FIX_ITERATIONS = 5
 # from delaying the whole run before the model has done anything.
 _SCAFFOLD_INSTALL_TIMEOUT_SECONDS = 180
 
-# Turns per fix attempt. No tool is forced: an attempt ends when the model ends its turn.
-_PHASE3_FIX_TURNS = 10
+# Work is counted in executed tool calls: each turn of ``max_turns`` allows this
+# many, so a model that makes one call per turn gets the work one that batches
+# four got. Turns stay a runaway guard at the same multiple.
+_CALLS_PER_TURN = 4
+# Executed tool calls per fix attempt (ten turns of four). No tool is forced: an
+# attempt ends when the model ends its turn.
+_PHASE3_FIX_CALLS = 10 * _CALLS_PER_TURN
 # Sent when a fix attempt stops with listed creates not yet read back.
 _PHASE3_CREATE_EVIDENCE_REMINDER = (
     "<system-reminder>These listed creates still have no read-back: {paths}. "
@@ -243,15 +248,12 @@ _PHASE3_CREATE_EVIDENCE_REMINDER = (
     "</system-reminder>"
 )
 
-# Fix attempts the turn reserve below is sized for.
-_PHASE3_NO_PROGRESS_ROUNDS = 2
-
-# Turns of ``max_turns`` Phase 2 leaves to the repair loop: that many full fix
-# attempts, but never more than 1/_PHASE3_RESERVE_MAX_FRACTION of the cap, so a
-# small cap stays mostly Phase 2's.
-# A share smaller than one fix attempt is not reserved at all.
-_PHASE3_TURN_RESERVE = _PHASE3_NO_PROGRESS_ROUNDS * _PHASE3_FIX_TURNS
-_PHASE3_RESERVE_MAX_FRACTION = 4
+# Share of each budget (seconds, cost and, with auto-fix on, tool calls) Phase 2
+# leaves to Phase 3's checks, judge and repair. Basis, the runs recorded on
+# 2026-11-17/18: where Phase 3 repaired, it made a median 25% of the run's tool
+# calls (10 runs); without an install hang it took 15-992 s (median 128 s, one
+# judge call 56-154 s), and a quarter of the 2400 s cap covers 4 of those 5.
+_PHASE3_BUDGET_SHARE = 0.25
 
 # Runtime-gate verdicts, ordered worst-last so a tuple compares as a score.
 _RUNTIME_OK, _RUNTIME_UNVERIFIED, _RUNTIME_FAILED = 0, 1, 2
@@ -265,7 +267,7 @@ _RUNTIME_OK, _RUNTIME_UNVERIFIED, _RUNTIME_FAILED = 0, 1, 2
 # An app can pass every acceptance check and still fail its own generated
 # scenario, so a gate keyed on it would refuse a working application.
 _RUNTIME_OBSERVED_FAILURE_PREFIXES = (
-    "mapper config:", "application startup:", "create contract:", "action call:",
+    "mapper config:", "application startup:", "create contract:", "action call:", "read contract:",
 )
 # Source the app cannot survive at runtime even where no probe reached it: it
 # does not parse, imports a module that is not there, or uses a name nothing
@@ -301,9 +303,18 @@ _APPLICATION_OUTPUT_DIRS = {
 }
 _APPLICATION_PRIMARY_TOOLS = frozenset(_APPLICATION_OUTPUT_DIRS)
 # The generators a modify run regenerates and merges after a model change (#659):
-# on 44 FastAPI runs, regenerating kept every app working. The web app's React
-# output has no determinism test yet, so it is not regenerated.
-REGENERABLE_GENERATORS = frozenset({"generate_fastapi_backend"})
+# on 44 FastAPI runs, regenerating kept every app working.
+REGENERABLE_GENERATORS = frozenset({"generate_fastapi_backend", "generate_web_app"})
+# A generator regenerated only in part: the workspace paths it regenerates, those
+# derived from the domain model alone. The web app's pages and components need
+# the GUI model, which a model change does not bring.
+REGENERATED_PATHS = {"generate_web_app": ("web_app/backend/", "web_app/frontend/src/api/generated/")}
+
+
+def is_regenerated(generator: str, rel_path: str) -> bool:
+    """Whether a regeneration of ``generator`` writes this workspace path (``/``-separated)."""
+    prefixes = REGENERATED_PATHS.get(generator)
+    return prefixes is None or rel_path.startswith(prefixes)
 
 # Sub-generator tools that a chosen PRIMARY generator already bundles (e.g. a
 # FastAPI backend already contains SQLAlchemy models, Pydantic schemas and REST

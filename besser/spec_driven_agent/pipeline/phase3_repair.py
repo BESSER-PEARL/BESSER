@@ -5,7 +5,9 @@ may edit only the files they name, their neighbours and new files
 (``repair_scope``). No tool is forced. An attempt that edits nothing ends the
 loop; one that edits is kept only if it retires a blocker it faced without
 adding an observed failure or blockers (``_attempt_not_kept``), else the tree
-from before it is restored and the loop ends.
+from before it is restored. An attempt that had retired or changed a blocker
+gets one more attempt from that tree, told what broke; otherwise, or after a
+second revert in a row, the loop ends.
 
 Snapshot/rollback lives here too because it is the same decision: the snapshot
 is re-taken after every kept attempt, so it always holds the tree the next
@@ -25,6 +27,7 @@ import shutil
 import time
 from collections import Counter
 
+from besser.spec_driven_agent.agent.edit_apply import gutter_line
 from besser.spec_driven_agent.agent.history_eviction import (
     without_rejected_edit_drafts,
 )
@@ -42,7 +45,7 @@ from besser.spec_driven_agent.model_serializer import serialize_domain_model, to
 from besser.spec_driven_agent.pipeline.constants import (
     _MAX_TOOLCHAIN_FIX_ITERATIONS,
     _PHASE3_CREATE_EVIDENCE_REMINDER,
-    _PHASE3_FIX_TURNS,
+    _PHASE3_FIX_CALLS,
     _ROLLBACK_DISCARD_DIR,
     _ROLLBACK_PRESERVED,
     _RUNTIME_FAILED,
@@ -82,7 +85,6 @@ from besser.spec_driven_agent.validation.issues import (
     unresolved_defects,
 )
 from besser.spec_driven_agent.validation.toolchain import (
-    _build_toolchain_reminder,
     _toolchain_commands_for,
 )
 from besser.utilities.workspace_fs import copytree_plain, is_plain_entry, walk_plain
@@ -106,8 +108,19 @@ _FIX_PROMPT_MAX_SCOPE_FILES = 40
 # Masked when attempts compare findings: an edit moves the lines and columns of the
 # errors it leaves. Other numbers (``/e2/`` and ``/e3/``) tell findings apart.
 _LINE_NUMBERS_RE = re.compile(r"line \d+|:\d+(?::\d+)?|\(\d+,\d+\)")
-# The route a runtime finding names: ``create contract: backend: POST /order/ - ...``.
-_POST_ROUTE_RE = re.compile(r": POST (\S+) - ")
+# The route a runtime finding names: ``create contract: backend: POST /order/ - ...``
+# (``GET`` for a ``read contract:``).
+_POST_ROUTE_RE = re.compile(r": (?:POST|GET) (\S+) - ")
+# What a runtime finding tests: its kind, backend and route. Its text is the error seen there.
+_RUNTIME_TARGET_RE = re.compile(
+    r"(?:runtime unverified: )?(create contract|action call|create unverified|action unverified|read contract): "
+    r"(\S+): (?:POST|GET) (\S+) - ")
+# The probe's generated input, quoted in a runtime finding: not part of the error.
+_PROBE_INPUT_RE = re.compile(r"attempted input: .*?(?=\. Th(?:is|ese) )", re.S)
+# An object's memory address in an exception text (``<Order at 0x7f...>``): new in every process.
+_ADDRESS_RE = re.compile(r"\b0x[0-9a-fA-F]+\b")
+# Characters of the current text of the files the blockers name, pasted into a fix prompt.
+_FIX_PROMPT_FILE_CHARS = 24_000
 
 
 def clip_finding(text: str) -> str:
@@ -117,6 +130,20 @@ def clip_finding(text: str) -> str:
     head = _FIX_PROMPT_BLOCKER_CHARS - _FIX_PROMPT_BLOCKER_TAIL_CHARS
     cut = len(text) - _FIX_PROMPT_BLOCKER_CHARS
     return f"{text[:head]} [... {cut} chars cut ...] {text[-_FIX_PROMPT_BLOCKER_TAIL_CHARS:]}"
+
+
+def _finding_key(message: str):
+    """What a finding tests, as attempts compare findings: a runtime finding by its kind,
+    backend and route, any other by its message with line numbers masked (an edit moves
+    the lines of the errors it leaves)."""
+    target = _RUNTIME_TARGET_RE.match(message)
+    return target.groups() if target else _LINE_NUMBERS_RE.sub("#", message)
+
+
+def _finding_text(message: str) -> str:
+    """The error a finding reports, with line numbers, memory addresses and the probe's input masked."""
+    text = _PROBE_INPUT_RE.sub("attempted input: #", message)
+    return _LINE_NUMBERS_RE.sub("#", _ADDRESS_RE.sub("0x#", text))
 
 
 def _blocker_kind(message: str) -> str:
@@ -247,7 +274,11 @@ class Phase3RepairMixin:
     _repair_last_outcome: str | None = None
 
     def _complete_repair_if_verified(self) -> None:
-        if self._phase2_stop_reason == "validation_required":
+        # A handoff with checklist items still open or blocked stays one: nothing did that work.
+        # So does a cut at a budget share with no checklist to show the work was finished.
+        if self._phase2_stop_reason == "validation_required" and not (
+                self.executor.open_tasks() or self.executor.blocked_tasks()
+                or (self._phase2_cut_at_share and not self.executor.task_snapshot())):
             self._phase2_exited_cleanly = True
             self._phase2_stop_reason = "completed"
 
@@ -255,32 +286,35 @@ class Phase3RepairMixin:
         """One stop gate for repair turns and the validation calls between them.
 
         ``check_turn_budget=False`` asks for validation only, which needs time
-        before the cap for its checks; a repair turn needs time for an LLM call.
+        before the cap for its checks and is free; a repair turn is an LLM call,
+        so it also needs spend, quota, turns and time for that call.
         """
         reason = None
         if self.deadline.checks_out_of_time():
             reason = "runtime budget exhausted"
-        elif self.max_cost_usd is not None and self.client.usage.estimated_cost >= self.max_cost_usd:
-            reason = "cost budget exhausted"
-        elif self._phase2_quota_exhausted:
-            reason = "provider quota exhausted in Phase 2"
-        elif check_turn_budget and self.total_turns >= self.max_turns:
-            # No further edit turn, but final verification of the last accepted
-            # tool batch may still run. Do not poison that check as cancelled.
-            return "turn budget exhausted"
         elif self.deadline.cancelled:
             reason = "cancellation requested"
         elif self._phase3_interrupted:
             reason = "repair interrupted before verification completed"
             if self._phase3_interrupt_detail:
                 reason = f"{reason} ({self._phase3_interrupt_detail})"
-        elif check_turn_budget and self.deadline.out_of_time():
-            # Like the turn budget: no further repair turn, but the attempt
-            # so far is still checked.
-            return "runtime budget exhausted"
         if reason:
             self._phase3_interrupted = True
-        return reason
+            return reason
+        if not check_turn_budget:
+            return None
+        # No further repair turn, but the attempt so far is still checked.
+        if self.max_cost_usd is not None and self.client.usage.estimated_cost >= self.max_cost_usd:
+            return "cost budget exhausted"
+        if self._phase2_quota_exhausted:
+            return "provider quota exhausted in Phase 2"
+        if self._tool_calls_executed() >= self._call_budget():
+            return "tool-call budget exhausted"
+        if self.total_turns >= self._turn_guard():
+            return "turn budget exhausted"
+        if self.deadline.out_of_time():
+            return "runtime budget exhausted"
+        return None
 
     def _repair_obligations_revision(self) -> str:
         """Test corrections and checklist changes are progress without source edits,
@@ -312,6 +346,7 @@ class Phase3RepairMixin:
         """
         if self.phase3_started_at is None:
             self.phase3_started_at = time.monotonic()
+        self._offer_test_api()
         # Announced before the first check, which can take minutes (npm, tsc), so
         # that time is counted as validation, not as the phase before it.
         self._emit_progress(self.total_turns, "__validating__", "")
@@ -452,7 +487,8 @@ class Phase3RepairMixin:
 
         # An attempt that edits the tree is kept only if it moves it forward
         # (``_attempt_not_kept``); otherwise the tree before it is restored and
-        # the loop ends. A kept tree is the next attempt's rollback target. An
+        # the loop ends, after one more attempt from that tree when the reverted
+        # one had made progress. A kept tree is the next attempt's rollback target. An
         # attempt that edits nothing continues the loop only if its evidence
         # retired a blocker, or once after every write it tried was refused.
         current_issues = list(issues)
@@ -462,17 +498,19 @@ class Phase3RepairMixin:
         # Set when the tree an attempt left was replaced: an interrupted
         # attempt's unvalidated edits, or an attempt that was not kept.
         restored = False
+        # The notes of reverted attempts a retry followed: later findings replace them otherwise.
+        rollback_notes: list[ValidationIssue] = []
         last_issues = list(issues)
         attempts_run = self._repair_progress.get("attempts_run", 0)
         self._repair_last_outcome = None
-        retried_refusals = False
+        retried_refusals = retried_revert = False
 
         def checkpoint_progress() -> None:
             self._repair_progress = {"attempts_run": attempts_run}
             if self._may_save_phase3_checkpoint():
                 self._save_phase3_checkpoint()
 
-        max_attempts = max(_MAX_TOOLCHAIN_FIX_ITERATIONS, self.max_turns - self.total_turns)
+        max_attempts = max(_MAX_TOOLCHAIN_FIX_ITERATIONS, self._turn_guard() - self.total_turns)
         # Which rule ends this loop, for the trace: report-only.
         exit_reason = "attempt cap"
         for _ in range(max_attempts):
@@ -533,8 +571,8 @@ class Phase3RepairMixin:
                 exit_reason = mid_attempt_stop
                 # This attempt's edits were never validated. Ship the tree
                 # that was, not an unverified one.
-                restored = source_changed and self._discard_unverified_attempt(
-                    mid_attempt_stop, current_issues, attempts_run)
+                if source_changed and self._discard_unverified_attempt(mid_attempt_stop, current_issues, attempts_run):
+                    restored = True
                 break
             if not source_changed and not obligations_changed:
                 # Nothing moved on disk or in the evidence: a re-check would find the same.
@@ -590,15 +628,31 @@ class Phase3RepairMixin:
                 before_facts=probe_before[1][1] if probe_before[1] and probe_before[1][0] == revision_before else None,
                 after_facts=facts_after[1] if facts_after and facts_after[0] == self._workspace_revision() else None)
             if not_kept and source_changed:
+                progressed = (self._retired(current_blockers, blockers_after, judge_ran(issues_after))
+                              or self._still_failing(current_blockers, blockers_after))
                 restored = self._revert_attempt(attempts_run, not_kept, issues_after, probe_before)
+                if restored and progressed and not retried_revert:
+                    # It moved some blockers but broke something: one more attempt from the
+                    # restored tree, told what broke. A second revert in a row ends the loop.
+                    retried_revert = True
+                    rollback_notes.append(self._validation_issues[-1])  # the note _revert_attempt adds
+                    self._repair_last_outcome = (
+                        f"Fix attempt {attempts_run} was rolled back: {not_kept}. The tree from before it is "
+                        "restored, so the blockers below are the ones it faced. Repair them without causing that.")
+                    logger.warning("Phase 3: attempt %d was reverted after progress; one more attempt", attempts_run)
+                    continue
                 exit_reason = (f"attempt {attempts_run} reverted: {not_kept}" if restored
                                else f"attempt {attempts_run} not kept, and its tree could not be restored: {not_kept}")
                 if not restored:
                     last_issues = issues_after
                     self._report_findings(attempts_run, issues_after)
                 break
+            # These findings describe the tree that ships; an edit here is a tree newer than any restored one.
+            restored = retried_revert = False
+            if source_changed:
+                self._phase3_rolled_back = False
             last_issues = issues_after
-            self._validation_issues = self._with_model_contract(issues_after)
+            self._validation_issues = self._with_model_contract(issues_after) + rollback_notes
             self._report_findings(attempts_run, issues_after)
             if not blockers_after:
                 logger.info(
@@ -629,16 +683,18 @@ class Phase3RepairMixin:
                 break
             seen.add(state)
             self._repair_last_outcome = self._attempt_outcome(
-                attempts_run, retired, len(blockers_after), round_calls, source_changed)
+                attempts_run, retired, self._still_failing(current_blockers, blockers_after),
+                len(blockers_after), round_calls, source_changed)
             current_issues, current_blockers, current_score = list(issues_after), blockers_after, score_after
             checkpoint_progress()
 
         self._phase3_exit_reason = exit_reason
         if restored:
+            self._validation_issues += [note for note in rollback_notes if note not in self._validation_issues]
             last_issues = list(self._validation_issues)
             self._report_findings(attempts_run, last_issues, restored=True)
         else:
-            self._validation_issues = self._with_model_contract(last_issues)
+            self._validation_issues = self._with_model_contract(last_issues) + rollback_notes
         checkpoint_progress()
         remaining_blockers = [
             i for i in last_issues if i.severity == "blocker"
@@ -655,15 +711,41 @@ class Phase3RepairMixin:
     @staticmethod
     def _blocker_key(issue: ValidationIssue):
         """What blocks, as attempts compare: a requirement by id (its status is compared
-        apart, see ``_retired``), anything else by its message with line numbers masked
-        (an edit moves the lines of the errors it leaves)."""
+        apart, see ``_retired``), anything else by what it tests (``_finding_key``)."""
         requirement = requirement_status(issue.message)
-        return ("requirement", requirement[0]) if requirement else _LINE_NUMBERS_RE.sub("#", issue.message)
+        return ("requirement", requirement[0]) if requirement else _finding_key(issue.message)
 
     def _blocker_state_key(self, blockers: list[ValidationIssue]) -> frozenset:
-        """A blocker set as the repeated-state check compares it, statuses included."""
-        return frozenset(Counter((self._blocker_key(issue), requirement_status(issue.message))
+        """A blocker set as the repeated-state check compares it, statuses and runtime errors included."""
+        return frozenset(Counter((self._blocker_key(issue), requirement_status(issue.message),
+                                  _finding_text(issue.message) if _RUNTIME_TARGET_RE.match(issue.message) else None)
                                  for issue in blockers).items())
+
+    @staticmethod
+    def _still_failing(before: list[ValidationIssue], after: list[ValidationIssue]) -> list[str]:
+        """The runtime blockers of ``after`` that test what a blocker of ``before`` tested, now
+        with another error: neither retired nor added."""
+        errors: dict = {}
+        for issue in before:
+            if _RUNTIME_TARGET_RE.match(issue.message):
+                errors.setdefault(_finding_key(issue.message), set()).add(_finding_text(issue.message))
+        return [issue.message for issue in after
+                if _finding_key(issue.message) in errors
+                and _finding_text(issue.message) not in errors[_finding_key(issue.message)]]
+
+    @staticmethod
+    def _removed_entities(before_facts: list | None, after_facts: list | None) -> list[str]:
+        """The entities the probe measured on a backend that booted before an attempt and
+        does not find on that backend, booted, after it: compared by entity name."""
+        if not before_facts or not after_facts:
+            return []
+        after = {backend.get("backend"): set(backend.get("entities") or {})
+                 for backend in after_facts if backend.get("boot") == "ok"}
+        return [f"{name} (POST {entry.get('path')})"
+                for backend in before_facts
+                if backend.get("boot") == "ok" and backend.get("backend") in after
+                for name, entry in (backend.get("entities") or {}).items()
+                if name not in after[backend.get("backend")]]
 
     def _retired(self, before: list[ValidationIssue], after: list[ValidationIssue],
                  judged_after: bool = True) -> list[str]:
@@ -706,9 +788,9 @@ class Phase3RepairMixin:
 
     @staticmethod
     def _newly_reachable(before_facts: list | None, after_facts: list | None):
-        """``(finding, entity)`` predicates: whether a ``create contract:`` / ``action call:``
-        finding, or a probed entity, belongs to an entity the probe could not create on the
-        tree before the attempt. The route's entity comes from the probe's records of the
+        """``(finding, entity)`` predicates: whether a ``create contract:`` / ``action call:`` /
+        ``read contract:`` finding, or a probed entity, belongs to an entity the probe could not
+        create on the tree before the attempt. The route's entity comes from the probe's records of the
         tree after it; without records of both trees nothing is excused."""
         if not before_facts or not after_facts:
             return (lambda message: False), (lambda entity: False)
@@ -718,11 +800,14 @@ class Phase3RepairMixin:
         for backend in after_facts:
             for name, entry in (backend.get("entities") or {}).items():
                 entity_of[("create contract:", entry.get("path"))] = name
+                for read in entry.get("reads") or []:
+                    entity_of[("read contract:", read.get("route"))] = name
             for call in [*(backend.get("action_calls") or []), *(backend.get("actions") or [])]:
                 entity_of[("action call:", call.get("route"))] = call.get("entity")
 
         def finding(message: str) -> bool:
-            prefix = next((p for p in ("create contract:", "action call:") if message.startswith(p)), None)
+            prefix = next((p for p in ("create contract:", "action call:", "read contract:")
+                           if message.startswith(p)), None)
             match = _POST_ROUTE_RE.search(message)
             entity = entity_of.get((prefix, match.group(1))) if prefix and match else None
             return entity is not None and entity not in created
@@ -735,8 +820,12 @@ class Phase3RepairMixin:
                           after_facts: list | None = None) -> str | None:
         """Why an attempt is not kept (or, with no edit, does not continue the loop), or None.
 
-        Kept only if (1) it retired a blocker it faced (``_retired``); (2) every
-        observed failure it added (``unresolved_defects``) belongs to a check
+        Never kept when the probe no longer finds an entity it measured before
+        (``_removed_entities``): a removed create is failing, not fixed. Else kept
+        only if (1) it retired a blocker it faced (``_retired``), or a runtime
+        blocker now fails with another error (``_still_failing``); (2) every
+        observed failure it added (``unresolved_defects``, compared by what it
+        tests) belongs to a check
         family that could not run before (``hidden``): fixing the front failure
         of a layer shows what it hid; (3) the blocker count, leaving out the
         added findings of those families, is no higher, a requirement whose
@@ -750,14 +839,17 @@ class Phase3RepairMixin:
         def excused(message: str) -> bool:
             return could_not_run(message, hidden) or reachable_finding(message)
 
-        if not self._retired(before, after, judged_after):
+        removed = self._removed_entities(before_facts, after_facts)
+        if removed:
+            return f"the probe no longer finds what it tested before: {', '.join(removed)[:300]}"
+        if not self._retired(before, after, judged_after) and not self._still_failing(before, after):
             return f"it retired none of the {counted(len(before), 'blocker')} it faced"
         # A requirement verdict is a judgment, never an observed failure.
-        observed_before = Counter(_LINE_NUMBERS_RE.sub("#", i.message) for i in unresolved_defects(before)
+        observed_before = Counter(_finding_key(i.message) for i in unresolved_defects(before)
                                   if not requirement_status(i.message))
         added = [i.message for i in unresolved_defects(after)
                  if not requirement_status(i.message) and not excused(i.message)
-                 and _LINE_NUMBERS_RE.sub("#", i.message) not in observed_before]
+                 and _finding_key(i.message) not in observed_before]
         if added:
             return f"it added an observed failure: {added[0][:300]}"
         new_keys = Counter(self._blocker_key(i) for i in after) - Counter(self._blocker_key(i) for i in before)
@@ -807,15 +899,16 @@ class Phase3RepairMixin:
         return [f"{item.get('tool')} on {item.get('path')}: {str(item.get('error', ''))[:200]}"
                 for item in failures[-5:]]
 
-    def _attempt_outcome(self, attempt: int, retired: list[str], remaining: int,
+    def _attempt_outcome(self, attempt: int, retired: list[str], still_failing: list[str], remaining: int,
                          calls: list[dict], source_changed: bool) -> str:
         """What a kept attempt did, for the next attempt's prompt."""
         edited = _edited_paths(calls)
         what = f"edited {', '.join(edited)}" if source_changed and edited else "settled evidence without an edit"
         return (f"Fix attempt {attempt} was kept. It {what} and retired "
-                f"{counted(len(retired), 'blocker')}: "
-                + "; ".join(message[:160] for message in retired[:5])
+                f"{counted(len(retired), 'blocker')}"
+                + (": " + "; ".join(message[:160] for message in retired[:5]) if retired else "")
                 + (f" (+{len(retired) - 5} more)" if len(retired) > 5 else "")
+                + "".join(f". Still failing, now: {message[:300]}" for message in still_failing[:5])
                 + f". {counted(remaining, 'blocker')} remain, listed below.")
 
     def _only_unlocated_citations_remain(self, blockers: list[ValidationIssue]) -> bool:
@@ -1048,8 +1141,8 @@ class Phase3RepairMixin:
         undone = (f" The restore also undid completed work: {len(reopened)} checklist "
                   f"item(s) verified during the attempt are open again." if reopened else "")
         self._validation_issues = self._with_model_contract(restored) + [_classify_issue(
-            f"validation: Phase 3 fix attempt {attempt} was rolled back - {reason} - so the tree "
-            f"from before it ships.{undone} Findings seen only in the discarded tree (they may "
+            f"validation: Phase 3 fix attempt {attempt} was rolled back - {reason} - to the tree "
+            f"from before it.{undone} Findings seen only in the discarded tree (they may "
             "still be real): " + seen_only
         )]
         restored_blockers = [i for i in restored if i.severity == "blocker"]
@@ -1095,7 +1188,8 @@ class Phase3RepairMixin:
         """The turns of one fix attempt; see ``_invoke_phase3_fix_loop``.
 
         A fresh conversation whose prompt carries the files the run has
-        edited and the previous attempt's outcome. It ends when the model
+        edited, the previous attempt's outcome and, within a character budget,
+        the current text of the files its blockers name. It ends when the model
         ends its turn or the per-attempt turn budget is spent; no tool is
         forced. Tool calls run through ``_execute_tool_blocks`` so they are
         recorded like Phase 2's.
@@ -1190,12 +1284,17 @@ class Phase3RepairMixin:
         prompt_parts.extend(_fix_prompt_blocker_lines(
             sorted(blockers, key=self._repair_priority), requirements, named))
 
-        # Show the offending lines: with only "file line N" a model spends a
-        # turn on read_file; with the excerpt it calls modify_file immediately.
-        # A BOUNDED window is the point -- SWE-agent's ablation scores
-        # a 100-line window above the whole file (18.0 vs 12.7 on SWE-bench
-        # Lite), so this never pastes an entire file.
-        excerpts = self._excerpts_for(blockers)
+        # A fresh conversation: nothing read in an earlier round is in it.
+        self.executor.forget_shown_results()
+        seeded = {} if verification_only else self._seed_named_files(
+            [rel for issue in sorted(blockers, key=self._repair_priority) for rel, _ in named.get(issue.message, [])])
+        if seeded:
+            prompt_parts.extend(["", "The files these blockers name, as read_file returns them now (each read_id "
+                                     "is valid for replace_file_lines; quote old_text without the line-number "
+                                     "gutter):"])
+            prompt_parts.extend(seeded.values())
+        # A named file that did not fit the budget above gets the lines around its blocker instead.
+        excerpts = self._excerpts_for(blockers, shown=set(seeded))
         if excerpts:
             prompt_parts.append("")
             prompt_parts.append(
@@ -1206,9 +1305,9 @@ class Phase3RepairMixin:
 
         prompt_parts.append("")
         prompt_parts.append(
-            "Resolve authorized dependency setup through install_dependencies, then "
-            "validate_app; resolve missing evidence using current exact citations "
-            "or test_api. Do not manufacture source changes to "
+            "Resolve authorized dependency setup by installing with run_command, then "
+            "validate_app; resolve missing evidence using current exact citations"
+            + (" or test_api" if self._test_api_offered else "") + ". Do not manufacture source changes to "
             "satisfy bookkeeping; make an edit only if behavior is actually missing. "
             "The harness will recheck evidence when this attempt ends."
             if verification_only else
@@ -1229,11 +1328,8 @@ class Phase3RepairMixin:
                 + ". It may also create new files. To edit any other file, add needed_for to that "
                 "call, naming the blocker the file is needed for.")])
 
-        # When the blockers include toolchain errors and shell tools are on,
-        # instruct the LLM to drive the toolchain itself with run_command — that's the
-        # only way to know whether a fix actually compiles. We do this
-        # as additional text in the same user turn (vs. a separate
-        # message) so the LLM sees the request as part of the brief.
+        # The one place the toolchain instruction is given: the diff alone does not
+        # show it compiles. validate_app runs the gate's check where it can.
         if toolchain_blockers and not self.allow_shell_tools:
             cmds = self._toolchain_commands_for(toolchain_blockers)
             prompt_parts.append("")
@@ -1250,52 +1346,37 @@ class Phase3RepairMixin:
             cmd_lines = "\n".join(f"  - {c}" for c in cmds)
             prompt_parts.append("")
             prompt_parts.append(
-                "After each edit, re-run the relevant toolchain check "
-                "using run_command to confirm the error is gone:"
+                "Fix the reported compile / type errors, then call validate_app: it re-runs "
+                "these checks as the end of this attempt does. Repeat until it reports none. "
+                "Where it lists a check as not run, run it with run_command:"
             )
             prompt_parts.append(cmd_lines)
             prompt_parts.append(
-                "Keep iterating (edit -> re-run) until the toolchain "
-                "reports zero errors. Do not declare done while any "
-                "compile / type error is still reported."
+                "Do not end the attempt while any compile / type error is still reported."
             )
 
         fix_prompt = "\n".join(prompt_parts)
         messages: list[dict] = [{"role": "user", "content": fix_prompt}]
-        # A fresh conversation: nothing read in an earlier round is in it.
-        self.executor.forget_shown_results()
-
-        # Inject a high-salience reminder as a separate user message
-        # right after the prompt. Matches the pattern used by the
-        # per-file modify-loop guard: a <system-reminder>-tagged block
-        # the LLM sees at response-time, not buried inside the prompt.
-        if toolchain_blockers:
-            reminder = self._build_toolchain_reminder(toolchain_blockers)
-            messages.append({
-                "role": "user",
-                "content": [{"type": "text", "text": reminder}],
-            })
 
         edits = 0                 # successful write-tool calls this attempt
         # needed_for is offered only while the attempt's edits are limited.
         tools = with_scope_widening(self.tools) if scope is not None else self.tools
         unconfirmed_at_reminder: set | None = None
         truncations = 0           # "emit less" retries after a max_tokens stop
-        turn_cap = _PHASE3_FIX_TURNS
+        # Executed tool calls this attempt may make; its turns are guarded at the same number.
+        cap = _PHASE3_FIX_CALLS
+        calls_before = self._tool_calls_executed()
         turn = 0
         while True:
             stop_reason = self._phase3_stop_requested()
             if stop_reason:
                 logger.warning("Phase 3: %s", stop_reason)
                 return edits
-            if turn >= turn_cap:
+            if max(turn, self._tool_calls_executed() - calls_before) >= cap:
                 return edits
             turn += 1
             self.total_turns += 1
             self._trace.write(EVENT_TURN_START, turn=self.total_turns, phase="phase3_fix")
-            # No tool is forced in a fix attempt; the executor's recovery
-            # ladder still names its next step in the tool result.
-            self._force_tool_next = None
             # Same compaction as Phase 2; the blockers ride in its work state.
             messages = self._maybe_compact(messages)
             request_messages = without_rejected_edit_drafts(messages)
@@ -1341,7 +1422,7 @@ class Phase3RepairMixin:
                 if unconfirmed and (unconfirmed_at_reminder is None
                                     or unconfirmed < unconfirmed_at_reminder):
                     unconfirmed_at_reminder = unconfirmed
-                    turn_cap = max(turn_cap, turn + 1)
+                    cap = max(cap, turn + 1, self._tool_calls_executed() - calls_before + 1)
                     if response["content"]:
                         messages.append({"role": "assistant", "content": response["content"]})
                     paths = ", ".join(f"POST {path}" for _, path in sorted(unconfirmed))
@@ -1428,14 +1509,11 @@ class Phase3RepairMixin:
         """
         parts = [
             "You are fixing validation errors in generated code. "
-            "Fix each issue concisely. Call validate_app to recheck startup and "
-            "data entry after a coherent repair. When shell tools are unavailable, "
-            "validate_app and test_api are the supported verification tools. Use test_api "
-            "for specification-based workflow assertions and invalid inputs. When shell tools "
-            "are available and the report contains "
-            "toolchain errors (tsc / cargo / kotlinc), verify each fix by "
-            "re-running that toolchain with run_command; the diff alone does "
-            "not show that it compiles.", "",
+            "Fix each issue concisely. Call validate_app after a coherent repair: it runs "
+            "the checks that decide whether this attempt is kept, except the requirements "
+            "judgment."
+            + (" Use test_api for specification-based workflow assertions and invalid inputs."
+               if self._test_api_offered else ""), "",
         ]
         if self._instructions:
             parts.extend([
@@ -1461,10 +1539,40 @@ class Phase3RepairMixin:
             ])
         return "\n".join(parts).rstrip("\n")
 
+    def _seed_named_files(self, paths: list[str]) -> dict[str, str]:
+        """``{path: prompt block}``: the files the blockers name, in order, read through
+        ``read_file`` so a re-read in this conversation is answered with a stub. A file
+        that does not fit what is left of ``_FIX_PROMPT_FILE_CHARS`` is left out unread:
+        a read records the file as seen."""
+        seeded: dict[str, str] = {}
+        budget = _FIX_PROMPT_FILE_CHARS
+        for rel in dict.fromkeys(paths):
+            path = os.path.join(self.output_dir, rel)
+            try:
+                if os.path.getsize(path) > budget:
+                    continue
+                with open(path, encoding="utf-8") as handle:
+                    lines = handle.read().split("\n")
+            except (OSError, UnicodeDecodeError):
+                continue
+            # As read_file numbers it.
+            if sum(len(gutter_line(n, line)) + 1 for n, line in enumerate(lines, 1)) - 1 > budget:
+                continue
+            result = self.executor.execute_typed("read_file", {"path": rel})
+            payload = result.payload if result.succeeded else {}
+            content = payload.get("content")
+            if not content:
+                continue
+            budget -= len(content)
+            seeded[rel] = "\n".join(["", f"{rel} (read_id {payload.get('read_id')}, whole file):",
+                                     "```", content, "```"])
+        return seeded
+
     def _excerpts_for(
-        self, blockers: list[ValidationIssue], context: int = 5, limit: int = 3
+        self, blockers: list[ValidationIssue], context: int = 5, limit: int = 3,
+        shown: set[str] = frozenset(),
     ) -> list[str]:
-        """Numbered source windows around each blocker that names file+line."""
+        """Numbered source windows around each blocker that names file+line, except in ``shown`` files."""
         out: list[str] = []
         seen: set[tuple[str, int]] = set()
         for issue in blockers:
@@ -1472,7 +1580,7 @@ class Phase3RepairMixin:
             if not match:
                 continue
             rel, line_no = match.group(1), int(match.group(2))
-            if (rel, line_no) in seen or len(seen) >= limit:
+            if (rel, line_no) in seen or len(seen) >= limit or rel in shown:
                 continue
             path = os.path.realpath(os.path.join(self.output_dir, rel.replace("/", os.sep)))
             workspace = os.path.realpath(self.output_dir)
@@ -1503,10 +1611,6 @@ class Phase3RepairMixin:
         """Delegate to the toolchain module."""
         return _toolchain_commands_for(toolchain_blockers, shell_tools=self.allow_shell_tools)
 
-    def _build_toolchain_reminder(self, toolchain_blockers: list[ValidationIssue]) -> str:
-        """Delegate to the toolchain module."""
-        return _build_toolchain_reminder(toolchain_blockers, shell_tools=self.allow_shell_tools)
-
     @staticmethod
     def _repair_priority(issue: ValidationIssue) -> tuple[int, str]:
         message = issue.message.lower()
@@ -1515,7 +1619,7 @@ class Phase3RepairMixin:
         # They belong beside the startup classes, not below a lint finding.
         if message.startswith((
             "syntax", "python contract:", "mapper config:", "application startup:",
-            "missing module:", "create contract:", "action call:",
+            "missing module:", "create contract:", "action call:", "read contract:",
         )):
             return 0, message
         if message.startswith(("data contract:", "runtime unverified:")):

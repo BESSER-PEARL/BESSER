@@ -294,6 +294,12 @@ def read_events(participant: Optional[str] = None) -> list[dict]:
     return events
 
 
+# Run outcomes the report has a column for; any other value counts as unknown.
+_COUNTED_OUTCOMES = (
+    "success", "incomplete", "completed_with_blockers", "completed_unverified",
+)
+
+
 class _ParticipantStats:
     """Aggregation bucket for one participant."""
 
@@ -314,7 +320,7 @@ class _ParticipantStats:
             outcome = str(run.get("outcome") or "unknown")
             if outcome.startswith("failed"):
                 counts["failed"] += 1
-            elif outcome in ("success", "incomplete"):
+            elif outcome in _COUNTED_OUTCOMES:
                 counts[outcome] += 1
             else:
                 counts["unknown"] += 1
@@ -447,7 +453,9 @@ def _render_markdown(stats: dict[str, _ParticipantStats]) -> str:
             (
                 f"- Run outcomes: {outcomes.get('success', 0)} success / "
                 f"{outcomes.get('incomplete', 0)} incomplete / "
-                f"{outcomes.get('failed', 0)} failed"
+                f"{outcomes.get('failed', 0)} failed / "
+                f"{outcomes.get('completed_with_blockers', 0)} with blockers / "
+                f"{outcomes.get('completed_unverified', 0)} not verified"
             ),
             f"- Average run duration: {round(s.avg_duration, 1)} s",
             f"- Total LLM turns: {s.total_turns}",
@@ -472,8 +480,9 @@ def _render_markdown(stats: dict[str, _ParticipantStats]) -> str:
         "",
         "| Participant | Sessions | Prompts | Runs | Success | Incomplete | "
         "Failed | Avg duration (s) | Tokens | Gen untouched % | "
-        "Gen LLM-modified % | LLM-authored % |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        "Gen LLM-modified % | LLM-authored % | With blockers | Not verified |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- "
+        "| --- | --- |",
     ]
     for participant, s in stats.items():
         outcomes = s.outcome_counts
@@ -484,7 +493,9 @@ def _render_markdown(stats: dict[str, _ParticipantStats]) -> str:
             f"| {outcomes.get('failed', 0)} | {round(s.avg_duration, 1)} "
             f"| {s.total_tokens:,} | {split['generator_untouched_pct']} "
             f"| {split['generator_llm_modified_pct']} "
-            f"| {split['llm_authored_pct']} |"
+            f"| {split['llm_authored_pct']} "
+            f"| {outcomes.get('completed_with_blockers', 0)} "
+            f"| {outcomes.get('completed_unverified', 0)} |"
         )
     lines.append("")
     return "\n".join(lines)
@@ -497,6 +508,8 @@ _CSV_COLUMNS = [
     "files_total", "generator_untouched", "generator_llm_modified",
     "llm_authored", "generator_untouched_pct", "generator_llm_modified_pct",
     "llm_authored_pct", "delivery_events", "friction_events",
+    # Appended, so the columns above keep their positions.
+    "completed_with_blockers", "completed_unverified",
 ]
 
 
@@ -517,6 +530,8 @@ def _render_csv(stats: dict[str, _ParticipantStats]) -> str:
             split["llm_authored"], split["generator_untouched_pct"],
             split["generator_llm_modified_pct"], split["llm_authored_pct"],
             sum(s.delivery.values()), s.friction,
+            outcomes.get("completed_with_blockers", 0),
+            outcomes.get("completed_unverified", 0),
         ])
     return buffer.getvalue()
 

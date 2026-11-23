@@ -128,6 +128,10 @@ class _Recorder:
     def of(self, kind: str) -> list[dict]:
         return [r.kwargs for r in self.requests if r.kind == kind]
 
+    def request_chars(self, kind: str) -> list[dict[str, int]]:
+        """Per request of ``kind``, in order: :func:`request_chars` of what was sent."""
+        return [request_chars(kwargs) for kwargs in self.of(kind)]
+
 
 # ----------------------------------------------------------------------
 # Anthropic
@@ -270,6 +274,17 @@ def plain(value: Any) -> Any:
     if isinstance(value, SimpleNamespace):
         return plain(vars(value))
     return value
+
+
+def request_chars(kwargs: dict) -> dict[str, int]:
+    """Characters of a request's system prompt, tool schemas and messages, as JSON.
+
+    A provider-free size measure: it follows the prompt, the tool schemas and the
+    tool results a run replays, not the model's behaviour. On OpenAI the system
+    prompt is the first message.
+    """
+    return {part: len(json.dumps(plain(kwargs[part]), ensure_ascii=False, default=str)) if part in kwargs else 0
+            for part in ("system", "tools", "messages")}
 
 
 def without_cache_control(value: Any) -> Any:

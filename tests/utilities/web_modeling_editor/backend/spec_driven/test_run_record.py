@@ -162,6 +162,24 @@ def test_a_cancelled_run_that_left_output_records_the_cancel(orchestrator):
     assert run["stop_message"] == "The run was cancelled before it finished."
 
 
+def test_a_handoff_that_validation_did_not_complete_is_never_plain_completed(orchestrator):
+    """Phase 3 promotes a handoff to "completed" only with no checklist item left open,
+    so one still recorded as handed off left work undone."""
+    _Orchestrator.stop_reason = "validation_required"
+    run = _run(SmartGenerationRunner(_build_request(), runtime=current_runtime()))
+
+    assert run["stopped_by"] == "handed off to validation"
+    assert run["outcome"] == "completed_unverified"
+
+
+def test_repeated_output_truncation_is_not_a_provider_error(orchestrator):
+    _Orchestrator.stop_reason = "output_limit"
+    run = _run(SmartGenerationRunner(_build_request(), runtime=current_runtime()))
+
+    assert run["stopped_by"] == "output limit" and run["outcome"] != "failed"
+    assert "output limit" in run["stop_message"]
+
+
 class _BlockedOrchestrator(_Orchestrator):
     """Leaves two unresolved findings behind."""
 

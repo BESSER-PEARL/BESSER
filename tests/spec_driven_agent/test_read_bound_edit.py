@@ -88,9 +88,9 @@ def test_repeated_qwen_shaped_quotation_failures_switch_strategy_and_recover(tmp
     """The w7zoeszt shape: first quoted line shifted, subsequent lines not.
 
     Exercise the real loop, executor, provider tool-choice, and trace together;
-    a successful range edit must count as progress in BOTH phases. Generation
-    forces the executor's next step; a repair attempt forces no tool, and the
-    model takes the next step from the refusal's located_range.
+    a successful range edit must count as progress in BOTH phases. No phase
+    forces a tool: the model takes the next step from the refusal's
+    located_range.
     """
     (tmp_path / "app.py").write_text(SOURCE, encoding="utf-8")
 
@@ -109,9 +109,7 @@ def test_repeated_qwen_shaped_quotation_failures_switch_strategy_and_recover(tmp
             name = "modify_file"
             args = dict(path="app.py", old_text="    async def action():\n    return False\n",
                         new_text="async def action():\n    return True\n")
-            if force_tool == "read_file":
-                name, args = "read_file", dict(path="app.py", offset=1, limit=2)
-            elif force_tool == "replace_file_lines" or (phase == "repair" and n == 2):
+            if n == 2:
                 results = [json.loads(b["content"]) for m in messages if isinstance(m.get("content"), list)
                            for b in m["content"] if isinstance(b, dict) and b.get("type") == "tool_result"]
                 # Either a read_file view or the span a missed modify_file located.
@@ -134,9 +132,7 @@ def test_repeated_qwen_shaped_quotation_failures_switch_strategy_and_recover(tmp
         orch.run("Change action to return True; preserve unrelated.")
     # One miss, not two plus a re-read: the miss itself brackets the target
     # and issues the read_id, so the range edit is the very next call.
-    assert client.forced[:2] == ([None, "replace_file_lines"] if phase == "generation" else [None, None])
-    if phase == "repair":
-        assert set(client.forced) == {None}
+    assert set(client.forced) == {None}
     assert (tmp_path / "app.py").read_text(encoding="utf-8") == SOURCE.replace("return False", "return True", 1)
     assert not orch.executor._frozen("app.py")
     writes = [e for e in orch.tool_calls_log if e["tool"] == "replace_file_lines"]

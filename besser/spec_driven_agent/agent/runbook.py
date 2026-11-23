@@ -437,8 +437,8 @@ The shell is one session for the whole run, so the server `up` starts keeps
 running between commands: `routes` and `req` reach that same server, and `down`
 stops it. If the session was restarted in between (a result's notes say so),
 `req` and `routes` boot a fresh server themselves; the SQLite file keeps
-records either way. The probe path is relative: if you `cd`-ed elsewhere, pass
-`working_dir="."`. Files the app writes while it runs here (its database, a key
+records either way. The probe path is relative to the workspace root, where every
+command starts. Files the app writes while it runs here (its database, a key
 it generates, uploads) are not delivered with the app: its own code has to
 create whatever it needs at startup.
 
@@ -447,33 +447,36 @@ create whatever it needs at startup.
 1. `up`. If it prints **BOOT_FAILED**, the traceback printed under it is the
    real error: fix that file and line, then run `up` again. Nothing else you
    do matters until it prints BOOT_OK. If it prints **MISSING_DEPENDENCY**,
-   call `install_dependencies` for that directory, then `up` again.
+   run `python -m pip install -r requirements.txt` with working_dir that
+   directory and timeout=300, then `up` again.
 2. `routes`. Use the paths and field names it prints for every request below.
    Do not use the paths you remember writing - `routes` is the live truth.
    A frontend caller you write sends the body exactly as `<-` shows it (a
    `{{"params": {{...}}}}` body keeps that wrapper) and reads `-> object {{...}}`
    by those keys: only `-> list` is an array.
-3. `req GET /health`. Not 200 → step 1's log tail names the cause.
-4. **Create one of every entity**, parents before children, reusing the `id`
-   each create returns. A **500** is your bug: the log tail printed under the
-   response holds the traceback - fix the named file and line, `down`, `up`,
-   and repeat the SAME request. A **422** means your payload disagrees with
-   the schema the app declares: re-read that schema in `routes` and correct
-   the *payload*. Never relax a schema, drop a constraint or delete a
-   validator to make a request pass.
-5. **Call every action the specification describes**, with the literal `{{}}`
-   body the generated button sends, on an entity you just created. Then
-   `req GET /<entity>/<id>` and check the field the action was supposed to
-   change actually changed. An action that answers 200 and changes nothing is
-   a failure, not a pass - it is the single most common defect in these apps.
-6. After any edit: `down`, then `up`. The server does not reload.
-   A **401/403** means the endpoint needs auth: register and log in through
-   the app's own endpoints (`routes auth`), then repeat the request with
-   `-H "Authorization: Bearer <access_token from the login response>"`.
-7. Only when every entity creates and every action both succeeds and has a
-   visible effect may you report the app as working. If an action cannot be
-   made to work, leave its checklist item blocked with what you observed -
-   do not close it.
+3. **Create one of every entity with `test_api`**, not `req`: a scenario
+   creates parents before children, reusing each returned id (`{{{{0.id}}}}`),
+   and reads every record back by id. `test_api` keeps each scenario and
+   reruns it after every edit, so its result is evidence; a `req` result is
+   not. A **422** means the payload disagrees with the schema the app
+   declares: re-read that schema in `routes` and correct the *payload*.
+   Never relax a schema, drop a constraint or delete a validator to make a
+   request pass.
+4. **Call every action the specification describes with `test_api`**, with
+   the literal `{{}}` body the generated button sends, on a record the same
+   scenario created, then GET that record and assert with `expected_fields`
+   the field the action was supposed to change. An action that answers 200
+   and changes nothing is a failure, not a pass - it is the single most
+   common defect in these apps.
+5. A **500** in a scenario is your bug: `log 60` holds the traceback. Fix the
+   named file and line, `down`, `up` (the server does not reload), reproduce
+   the one failing request with `req` while you debug, then rerun the
+   scenario by its scenario_id. A **401/403** means the endpoint needs auth:
+   register and log in through the app's own endpoints (`routes auth`) in the
+   scenario and pass the token as a header on the later requests.
+6. Only when every create and every action scenario passes may you report
+   the app as working. If an action cannot be made to work, leave its
+   checklist item blocked with what you observed - do not close it.
 
 State what you actually observed - a status code and the value you read back -
 not that you "verified" something.
@@ -776,7 +779,8 @@ def boot(quiet=False):
             print("--- the server died on startup; this is the real error ---")
             print(tail)
             if kind == "MISSING_DEPENDENCY":
-                print("NEXT: install_dependencies(working_dir='%s'), then rerun `up`." % rel)
+                print("NEXT: run_command('python -m pip install -r requirements.txt', working_dir='%s', "
+                      "timeout=300), then rerun `up`." % rel)
             else:
                 print("NEXT: fix the file and line named in the traceback above, "
                       "then rerun `up`. Nothing else can be checked until it boots.")

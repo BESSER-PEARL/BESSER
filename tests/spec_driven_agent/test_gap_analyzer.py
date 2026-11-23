@@ -347,7 +347,8 @@ def test_phase2_that_uses_every_turn_reports_the_turn_limit(tmp_path, monkeypatc
 
     orch._run_phase2("build a library api", extra_issues=[])
 
-    assert orch.total_turns == 1
+    # Its turns execute no tool call, so only the runaway guard on turns stops it.
+    assert orch.total_turns == orch._turn_guard() == 4
     assert (orch._phase2_stop_reason, orch._phase2_exited_cleanly) == ("max_turns", False)
 
 
@@ -447,28 +448,18 @@ def _generated_file(tmp_path, lines: int, read: bool = True) -> tuple[ToolExecut
     return executor, rel
 
 
-def test_write_file_allowed_after_two_modifies(tmp_path):
-    """The size rule inverted: this is now the LARGE-file case.
+def test_landed_modifies_do_not_unlock_a_lossy_rewrite_of_a_large_generated_file(tmp_path):
+    """A large generated file's rewrite is judged by what it keeps, not by edit counts.
 
-    It used to be the small-file case (<=200 lines had to be modified twice
-    before a rewrite unlocked, while anything larger could be rewritten
-    cold). That is backwards: a small file is the one a model can reproduce
-    faithfully from one read, and a large one is where a rewrite drops code.
-    So the threshold swapped sides, and this test swapped with it - the
-    assertion "two modify attempts unlock the rewrite" is unchanged, it just
-    now guards the files where it matters.
-
-    The rejection text changed with it and the assertion follows the text:
-    "delete_file + write_file" is gone because wholesale replacement is the
-    very thing the guard exists to discourage, and the message now names the
-    unlock rule instead. Neither escape was removed from the executor.
+    Two modify_file calls used to unlock any rewrite, and refused calls counted
+    too, so two throwaway edits let a rewrite drop most of the file. The refusal
+    names what the rewrite loses; a rewrite that keeps the code lands at once.
     """
     executor, rel = _generated_file(tmp_path, 300)
 
     cold = json.loads(executor.execute("write_file", {"path": rel, "content": "x = 1\n"}))
-    assert "error" in cold
+    assert cold.get("rejection_kind") == "rewrite_loss", cold
     assert "modify_file" in cold["error"]
-    assert "after two modify_file attempts" in cold["error"]
 
     for n in (0, 1):
         result = json.loads(executor.execute(
@@ -476,11 +467,13 @@ def test_write_file_allowed_after_two_modifies(tmp_path):
             {"path": rel, "old_text": f"line_{n} = {n}", "new_text": f"line_{n} = {n + 10}"},
         ))
         assert result.get("status") == "modified"
+    executor._read_file({"path": rel})
 
-    # After two demonstrated modify attempts, the rewrite is allowed
-    rewrite = json.loads(executor.execute(
-        "write_file", {"path": rel, "content": "x = 1\n"},
-    ))
+    lossy = json.loads(executor.execute("write_file", {"path": rel, "content": "x = 1\n"}))
+    assert lossy.get("rejection_kind") == "rewrite_loss", lossy
+    with open(os.path.join(str(tmp_path), rel), encoding="utf-8") as fh:
+        kept = fh.read()
+    rewrite = json.loads(executor.execute("write_file", {"path": rel, "content": kept + "x = 1\n"}))
     assert rewrite.get("status") == "written"
 
 
@@ -660,13 +653,15 @@ def _booking_model() -> DomainModel:
 
 class TestPresentEnumerationsAreNotGaps:
 
-    def test_present_enumerations_are_dropped_and_declared_methods_kept(self):
-        """Pins the live run: the two enumeration tasks go, all six method
-        tasks stay, order preserved."""
+    def test_present_enumerations_are_annotated_and_declared_methods_kept(self):
+        """Pins the live run: the two enumeration tasks are annotated with the
+        enumeration the model has, all six method tasks stay, order preserved."""
         from besser.spec_driven_agent.planning.gap_analyzer import _drop_present_enumerations
 
         kept = _drop_present_enumerations(ENUM_TASKS + METHOD_TASKS, _booking_model())
-        assert kept == METHOD_TASKS
+        assert kept[len(ENUM_TASKS):] == METHOD_TASKS
+        for task, noted in zip(ENUM_TASKS, kept):
+            assert noted.startswith(task) and "already has this enumeration" in noted
 
     def test_match_ignores_the_proposed_name_and_casing(self):
         from besser.spec_driven_agent.planning.gap_analyzer import _drop_present_enumerations
@@ -675,7 +670,17 @@ class TestPresentEnumerationsAreNotGaps:
             "Create a new enum Status (awaiting_payment, confirmed, cancelled) for bookings",
             "Define enumeration PhysicalState: NOT_ARRIVED | CHECKED_IN | CHECKED_OUT",
         ]
-        assert _drop_present_enumerations(tasks, _booking_model()) == []
+        kept = _drop_present_enumerations(tasks, _booking_model())
+        assert "as BookingCommercialStatus" in kept[0] and "as BookingPhysicalStatus" in kept[1]
+
+    def test_a_present_enumeration_task_that_also_asks_for_more_is_kept(self):
+        """A text sanitizer annotates; it never drops the rest of the task."""
+        from besser.spec_driven_agent.planning.gap_analyzer import _drop_present_enumerations
+
+        task = ("Create an enum Stage (NOT_ARRIVED, CHECKED_IN, CHECKED_OUT) and show "
+                "the stage of each booking on the booking list page")
+        [noted] = _drop_present_enumerations([task], _booking_model())
+        assert noted.startswith(task)
 
     def test_a_genuinely_new_enumeration_is_still_a_gap(self):
         from besser.spec_driven_agent.planning.gap_analyzer import _drop_present_enumerations
@@ -727,7 +732,8 @@ class TestPresentEnumerationsAreNotGaps:
             inventory="backend/main_api.py 1200\nbackend/booking_methods.py 400",
             llm_client=Planner(),
         )
-        assert tasks == METHOD_TASKS
+        assert tasks[len(ENUM_TASKS):] == METHOD_TASKS
+        assert all("already has this enumeration" in task for task in tasks[:len(ENUM_TASKS)])
 
 
 class TestMatchingInstruction:

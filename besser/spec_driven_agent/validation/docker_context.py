@@ -14,6 +14,8 @@ from __future__ import annotations
 import json
 import os
 import shlex
+from collections.abc import Collection
+
 from besser.utilities.workspace_fs import walk_plain
 
 _COMPOSE_NAMES = ("docker-compose.yml", "docker-compose.yaml",
@@ -103,11 +105,13 @@ def missing_copy_manifests(dockerfile: str, content: str,
 
 
 def dockerfile_copy_issues(output_dir: str, dockerfile: str, content: str,
-                           contexts: dict[str, str]) -> list[str]:
-    """One issue per missing package.json / requirements.txt COPY source."""
+                           contexts: dict[str, str], restored: Collection[str] = ()) -> list[str]:
+    """One issue per missing package.json / requirements.txt COPY source, but
+    those in ``restored``, which a repair puts back before the build."""
     rel = os.path.relpath(dockerfile, output_dir).replace("\\", "/")
     return [
         f"{rel} references {os.path.relpath(path, output_dir).replace(chr(92), '/')} "
         "but it doesn't exist"
         for path in missing_copy_manifests(dockerfile, content, contexts)
+        if path not in restored
     ]

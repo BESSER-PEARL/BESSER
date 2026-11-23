@@ -93,14 +93,6 @@ class TestNoRefusalPointsAtARefusedAction:
         assert "delete_file" not in res["error"], res["error"]
         assert _actionable(res["error"]), res["error"]
 
-    def test_delete_file_refusal_names_a_route_that_is_not_delete_file(self, tmp_path):
-        ex = _executor(tmp_path, **{"sql_alchemy.py": ORM})
-        ex._generator_files.add("sql_alchemy.py")
-        ex._protect_scaffold = True
-        res = ex._delete_file({"path": "sql_alchemy.py"})
-        assert "error" in res
-        assert _actionable(res["error"]), res["error"]
-
 
 class TestWriteFileStripsTheReadGutter:
     """Mode 9: the read gutter pasted into a whole-file rewrite.

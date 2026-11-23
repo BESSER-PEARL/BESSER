@@ -30,6 +30,7 @@ import time
 import uuid
 import zipfile
 import zlib
+from collections import Counter
 from dataclasses import dataclass, replace as dataclass_replace
 from itertools import chain, zip_longest
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Iterable, Optional
@@ -78,6 +79,7 @@ from besser.spec_driven_agent.agent.tools import get_available_generator_names
 from besser.spec_driven_agent.run_recap import NO_RULES_STATED
 from besser.spec_driven_agent.run_report import RECIPE_FILENAME
 from besser.spec_driven_agent.state import agent_trace
+from besser.spec_driven_agent.state.api_workflows import WORKFLOWS_FILENAME
 from besser.spec_driven_agent.state.generator_output import GENERATOR_OUTPUT_FILENAME, attach_model, stored_model
 from besser.spec_driven_agent.state.trace_model import (
     TRACE_MODEL_FILENAME,
@@ -97,9 +99,12 @@ from besser.utilities.provenance import (
     write_generation_provenance,
 )
 from besser.spec_driven_agent.validation.user_wording import (
-    Finding, plain_check, plain_reason, summary_lines, user_finding, user_sentence,
+    Finding, not_checked, plain_check, plain_reason, summary_lines, user_finding, user_sentence,
 )
 from besser.spec_driven_agent.validation.issues import (
+    JUDGMENT_DEFERRED,
+    RUNTIME_NOT_CHECKABLE,
+    _classify_issue,
     is_completion_issue,
     is_configured_off,
     is_not_confirmed,
@@ -184,9 +189,11 @@ _DOWNLOAD_DIR_RE = re.compile(
 # prefix keeps it out of every push and download.
 GITHUB_SOURCE_FILENAME = ".besser_github_source.json"
 # BESSER's own files a later run reads back, so they ride in the ZIP and the
-# GitHub push: the recipe (generator, history), the line attribution, and the
-# generator's stored output (the base a model change is merged against).
-CARRIED_RUN_FILES = (RECIPE_FILENAME, agent_trace.ATTRIBUTION_FILENAME, GENERATOR_OUTPUT_FILENAME)
+# GitHub push: the recipe (generator, history), the line attribution, the
+# generator's stored output (the base a model change is merged against), and
+# the API workflows a later modify run replays.
+CARRIED_RUN_FILES = (RECIPE_FILENAME, agent_trace.ATTRIBUTION_FILENAME, GENERATOR_OUTPUT_FILENAME,
+                     WORKFLOWS_FILENAME)
 _MAX_DOWNLOAD_MANIFEST_BYTES = 16 * 1024
 
 # Error codes a run that goes on to deliver output is shown as warnings.
@@ -360,6 +367,8 @@ _WORKFLOW_FAILED = ("a test the agent wrote ran against the app and failed; it i
 # The heading of the checked-and-not-met state in BESSER_GENERATION.md: a rule missing in the
 # code, a cited implementation that does not do it.
 _NOT_MET = "Checked and not met"
+# The heading of the advisory findings: observed, blocking nothing, no verdict.
+_SEEN = "Seen, not blocking"
 # Verification levels (``requirements_ledger.with_verification_levels``) at which a call to the
 # running app exercised the requirement; ``unverified`` means only its source citation was checked.
 _RAN_LEVELS = ("verified", "api_verified")
@@ -374,7 +383,7 @@ def _ran(verdict: dict) -> bool:
 # A judge note's citation annotation: a file path and a remark for the agent.
 _CITATION_NOTE_RE = re.compile(r"\s*\[citation [^\]]*\]")
 # "agent left out:": the project's agent is not in the web app, so nothing about it was checked there.
-_UNCHECKED_PREFIXES = ("task unverified:", "runtime unverified:", "agent left out:")
+_UNCHECKED_PREFIXES = ("task unverified:", "runtime unverified:", "agent left out:", JUDGMENT_DEFERRED)
 
 
 def _user_facing_cost(usage: Any, cost_usd: float) -> float:
@@ -511,6 +520,9 @@ def run_summary_markdown(
         if run.get("outcome") == "completed_unverified" and run.get("stop_message"):
             lines.append(f"- Not verified: {one_line(run['stop_message'])}")
         off = [gap for gap in run.get("not_verified") or [] if isinstance(gap, dict) and gap.get("configured_off")]
+        if run_record.not_checkable((gap.get("check"), gap.get("reason")) for gap in off):
+            lines.append(f"- Not checked: the app's runtime ({one_line(RUNTIME_NOT_CHECKABLE)})")
+            off = [gap for gap in off if gap.get("reason") != RUNTIME_NOT_CHECKABLE]
         if off:
             lines.append("- Checks off on this server: " + "; ".join(
                 f"{one_line(gap.get('check'))} ({one_line(gap.get('reason'))})" for gap in off))
@@ -520,7 +532,8 @@ def run_summary_markdown(
         f"- Verification: {counts.verified} confirmed by running the app's API, "
         f"{counts.foundInCode} found in the code but not run, {counts.notVerified} not confirmed, "
         f"{counts.shippedUnenforced} checked and not met"
-        + (f", {counts.failed} test workflow(s) ran and failed" if counts.failed else ""))
+        + (f", {counts.failed} test workflow(s) ran and failed" if counts.failed else "")
+        + (f", {counts.advisory} seen, not blocking" if counts.advisory else ""))
     removed, kept = (recipe.get(key) if type(recipe.get(key)) is int else 0
                      for key in ("runtime_files_removed_count", "runtime_files_not_removed_count"))
     note = recipe.get("runtime_files_note")
@@ -549,6 +562,15 @@ def run_summary_markdown(
             lines += [f"- {line}" for line in shown]
             if max(total, len(items)) > covered:
                 lines.append(f"- and {max(total, len(items)) - covered} more")
+    if verification.advisory:
+        # One line per sentence: several lint or screen findings say the same thing.
+        seen = list(Counter(one_line(item.what) for item in verification.advisory).items())
+        shown = seen[:_SUMMARY_ITEMS_PER_STATE]
+        lines += ["", f"### {_SEEN}", ""]
+        lines += [f"- {line}" + (f" ({n} findings)" if n > 1 else "") for line, n in shown]
+        rest = max(counts.advisory, len(verification.advisory)) - sum(n for _, n in shown)
+        if rest > 0:
+            lines.append(f"- and {rest} more")
     return lines
 
 
@@ -601,6 +623,7 @@ def build_verification_report(recipe: dict, run_id: Optional[str] = None) -> Ver
     not_verified: list[VerificationItem] = []
     unenforced: list[VerificationItem] = []
     failed: list[VerificationItem] = []
+    advisory: list[VerificationItem] = []
 
     if recipe.get("warning") and not any(
         recipe.get(key) for key in
@@ -739,11 +762,18 @@ def build_verification_report(recipe: dict, run_id: Optional[str] = None) -> Ver
         else:
             not_verified.append(_item("api_workflow", ident, what, why="it could not be run against the app"))
     # Workflows the agent retired as replaced by another: not run at the end, so not evidence either way.
+    # One that had failed says so: retiring it settled nothing.
     for retired in recipe.get("api_scenarios_retired") or []:
         if isinstance(retired, dict):
             ident = str(retired.get("scenario_id") or "")
-            not_verified.append(_item("api_workflow", ident, f"Test workflow '{ident}'",
-                                      why=f"the agent retired it: {retired.get('reason') or 'no reason given'}"))
+            reason = retired.get("reason") or "no reason given"
+            if retired.get("last_status") == "failed":
+                not_verified.append(_item("api_workflow", ident, f"Test workflow '{ident}' (failed, retired)",
+                                          why=f"it ran against the app and failed, then the agent retired it: "
+                                              f"{reason}"))
+            else:
+                not_verified.append(_item("api_workflow", ident, f"Test workflow '{ident}'",
+                                          why=f"the agent retired it: {reason}"))
 
     # 3b. A run that judged its requirements but never ran the app has no
     #     runtime evidence at all. Silence here reads as "it works".
@@ -777,6 +807,11 @@ def build_verification_report(recipe: dict, run_id: Optional[str] = None) -> Ver
             # Every other finding the counts call not confirmed (the runtime gate's "no runtime
             # evidence"); requirements are listed from their verdicts above and below.
             not_verified.append(_item("check", "", user_sentence(message)))
+        elif not is_not_confirmed(message) and (issue.get("severity") or _classify_issue(message).severity) == "warning":
+            # A plain warning (the stored severity, as blockerCount counts it): what a check could
+            # not look at is not verified; what it saw is advisory.
+            (not_verified if not_checked(message) else advisory).append(
+                _item("check", "", user_sentence(message)))
 
     # 5. The requirements ledger can fail before producing a single verdict
     #    (extraction failed, verification budget exhausted). Its finding then
@@ -797,12 +832,14 @@ def build_verification_report(recipe: dict, run_id: Optional[str] = None) -> Ver
         notVerified=_capped(not_verified),
         shippedUnenforced=_capped(unenforced),
         failed=_capped(failed),
+        advisory=_capped(advisory),
         counts=VerificationCounts(
             verified=len(verified),
             foundInCode=len(found_in_code),
             notVerified=len(not_verified),
             shippedUnenforced=len(unenforced),
             failed=len(failed),
+            advisory=len(advisory),
         ),
     )
 
@@ -2009,8 +2046,7 @@ class SmartGenerationRunner:
             # Disable the arbitrary-shell tools by default — they are
             # user-steerable RCE / secret-exfil on a shared BYOK host. OFF by
             # default (BESSER_LLM_ENABLE_SHELL_TOOLS). The agent keeps every
-            # static tool; only arbitrary `run_command`/`install_dependencies`
-            # are withheld.
+            # static tool; only arbitrary `run_command` is withheld.
             allow_shell_tools=settings.llm_enable_shell_tools,
             per_write_diagnostics=settings.llm_per_write_diagnostics,
             enable_import_smoke_check=settings.llm_enable_import_smoke_check,
@@ -2018,9 +2054,10 @@ class SmartGenerationRunner:
             # The modeling assistant's requirements, when the editor sent
             # them: the ledger is built from them instead of extracted again.
             stated_requirements=(
-                [item.model_dump(mode="json") for item in self.request.requirements]
+                [item.model_dump(mode="json", exclude_none=True) for item in self.request.requirements]
                 if self.request.requirements is not None else None
             ),
+            followup_states_nothing_new=self.request.followup_states_nothing_new,
             # Binding generator choice from an approved preview plan. A
             # bound None explicitly skips Phase 1; an unbound None auto-selects.
             target_generator=target_generator,
@@ -2488,11 +2525,14 @@ class SmartGenerationRunner:
                     ))
                 else:
                     # Phase 2 finished cleanly, but Phase 3 left unfixed blockers.
+                    # A modify run names first a hard blocker its previous version did not have.
+                    _regressions = getattr(orchestrator, "_seed_regressions", None) or []
                     incomplete_reason_msg = (
                         f"The app was generated, but {len(_unfixed_blockers)} unresolved "
                         "implementation or verification issue(s) remain. "
-                        "The generated app is not verified complete. First: "
-                        + user_sentence(_unfixed_blockers[0])
+                        "The generated app is not verified complete. "
+                        + (f"New since the previous version, a regression to confirm: {user_sentence(_regressions[0])}"
+                           if _regressions else f"First: {user_sentence(_unfixed_blockers[0])}")
                     )
                     yield self._sse(ErrorEvent(
                         code="INCOMPLETE",
@@ -2512,6 +2552,12 @@ class SmartGenerationRunner:
                     "max_turns": (
                         "The customization loop reached its step limit before "
                         "finishing every requested change."
+                    ),
+                    "output_limit": (
+                        "The customization loop stopped because the model's replies "
+                        "were cut off at its output limit too often"
+                        + (f" ({api_err})" if api_err else "")
+                        + " before all requested changes were applied."
                     ),
                     "stuck_edit_loop": (
                         "The customization loop stopped because repeated edits "
@@ -2596,6 +2642,7 @@ class SmartGenerationRunner:
                 done_event.unverifiedReason = (run_record.not_verified_message(
                     _run_gaps, updated=self._facts.mode == "modify") if unverified else None)
                 done_event.checksOff = [kind for kind, _, off in _gaps if off]
+                done_event.outcome = self._facts.outcome
                 done_event.notConfirmedCount = _not_confirmed
                 done_event.unresolvedBlockerCount = len(_unfixed_blockers)
                 # Completed-with-blockers vs cut-short need different
@@ -3186,7 +3233,10 @@ class SmartGenerationRunner:
         try:
             done = self._t_done_payload
             if done is not None:
-                outcome = "incomplete" if done.get("incomplete") else "success"
+                # "success" is a completed run only; the record's other finished outcomes are their own values.
+                outcome = ("incomplete" if done.get("incomplete")
+                           else done.get("outcome") if done.get("outcome") in run_record.FINISHED_UNCLEAN
+                           else "success")
             elif self._t_last_error_code:
                 outcome = f"failed:{self._t_last_error_code}"
             elif self._t_stream_aborted:

@@ -173,7 +173,8 @@ Keep the design:
 Design quality:
 - {spacing}; align to the page's grid. One page heading, then
   section headings and muted secondary text.
-- Loading, empty and error states on every data view, styled with the design classes.
+- Loading, empty and error states on every data view you write, styled with the design
+  classes; a generated table has its own (word its empty state with `options.emptyText`).
 - Every control labelled (visible label or `aria-label`); one primary button per form.
 - A new screen copies an existing page's shell and card pattern.
 """

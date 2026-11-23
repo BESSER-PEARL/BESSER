@@ -101,29 +101,48 @@ _ENFORCEMENT_TOKENS = (
     "httpexception", "valueerror", "min_length", "max_length", "pattern",
     "field(", "constr", "check(", "ge=", "le=", "gt=", "lt=",
 )
-# The extractor still pads the ledger with "a person must have a first name"
-# items and may label them 'rule'; a column IS that requirement. The
-# enforcing-line demand applies to a 'rule' only when its text states a
-# constraint.
-# Whole words with their inflections: as substrings "less" matched "lesson"
-# and "format" matched "information". A word the requirement lists as a value
-# ("one of: positive, mixed, negative") still states the rule that the field
-# takes only those values; an enumeration that has them enforces it.
-_CONSTRAINT_WORDS = re.compile(
+# Set by the extraction: what code meets the item. "declaration": a field, the state a
+# new record starts in; "type": a field's type or enumeration restricting its values;
+# "check": a check or refusal at run time.
+MET_BY_FIELD = "met_by"
+MET_BY = ("declaration", "type", "check")
+
+# An item without the label (recorded by an older run, or stated by the editor) is read
+# as it was before the label existed, by these English words, so its verdict does not
+# change: on 223 stored apps, reading it as "check" turned 25 confirmed requirements
+# into unconfirmed ones. No labelled item is read this way.
+_UNLABELLED_CONSTRAINT_WORDS = re.compile(
     r"\b(?:unique(?:ly|ness)?|must\s+not|may\s+not|may\s+never|cannot|can\s+not|never|at\s+least|at\s+most"
     r"|no\s+more\s+than|exceed(?:s|ed|ing)?|only\s+(?:if|when|after)|(?:in)?valid(?:ly|ity|at\w+)?"
     r"|format(?:s|ted|ting)?|shap(?:e|es|ed|ing)|(?:mis)?match(?:es|ed|ing)?|overlap(?:s|ped|ping)?|before|after"
     r"|greater|less(?:er)?|between|positive(?:ly)?|non-negative|refus(?:e|es|ed|ing|al)|reject(?:s|ed|ing|ion)?)\b",
     re.IGNORECASE,
 )
+_UNLABELLED_INITIAL_STATE_WORDS = ("start", "begin", "initial", "default")
 
 
-def _states_constraint(text: str) -> bool:
-    return bool(_CONSTRAINT_WORDS.search(text))
+def _met_by(item: dict) -> str | None:
+    """The item's label; None for an item without one."""
+    value = item.get(MET_BY_FIELD)
+    return value if value in MET_BY else None
 
 
-def _demands_enforcement(kind: str, text: str) -> bool:
-    return kind == "uniqueness" or (kind in ("validation", "rule") and _states_constraint(text))
+def _demands_enforcement(item: dict) -> bool:
+    kind = item.get("kind", "")
+    if kind == "uniqueness" or kind not in ("validation", "rule"):
+        return kind == "uniqueness"
+    label = _met_by(item)
+    if label is None:
+        return bool(_UNLABELLED_CONSTRAINT_WORDS.search(item.get("text", "")))
+    return label != "declaration"
+
+
+def _met_by_a_declaration(item: dict) -> bool:
+    """Whether a field's default can meet the item (the state a new record starts in)."""
+    label = _met_by(item)
+    if label is None:
+        return any(word in item.get("text", "").lower() for word in _UNLABELLED_INITIAL_STATE_WORDS)
+    return label == "declaration"
 
 
 _READ_NUMBER_PREFIX_RE = re.compile(r"^\s*\d+\s*\|\s?")
@@ -489,6 +508,11 @@ _EXTRACT_SYSTEM_PROMPT = (
     "data invented beyond a given source), never a refusal or limit the app "
     "enforces (that is a 'rule'); 'preservation' "
     "for existing behaviour a change must keep working as it is.\n"
+    "- met_by: what code meets the item. 'declaration': declaring data (a field a "
+    "record has, the state a new record starts in); 'type': a field's type or "
+    "enumeration (one of listed values); 'check': a check or refusal at run time (a "
+    "limit, a value's shape, a change allowed only under a condition, even if it "
+    "names the initial state).\n"
     "- Skip the technology stack and instructions to the assistant.\n"
     "- Broad goals such as 'functional for any user' or 'no errors' do not add "
     "unstated authentication, authorization, user roles, integrations, or exhaustive "
@@ -517,8 +541,9 @@ _SUBMIT_REQUIREMENTS_TOOL = {
                                      "computed", "transition", "action", "ui",
                                      ABSENCE_KIND, PRESERVATION_KIND],
                         },
+                        MET_BY_FIELD: {"type": "string", "enum": list(MET_BY)},
                     },
-                    "required": ["text"],
+                    "required": ["text", MET_BY_FIELD],
                 },
             },
         },
@@ -784,6 +809,8 @@ def _requirement_items(extracted: list) -> list[dict]:
         # undischargeable gate: an unknown kind is no kind.
         requirements.append({"id": len(requirements) + 1, "text": text.strip(),
                              "kind": kind if kind in _EXTRACTED_KINDS else ""})
+        if isinstance(item, dict) and item.get(MET_BY_FIELD) in MET_BY:
+            requirements[-1][MET_BY_FIELD] = item[MET_BY_FIELD]
     # Preserve every returned item, even if a provider ignores maxItems. A full
     # response may still have omitted the specification's tail; neither slicing
     # it nor treating a saturated extraction as complete is safe.
@@ -826,6 +853,11 @@ _SUBMIT_FOLLOW_UP_TOOL = {
 }
 
 
+def _first_message(instructions: str) -> str:
+    """The user's request before any later message."""
+    return original_request(instructions).split(LATER_REQUEST_MARKER, 1)[0].strip()
+
+
 def later_messages(instructions: str) -> list[str]:
     """The user's messages after the first one, oldest first (``LATER_REQUEST_MARKER`` sections)."""
     messages = []
@@ -839,21 +871,27 @@ def extract_follow_up(previous: list[dict], instructions: str, previous_instruct
                       llm_client, *, can_call: Callable[[], bool] | None = None) -> dict | None:
     """What the user's messages since the previous run ask of the app ``previous`` describes.
 
-    The new messages are the later messages of ``instructions`` after those of
-    ``previous_instructions`` (the previous run's) when these start the conversation, all of
-    them otherwise, and the newest one when there are none. Returns ``{"requirements",
-    "replaces", "continues"}``: requirements numbered from 1, the ids of ``previous`` a new
-    message changes, asks for again or removes, and whether the messages only ask to retry or
-    finish earlier work. None when no real provider is available or the call failed.
+    The new messages are the later messages of ``instructions`` after those it shares, from the
+    start, with ``previous_instructions`` (the previous run's); when there are none, nothing is
+    new if the first message is unchanged, else the newest message is. Returns
+    ``{"requirements", "replaces", "continues"}``: requirements numbered from 1, the ids of
+    ``previous`` a new message changes, asks for again or removes, and whether the messages only
+    ask to retry or finish earlier work. When the new messages are empty or are only the previous
+    run's newest message, that is decided without a call. None when no real provider is available
+    or the call failed.
     """
     validate_specification(instructions)
     if not _is_real_provider(llm_client):
         return None
     seen, messages = later_messages(previous_instructions or ""), later_messages(instructions)
-    # The previous run's messages are the start of this conversation; otherwise every later one is new.
-    earlier_messages = seen if messages[:len(seen)] == seen else []
-    new = messages[len(earlier_messages):] or [latest_user_message(instructions)]
-    earlier = original_request(instructions).split(LATER_REQUEST_MARKER, 1)[0].strip()
+    # A retry is sent but not kept in the conversation, so only the shared start was the previous run's.
+    shared = next((i for i, (a, b) in enumerate(zip(seen, messages)) if a != b), min(len(seen), len(messages)))
+    earlier_messages, fresh = messages[:shared], messages[shared:]
+    same_start = _first_message(instructions) == _first_message(previous_instructions or "")
+    new = fresh or [latest_user_message(instructions)]
+    if (not fresh and same_start) or not any(new) or new == [latest_user_message(previous_instructions or "")]:
+        return {"requirements": [], "replaces": set(), "continues": True}
+    earlier = _first_message(instructions)
     prompt = "\n\n".join([
         "## The earlier conversation (context only)", earlier, *earlier_messages,
         "## Requirements the app was built against", render_requirements(previous),
@@ -873,11 +911,13 @@ def extract_follow_up(previous: list[dict], instructions: str, previous_instruct
     }
 
 
-def stated_requirements_ledger(stated: list[dict], instructions: str) -> list[dict] | None:
+def stated_requirements_ledger(stated: list[dict], instructions: str, *,
+                               newest_states_nothing_new: bool = False) -> list[dict] | None:
     """The ledger built from the requirements the editor sent, or None when they
     do not cover the request and it must be extracted instead.
 
-    ``stated`` items are ``{"id", "text", "kind"}``: the modeling assistant
+    ``stated`` items are ``{"id", "text", "kind"}`` and an optional ``met_by``
+    (kept when it is one of :data:`MET_BY`): the modeling assistant
     extracted them from the user's request, and ``id`` is their artifact id in
     the project trace. Each ledger item keeps it as ``ref``, so a verdict names
     the requirement the trace links to model elements. Only the
@@ -885,16 +925,20 @@ def stated_requirements_ledger(stated: list[dict], instructions: str) -> list[di
 
     The assistant extracts from the user's first request only. A request with
     later messages (``LATER_REQUEST_MARKER``) states requirements the list
-    lacks, so the whole request is extracted instead.
+    lacks, so the whole request is extracted instead; with
+    ``newest_states_nothing_new`` (the assistant's verdict on a retry or a fix)
+    the newest one is not counted.
     """
-    if LATER_REQUEST_MARKER in original_request(instructions):
+    later = later_messages(instructions)
+    if later[:-1] if newest_states_nothing_new else later:
         logger.warning(
             "Requirements ledger: the request has later messages that the %d requirements "
             "from the editor do not cover; extracting from the whole request instead", len(stated),
         )
         return None
     judged = [item for item in stated if item["kind"] in JUDGED_KINDS]
-    requirements = [{"id": rid, "text": item["text"], "kind": item["kind"], "ref": item["id"]}
+    requirements = [{"id": rid, "text": item["text"], "kind": item["kind"], "ref": item["id"],
+                     **({MET_BY_FIELD: item[MET_BY_FIELD]} if item.get(MET_BY_FIELD) in MET_BY else {})}
                     for rid, item in enumerate(judged, start=1)]
     # The assistant's extraction stops at the same cap as ours: a full list may
     # have left the specification's tail out.
@@ -1233,7 +1277,7 @@ def build_app_digest_details(output_dir: str, *, focus_paths: list[str] | None =
             if 4 <= key[1] <= 5 and total + len(chunk) + 2 <= ui_budget:
                 reserved.add(rel)
                 total += len(chunk) + 2
-    parts: list[str] = []
+    kept: list[tuple[str, str]] = []
     omitted = unreadable + omitted_by_focus + styles_left_out
     truncated_paths = []
     over_budget = []
@@ -1245,10 +1289,15 @@ def build_app_digest_details(output_dir: str, *, focus_paths: list[str] | None =
                 over_budget.append(rel)
                 continue
             total += len(chunk) + 2
-        parts.append(chunk)
+        kept.append((rel, chunk))
         shown.append(rel)
         if truncated or rel in regions:
             truncated_paths.append(rel)
+    # The written shares above pick what fits. Shown cited files first, then by
+    # kind and path, which no edit changes, so a repeated judge call can reuse
+    # the cached prompt up to the first file that changed.
+    parts = [chunk for _, chunk in sorted(
+        kept, key=lambda item: (item[0] not in focused, *_digest_priority(item[0])))]
     footer = (
         "\n\n## Digest coverage (not application source)\n"
         f"Files shown: {len(parts)}; truncated excerpts: {len(truncated_paths)}; "
@@ -1341,6 +1390,8 @@ def _verdict_identity(rid: int, requirement: dict) -> dict:
     identity = {"id": rid, "text": requirement["text"], "kind": requirement.get("kind", "")}
     if requirement.get("ref"):
         identity["ref"] = requirement["ref"]
+    if requirement.get(MET_BY_FIELD) in MET_BY:
+        identity[MET_BY_FIELD] = requirement[MET_BY_FIELD]
     return identity
 
 
@@ -1401,8 +1452,10 @@ def judge_coverage(requirements: list[dict], digest: str, llm_client, *,
     by_id = {r["id"]: r for r in requirements}
     verdicts: dict[int, dict] = {}
     if application_requirements:
-        judge_prompt = (authority + repair_context + f"## Requirements\n\n{listing}"
-                        f"\n\n## Generated code\n\n{digest}")
+        # Most stable first, so a repeated call can reuse the cached prefix:
+        # the request, the code, then the feedback and the requirements.
+        judge_prompt = (authority + f"## Generated code\n\n{digest}\n\n"
+                        + repair_context + f"## Requirements\n\n{listing}")
         # The first attempt uses the planning model first; a
         # retry forces the primary model straight away (see _call_with_tool)
         # instead of repeating the exact call that just failed or came back
@@ -1604,8 +1657,9 @@ _DECLARATION_ONLY = "the cited declaration does not perform the required behavio
 _ROLE_FAILURES = frozenset({_NO_PARSE, _NOT_CODE, _COMMENT, _NOOP_VALIDATOR, _SCAFFOLD, _ACTION_SCAFFOLD})
 
 
-def _python_citation(tree: ast.AST | None, lineno: int, kind: str, text: str) -> tuple[ast.stmt | None, str]:
-    """Check the cited statement's role; this is not a semantic proof."""
+def _python_citation(tree: ast.AST | None, lineno: int, kind: str, met_by: str) -> tuple[ast.stmt | None, str]:
+    """Check the cited statement's role; this is not a semantic proof. ``met_by`` as in
+    :func:`_met_by`: a column default meets a transition only when a declaration does."""
     if tree is None:
         return None, _NO_PARSE
     enclosing = [n for n in ast.walk(tree) if isinstance(n, ast.stmt)
@@ -1636,8 +1690,7 @@ def _python_citation(tree: ast.AST | None, lineno: int, kind: str, text: str) ->
             # these behaviours; a bare enum or required input cannot.
             value = getattr(statement, "value", None)
             if isinstance(statement, (ast.Assign, ast.AnnAssign)) and isinstance(value, ast.Call):
-                if (kind == "transition" and any(word in text.lower() for word in (
-                        "start", "begin", "initial", "default"))
+                if (kind == "transition" and met_by == "declaration"
                         and any(k.arg in {"default", "default_factory", "server_default"}
                                 for k in value.keywords)):
                     return statement, ""
@@ -1730,7 +1783,8 @@ def _span_failure(item: dict, source: _Source, first_line: int, lineno: int, quo
         return "the cited line is punctuation alone (`{`, `/>`); it identifies no code"
     statement = None
     if source.path.endswith(".py"):
-        statement, reason = _python_citation(source.tree, lineno, item.get("kind", ""), item.get("text", ""))
+        statement, reason = _python_citation(
+            source.tree, lineno, item.get("kind", ""), "declaration" if _met_by_a_declaration(item) else "check")
         if reason:
             return reason
         invalid = next((d for d in source.diagnostics if (
@@ -1741,11 +1795,16 @@ def _span_failure(item: dict, source: _Source, first_line: int, lineno: int, quo
         if invalid:
             return "the cited implementation is invalid: " + invalid["message"]
     kind, text = item.get("kind", ""), item.get("text", "")
-    if (_demands_enforcement(kind, text)
+    if (_demands_enforcement(item)
             and not isinstance(statement, (ast.If, ast.Raise, ast.Assert))
+            # ``return "F" if score < 50 else grade(score)`` decides on a condition as an ``if`` does.
+            and not (statement is not None
+                     and any(isinstance(node, ast.IfExp) for node in ast.walk(statement)))
             and not source.lines[first_line - 1].lstrip().startswith(("if ", "if(", "if\t", "else if "))
             and not any(tok in quote.lower() for tok in _ENFORCEMENT_TOKENS)
-            and not (kind != "uniqueness" and _only_lists_cited_enumeration(text, statement, source.tree))):
+            and not (kind != "uniqueness" and _met_by(item) in ("type", None)
+                     and _only_lists_cited_enumeration(text, statement, source.tree,
+                                                       unlabelled=_met_by(item) is None))):
         return "the cited line declares data; it does not demonstrate enforcement"
     return ""
 
@@ -1796,16 +1855,16 @@ def _field_named(text: str, field: str) -> bool:
     return bool(words) and all(re.search(rf"\b{re.escape(word)}(?:e?s)?\b", text, re.I) for word in words)
 
 
-def _only_lists_cited_enumeration(text: str, statement: ast.stmt | None, tree: ast.AST | None) -> bool:
-    """The requirement's constraint words are values of the enumeration cited.
+def _only_lists_cited_enumeration(text: str, statement: ast.stmt | None, tree: ast.AST | None,
+                                  unlabelled: bool = False) -> bool:
+    """The requirement's values are those of the enumeration cited.
 
     The cited Python statement defines, belongs to or types a field with one
     enumeration of the same file. A field of a class of that file is of that
     enumeration and is the one the requirement names (the cited field, when one
-    is cited). The requirement names every value of the enumeration, lists no
-    other value beside them, and states no constraint once they are taken out.
-    The type then refuses any other value, which is the enforcement. "Must not
-    go from closed back to open" names the values too, and still needs its check."""
+    is cited). The requirement names every value of the enumeration and lists no
+    other value beside them. The type then refuses any other value, which is the
+    enforcement of an item a type meets (:func:`_met_by`)."""
     if statement is None or tree is None:
         return False
     enumerations = {
@@ -1831,9 +1890,11 @@ def _only_lists_cited_enumeration(text: str, statement: ast.stmt | None, tree: a
     spans = sorted(match.span() for member in members for match in member.finditer(text))
     if not _lists_only_members(text, spans):
         return False
-    for member in members:
-        text = member.sub(" ", text)
-    return not _states_constraint(text)
+    if unlabelled:  # as before the label: no constraint stated beside the listed values
+        for member in members:
+            text = member.sub(" ", text)
+        return not _UNLABELLED_CONSTRAINT_WORDS.search(text)
+    return True
 
 
 _UNMATCHED_NOTE_CHARS = 80
@@ -2827,6 +2888,8 @@ def _recorded_verdict(item) -> dict | None:
                "inspection_paths": [p for p in paths if isinstance(p, str)] if isinstance(paths, list) else []}
     if isinstance(item.get("ref"), str):
         verdict["ref"] = item["ref"]
+    if item.get(MET_BY_FIELD) in MET_BY:
+        verdict[MET_BY_FIELD] = item[MET_BY_FIELD]
     return verdict
 
 

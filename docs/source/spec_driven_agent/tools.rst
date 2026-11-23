@@ -15,18 +15,19 @@ would immediately fail.
    * - Files
      - ``list_files``, ``read_file``, ``write_file``, ``modify_file``, ``replace_file_lines``,
        ``search_in_files``, ``delete_file``
-   * - Model queries
-     - ``query_class``, ``list_classes_with``, ``get_constraints_for``
    * - Validation / bookkeeping
-     - ``validate_app``, ``test_api``, ``validate_model``, ``check_syntax``, ``task_list``
+     - ``validate_app``, ``test_api`` (while the workspace holds a generated
+       FastAPI backend), ``task_list``
    * - Generators
      - The 19 generator tools listed below.
    * - Shell
-     - ``run_command``, ``install_dependencies``
+     - ``run_command``
 
-The model-query tools give the LLM random access into your domain model
-(attributes, flattened inherited methods, association ends, OCL constraints)
-without holding the whole serialized model in context.
+A tool is offered only when it can return something the context lacks. The
+system prompt holds the whole serialized domain model (inherited members, OCL
+constraints and rejected expressions included), so there is no tool to query
+it; the write tools check the syntax of what they write, and ``validate_app``
+runs the application checks.
 
 File edits and the checklist
 ----------------------------
@@ -39,7 +40,10 @@ is claimed. Missing-file responses suggest existing paths without substituting
 them for the requested path.
 
 ``write_file`` over an existing file requires the whole file to have been read
-this run; a rewrite from memory would drop scaffold code. Like the other
+(or written) this run; a rewrite from memory would drop scaffold code, and a
+landed ``modify_file`` does not count as a read. Once history eviction has
+stubbed the last whole copy of a file in the conversation, it must be read
+again before a ``write_file``. Like the other
 editors, it refuses an edit that would make the ORM or Pydantic module
 (``sql_alchemy.py``, ``pydantic_classes.py``) fail to import. Only the
 ``N| `` line numbering that ``read_file`` displays (``7| code``, or the padded
@@ -57,30 +61,70 @@ schema declares: a null optional argument counts as omitted, ``"12"`` or ``12.0`
 is accepted for an integer, ``"true"``/``"false"`` for a boolean and a single value
 for an array; any other mismatch (a boolean or ``1.5`` for an integer, ``inf``, an
 object for a string, a value outside an ``enum``) is refused with an error naming
-the argument, the expected type and the type received.
+the argument, the expected type and the type received. An argument the tool
+does not declare (``old_text`` on a range edit, a ``path`` scope on
+``search_in_files``) is not used, and the result says so under
+``ignored_arguments``, with the arguments the tool takes.
 
 A refused edit carries one next step (``edit_recovery``), the same in
 customization and validation repair. When a ``modify_file`` miss brackets one
 region, or a range edit's ``read_id`` is stale, the result holds that span as a
 ``located_range`` with a fresh ``read_id`` for ``replace_file_lines``. From the
 second refused edit on a file (with no landed edit between), the step is to read
-the whole file and ``write_file`` it back; two targeted edit attempts of either
-kind also unlock ``write_file`` where it is otherwise held back (a large
-generated file, a modify run). The orchestrator's reminders repeat that step.
-A generated frontend page or component (``.tsx``, ``.jsx``, ``.ts`` or ``.js``
-under a ``frontend`` folder) over 200 lines needs no such attempts when the
-rewrite keeps its code: at least 60% of its non-blank lines, every column-0
-declaration outside comments, its ``export default``, every ``<Route>``
-element, no new elision such as ``{/* ... unchanged ... */}``, and no new
+the whole file and ``write_file`` it back. The orchestrator's reminders repeat
+that step. No tool call is forced: the step is in the result, and the model
+chooses its next call, in Phase 2 as in a repair attempt.
+
+A rewrite of a file this run did not create must keep its code when the file
+is a generated one over 200 lines, or, in a modify run, any file over 15
+lines. Keeping its code means: at least 60% of its non-blank lines; every
+top-level declaration (Python ``def``, ``class`` and assigned names, and each
+Python class's own methods, fields and assigned names; TS/JS column-0
+declarations outside comments); no fewer Python decorators and
+module-level calls (``app.include_router(...)``), and no fewer TS/JS ``export
+default`` statements, ``<Route>`` elements and re-exports (``export { A } from
+"./a"``); no new elision such as ``{/* ... unchanged ... */}``; and no new
 comment-only line that reads as a placeholder (``{/* remaining fields
 unchanged */}``) in place of three or more of the file's lines that the
 rewrite has fewer copies of (a repeated section counts), or added while a
 block of three or more such lines is deleted elsewhere, however much the
-rewrite adds. A rewrite that misses one is
-refused saying which. Backend and other files, and frontend files with no
-declarations to compare, keep the two-attempt rule.
-Repeated failures do not permanently freeze the file; an agent that ignores
-recovery is still bounded by the loop and run budgets.
+rewrite adds. A rewrite that misses one is refused saying which
+(``rejection_kind`` ``rewrite_loss``), whatever edits came before it. The
+same rule holds a ``modify_file`` or ``replace_file_lines`` edit that writes
+new code over 90% or more of the file's non-blank lines (with ``replace_all``,
+counting every occurrence), so a whole-range edit cannot apply a rewrite the
+rule refused. An edit over less of the file is a targeted edit and is not held
+to it, however much shorter it makes the file (simplifying a function, folding
+calls into a loop). An empty replacement is a removal and
+lands however much it spans: for a removal the model means to make, the
+refusal says to replace only that code's own lines with nothing (naming the
+``read_id`` of its whole-file read), and for a rename to edit only the line
+that names it. A file
+``write_file`` created this run, and a smaller file, is rewritten freely. A
+change these checks cannot see (one entry dropped from a large object literal)
+is a targeted edit's job, and is not caught here; a file with no declarations
+to compare (CSS, JSON, YAML, HTML, ``requirements.txt``) is held only to the
+60% share and the elision checks. Repeated failures do not
+permanently freeze the file; an agent that ignores recovery is still bounded
+by the loop and run budgets.
+
+The rule guards against losing code by accident; it is not a wall against an
+agent that removes code in several steps. Each step is judged against the file
+as it is then, so these sequences still land on a large generated file:
+``delete_file`` (or ``rm`` through ``run_command``)
+and then ``write_file``, since the file is then new to this run; emptying the
+file with a range edit and then ``write_file``, since an empty file is below
+the size limit; and several range edits that each replace less than 90% of
+the file.
+
+``delete_file`` removes one regular file, for every model alike: whether a
+delete runs never depends on the model. When other files still import a
+top-level module or package the delete removed, the result lists those imports
+under ``still_imported`` (the same unresolved-import findings validation
+reports, new since the delete), so the model can change or remove them. An
+import of a deleted module inside a package that still exists (``from services
+import billing``) is not listed; the build and startup checks catch it, and any
+import the model leaves.
 
 ``read_file`` returns a ``read_id`` tied to the resolved path, whole-file content
 hash, and actually displayed lines. ``replace_file_lines`` accepts that ID,
@@ -99,6 +143,10 @@ conversation, returns a short ``unchanged`` stub naming the still-valid
 ``read_id`` and line range instead of the text. Repeating the call right after
 a stub returns the text. Compaction, history eviction, a resume and each
 Phase 3 fix round (a fresh conversation) reset this, so the next read is full.
+From the third read of one file, a read of a window under 40 lines, or of a
+window that continues the previous read of that file, carries a ``hint``: one
+``read_file`` without ``limit`` returns up to 60,000 characters from
+``offset``.
 
 Every tool result reaches the model as JSON with non-ASCII text kept literal
 (``é``, not ``\u00e9``). ``list_files`` returns one ``<path> <size>`` line per
@@ -113,10 +161,15 @@ a ``pyvenv.cfg`` (a virtualenv, whatever its name; it is named under
 ``file_glob`` matches file names only; one containing a path separator is
 refused with an error rather than returning no matches.
 
-``task_list(action='done')`` runs an attached verifier and refuses the item
-while it fails; a verifier exception is a failed check, not success. An item
-without a verifier closes on the model's word, with no code to quote. The ids
-may also come as ``done_ids``, the key the reply lists them under.
+``task_list`` takes one shape with four optional fields, any combination in
+one call: ``done`` (item ids), ``add`` (item texts), ``drop`` and ``blocked``
+(lists of ``{id, reason}``). A call with none lists every item with its status,
+and every result ends with ``open_items``, the id and a short label of each open
+item. The earlier ``action=...`` shape (``list``, ``done``, ``add``, ``drop``,
+``blocked``, ``mixed``) is still accepted. ``done`` runs an attached verifier
+and refuses the item while it fails; a verifier exception is a failed check,
+not success. An item without a verifier closes on the model's word, with no
+code to quote.
 
 After every successful edit the harness re-runs the verifiers and closes the
 items whose check now passes. Nothing else closes an item: an edit to a file
@@ -132,7 +185,7 @@ workspace file is reported as absent; the item for a modeled rule the
 generators could not enforce names ``routers/<class>.py``, relative to the
 backend folder, so its finding says no workspace file is there.
 
-``action='blocked'`` requires a reason and records required work the model
+``blocked`` requires a reason and records required work the model
 could not finish; the item stops holding the end-turn gate. A later passing
 check can clear the block. ``drop`` is only for work outside the user's
 request. Task outcomes are retained in the recipe.
@@ -140,21 +193,45 @@ request. Task outcomes are retained in the recipe.
 Application checks during editing
 ---------------------------------
 
-``validate_app`` reports source contracts, startup and create-request failures
-after a coherent edit. It lists at most 40 findings, most urgent first, and
-counts the rest (``remaining_issue_count``); a finding longer than 1,200
+``validate_app`` runs the deterministic checks that decide the run, the same
+function Phase 3 runs after every fix attempt and at the end: source and
+schema/router contracts, startup and create requests, retained ``test_api``
+workflows, frontend, data and model checks, ruff, the dependency check, and the
+type check, frontend build and screen check. Phase 3 alone adds the requirements
+judgment (``validate_app`` lists its last verdicts), the checklist's findings
+(open items are the end-turn gate's) and the authorization check, and first
+applies the deterministic repairs (build configuration, Dockerfile lockfile
+fixes, dependency pins, a deleted scaffold ``requirements.txt``):
+``validate_app`` writes no source file (a build still writes its output folder)
+and reports on the tree as those repairs would leave it, without making them.
+A Dockerfile lockfile fix or a ``requirements.txt`` the sweep would put back is
+not reported, and a build script the sweep would rewrite (``"build": "vite"``,
+which starts a dev server, becomes ``"vite build"``) is not run but listed as
+not run, naming the rewrite. It lists at most 40 findings, blockers
+first, and counts the rest (``remaining_issue_count``); a finding longer than 1,200
 characters is cut as in the Phase 3 fix prompt, keeping its head and tail. Validation runs after writes in the same tool batch.
-Once the app has frontend files, it also reports the static frontend checks
-(contract, import resolution, create forms) and, without a GUI model, the
-acceptance-matrix findings; a warning among them is marked
-``advisory, not a blocker``. When the run has a checklist, a passing result
-also lists its open items (``open_items``: id and a short label, empty when
+A warning is marked ``advisory, not a blocker``. The acceptance-matrix findings
+wait for frontend files and are left out with a GUI model. tsc and the frontend
+build reuse their last verdict while no file they can read changes (any file but
+Python sources and the rest of a Python project's folder) and the installed
+dependencies are the same, and the dependency check while its
+``requirements.txt`` is unchanged. Where the agent can install a project's
+dependencies, tsc and the build wait for the install: a not-run note that names
+the ``npm install`` to run, never a blocker, so it neither holds Phase 2 open
+nor is among the findings Phase 2 opens with (the final check still blocks on
+it); otherwise tsc runs the same partial check as Phase 3. The screen check needs a browser. A check that
+did not run is listed as not run, never as a blocker, and ``verified`` is true
+only when none is listed and no blocker remains. When the run has a checklist,
+a result with no blocker also lists its open items (``open_items``: id and a short label, empty when
 none is open), the ids ``task_list`` needs to close them. Ending a turn runs
 the same checks, so the tool's description asks for a call after a code change
 only, not a second one before finishing.
 
 ``test_api`` executes up to 20 declarative requests against a disposable copy of
-one generated FastAPI backend and a fresh SQLite database. Requests share state
+one generated FastAPI backend and a fresh SQLite database. It is offered, and the
+prompts name it, only while the workspace holds such a backend (``main_api.py``
+next to ``sql_alchemy.py``), decided when Phase 2 and Phase 3 start, so the tool
+list does not change within a phase. Requests share state
 within a scenario; later requests may reference response JSON using
 ``{{0.room.id}}``. When the path is missing from a response that wraps the record
 under exactly one key (``{"todolist": {"id": 1}, "items_ids": []}``), ``{{0.id}}``
@@ -164,6 +241,12 @@ Assertions specify expected statuses and dotted JSON fields;
 an expected field value accepts the same references, so a check can name an id
 an earlier request returned. Braces that resolve to no earlier value are text,
 compared and reported as written.
+
+A request body is ``json``, or ``form``: urlencoded fields (an OAuth2 password
+login, a form post), whose values accept the same references. With ``files`` the
+body is multipart, for an upload: each file field maps to ``{"filename",
+"content", "content_type"}`` with text content (a CSV, a small text document).
+``json`` and ``form``/``files`` in one request are refused.
 
 A request may carry ``headers``, whose values accept the same references, so a
 scenario can register, log in and send the returned token on later requests:
@@ -189,7 +272,9 @@ request that sends such a field back by reference; other fields that happen to
 hold the same value are shown. References such as ``{{1.access_token}}`` still
 receive the real value.
 Named scenarios are retained during the run and replayed after source changes;
-failures block completion. Correcting a mistaken test requires an explicit
+failures block completion. A later modify run replays the ones that passed on
+its delivered tree, where a failure is a regression to confirm, not a blocker
+(see :ref:`spec-driven-recipe-size`). Correcting a mistaken test requires an explicit
 ``correction_reason``. A correction that removes a request which passed in the
 scenario's last run (same method and route no longer present) is refused: such
 checks stay in the corrected scenario or go under their own ``scenario_id``.
@@ -202,7 +287,8 @@ expectations and last report without executing them. ``action="run"`` with
 only a scenario ID replays its saved definition. ``action="retire"`` with a
 scenario ID and ``correction_reason`` drops a workflow another one replaced: it
 is no longer replayed and no longer blocks the run, and the run report lists it
-under *Could not verify* as retired, with the reason. The original specification
+under *Could not verify* as retired, with the reason; a workflow that had failed
+when it was retired is listed as *failed, retired*: retiring it settled nothing. The original specification
 remains authoritative: a generated assertion can be wrong and must not force
 correct application behavior to regress.
 
@@ -285,25 +371,34 @@ the agent's calls only: when the model changed, a modify run itself regenerates
 the generated files and merges the change into edited ones (see
 :ref:`spec-driven-regeneration`).
 
+After Phase 1, Phase 2 drops the generators whose output the chosen generator
+already bundles (Pydantic, SQLAlchemy and the like next to a backend). The
+single-artifact generators that remain (``generate_python_classes``,
+``generate_java_classes``, ``generate_rdf``, ``generate_supabase``) stay
+offered whether or not the request asks for that artifact: nothing structured
+in a run says which extra artifacts the user wants, and the tool list is never
+chosen by matching the request's wording.
+
 .. _spec-driven-shell-tools:
 
 Shell tools
 -----------
 
-``run_command`` and ``install_dependencies`` run arbitrary commands. They are
+``run_command`` runs arbitrary commands, installs included. It is
 what lets the agent close its own loop — run ``pytest``, run ``npm run build``,
 read the failures and fix them — and they are the single largest capability
-difference between a run with them and a run without. They are also arbitrary
-code execution on the host that serves generation, so who is allowed to switch them on is a
+difference between a run with it and a run without. It is also arbitrary
+code execution on the host that serves generation, so who is allowed to switch it on is a
 deployment decision, never a per-request one.
 
 A command cannot change the run's own records: ``.besser_checkpoint.json`` and
 ``.besser_recipe.json`` are restored after each command if it rewrote, deleted
 or planted them, and the result says so under ``run_records_restored``.
 
-Before it installs, ``install_dependencies`` pins the known-incompatible
-dependency pairs described in :doc:`validation` into the working directory's
-``requirements.txt`` and lists each change under ``pinned`` in its result.
+When a write tool writes a ``requirements.txt``, the harness pins the
+known-incompatible dependency pairs described in :doc:`validation` into it and
+lists each change under ``pinned`` in the write's result, with a note that
+packages installed from the file before no longer match it.
 
 The policy
 ~~~~~~~~~~
@@ -312,7 +407,7 @@ The policy
 that does not set it: the local ``docker-compose.yml``, the backend service in
 ``docker-compose.prod.yml``, and a backend started by hand. With the tools off,
 every static tool (``read_file``, ``write_file``, ``modify_file``,
-``check_syntax``, the generators, the runtime probes) stays available, so the
+``validate_app``, the generators, the runtime probes) stays available, so the
 agent still produces and validates a full application; it just cannot shell
 out. The ``pip install --dry-run`` dependency check in
 :doc:`Phase 3 <validation>` is behind the same flag, since resolving an sdist
@@ -363,22 +458,19 @@ What it does:
 - **Refusal, not concealment.** The gate is enforced when the tool is called,
   not by leaving it out of the advertised list — a model that names a tool it
   was never offered is refused too.
-- **One shell per run, like a terminal.** The directory a command ends in
-  (``cd``) and the variables it exports (``export``, ``source
-  .venv/bin/activate``) carry over to the next command, and on Linux a
-  process started in the background (``python app.py > app.log 2>&1 &``)
-  keeps running after its command returns, so a server started in one
-  command answers ``curl`` in the next. ``working_dir`` runs one command in
-  another directory without moving the shell; ``install_dependencies`` runs
-  in the same shell and leaves its directory and environment as they were.
-  What a background process prints after its command returned is discarded.
-  A command that ends outside the workspace does not move the shell there:
-  the next command starts in the workspace root, and the result says so.
+- **One shell per run.** Every command starts in the workspace root, or in
+  its ``working_dir``: a ``cd`` lasts for its own command only, since models
+  write each command as if from the root. The variables a command exports
+  (``export``, ``source .venv/bin/activate``) carry over to the next command,
+  and on Linux a process started in the background (``python app.py >
+  app.log 2>&1 &``) keeps running after its command returns, so a server
+  started in one command answers ``curl`` in the next. What a background process prints after its command returned is
+  discarded.
 - **Working directory inside the run workspace.** ``working_dir`` is resolved
   against the workspace and a path that escapes it is rejected.
 - **A per-command timeout**: 120 seconds by default. A command may set
-  ``timeout`` up to 600 seconds for a slow build, and ``install_dependencies``
-  gets 300; no command runs past the run's remaining runtime. A command still
+  ``timeout`` up to 600 seconds for a slow build or a first install; no
+  command runs past the run's remaining runtime. A command still
   running then is killed together with everything it started (its process
   group); the session and the processes earlier commands left running are
   untouched.
@@ -395,14 +487,14 @@ What it does:
   tail are kept with a marker for the dropped middle.
 
 - **A bubblewrap sandbox on Linux, one per run.** A run's shell is a single
-  sandbox, started at its first ``run_command`` or ``install_dependencies``,
+  sandbox, started at its first ``run_command``,
   with its own user, PID and mount namespaces; no other run's processes or
   files are visible in it. The container filesystem is visible read-only, other
   runs' workspaces, the telemetry folder and the incident log folder
   (``BESSER_INCIDENT_LOG_DIR``) are hidden, and only the run
   workspace and a per-run ``$HOME`` (``<run dir>.sandbox-home``) are writable.
-  ``/usr/local`` and ``/root`` stay read-only, so ``install_dependencies``
-  (``pip install``, ``npm install``) installs into that per-run ``$HOME``
+  ``/usr/local`` and ``/root`` stay read-only, so an install
+  (``pip install``, ``npm install``) goes into that per-run ``$HOME``
   rather than into the worker or into later runs. Where the worker has
   ``pasta`` (passt) and ``/dev/net/tun``, the session also gets a network
   namespace of its own (``BESSER_LLM_SHELL_NETWORK``): its ``localhost``
@@ -424,8 +516,8 @@ What it does:
   control channel is a pipe to the worker, and bubblewrap's init takes the
   whole PID namespace with it). A session with no command for
   ``BESSER_LLM_SHELL_SESSION_IDLE_SECONDS`` (900; ``0`` never) is closed too,
-  and the next command starts a fresh one; the directory and environment
-  survive that, since the worker keeps them, and the result's ``notes`` tell
+  and the next command starts a fresh one; the environment
+  survives that, since the worker keeps it, and the result's ``notes`` tell
   the model its background processes are gone. At most
   ``BESSER_LLM_SHELL_SESSION_MAX`` (10) sessions live per worker; past that a
   command runs in a one-off sandbox with the same confinement, whose
@@ -436,16 +528,16 @@ What it does:
   a fresh sandbox of their own, so nothing a command left behind can steer a
   check. Before each Phase 3 validation sweep the session's processes are
   stopped as well, so a dev server or file watcher the agent left running
-  cannot write to the workspace while it is checked; the directory and
-  environment carry over to the next command, whose notes say so.
+  cannot write to the workspace while it is checked; the environment
+  carries over to the next command, whose notes say so.
 
 What it does not:
 
 - **No sandbox on Windows or macOS.** There is no namespace sandbox on those
   platforms, so commands run unconfined, as the backend user, and a warning
   is logged. The same applies on Linux with ``BESSER_LLM_SHELL_SANDBOX=off``.
-  Each command is then its own process: the directory and environment still
-  carry over, but the worker does not track what a command left running, so
+  Each command is then its own process: the environment still
+  carries over, but the worker does not track what a command left running, so
   ending the run does not stop it.
 - **It does not cut the network for commands.** ``run_command`` keeps
   outbound network access so that installs work, as do the Phase 1
@@ -462,7 +554,10 @@ Phase 2's system prompt gains a *runtime verification* runbook, and a probe
 script, ``.besser_probe.py``, is written to the workspace root. Its
 subcommands (``up``, ``routes``, ``req``, ``log``, ``down``) boot the server
 detached, list its routes and send requests, so the agent can run the app
-rather than only read it. ``routes`` prints, per route, the JSON body it reads
+rather than only read it. The runbook has the agent create every entity and
+call every action through ``test_api`` scenarios, which are retained and
+replayed as evidence; ``up``, ``log`` and ``req`` are for debugging a failure
+a scenario reported. ``routes`` prints, per route, the JSON body it reads
 as its top-level keys (``<- {"params": {...}}`` for a method route, whose
 values go inside that key) and what a 2xx answer is (``-> list`` or
 ``-> object {...}`` with its keys): the response schema the app's OpenAPI
@@ -484,14 +579,12 @@ prints only their names. It sends form fields and files as
 ``-F "file=@path"`` (``;type=<mime>`` and ``;filename=<name>`` set a file's
 type and name), for an upload endpoint; a field value keeps its own quotes. ``down`` stops a process only when its command line
 identifies it as the probe's own server, since a recorded PID from a previous
-session can name an unrelated process. Several ``run_command`` (and
-``install_dependencies``) calls in one turn run one after another, in order.
-A command without ``working_dir`` starts where an earlier ``cd`` left the
-shell; when that is not the workspace root, the result's first field,
-``ran_in``, names that directory. When the line's first ``cd``, relative,
-fails there and the path exists from the workspace root (inside it), a
-``cd_hint`` names the shell's directory
-and the path to use from it (or as ``working_dir``). A line that joins two commands with ``;`` or
+session can name an unrelated process. Several ``run_command`` calls in one
+turn run one after another, in order.
+In a turn that also writes files, a command starts only after every write the
+model emitted before it has finished, and a write emitted after it starts only
+once it has returned; reads still run in parallel.
+A line that joins two commands with ``;`` or
 a new line, exits 0 and reports a failure in stderr gets a ``note`` that
 ``exit_code`` is the last command's alone.
 ``BESSER_LLM_SHELL_RUNBOOK=0`` leaves the runbook out.
@@ -505,7 +598,7 @@ write tool wrote them; the recipe lists them under ``runtime_files_removed``.
 They are therefore in neither the download nor a GitHub push.
 
 The worker also lists the backend's files before and after every
-``run_command`` and ``install_dependencies`` call, and records a file the call
+``run_command`` call, and records a file the call
 left as written by the running app (a request sent with ``curl``, a test
 client, a script importing the app) only when all of these hold: it is new
 under the backend folder, outside dot-folders; it is a data file (``.json``,

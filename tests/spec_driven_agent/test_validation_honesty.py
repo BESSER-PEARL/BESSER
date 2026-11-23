@@ -430,7 +430,7 @@ def test_required_frontend_build_respects_permissions_and_current_source(orch, t
                                        or is_not_confirmed(findings[0]))
         assert _classify_issue(findings[0]).severity == ("blocker" if enabled and allowed else "warning")
         if enabled and allowed:
-            assert findings[0].startswith("verification setup:") and "install_dependencies" in findings[0]
+            assert findings[0].startswith("verification setup:") and "run_command" in findings[0]
     assert calls == [], "missing permission/dependencies must never launch npm or install"
     monkeypatch.setattr("shutil.which", lambda name: None)
     findings = collect_frontend_build_issues(str(tmp_path), enabled=True, allow_shell=True, **options)

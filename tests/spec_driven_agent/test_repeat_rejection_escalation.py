@@ -11,11 +11,16 @@ from __future__ import annotations
 
 import json
 import os
+from types import SimpleNamespace
 
+import httpx
 import pytest
 
 from besser.BUML.metamodel.structural import Class, DomainModel, PrimitiveDataType, Property
-from besser.spec_driven_agent.providers.llm_client import UsageTracker
+from besser.spec_driven_agent.errors import DeadlineReached
+from besser.spec_driven_agent.execution.deadline import under_deadline
+from besser.spec_driven_agent.providers import llm_client
+from besser.spec_driven_agent.providers.llm_client import OpenAIProvider, UsageTracker
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 
 
@@ -77,23 +82,12 @@ def _run(simple_model, tmp_path, max_turns=20):
     return orch, client
 
 
-def test_two_refusals_escalate_to_a_rewrite_then_force_a_fresh_read(simple_model, tmp_path):
-    """Renamed from ``test_two_refusals_force_a_fresh_read_on_the_next_turn``.
-
-    Two refusals still change the strategy on the very next turn, and the
-    new strategy still starts with a read - but it is now carried as the
-    tool result's ``edit_recovery`` rather than as a forced ``read_file``.
-    The orchestrator only forces a tool for ``read_file`` /
-    ``replace_file_lines`` / ``modify_file`` (see the allowlist beside
-    ``_force_tool_next``), and ``write_file`` is deliberately not forceable
-    - forcing it would order a rewrite before the read the instruction
-    requires.
-
-    So the hard steer arrives one refusal later, from the orchestrator's
-    own ``_REPEAT_FORCE_AT = 3``: turn 4 instead of turn 3. Both halves are
-    asserted, because dropping either one is how this escalation could
-    silently stop happening. That reminder used to name ``replace_file_lines``
-    while the executor named the rewrite; it now quotes the executor's step.
+def test_two_refusals_escalate_to_a_rewrite_and_no_tool_is_forced(simple_model, tmp_path):
+    """Two refusals change the strategy on the very next turn, carried as the
+    tool result's ``edit_recovery``; the reminder at ``_REPEAT_FORCE_AT`` quotes
+    the executor's step. The next tool is the model's choice: a forced call
+    (a named tool_choice) drops the conversation cache on providers that cache
+    by tool_choice, and replaced the model's own batch with one call.
     """
     orch, client = _run(simple_model, tmp_path)
 
@@ -105,9 +99,7 @@ def test_two_refusals_escalate_to_a_rewrite_then_force_a_fresh_read(simple_model
                 if isinstance(c, str) and '"next_tool": "write_file"' in c)
     assert "read_file on the WHOLE file" in hint
 
-    forced = [n for n, f in client.turns if f == "read_file"]
-    assert forced, client.turns
-    assert forced[0] == 4, "the hard steer is _REPEAT_FORCE_AT, one refusal later"
+    assert all(force is None for _, force in client.turns), client.turns
     assert any("read_file on the WHOLE file" in t and "app.py" in t for t in client.texts_seen)
 
 
@@ -152,6 +144,77 @@ def test_a_client_without_force_tool_still_gets_the_message_and_the_stop(simple_
     orch.run("Build an app")
     assert orch._phase2_stop_reason == "stuck_edit_loop"
     assert any("read_file on the WHOLE file" in t for t in client.texts_seen)
+
+
+def _openai_endpoint(monkeypatch, fail, seconds_per_request=0.0):
+    """An OpenAIProvider whose endpoint answers through ``fail(kwargs)``: an
+    error to raise, or None to reply. Each request lasts ``seconds_per_request``
+    on the provider's clock. Returns it and the requests it got."""
+    requests = []
+    clock = [0.0]
+
+    def create(**kwargs):
+        requests.append(kwargs)
+        clock[0] += seconds_per_request
+        error = fail(kwargs)
+        if error is not None:
+            raise error
+        if kwargs.get("stream"):
+            delta = SimpleNamespace(content="done", tool_calls=None)
+            return iter([SimpleNamespace(model=kwargs["model"], usage=None,
+                                         choices=[SimpleNamespace(delta=delta, finish_reason="stop")])])
+        message = SimpleNamespace(content="done", tool_calls=None)
+        return SimpleNamespace(
+            model=kwargs["model"], choices=[SimpleNamespace(message=message, finish_reason="stop")],
+            usage=SimpleNamespace(prompt_tokens=10, completion_tokens=1, prompt_tokens_details=None))
+
+    completions = SimpleNamespace(create=create)
+    monkeypatch.setattr(llm_client, "openai_client",
+                        lambda **kw: SimpleNamespace(chat=SimpleNamespace(completions=completions)))
+    monkeypatch.setattr(llm_client, "time",
+                        SimpleNamespace(sleep=lambda s: None, monotonic=lambda: clock[0]))
+    return OpenAIProvider(api_key="sk-test", model="gpt-4o",
+                          base_url="https://gateway.example.invalid/v1"), requests
+
+
+def _status_error(cls, status, message):
+    request = httpx.Request("POST", "https://gateway.example.invalid/v1/chat/completions")
+    return cls(f"Error code: {status} - {message}",
+               response=httpx.Response(status, request=request), body=None)
+
+
+
+
+
+
+
+
+
+
+class _UnderDeadline:
+    def __init__(self, deadline):
+        self.deadline = deadline
+
+    @under_deadline
+    def call(self, fn, *args):
+        return fn(*args)
+
+
+
+
+class _CutClient:
+    """Every call is cut by the run's deadline."""
+    model = "mock-model"
+    usage = UsageTracker("mock-model")
+
+    def __init__(self):
+        self.calls = []
+
+    def chat(self, system, messages, tools, force_tool=None, model_override=None):
+        self.calls.append(force_tool)
+        raise DeadlineReached("the run's time limit is reached")
+
+
 
 
 def test_untruncated_edit_inputs_are_kept_beside_the_trace(simple_model, tmp_path):
@@ -358,3 +421,27 @@ def test_successful_edits_never_escalate_to_a_rewrite(tmp_path):
         "a landed edit must reset the refusal count, or an ordinary "
         "miss-fix-miss rhythm escalates to a rewrite"
     )
+
+
+def test_a_located_miss_names_the_range_edit_without_forcing_it(simple_model, tmp_path):
+    """The miss's result carries the located range; the next call is the model's choice."""
+    source = "".join(f"def f{i}(a):\n    total = a + {i}\n    return total\n\n" for i in range(12))
+    quote = "def f3(a):\n    total = a+3\n    return total"
+
+    class Stop(StuckClient):
+        def chat(self, system, messages, tools, force_tool=None, model_override=None):
+            self.turns.append((len(self.turns) + 1, force_tool))
+            return {"stop_reason": "end_turn", "content": [MockBlock("text", text="done")]}
+
+    (tmp_path / "svc.py").write_text(source, encoding="utf-8")
+    client = Stop()
+    orch = LLMOrchestrator(llm_client=client, domain_model=simple_model,
+                           output_dir=str(tmp_path), max_turns=4)
+    orch.executor.execute_typed("read_file", {"path": "svc.py"})
+    miss = orch._execute_tool_blocks([MockBlock("tool_use", name="modify_file", id="m0", input={
+        "path": "svc.py", "old_text": quote, "new_text": quote.replace("total", "t")})], turn=0)
+    assert '"located_range"' in miss[0]["content"], miss
+
+    orch._chat_turn("system", [{"role": "user", "content": "go"}])
+
+    assert client.turns == [(1, None)], client.turns

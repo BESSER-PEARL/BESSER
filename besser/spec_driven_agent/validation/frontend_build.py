@@ -36,7 +36,7 @@ def install_markers(project_dir: str) -> tuple:
 def collect_frontend_build_issues(
     output_dir: str, *, enabled: bool, allow_shell: bool,
     source_revision: Callable[[], str], build_verdicts: dict,
-    can_run: Callable[[], bool], timeout: float = 120,
+    can_run: Callable[[], bool], timeout: float = 120, rewritten_builds: dict | None = None,
 ) -> list[str]:
     """Build discovered web apps only when explicitly authorized and installed.
 
@@ -47,7 +47,9 @@ def collect_frontend_build_issues(
     tree it already judged. A build that did not finish (timeout, no sandbox,
     source changed meanwhile) is no verdict and runs again. Entries are
     in-memory only; a resumed run checks again. The build script is
-    model-authored, so it runs sandboxed with no network.
+    model-authored, so it runs sandboxed with no network. ``rewritten_builds``
+    maps a folder to the build script the final check's repair writes before it
+    builds; that folder is not built until then.
     """
     from besser.spec_driven_agent.execution.sandbox import SandboxUnavailable, run_confined
 
@@ -112,6 +114,11 @@ def collect_frontend_build_issues(
         if not os.path.isdir(os.path.join(folder, "node_modules")):
             issues.append(required_dependency_setup(label, rel))
             continue  # the agent may use its authorized install tool; never install here
+        rewritten = (rewritten_builds or {}).get(rel)
+        if rewritten:
+            issues.append(required_check_unverified(
+                label, f'scripts.build is "{build}"; the final check rewrites it to "{rewritten}" before building'))
+            continue
         revision = source_revision()
         key = (rel, revision, install_markers(folder), build)
         if key in build_verdicts:

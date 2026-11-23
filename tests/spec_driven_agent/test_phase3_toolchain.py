@@ -288,12 +288,11 @@ def test_fix_loop_prompt_contains_toolchain_error_and_rerun_command(tmp_path) ->
 
     # Verbatim error line surfaced in the prompt
     assert "TS2322" in text
-    # Explicit instruction to re-run the toolchain
+    # Explicit instruction to re-run the toolchain, given once: it was in the
+    # system prompt, the brief and a separate reminder that repeated the errors.
     assert "npx tsc --noEmit" in text
-    # High-salience reminder injected as a second user turn
-    assert "<system-reminder>" in text
-    # System prompt makes the contract explicit too
-    assert "run_command" in system
+    assert (system + text).count("re-run") == 1 and "run_command" not in system
+    assert "<system-reminder>" not in text and len(messages) == 1
 
 
 def test_fix_loop_prompt_never_asks_for_run_command_with_shell_tools_off(tmp_path) -> None:

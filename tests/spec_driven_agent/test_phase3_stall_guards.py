@@ -211,15 +211,15 @@ def test_an_attempt_whose_edits_were_all_refused_gets_one_more_round(orch):
 
 def test_a_spent_cost_budget_still_ends_the_first_barren_round(orch):
     """Budget beats patience: the extra round is granted only while there is
-    money for it. A barren round that also exhausts the cost cap ends the loop
-    on the spot, streak counter or no streak counter."""
+    money for it. A round whose writes were all refused and that also exhausts
+    the cost cap ends the loop on the spot, streak counter or no streak counter."""
     orch.max_cost_usd = 1.0
     orch.client.usage = _MutableUsage(0.5)
 
     def spend(_attempt):
         orch.client.usage.estimated_cost = 1.0
 
-    attempts = _drive(orch, [(0, False, False, _blockers(6))] * 8, after_round=spend)
+    attempts = _drive(orch, [(0, False, False, _blockers(6))] * 8, after_round=spend, rejected_edits=1)
 
     assert attempts == 1
     assert orch._phase3_exit_reason == "cost budget exhausted"
@@ -479,7 +479,8 @@ def test_the_rollback_ranks_the_tree_before_an_attempt_on_its_own_measurements(o
         "a repair that broke three entity creates was scored as an improvement"
     )
     assert orch._phase3_rolled_back is True
-    assert orch._phase3_exit_reason.startswith("attempt 1 reverted: it added an observed failure: create contract:")
+    # Attempt 1 retired a blocker, so one more attempt ran; it broke the same creates.
+    assert orch._phase3_exit_reason.startswith("attempt 2 reverted: it added an observed failure: create contract:")
 
 
 # ---------------------------------------------------------------------------

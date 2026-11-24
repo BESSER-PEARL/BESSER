@@ -39,8 +39,14 @@ Highlights
   is out of date. Element popups open it with *Show traceability*. Traces stay
   in the browser (IndexedDB), are safe with two tabs open, and keep the newest
   runs per generator. The assistant can answer questions about the trace
-  ("which code came from Book?") from a size-capped summary the editor sends
-  (`WME #290 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/290>`_).
+  ("which code came from Book?") from a size-capped summary the editor sends.
+  When a message names no element, the summary is about the elements selected
+  on the class diagram, so "what is the impact if I change this?" works too.
+  The editor's user guide gains a Traceability page that explains the page
+  and how to realign an out-of-date project
+  (`WME #290 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/290>`_,
+  `WME #307 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/307>`_,
+  `WME #308 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/308>`_).
 * **A trace view for Spec-Driven Agent runs.** *View files* shows for each
   line whether the AI wrote it, a BESSER generator produced it or a person
   edited it between runs, and flags a file changed after the run recorded it.
@@ -212,6 +218,18 @@ Fixes
   (``BESSER_FREE_LLM_SECONDARY_BASE_URL`` / ``_TOKEN`` / ``_MODELS``) sits in the
   fallback chain before the self-hosted model, and Command Code's newer
   per-model refusals no longer skip every other model of the key.
+* **Traceability page.** GUI edits on a page other than the one shown are
+  recorded (`WME #306 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/306>`_).
+  The empty page has a *Turn recording on* button, the summary counts
+  "cross-artefact trace links", a bundled link on the lineage canvas shows how
+  many of its links are out of date (``×12 (⚠ 3 out of date)``), and the
+  summary figures, the legend and *Show history* have tooltips that also open
+  on keyboard focus
+  (`WME #307 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/307>`_).
+* **Full browser storage.** The "local storage is nearly full" warning says
+  how to free space and opens a *Free up space* dialog that lists the saved
+  projects by size and last edit, with export and delete
+  (`WME #298 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/298>`_).
 * **Smaller fixes.** The SQL generator writes its DDL as UTF-8, so a class
   named "Bücher" no longer breaks on Windows; a CNOT converts back as the
   editor draws it; a project whose owner contains "PROJECT DEFINITION" imports

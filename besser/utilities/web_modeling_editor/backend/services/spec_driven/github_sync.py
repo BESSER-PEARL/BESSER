@@ -289,7 +289,8 @@ async def push_run_to_github(
             {
                 "AI-Tool": f"besser-spec-driven-agent/{get_besser_version()}",
                 "AI-Model": run_recipe.get("llm_model"),
-                "AI-Role": "feature-modification" if modified else "code-generation",
+                "AI-Role": "code-transformation" if modified else "code-generation",
+                "AI-Tokens": _ai_tokens(run_recipe.get("usage")),
             },
         )
         pull_request_url = None
@@ -415,6 +416,19 @@ async def _hold_repo_agents_md(
         with open_plain_write(path, "wb", root=workdir) as handle:
             handle.write(current["content"].encode("utf-8"))
     return True
+
+
+# The recipe's usage counters, under the names of the AI-Tokens trailer (github.com/dspinellis/ai-commit-headers).
+_AI_TOKEN_COUNTS = (("input", "input_tokens"), ("cached", "cache_read_tokens"), ("output", "output_tokens"))
+
+
+def _ai_tokens(usage) -> Optional[str]:
+    """The ``AI-Tokens`` value (``input=…, cached=…, output=…``) of a run's usage, or None when it recorded none."""
+    if not isinstance(usage, dict):
+        return None
+    counts = [(name, usage.get(key)) for name, key in _AI_TOKEN_COUNTS]
+    counts = [(name, n) for name, n in counts if isinstance(n, int) and not isinstance(n, bool) and n > 0]
+    return ", ".join(f"{name}={n}" for name, n in counts) or None
 
 
 def _model_changes(entry) -> list[str]:

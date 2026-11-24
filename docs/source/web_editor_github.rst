@@ -80,6 +80,15 @@ editor's Save, the agent's push, Go live) uses the same layout, defined once in
 - Commits BESSER makes end with ``BESSER-Origin: editor`` or
   ``BESSER-Origin: spec-driven-agent``; the history uses it to tell them from a
   person's commits.
+- A Spec-Driven Agent push also records how AI took part, as the
+  `AI commit headers <https://github.com/dspinellis/ai-commit-headers>`_
+  trailers just before ``BESSER-Origin``: ``AI-Tool``
+  (``besser-spec-driven-agent/<version>``), ``AI-Model`` (the model's public
+  label), ``AI-Role`` (``code-generation`` for a new app,
+  ``code-transformation`` for a run that modified one) and ``AI-Tokens``
+  (``input=…, cached=…, output=…``). A trailer the run has no value for is
+  left out. The request's text is not written, since the repository may be
+  public.
 
 Agent credentials (LLM keys, bot tokens, database passwords in the agent
 diagram's config) are replaced with ``[REDACTED]`` before ``diagrams.json`` is

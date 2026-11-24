@@ -597,13 +597,16 @@ def test_the_agent_push_commit_carries_ai_headers_with_the_public_model_label(mo
     fake = _PushGitHub()
     run_id = _seed_run(tmp_path)
     (tmp_path / "run" / ".besser_recipe.json").write_text(json.dumps(
-        {"llm_model": "gateway", "history": [{"mode": "modify"}]}), encoding="utf-8")
+        {"llm_model": "gateway", "history": [{"mode": "modify"}],
+         "usage": {"input_tokens": 1200, "cache_read_tokens": 0, "output_tokens": 340}}), encoding="utf-8")
     r = _push(monkeypatch, fake, run_id)
 
     assert r.status_code == 200, r.text
     lines = _trailers(fake.push["message"])
     assert lines[0].startswith("AI-Tool: besser-spec-driven-agent/")
-    assert lines[1:] == ["AI-Model: gateway", "AI-Role: feature-modification", "BESSER-Origin: spec-driven-agent"]
+    # AI-Role takes a value from the spec's fixed list: a modify run is a code-transformation.
+    assert lines[1:] == ["AI-Model: gateway", "AI-Role: code-transformation",
+                         "AI-Tokens: input=1200, output=340", "BESSER-Origin: spec-driven-agent"]
 
 
 def test_a_push_without_a_recorded_model_omits_ai_model(monkeypatch, tmp_path):
@@ -612,7 +615,7 @@ def test_a_push_without_a_recorded_model_omits_ai_model(monkeypatch, tmp_path):
 
     assert r.status_code == 200, r.text
     lines = _trailers(fake.push["message"])
-    assert not any(line.startswith("AI-Model") for line in lines)
+    assert not any(line.startswith(("AI-Model", "AI-Tokens")) for line in lines)
     assert lines[-2:] == ["AI-Role: code-generation", "BESSER-Origin: spec-driven-agent"]
 
 

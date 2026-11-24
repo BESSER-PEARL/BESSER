@@ -177,6 +177,14 @@ Spec-Driven Agent
   catalog can no longer raise the compaction threshold. A connection that
   fails within seconds is retried on the same model before the fallback chain
   moves on.
+* **AI commit headers.** A run pushed to GitHub records how AI took part in
+  the commit with the trailers Diomidis Spinellis proposes in
+  `Documenting AI-generated code commits <https://www.spinellis.gr/blog/20260702/>`_:
+  ``AI-Tool``, ``AI-Model``, ``AI-Role`` and, new, ``AI-Tokens``
+  (``input=…, cached=…, output=…``). ``AI-Role`` follows the proposal's
+  vocabulary: a run that modified an app is ``code-transformation`` (8.10 wrote
+  ``feature-modification``). The request's text is not written, since the
+  repository may be public (:doc:`../../web_editor_github`).
 * **History eviction, off by default.** ``BESSER_LLM_HISTORY_EVICTION``
   replaces stale file bodies in older messages by stubs. On recorded runs it
   sent 7.5% fewer input characters but cost about 2% more on a provider that

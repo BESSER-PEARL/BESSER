@@ -59,8 +59,22 @@ This method will generate a modular project (rather than one large file) so each
    + ``sql_alchemy.py``: Includes SQL Alchemy database models.
    + ``pydantic_classes.py``: Consists of Pydantic validation models.
    + ``requirements.txt``: The dependencies of the generated application.
+   + ``api_contract.json``: Every route of the generated API as data: method, path, path and query parameters, the
+     ``<Class>Create`` body keys with their types and enumeration literals, what each route returns (including
+     its wrappers, such as ``{"task": ..., "tag_ids": [...]}`` from GET by id), the id type, pagination and the
+     two error shapes. The :doc:`react` generator renders its typed API client from the same data.
+   + ``API.md``: The same contract as a compact reference for people and coding agents.
 
 Running the application creates the SQLite database file under ``data/`` (unless ``DATABASE_URL`` points elsewhere).
+
+After ``generate()``, ``backend.traced_files`` records what each file was rendered from, by path in the output
+folder, for the elements that have an ``id`` (as every element drawn in the web editor does): the lines of each
+class, enumeration, association, attribute and method in ``sql_alchemy.py`` (see :doc:`alchemy`), of each class,
+enumeration and attribute and each OCL constraint's validator in ``pydantic_classes.py``, of each class's
+``include_router`` lines in ``main_api.py`` and of each method in ``routers/<class>_methods.py``;
+``routers/<class>.py`` is recorded as generated as a whole from its class.
+Recording them does not change the generated files. The web editor turns them into a :doc:`trace
+<../buml_language/model_types/traceability>` of the run.
 
 
 .. image:: ../img/backend_generator_schema.png
@@ -236,6 +250,13 @@ How the model shapes these endpoints:
 * When an attribute and an **association end share a name**, the association
   end is generated and the attribute is left out (model validation warns about
   the clash).
+* A required **text attribute** (a ``str`` that is not optional) refuses an
+  empty or whitespace-only value with ``422``; the value is stored as sent.
+  ``PUT`` takes the same schema as ``POST``, so a record stored blank before
+  this rule (by an app generated before 8.11.0) is updated only with the
+  field filled. An optional one accepts any value. A ``str`` attribute is stored as
+  long text: unbounded on PostgreSQL and SQLite, up to 64 KB on MySQL, 4000
+  characters on Oracle (see :doc:`alchemy`).
 * A ``DELETE`` that would leave another record without a link it requires is
   refused with ``409`` and a message naming that record, including when the
   record is required by a part that would be deleted with its whole.

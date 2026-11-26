@@ -15,6 +15,7 @@ verdict lands in the recipe so the reviewer sees what was NOT built.
 from __future__ import annotations
 
 import ast
+import fnmatch
 import hashlib
 import json
 import keyword
@@ -30,6 +31,7 @@ import time
 
 from pygments.token import Comment, String
 
+from besser.BUML.metamodel.traceability import RequirementKind
 from besser.spec_driven_agent.planning.code_text import _lexer_for, code_only
 from besser.spec_driven_agent.planning.gap_analyzer import _chat_supports_kwargs, _is_real_provider
 from besser.spec_driven_agent.planning.requested_routes import _ANY_VERB as _ROUTE_ANY_VERB
@@ -37,7 +39,7 @@ from besser.spec_driven_agent.planning.requested_routes import _PARAM_RE as _ROU
 from besser.spec_driven_agent.planning.requested_routes import _VERBS as _ROUTE_VERBS
 from besser.spec_driven_agent.planning.requested_routes import _literal as _route_literal
 from besser.spec_driven_agent.planning.requested_routes import _methods as _route_methods
-from besser.spec_driven_agent.planning.specification import validate_specification
+from besser.spec_driven_agent.planning.specification import MAX_REQUIREMENTS, validate_specification
 from besser.spec_driven_agent.planning.target import ENTITY_CRUD_KIND
 from besser.spec_driven_agent.providers.tool_input import coerce_to_schema
 from besser.spec_driven_agent.state.agent_trace import matching_lines
@@ -57,7 +59,6 @@ VERBATIM_MARKER = "## The user's original request, verbatim"
 # generation_handler.py), inside the original request.
 LATER_REQUEST_MARKER = "## Subsequent user request, verbatim"
 
-_MAX_REQUIREMENTS = 128
 _EXTRACTION_INCOMPLETE = (
     "Requirement extraction reached its item limit; coverage of the full original "
     "specification is unverified. Complete extraction and audit the remaining "
@@ -65,6 +66,21 @@ _EXTRACTION_INCOMPLETE = (
     "verification obligation, not an application feature."
 )
 _STATUSES = ("implemented", "partial", "missing", "unverified")
+# Requirements no cited line can show: something the app must not have, and existing
+# behaviour a change must keep. Left unverified by the judge, ``settle_uncitable`` decides them.
+ABSENCE_KIND = "absence"
+PRESERVATION_KIND = "preservation"
+# The status it gives besides "missing": reported, never a blocker.
+NOT_PROVABLE = "not_provable"
+
+# The kinds of a requirement the editor sends that the judge checks against the
+# code. An entity existing (data) is the model, already generated; the stack
+# (technical) and qualities such as performance cannot be judged from source.
+JUDGED_KINDS = frozenset({
+    RequirementKind.UNIQUENESS.value, RequirementKind.VALIDATION.value, RequirementKind.RULE.value,
+    RequirementKind.COMPUTED.value, RequirementKind.TRANSITION.value, RequirementKind.ACTION.value,
+    RequirementKind.UI.value, RequirementKind.INTEGRATION.value,
+})
 
 # What the judge reads: the schemas and the ORM first (validators, unique
 # columns), then the backend code the model wrote or changed (where rules are
@@ -85,29 +101,48 @@ _ENFORCEMENT_TOKENS = (
     "httpexception", "valueerror", "min_length", "max_length", "pattern",
     "field(", "constr", "check(", "ge=", "le=", "gt=", "lt=",
 )
-# The extractor still pads the ledger with "a person must have a first name"
-# items and may label them 'rule'; a column IS that requirement. The
-# enforcing-line demand applies to a 'rule' only when its text states a
-# constraint.
-# Whole words with their inflections: as substrings "less" matched "lesson"
-# and "format" matched "information". A word the requirement lists as a value
-# ("one of: positive, mixed, negative") still states the rule that the field
-# takes only those values; an enumeration that has them enforces it.
-_CONSTRAINT_WORDS = re.compile(
+# Set by the extraction: what code meets the item. "declaration": a field, the state a
+# new record starts in; "type": a field's type or enumeration restricting its values;
+# "check": a check or refusal at run time.
+MET_BY_FIELD = "met_by"
+MET_BY = ("declaration", "type", "check")
+
+# An item without the label (recorded by an older run, or stated by the editor) is read
+# as it was before the label existed, by these English words, so its verdict does not
+# change: on 223 stored apps, reading it as "check" turned 25 confirmed requirements
+# into unconfirmed ones. No labelled item is read this way.
+_UNLABELLED_CONSTRAINT_WORDS = re.compile(
     r"\b(?:unique(?:ly|ness)?|must\s+not|may\s+not|may\s+never|cannot|can\s+not|never|at\s+least|at\s+most"
     r"|no\s+more\s+than|exceed(?:s|ed|ing)?|only\s+(?:if|when|after)|(?:in)?valid(?:ly|ity|at\w+)?"
     r"|format(?:s|ted|ting)?|shap(?:e|es|ed|ing)|(?:mis)?match(?:es|ed|ing)?|overlap(?:s|ped|ping)?|before|after"
     r"|greater|less(?:er)?|between|positive(?:ly)?|non-negative|refus(?:e|es|ed|ing|al)|reject(?:s|ed|ing|ion)?)\b",
     re.IGNORECASE,
 )
+_UNLABELLED_INITIAL_STATE_WORDS = ("start", "begin", "initial", "default")
 
 
-def _states_constraint(text: str) -> bool:
-    return bool(_CONSTRAINT_WORDS.search(text))
+def _met_by(item: dict) -> str | None:
+    """The item's label; None for an item without one."""
+    value = item.get(MET_BY_FIELD)
+    return value if value in MET_BY else None
 
 
-def _demands_enforcement(kind: str, text: str) -> bool:
-    return kind == "uniqueness" or (kind in ("validation", "rule") and _states_constraint(text))
+def _demands_enforcement(item: dict) -> bool:
+    kind = item.get("kind", "")
+    if kind == "uniqueness" or kind not in ("validation", "rule"):
+        return kind == "uniqueness"
+    label = _met_by(item)
+    if label is None:
+        return bool(_UNLABELLED_CONSTRAINT_WORDS.search(item.get("text", "")))
+    return label != "declaration"
+
+
+def _met_by_a_declaration(item: dict) -> bool:
+    """Whether a field's default can meet the item (the state a new record starts in)."""
+    label = _met_by(item)
+    if label is None:
+        return any(word in item.get("text", "").lower() for word in _UNLABELLED_INITIAL_STATE_WORDS)
+    return label == "declaration"
 
 
 _READ_NUMBER_PREFIX_RE = re.compile(r"^\s*\d+\s*\|\s?")
@@ -135,12 +170,24 @@ _MAX_QUOTE_LINES = 25
 _MAX_UNQUOTED_TAIL = 24
 _BLOCK_PUNCTUATION = frozenset("{(:;,[")
 
+# A judge may return quotation marks typographic (“button”, »button»): the glyph is not code.
+_TYPOGRAPHIC_QUOTES = str.maketrans({
+    "“": '"', "”": '"', "„": '"', "‟": '"', "«": '"', "»": '"',
+    "‘": "'", "’": "'", "‚": "'", "‛": "'", "‹": "'", "›": "'",
+    "＂": '"', "＇": "'",
+})
+
+
+def _ascii_quotes(text: str) -> str:
+    """Every quotation mark as ``"``: single, typographic and fullwidth ones alike."""
+    return text.translate(_TYPOGRAPHIC_QUOTES).replace("'", '"')
+
 
 def _normalise_quote(text: str, escapes: bool = True) -> str:
     """The judge's quote, made comparable to file text: literal escape
     sequences become spaces (unless ``escapes`` is off, for a quote of code
-    such as ``"\\n".join(...)``), single quotes become double quotes (a judge may
-    rewrite ``Mapped_["Booking"]`` as ``Mapped_['Booking']``), and
+    such as ``"\\n".join(...)``), single and typographic quotes become double quotes
+    (a judge may rewrite ``Mapped_["Booking"]`` as ``Mapped_['Booking']``), and
     only the first quoted line counts - later lines are often abridged."""
     if escapes:
         text = text.replace("\\n", "\n").replace("\\t", " ")
@@ -148,17 +195,18 @@ def _normalise_quote(text: str, escapes: bool = True) -> str:
     # read_file numbers what the model sees; no real source line starts with
     # "175| ", so such a prefix is always a copied artifact.
     first = _READ_NUMBER_PREFIX_RE.sub("", first, count=1)
-    return _collapse(first.replace("'", '"'))
+    return _collapse(_ascii_quotes(first))
 
 
 def _normalise_line(line: str) -> str:
     """A source line in a quote's form. Its escapes stay as written: turning
     ``"\\n".join(...)`` into a line break cut the line at that string."""
-    return _collapse(line.replace("'", '"'))
+    return _collapse(_ascii_quotes(line))
 
 
-def _citation_parts(raw: str, path: str, files: dict[str, str] | None = None) -> list[tuple[str, str, bool]]:
-    """(path, quote, cut) for each part of an abridged or listed citation.
+def _citation_parts(raw: str, path: str, files: dict[str, str] | None = None,
+                    min_part: int = _MIN_PART_QUOTE) -> list[tuple[str, str, bool]]:
+    """(path, quote, cut) for each part of an abridged or listed citation of at least ``min_part`` characters.
 
     ``cut`` when an ellipsis right after the part marks the rest of its line
     as left out; "and other.py: b", or "other.py: b" naming one of ``files``,
@@ -174,11 +222,11 @@ def _citation_parts(raw: str, path: str, files: dict[str, str] | None = None) ->
         for switch in _FILE_SWITCH_RE.finditer(segment) if files else ():
             if len(_resolve_cited_path(switch.group(1), "", files, {})) == 1:
                 quote = _evidence_quote(segment[offset:switch.start()])
-                if len(quote) >= _MIN_PART_QUOTE:
+                if len(quote) >= min_part:
                     parts.append((path, quote, False))
                 path, offset = switch.group(1), switch.end()
         quote = _evidence_quote(segment[offset:])
-        if len(quote) >= _MIN_PART_QUOTE:
+        if len(quote) >= min_part:
             parts.append((path, quote, cut))
         path = next_path or path
         position = end
@@ -292,7 +340,20 @@ def _quote_spans(quoted: str, source: _Source, cut: bool = False) -> list[tuple[
     spans = list(_spans_in(quoted, source, source.normalised, cut))
     if not spans and source.bare != source.normalised:
         spans = list(_spans_in(quoted, source, source.bare, cut))
-    return spans
+    return spans or _quoteless_span(quoted, source)
+
+
+def _quoteless_span(quoted: str, source: _Source) -> list[tuple[int, int]]:
+    """For a quote with no quotation mark at all (some providers return a citation with them
+    left out): the one line of the file that reads as the quote once its quotation marks are
+    removed; none when no line or more than one line does, so a line is never picked among several."""
+    bare = quoted
+    if '"' in quoted or len(bare) < _MIN_PART_QUOTE:
+        return []  # a quote that kept quotation marks is compared with them
+    found = [index + 1 for index, line in enumerate(source.normalised)
+             if (text := line.replace('"', "")) == bare
+             or (text.startswith(bare) and set(text[len(bare):]) <= _BLOCK_PUNCTUATION)]
+    return [(found[0], found[0])] if len(found) == 1 else []
 
 
 def _spans_in(quoted: str, source: _Source, normalised: list[str], cut: bool):
@@ -386,13 +447,36 @@ _SOURCE_SUFFIXES = frozenset({
     # native UI markup that holds a desktop app's controls: WPF/WinUI, Avalonia, Qt
     ".xaml", ".axaml", ".qml",
 })
+# Judged and citable, but in the whole-app digest only for an appearance requirement
+# (``shows_stylesheets``); otherwise listed as omitted, so a verdict naming one gets them shown.
+_STYLESHEET_SUFFIXES = frozenset({".css", ".scss", ".sass", ".less"})
+
+
+def _is_stylesheet(rel: str) -> bool:
+    return Path(rel).suffix.lower() in _STYLESHEET_SUFFIXES
 
 
 def _is_judged_source(path: Path) -> bool:
-    """Application source, plus Android's screens (``res/layout*/*.xml``); other
-    XML (``pom.xml``, the manifest) carries no behaviour."""
+    """Application source and stylesheets, plus Android's screens (``res/layout*/*.xml``);
+    other XML (``pom.xml``, the manifest) carries no behaviour."""
     suffix = path.suffix.lower()
-    return suffix in _SOURCE_SUFFIXES or (suffix == ".xml" and path.parent.name.startswith("layout"))
+    return (suffix in _SOURCE_SUFFIXES or suffix in _STYLESHEET_SUFFIXES
+            or (suffix == ".xml" and path.parent.name.startswith("layout")))
+
+
+# A requirement about how the app looks, whose evidence may be a stylesheet rule.
+_APPEARANCE_RE = re.compile(
+    r"\b(?:colou?rs?|colou?red|styled|styling|stylesheets?|css|fonts?|hover|cursor|dark\s+mode|borders?"
+    r"|shadows?|accent|spacing|margins?|padding|animat\w*|layout|appearance|visual(?:ly)?)\b",
+    re.IGNORECASE,
+)
+
+
+def shows_stylesheets(requirements: list[dict]) -> bool:
+    """Whether the whole-app digest should show the stylesheets: a requirement is about appearance."""
+    return any(_APPEARANCE_RE.search(str(item.get("text") or "")) for item in requirements)
+
+
 _BEHAVIOURAL_KINDS = frozenset({"computed", "transition", "action"})
 _TEST_SOURCE_NAME = re.compile(r"(?:\.(?:test|spec)\.[^.]+$|^test_.+\.py$|_test\.py$)", re.I)
 
@@ -419,13 +503,22 @@ _EXTRACT_SYSTEM_PROMPT = (
     "for the shape a value must have; 'rule' for limits and cross-entity "
     "rules; 'computed' for values worked out rather than typed in; "
     "'transition' for state changes and when they are refused; 'action' for "
-    "named operations; 'ui' for screens and interactions.\n"
+    "named operations; 'ui' for screens and interactions; 'absence' for "
+    "something the app must not have at all (no sign-in, no admin area, no "
+    "data invented beyond a given source), never a refusal or limit the app "
+    "enforces (that is a 'rule'); 'preservation' "
+    "for existing behaviour a change must keep working as it is.\n"
+    "- met_by: what code meets the item. 'declaration': declaring data (a field a "
+    "record has, the state a new record starts in); 'type': a field's type or "
+    "enumeration (one of listed values); 'check': a check or refusal at run time (a "
+    "limit, a value's shape, a change allowed only under a condition, even if it "
+    "names the initial state).\n"
     "- Skip the technology stack and instructions to the assistant.\n"
     "- Broad goals such as 'functional for any user' or 'no errors' do not add "
     "unstated authentication, authorization, user roles, integrations, or exhaustive "
     "accessibility/certification requirements. Extract the requested behavior, "
     "not a wish list of additional product features.\n"
-    f"- At most {_MAX_REQUIREMENTS} items. Never invent a requirement the "
+    f"- At most {MAX_REQUIREMENTS} items. Never invent a requirement the "
     "user did not state."
 )
 
@@ -437,7 +530,7 @@ _SUBMIT_REQUIREMENTS_TOOL = {
         "properties": {
             "requirements": {
                 "type": "array",
-                "maxItems": _MAX_REQUIREMENTS,
+                "maxItems": MAX_REQUIREMENTS,
                 "items": {
                     "type": "object",
                     "properties": {
@@ -445,10 +538,12 @@ _SUBMIT_REQUIREMENTS_TOOL = {
                         "kind": {
                             "type": "string",
                             "enum": ["validation", "uniqueness", "rule",
-                                     "computed", "transition", "action", "ui"],
+                                     "computed", "transition", "action", "ui",
+                                     ABSENCE_KIND, PRESERVATION_KIND],
                         },
+                        MET_BY_FIELD: {"type": "string", "enum": list(MET_BY)},
                     },
-                    "required": ["text"],
+                    "required": ["text", MET_BY_FIELD],
                 },
             },
         },
@@ -697,6 +792,11 @@ def extract_requirements(instructions: str, llm_client, *,
         logger.warning("Requirements ledger: 'requirements' came back as %s, not a list",
                        type(extracted).__name__)
         return None
+    return _requirement_items(extracted)
+
+
+def _requirement_items(extracted: list) -> list[dict]:
+    """The extraction tool's items as ledger requirements numbered from 1."""
     requirements: list[dict] = []
     for item in extracted:
         # A bare string is a requirement's text; a null or non-string text is
@@ -709,14 +809,141 @@ def extract_requirements(instructions: str, llm_client, *,
         # undischargeable gate: an unknown kind is no kind.
         requirements.append({"id": len(requirements) + 1, "text": text.strip(),
                              "kind": kind if kind in _EXTRACTED_KINDS else ""})
+        if isinstance(item, dict) and item.get(MET_BY_FIELD) in MET_BY:
+            requirements[-1][MET_BY_FIELD] = item[MET_BY_FIELD]
     # Preserve every returned item, even if a provider ignores maxItems. A full
     # response may still have omitted the specification's tail; neither slicing
     # it nor treating a saturated extraction as complete is safe.
-    if len(extracted) >= _MAX_REQUIREMENTS:
-        requirements.append({
-            "id": len(requirements) + 1, "text": _EXTRACTION_INCOMPLETE,
-            "kind": "verification",
-        })
+    if len(extracted) >= MAX_REQUIREMENTS:
+        requirements.append(_incomplete_extraction_item(len(requirements) + 1))
+    return requirements
+
+
+def _incomplete_extraction_item(rid: int) -> dict:
+    return {"id": rid, "text": _EXTRACTION_INCOMPLETE, "kind": "verification"}
+
+
+_FOLLOW_UP_SYSTEM_PROMPT = _EXTRACT_SYSTEM_PROMPT + (
+    "\n\nThis is a follow-up on an application already built. Extract requirements only "
+    "from the NEW user messages; the earlier conversation and the numbered requirements "
+    "the app was built against are context, used to resolve references such as 'retry', "
+    "'yes', 'the same for the other screen'.\n"
+    "- A new message that asks again for a numbered requirement, or changes it, gives a "
+    "requirement in its new form; put the number in 'replaces'. A numbered requirement a "
+    "new message removes or no longer wants goes in 'replaces' too.\n"
+    "- 'continues_earlier_work' is true when the new messages ask to retry, continue, "
+    "finish or fix what was asked before without stating what to change; then the "
+    "requirement list may be empty."
+)
+
+_SUBMIT_FOLLOW_UP_TOOL = {
+    "name": "submit_follow_up_requirements",
+    "description": "Submit the requirements the new user messages state.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "requirements": _SUBMIT_REQUIREMENTS_TOOL["input_schema"]["properties"]["requirements"],
+            "replaces": {"type": "array", "items": {"type": "integer"},
+                         "description": "Numbers of the listed requirements a new message changes, "
+                                        "asks for again or removes."},
+            "continues_earlier_work": {"type": "boolean"},
+        },
+        "required": ["requirements", "replaces", "continues_earlier_work"],
+    },
+}
+
+
+def _first_message(instructions: str) -> str:
+    """The user's request before any later message."""
+    return original_request(instructions).split(LATER_REQUEST_MARKER, 1)[0].strip()
+
+
+def later_messages(instructions: str) -> list[str]:
+    """The user's messages after the first one, oldest first (``LATER_REQUEST_MARKER`` sections)."""
+    messages = []
+    for part in original_request(instructions).split(LATER_REQUEST_MARKER)[1:]:
+        head, sep, rest = part.strip().partition("\n\n")
+        messages.append((rest if sep and head.startswith("This later request takes precedence") else part).strip())
+    return messages
+
+
+def extract_follow_up(previous: list[dict], instructions: str, previous_instructions: str | None,
+                      llm_client, *, can_call: Callable[[], bool] | None = None) -> dict | None:
+    """What the user's messages since the previous run ask of the app ``previous`` describes.
+
+    The new messages are the later messages of ``instructions`` after those it shares, from the
+    start, with ``previous_instructions`` (the previous run's); when there are none, nothing is
+    new if the first message is unchanged, else the newest message is. Returns
+    ``{"requirements", "replaces", "continues"}``: requirements numbered from 1, the ids of
+    ``previous`` a new message changes, asks for again or removes, and whether the messages only
+    ask to retry or finish earlier work. When the new messages are empty or are only the previous
+    run's newest message, that is decided without a call. None when no real provider is available
+    or the call failed.
+    """
+    validate_specification(instructions)
+    if not _is_real_provider(llm_client):
+        return None
+    seen, messages = later_messages(previous_instructions or ""), later_messages(instructions)
+    # A retry is sent but not kept in the conversation, so only the shared start was the previous run's.
+    shared = next((i for i, (a, b) in enumerate(zip(seen, messages)) if a != b), min(len(seen), len(messages)))
+    earlier_messages, fresh = messages[:shared], messages[shared:]
+    same_start = _first_message(instructions) == _first_message(previous_instructions or "")
+    new = fresh or [latest_user_message(instructions)]
+    if (not fresh and same_start) or not any(new) or new == [latest_user_message(previous_instructions or "")]:
+        return {"requirements": [], "replaces": set(), "continues": True}
+    earlier = _first_message(instructions)
+    prompt = "\n\n".join([
+        "## The earlier conversation (context only)", earlier, *earlier_messages,
+        "## Requirements the app was built against", render_requirements(previous),
+        "## The new user messages", *(f"{n}. {message}" for n, message in enumerate(new, 1)),
+    ])
+    payload = _call_with_tool(llm_client, _FOLLOW_UP_SYSTEM_PROMPT, prompt, _SUBMIT_FOLLOW_UP_TOOL,
+                              can_call=can_call)
+    if not payload or not isinstance(payload.get("requirements"), list):
+        return None
+    known = {item["id"] for item in previous}
+    replaces = payload.get("replaces")
+    return {
+        "requirements": _requirement_items(payload["requirements"]),
+        "replaces": {rid for rid in map(_verdict_id, replaces if isinstance(replaces, list) else [])
+                     if rid in known},
+        "continues": payload.get("continues_earlier_work") is True,
+    }
+
+
+def stated_requirements_ledger(stated: list[dict], instructions: str, *,
+                               newest_states_nothing_new: bool = False) -> list[dict] | None:
+    """The ledger built from the requirements the editor sent, or None when they
+    do not cover the request and it must be extracted instead.
+
+    ``stated`` items are ``{"id", "text", "kind"}`` and an optional ``met_by``
+    (kept when it is one of :data:`MET_BY`): the modeling assistant
+    extracted them from the user's request, and ``id`` is their artifact id in
+    the project trace. Each ledger item keeps it as ``ref``, so a verdict names
+    the requirement the trace links to model elements. Only the
+    :data:`JUDGED_KINDS` are judged.
+
+    The assistant extracts from the user's first request only. A request with
+    later messages (``LATER_REQUEST_MARKER``) states requirements the list
+    lacks, so the whole request is extracted instead; with
+    ``newest_states_nothing_new`` (the assistant's verdict on a retry or a fix)
+    the newest one is not counted.
+    """
+    later = later_messages(instructions)
+    if later[:-1] if newest_states_nothing_new else later:
+        logger.warning(
+            "Requirements ledger: the request has later messages that the %d requirements "
+            "from the editor do not cover; extracting from the whole request instead", len(stated),
+        )
+        return None
+    judged = [item for item in stated if item["kind"] in JUDGED_KINDS]
+    requirements = [{"id": rid, "text": item["text"], "kind": item["kind"], "ref": item["id"],
+                     **({MET_BY_FIELD: item[MET_BY_FIELD]} if item.get(MET_BY_FIELD) in MET_BY else {})}
+                    for rid, item in enumerate(judged, start=1)]
+    # The assistant's extraction stops at the same cap as ours: a full list may
+    # have left the specification's tail out.
+    if len(stated) >= MAX_REQUIREMENTS:
+        requirements.append(_incomplete_extraction_item(len(requirements) + 1))
     return requirements
 
 
@@ -728,10 +955,12 @@ def render_requirements(requirements: list[dict] | None) -> str:
 
 def _digest_priority(rel: str, shares: dict[str, float | None] | None = None) -> tuple[int, float, str]:
     """Digest order: schemas, backend code by the share of it the agent wrote, untouched
-    generator output, pages and components, the rest. With no stored generator output
+    generator output, pages and components, the rest, stylesheets. With no stored generator output
     (``shares`` empty) routers come before the other Python modules."""
     if rel.endswith(("pydantic_classes.py", "sql_alchemy.py")):
         return (0, 0.0, rel)
+    if _is_stylesheet(rel):
+        return (6, 0.0, rel)
     router = "/routers/" in rel or rel.startswith("routers/")
     if router or rel.endswith(".py"):
         if not shares:
@@ -800,7 +1029,7 @@ _REGION_VIEW_MAX_SHARE = 0.5
 _REGION_CONTEXT_LINES = 3
 
 
-def _changed_regions(compacted: str, generated: str) -> str:
+def _changed_regions(compacted: str, generated: str, rel: str = "") -> str:
     """``compacted`` (a :func:`_compact` file) without its runs of lines unchanged from
     ``generated`` beyond ``_REGION_CONTEXT_LINES`` of a change; each run left out is
     marked, and so is each place where generator lines were removed."""
@@ -808,7 +1037,7 @@ def _changed_regions(compacted: str, generated: str) -> str:
     changed = [True] * len(lines)
     removed: dict[int, int] = {}  # index in ``lines`` -> generator lines removed just before it
     old_end = 0
-    for old_start, start, size in matching_lines(_compact(generated).splitlines(), lines):
+    for old_start, start, size in matching_lines(_compact(generated, rel).splitlines(), lines):
         if old_start > old_end:
             removed[start] = removed.get(start, 0) + old_start - old_end
         changed[start:start + size] = [False] * size
@@ -902,12 +1131,14 @@ def _class_homes(files: dict[str, str], cache: dict) -> dict[str, set[str]]:
     return cache["classes"]
 
 
-def _compact(content: str) -> str:
-    """Drop blank and comment-only lines; the judge reads code, not prose."""
+def _compact(content: str, rel: str = "") -> str:
+    """Drop blank and comment-only lines; the judge reads code, not prose. In a
+    stylesheet a line starting with ``#`` is an id selector."""
+    comments = ("//",) if _is_stylesheet(rel) else ("#", "//")
     kept = []
     for line in content.splitlines():
         stripped = line.strip()
-        if not stripped or stripped.startswith(("#", "//")):
+        if not stripped or stripped.startswith(comments):
             continue
         kept.append(line.rstrip())
     return "\n".join(kept)
@@ -939,37 +1170,48 @@ def focus_paths_in_turn(path_lists: list[list[str]]) -> list[str]:
     return ordered
 
 
+def _glob_matches(pattern: str, rel: str) -> bool:
+    """``rel`` matches a judge's glob (``src/**/*.css``), from the root or as a suffix;
+    ``**/`` may stand for no folder."""
+    return any(fnmatch.fnmatchcase(rel, form) or fnmatch.fnmatchcase(rel, "*/" + form)
+               for form in {pattern, pattern.replace("**/", "")})
+
+
 def resolved_focus_paths(files: dict[str, str], focus_paths: list | None) -> list[str]:
     """The first ten distinct judged files the focus paths name, each unambiguously (a path
-    or a suffix). Capped after resolving: ten copies of one path left the rest out (r13-p81)."""
-    resolved: list[str] = []
+    or a suffix), then the files globs match in the slots left: a broad glob must not crowd
+    out a named file. Capped after resolving: ten copies of one path left the rest out (r13-p81)."""
+    named: list[str] = []
+    globbed: list[str] = []
     for path in focus_paths or []:
-        if len(resolved) >= _MAX_FOCUS_FILES:
-            break
         if not isinstance(path, str):
             continue
         path = path.strip().replace("\\", "/")
         while path.startswith("./"):
             path = path[2:]
+        if "*" in path:
+            globbed += sorted(rel for rel in files if _glob_matches(path, rel))
+            continue
         candidates = [path] if path in files else [rel for rel in files if rel.endswith("/" + path)]
-        if path and len(candidates) == 1 and candidates[0] not in resolved:
-            resolved.append(candidates[0])
-    return resolved
+        if path and len(candidates) == 1:
+            named.append(candidates[0])
+    return list(dict.fromkeys(named + globbed))[:_MAX_FOCUS_FILES]
 
 
-def build_app_digest_and_gaps(output_dir: str, *,
-                              focus_paths: list[str] | None = None) -> tuple[str, frozenset[str]]:
+def build_app_digest_and_gaps(output_dir: str, *, focus_paths: list[str] | None = None,
+                              stylesheets: bool = False) -> tuple[str, frozenset[str]]:
     """:func:`build_app_digest`, and the source files it left out or cut for the budget.
 
     The gaps are what the judge could not read in full: a verdict about them is
     not a fair one. Files never shown (``_DIGEST_SKIP_NAMES``) and the files a
-    focused digest leaves out on purpose are not gaps.
+    focused digest leaves out on purpose are not gaps; stylesheets a whole-app digest
+    leaves out (``stylesheets`` off) are.
     """
-    digest, gaps, _shown = build_app_digest_details(output_dir, focus_paths=focus_paths)
+    digest, gaps, _shown = build_app_digest_details(output_dir, focus_paths=focus_paths, stylesheets=stylesheets)
     return digest, gaps
 
 
-def build_app_digest_details(output_dir: str, *, focus_paths: list[str] | None = None
+def build_app_digest_details(output_dir: str, *, focus_paths: list[str] | None = None, stylesheets: bool = False
                              ) -> tuple[str, frozenset[str], frozenset[str]]:
     """:func:`build_app_digest_and_gaps`, and the files the digest shows (a focused one
     always shows the schema files too)."""
@@ -987,16 +1229,20 @@ def build_app_digest_details(output_dir: str, *, focus_paths: list[str] | None =
     contents: list[tuple[str, str]] = []
     unreadable = []
     omitted_by_focus: list[str] = []
+    styles_left_out: list[str] = []
     for rel, full in files.items():
         if focused and rel not in focused and _digest_priority(rel)[0] != 0:
             omitted_by_focus.append(rel)
+            continue
+        if not focused and not stylesheets and _is_stylesheet(rel):
+            styles_left_out.append(rel)
             continue
         if Path(full).name in _DIGEST_SKIP_NAMES:
             unreadable.append(rel)
             continue
         try:
             with open(full, "r", encoding="utf-8-sig", errors="ignore") as fh:
-                content = _compact(fh.read())
+                content = _compact(fh.read(), rel)
         except OSError:
             unreadable.append(rel)
             continue
@@ -1010,7 +1256,7 @@ def build_app_digest_details(output_dir: str, *, focus_paths: list[str] | None =
         if (whole > source_budget and rel not in focused and rel in baselines
                 and _digest_priority(rel)[0] != 0 and shares[rel] is not None
                 and 0 < shares[rel] < _REGION_VIEW_MAX_SHARE):
-            content = _changed_regions(content, baselines[rel])
+            content = _changed_regions(content, baselines[rel], rel)
             regions.add(rel)
         header = f"### {rel}\n"
         # The cited files share the budget: one large file must not crowd out the next.
@@ -1028,11 +1274,11 @@ def build_app_digest_details(output_dir: str, *, focus_paths: list[str] | None =
     if not focused:  # pages and components first, then the rest of the non-Python source
         ui_budget = int(source_budget * _DIGEST_UI_SHARE)
         for key, rel, chunk, _ in entries:
-            if key[1] >= 4 and total + len(chunk) + 2 <= ui_budget:
+            if 4 <= key[1] <= 5 and total + len(chunk) + 2 <= ui_budget:
                 reserved.add(rel)
                 total += len(chunk) + 2
-    parts: list[str] = []
-    omitted = unreadable + omitted_by_focus
+    kept: list[tuple[str, str]] = []
+    omitted = unreadable + omitted_by_focus + styles_left_out
     truncated_paths = []
     over_budget = []
     shown: list[str] = []
@@ -1043,10 +1289,15 @@ def build_app_digest_details(output_dir: str, *, focus_paths: list[str] | None =
                 over_budget.append(rel)
                 continue
             total += len(chunk) + 2
-        parts.append(chunk)
+        kept.append((rel, chunk))
         shown.append(rel)
         if truncated or rel in regions:
             truncated_paths.append(rel)
+    # The written shares above pick what fits. Shown cited files first, then by
+    # kind and path, which no edit changes, so a repeated judge call can reuse
+    # the cached prompt up to the first file that changed.
+    parts = [chunk for _, chunk in sorted(
+        kept, key=lambda item: (item[0] not in focused, *_digest_priority(item[0])))]
     footer = (
         "\n\n## Digest coverage (not application source)\n"
         f"Files shown: {len(parts)}; truncated excerpts: {len(truncated_paths)}; "
@@ -1062,14 +1313,15 @@ def build_app_digest_details(output_dir: str, *, focus_paths: list[str] | None =
     )
     if len(footer) > footer_budget:
         footer = footer[:max(0, footer_budget - 42)] + "\n[Coverage path listing also truncated.]\n"
-    return "\n\n".join(parts) + footer[:footer_budget], frozenset(over_budget + truncated_paths), frozenset(shown)
+    return "\n\n".join(parts) + footer[:footer_budget], frozenset(
+        over_budget + truncated_paths + styles_left_out), frozenset(shown)
 
 
 def named_digest_gaps(verdict: dict, gaps: frozenset[str]) -> list[str]:
     """The digest gaps a verdict's inspection paths, citations or note name.
 
-    A gap counts when its path appears in the note, when a named path is it or a
-    suffix of it (``risk_service.py`` for ``backend/risk_service.py``), or when its
+    A gap counts when its path appears in the note, when a named path is it, a suffix
+    of it (``risk_service.py`` for ``backend/risk_service.py``) or a glob matching it, or when its
     file name appears in the note and no other gap has that name.
     """
     named = [path.strip().replace("\\", "/").removeprefix("./")
@@ -1078,7 +1330,8 @@ def named_digest_gaps(verdict: dict, gaps: frozenset[str]) -> list[str]:
     note = str(verdict.get("note") or "")
     names = [Path(rel).name for rel in gaps]
     return [rel for rel in sorted(gaps)
-            if rel in note or any(rel == path or rel.endswith("/" + path) for path in named)
+            if rel in note or any(rel == path or rel.endswith("/" + path)
+                                  or ("*" in path and _glob_matches(path, rel)) for path in named)
             or (names.count(Path(rel).name) == 1
                 and re.search(r"(?<![\w.-])" + re.escape(Path(rel).name) + r"(?![\w-])", note))]
 
@@ -1131,6 +1384,17 @@ def cited_paths(evidence) -> list[str]:
     return [str(evidence or "").split(":", 1)[0].strip()]
 
 
+def _verdict_identity(rid: int, requirement: dict) -> dict:
+    """What a verdict repeats of its requirement: id, text, kind and, for a
+    requirement the editor sent, its trace artifact id (``ref``)."""
+    identity = {"id": rid, "text": requirement["text"], "kind": requirement.get("kind", "")}
+    if requirement.get("ref"):
+        identity["ref"] = requirement["ref"]
+    if requirement.get(MET_BY_FIELD) in MET_BY:
+        identity[MET_BY_FIELD] = requirement[MET_BY_FIELD]
+    return identity
+
+
 def _judge_once(llm_client, judge_prompt: str, by_id: dict[int, dict], *,
                 use_planning_model: bool, can_call: Callable[[], bool] | None = None) -> dict[int, dict]:
     """One judge call parsed into ``{id: verdict}``; empty when the call
@@ -1148,9 +1412,7 @@ def _judge_once(llm_client, judge_prompt: str, by_id: dict[int, dict], *,
             continue
         status = str(item.get("status", "")).lower()
         verdicts[rid] = {
-            "id": rid,
-            "text": by_id[rid]["text"],
-            "kind": by_id[rid].get("kind", ""),
+            **_verdict_identity(rid, by_id[rid]),
             "status": status if status in _STATUSES else "unverified",
             "evidence": _parse_evidence(item.get("evidence")),
             "note": str(item.get("note") or "").strip(),
@@ -1184,14 +1446,16 @@ def judge_coverage(requirements: list[dict], digest: str, llm_client, *,
                  "rejected_evidence": render_evidence(item.get("evidence"))[:1500],
                  "verification_feedback": str(item.get("note") or "")[:1500]}
                 for item in previous_verdicts or []
-                if isinstance(item, dict) and item.get("id") in requested_ids][:_MAX_REQUIREMENTS]
+                if isinstance(item, dict) and item.get("id") in requested_ids][:MAX_REQUIREMENTS]
     repair_context = ("## Previous citation verification (diagnostic data, not application code)\n\n"
                       + json.dumps(feedback, ensure_ascii=True)[:16000] + "\n\n") if feedback else ""
     by_id = {r["id"]: r for r in requirements}
     verdicts: dict[int, dict] = {}
     if application_requirements:
-        judge_prompt = (authority + repair_context + f"## Requirements\n\n{listing}"
-                        f"\n\n## Generated code\n\n{digest}")
+        # Most stable first, so a repeated call can reuse the cached prefix:
+        # the request, the code, then the feedback and the requirements.
+        judge_prompt = (authority + f"## Generated code\n\n{digest}\n\n"
+                        + repair_context + f"## Requirements\n\n{listing}")
         # The first attempt uses the planning model first; a
         # retry forces the primary model straight away (see _call_with_tool)
         # instead of repeating the exact call that just failed or came back
@@ -1229,13 +1493,13 @@ def judge_coverage(requirements: list[dict], digest: str, llm_client, *,
             # No code citation (or model claim) can discharge incomplete
             # extraction. Only completing the extraction can remove this gate.
             verdicts[rid] = {
-                "id": rid, "text": req["text"], "kind": "verification",
+                **_verdict_identity(rid, req),
                 "status": "unverified", "evidence": "",
                 "note": "requirement extraction completeness has not been established",
             }
             continue
         verdicts.setdefault(rid, {
-            "id": rid, "text": req["text"], "kind": req.get("kind", ""),
+            **_verdict_identity(rid, req),
             "status": "unverified", "evidence": "", "note": "no verdict returned",
         })
     return [verdicts[rid] for rid in sorted(verdicts)]
@@ -1375,22 +1639,43 @@ def _comment_only_lines(source: str, suffix: str) -> set[int]:
             if original.strip() and not visible.strip()}
 
 
-def _python_citation(tree: ast.AST | None, lineno: int, kind: str, text: str) -> tuple[ast.stmt | None, str]:
-    """Check the cited statement's role; this is not a semantic proof."""
+# Why a located, whole cited line is not an implementation at all, as opposed to a
+# citation of the wrong shape (punctuation, a decorator, a fragment) or a line that
+# does not show enforcement on its own. A verdict whose every cited line fails with
+# one of these is refuted (``EVIDENCE_REFUTED``): a blocker, not "not confirmed".
+_NO_PARSE = "the cited Python source does not parse"
+_NOT_CODE = "the cited line is a comment, docstring or placeholder"
+# An import names code without showing it: the rule may well be in what it imports.
+_IMPORT = "the cited line is an import; cite the code it imports"
+_COMMENT = "the cited line is a comment, not an implementation"
+_NOOP_VALIDATOR = "the cited validator is a no-op: it does not check or enforce a rule"
+_SCAFFOLD = "the cited implementation is an unimplemented scaffold"
+_ACTION_SCAFFOLD = "the cited action body is an unimplemented scaffold"
+_DECLARATION_ONLY = "the cited declaration does not perform the required behaviour"
+# Not _DECLARATION_ONLY nor _IMPORT: a column default, a ``column_property`` or an imported
+# helper can be the implementation, so neither proves the requirement is not met.
+_ROLE_FAILURES = frozenset({_NO_PARSE, _NOT_CODE, _COMMENT, _NOOP_VALIDATOR, _SCAFFOLD, _ACTION_SCAFFOLD})
+
+
+def _python_citation(tree: ast.AST | None, lineno: int, kind: str, met_by: str) -> tuple[ast.stmt | None, str]:
+    """Check the cited statement's role; this is not a semantic proof. ``met_by`` as in
+    :func:`_met_by`: a column default meets a transition only when a declaration does."""
     if tree is None:
-        return None, "the cited Python source does not parse"
+        return None, _NO_PARSE
     enclosing = [n for n in ast.walk(tree) if isinstance(n, ast.stmt)
                  and _statement_start(n) <= lineno <= n.end_lineno]
     if not enclosing:
         return None, "the cited line is not an executable statement"
     statement = min(enclosing, key=lambda n: n.end_lineno - _statement_start(n))
-    if isinstance(statement, (ast.Import, ast.ImportFrom, ast.Pass)) or (
+    if isinstance(statement, (ast.Import, ast.ImportFrom)):
+        return statement, _IMPORT
+    if isinstance(statement, ast.Pass) or (
         isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Constant)
     ):
-        return statement, "the cited line is a comment, docstring, import or placeholder"
+        return statement, _NOT_CODE
     functions = [n for n in enclosing if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
     if kind in {"validation", "rule", "uniqueness", "implementation"} and any(_noop_validator(fn) for fn in functions):
-        return statement, "the cited validator is a no-op: it does not check or enforce a rule"
+        return statement, _NOOP_VALIDATOR
     if kind == "implementation":
         # Checklist evidence records existing source, not behavioral acceptance.
         # Real framework declarations are valid implementation evidence; known
@@ -1398,15 +1683,14 @@ def _python_citation(tree: ast.AST | None, lineno: int, kind: str, text: str) ->
         body = min(functions, key=lambda n: n.end_lineno - n.lineno).body if functions else (
             statement.body if isinstance(statement, ast.ClassDef) else None)
         if _unimplemented_raise(statement) or body is not None and _stub_body(body):
-            return statement, "the cited implementation is an unimplemented scaffold"
+            return statement, _SCAFFOLD
     if kind in _BEHAVIOURAL_KINDS:
         if not functions:
             # Real declarative defaults / database expressions can implement
             # these behaviours; a bare enum or required input cannot.
             value = getattr(statement, "value", None)
             if isinstance(statement, (ast.Assign, ast.AnnAssign)) and isinstance(value, ast.Call):
-                if (kind == "transition" and any(word in text.lower() for word in (
-                        "start", "begin", "initial", "default"))
+                if (kind == "transition" and met_by == "declaration"
                         and any(k.arg in {"default", "default_factory", "server_default"}
                                 for k in value.keywords)):
                     return statement, ""
@@ -1417,10 +1701,10 @@ def _python_citation(tree: ast.AST | None, lineno: int, kind: str, text: str) ->
                     ) for n in ast.walk(value)
                 ):
                     return statement, ""
-            return statement, "the cited declaration does not perform the required behaviour"
+            return statement, _DECLARATION_ONLY
         function = min(functions, key=lambda n: n.end_lineno - n.lineno)
         if _stub_body(function.body) or _unimplemented_raise(statement):
-            return statement, "the cited action body is an unimplemented scaffold"
+            return statement, _ACTION_SCAFFOLD
     return statement, ""
 
 
@@ -1494,10 +1778,13 @@ def _span_failure(item: dict, source: _Source, first_line: int, lineno: int, quo
     def-and-body quote, the same statement for a formatted call.
     """
     if first_line in source.comments or lineno in source.comments:
-        return "the cited line is a comment, not an implementation"
+        return _COMMENT
+    if not re.search(r"\w", "".join(source.bare[first_line - 1:lineno])):
+        return "the cited line is punctuation alone (`{`, `/>`); it identifies no code"
     statement = None
     if source.path.endswith(".py"):
-        statement, reason = _python_citation(source.tree, lineno, item.get("kind", ""), item.get("text", ""))
+        statement, reason = _python_citation(
+            source.tree, lineno, item.get("kind", ""), "declaration" if _met_by_a_declaration(item) else "check")
         if reason:
             return reason
         invalid = next((d for d in source.diagnostics if (
@@ -1508,11 +1795,16 @@ def _span_failure(item: dict, source: _Source, first_line: int, lineno: int, quo
         if invalid:
             return "the cited implementation is invalid: " + invalid["message"]
     kind, text = item.get("kind", ""), item.get("text", "")
-    if (_demands_enforcement(kind, text)
+    if (_demands_enforcement(item)
             and not isinstance(statement, (ast.If, ast.Raise, ast.Assert))
+            # ``return "F" if score < 50 else grade(score)`` decides on a condition as an ``if`` does.
+            and not (statement is not None
+                     and any(isinstance(node, ast.IfExp) for node in ast.walk(statement)))
             and not source.lines[first_line - 1].lstrip().startswith(("if ", "if(", "if\t", "else if "))
             and not any(tok in quote.lower() for tok in _ENFORCEMENT_TOKENS)
-            and not (kind != "uniqueness" and _only_lists_cited_enumeration(text, statement, source.tree))):
+            and not (kind != "uniqueness" and _met_by(item) in ("type", None)
+                     and _only_lists_cited_enumeration(text, statement, source.tree,
+                                                       unlabelled=_met_by(item) is None))):
         return "the cited line declares data; it does not demonstrate enforcement"
     return ""
 
@@ -1563,16 +1855,16 @@ def _field_named(text: str, field: str) -> bool:
     return bool(words) and all(re.search(rf"\b{re.escape(word)}(?:e?s)?\b", text, re.I) for word in words)
 
 
-def _only_lists_cited_enumeration(text: str, statement: ast.stmt | None, tree: ast.AST | None) -> bool:
-    """The requirement's constraint words are values of the enumeration cited.
+def _only_lists_cited_enumeration(text: str, statement: ast.stmt | None, tree: ast.AST | None,
+                                  unlabelled: bool = False) -> bool:
+    """The requirement's values are those of the enumeration cited.
 
     The cited Python statement defines, belongs to or types a field with one
     enumeration of the same file. A field of a class of that file is of that
     enumeration and is the one the requirement names (the cited field, when one
-    is cited). The requirement names every value of the enumeration, lists no
-    other value beside them, and states no constraint once they are taken out.
-    The type then refuses any other value, which is the enforcement. "Must not
-    go from closed back to open" names the values too, and still needs its check."""
+    is cited). The requirement names every value of the enumeration and lists no
+    other value beside them. The type then refuses any other value, which is the
+    enforcement of an item a type meets (:func:`_met_by`)."""
     if statement is None or tree is None:
         return False
     enumerations = {
@@ -1598,9 +1890,11 @@ def _only_lists_cited_enumeration(text: str, statement: ast.stmt | None, tree: a
     spans = sorted(match.span() for member in members for match in member.finditer(text))
     if not _lists_only_members(text, spans):
         return False
-    for member in members:
-        text = member.sub(" ", text)
-    return not _states_constraint(text)
+    if unlabelled:  # as before the label: no constraint stated beside the listed values
+        for member in members:
+            text = member.sub(" ", text)
+        return not _UNLABELLED_CONSTRAINT_WORDS.search(text)
+    return True
 
 
 _UNMATCHED_NOTE_CHARS = 80
@@ -1610,7 +1904,7 @@ def _as_written(raw: str, fragment: str, limit: int = _UNMATCHED_NOTE_CHARS) -> 
     """``fragment`` (a whitespace-free quote part) as the judge wrote it in
     ``raw``, clipped, so a re-judge can see which part to correct."""
     kept = [i for i, char in enumerate(raw) if not char.isspace()]
-    at = "".join(raw[i] for i in kept).replace("'", '"').find(fragment) if fragment else -1
+    at = _ascii_quotes("".join(raw[i] for i in kept)).find(fragment) if fragment else -1
     text = " ".join(raw[kept[at]:kept[at + len(fragment) - 1] + 1].split()) if at >= 0 else fragment
     return text if len(text) <= limit else text[:limit - 3] + "..."
 
@@ -1743,7 +2037,7 @@ def _collapsed_text(full: str, cache: dict) -> str:
     if key not in cache:
         try:
             with open(full, "r", encoding="utf-8-sig", errors="ignore") as handle:
-                cache[key] = _collapse(handle.read().replace("'", '"'))
+                cache[key] = _collapse(_ascii_quotes(handle.read()))
         except OSError:
             cache[key] = ""
     return cache[key]
@@ -1912,6 +2206,29 @@ def _annotates(source: _Source, end: int, starts: set[int]) -> bool:
                                    for line in source.lines[end:start - 1]) for start in starts)
 
 
+_PATH_UNRESOLVED = "the cited source path is missing, excluded or ambiguous"
+
+
+def _cited_file_missing(path: str, raw_quote: str, output_dir: str, files: dict[str, str], parsed: dict,
+                        quote_cache: dict, sqlite: bool) -> bool:
+    """The citation names no file of the app, none is on disk at that path, and its code
+    is in no judged file: invented evidence, not a misquote or a file the digest left out."""
+    rel = path.strip().replace("\\", "/")
+    quote = _evidence_quote(raw_quote)
+    if (not rel or not quote or rel.startswith("/") or ".." in rel.split("/") or os.path.isabs(rel)
+            or _resolve_cited_path(rel, quote, files, quote_cache)
+            or os.path.exists(os.path.join(output_dir, rel))):
+        return False
+    if any(quote in _collapsed_text(full, quote_cache) for full in files.values()):
+        return False
+    # Nor a near match anywhere: a paraphrase of real code under a wrong path is a misquote.
+    for rel, full in files.items():
+        source = _load_source(full, parsed, sqlite)
+        if _where_the_quote_leaves(quote, source, rel, raw_quote, quote_cache)[1]:
+            return False
+    return True
+
+
 def _locate_decorator(path: str, raw_quote: str, files: dict[str, str], parsed: dict,
                       quote_cache: dict, sqlite: bool) -> tuple[list, str, bool]:
     """A quote that starts with decorators (annotations): located in the file it names
@@ -1929,7 +2246,7 @@ def _locate_decorator(path: str, raw_quote: str, files: dict[str, str], parsed: 
                 break
     candidates = _resolve_cited_path(path, "", files, quote_cache)
     if len(candidates) != 1:
-        return [], "the cited source path is missing, excluded or ambiguous", False
+        return [], _PATH_UNRESOLVED, False
     source = _load_source(candidates[0], parsed, sqlite)
     quoted = _normalise_quote(head)
     decorators = _decorator_dumps(head) if source.tree is not None else None
@@ -1969,7 +2286,7 @@ def _locate_citation(path: str, raw_quote: str, files: dict[str, str], parsed: d
     candidates = _resolve_cited_path(path, quoted, files, quote_cache)
     if len(candidates) != 1:
         elsewhere = "" if candidates else _found_elsewhere(quoted, None, files, parsed, quote_cache, sqlite)
-        return [], "the cited source path is missing, excluded or ambiguous" + (
+        return [], _PATH_UNRESOLVED + (
             f": {elsewhere}" if elsewhere else ""), bool(elsewhere)
     source = _load_source(candidates[0], parsed, sqlite)
     spans = list(_quote_spans(quoted, source))
@@ -1983,7 +2300,10 @@ def _locate_citation(path: str, raw_quote: str, files: dict[str, str], parsed: d
     if not spans:
         located = []
         literals: list[str] = []
-        for part_path, part, cut in _citation_parts(raw_quote, path, files):
+        parts = _citation_parts(raw_quote, path, files)
+        if not parts and any(_in_code(quoted, source, i) for i in range(len(source.lines))):
+            located = [(source, quoted, [])]  # too short to split, but code of the file
+        for part_path, part, cut in parts:
             homes = _resolve_cited_path(part_path, part, files, quote_cache)
             part_source = _load_source(homes[0], parsed, sqlite) if len(homes) == 1 else None
             spans = list(_quote_spans(part, part_source, cut)) if part_source else []
@@ -2008,6 +2328,9 @@ def _locate_citation(path: str, raw_quote: str, files: dict[str, str], parsed: d
         # The role check reads the matched source without comments, never the quote:
         # a comment the judge wrote into it is not code.
         return [(source, "".join(source.bare[first - 1:last]), [(first, last)]) for first, last in syntax], "", False
+    if located:
+        # Code of the file but no whole line (a quote cut short): it proves no role, and is not invented.
+        return located, "", False
     return _not_found(unmatched, unmatched_in[0], unmatched_in[1].strip(), raw_quote,
                       files, parsed, quote_cache, sqlite)
 
@@ -2038,7 +2361,7 @@ def verify_evidence(verdicts: list[dict], output_dir: str, imports: ImportIndex 
     checked: list[dict] = []
     for verdict in verdicts:
         item = dict(verdict)
-        for key in (*VERDICT_FINGERPRINT_KEYS, EVIDENCE_UNLOCATED):
+        for key in (*VERDICT_FINGERPRINT_KEYS, EVIDENCE_UNLOCATED, CITED_FRAGMENT_LINES, EVIDENCE_REFUTED):
             item.pop(key, None)
         if item.get("kind") == "verification":
             item.update(status="unverified", evidence="",
@@ -2056,6 +2379,7 @@ def verify_evidence(verdicts: list[dict], output_dir: str, imports: ImportIndex 
         # An empty citation is no citation, not one of absent code (r13-p81 R8).
         citations = [(path, quote) for path, quote in citations if quote.replace("\\n", "").strip()]
         located, reason = [], "" if citations else "no source line is cited"
+        missing_file, role_failures = False, []
         for index, (path, raw_quote) in enumerate(citations, 1):
             found, failure, malformed = _locate_citation(path, raw_quote, files, parsed, quote_cache, sqlite)
             if failure:
@@ -2063,6 +2387,8 @@ def verify_evidence(verdicts: list[dict], output_dir: str, imports: ImportIndex 
                 reason = reason or (f"citation {index} ({path.strip()}): {failure}" if structured else failure)
                 item[EVIDENCE_UNLOCATED] = CITATION_MALFORMED if malformed and item.get(
                     EVIDENCE_UNLOCATED, CITATION_MALFORMED) == CITATION_MALFORMED else CITATION_ABSENT
+                missing_file = missing_file or (failure == _PATH_UNRESOLVED and _cited_file_missing(
+                    path, raw_quote, output_dir, files, parsed, quote_cache, sqlite))
                 if item[EVIDENCE_UNLOCATED] == CITATION_ABSENT:
                     break
                 continue
@@ -2078,13 +2404,30 @@ def verify_evidence(verdicts: list[dict], output_dir: str, imports: ImportIndex 
                     reason = _span_failure(item, part_source, first_line, lineno, part)
                     if not reason:
                         break
+                    role_failures.append(reason)
                 if not reason:
                     break
                 if structured and spans:
                     reason = f"citation {index} ({path.strip()}): {reason}"
         if reason:
+            homes = _fragment_homes([(source, part) for _, _, source, part, spans in located if not spans], rel_of)
+            for rel, lines in homes:
+                reason += (f"; a cited part is part of {rel} line{'s' if len(lines) > 1 else ''} "
+                           + ", ".join(map(str, lines[:3])) + (", ..." if len(lines) > 3 else "") + "; cite that whole line")
+            if homes and not item.get(EVIDENCE_UNLOCATED) and not any(spans for *_, spans in located):
+                # Only fragments of real code: the judge misquoted lines that exist.
+                item[EVIDENCE_UNLOCATED] = CITATION_MALFORMED
             item["status"] = "unverified"
             item["note"] = " ".join(f"{item.get('note', '')} [{reason}]".split())
+            if missing_file:
+                item[EVIDENCE_REFUTED] = REFUTED_MISSING_FILE
+            elif (role_failures and set(role_failures) <= _ROLE_FAILURES and not item.get(EVIDENCE_UNLOCATED)
+                    and all(spans for *_, spans in located)):
+                # Every cited line was found whole, and none is an implementation.
+                item[EVIDENCE_REFUTED] = REFUTED_ROLE
+            pointed = sorted(f"{rel}:{lines[0]}" for rel, lines in homes if len(lines) == 1)
+            if pointed:
+                item[CITED_FRAGMENT_LINES] = pointed
         else:
             cited = {rel_of[part_source.path] for _, _, part_source, _, _ in located}
             if imports is None:
@@ -2099,11 +2442,55 @@ def verify_evidence(verdicts: list[dict], output_dir: str, imports: ImportIndex 
 VERDICT_FINGERPRINT_KEYS = ("cited_file_hashes", "dependency_file_hashes")
 # Set on a verdict with a citation not found in the file it names. CITATION_MALFORMED:
 # every such citation's code exists (a near match in the file, or the line verbatim in
-# one other file), so only the judge can correct it. CITATION_ABSENT: some cited code
-# exists nowhere, so implementing it may be the fix.
+# one other file), so its citation-repair round can correct it. CITATION_ABSENT: some
+# cited code exists nowhere, so implementing it may be the fix.
 EVIDENCE_UNLOCATED = "evidence_unlocated"
 CITATION_MALFORMED = "near_match"
 CITATION_ABSENT = "absent"
+# Set on an unverified verdict whose citation was checked and shows the requirement is
+# not implemented there: REFUTED_ROLE, every cited line was found whole and none is an
+# implementation (``_ROLE_FAILURES``); REFUTED_MISSING_FILE, a cited file does not exist
+# and its quoted code is in no file of the app. ``ledger_issues`` reports such a verdict
+# as ``requirement unsupported:``, a blocker; every other unverified one is not confirmed.
+EVIDENCE_REFUTED = "evidence_refuted"
+REFUTED_ROLE = "role"
+REFUTED_MISSING_FILE = "missing_file"
+# Set on an unverified verdict that cites a fragment of code (``_fragment_homes``) found in exactly one line:
+# ["path:line", ...], the lines the fix agent may cite whole in its place.
+CITED_FRAGMENT_LINES = "fragment_lines"
+
+
+def _fragment_homes(fragments: list[tuple[_Source, str]], rel_of: dict[str, str]) -> list[tuple[str, list[int]]]:
+    """(path, lines) of each fragment that identifies code (``_MIN_PART_QUOTE`` characters,
+    a word among them) and the 1-based lines it is code of; ``({`` or ``id=`` identifies none."""
+    homes = {}
+    for source, part in fragments:
+        if len(part) >= _MIN_PART_QUOTE and re.search(r"\w", part):
+            lines = [i + 1 for i in range(len(source.lines)) if _in_code(part, source, i)]
+            if lines:
+                homes.setdefault((rel_of[source.path], tuple(lines)), None)
+    return [(rel, list(lines)) for rel, lines in homes]
+
+
+def cites_fragment_lines(verdict: dict, evidence: list[dict], output_dir: str) -> str:
+    """"" when each ``{path, line}`` of ``evidence`` is located on a line of the verdict's
+    :data:`CITED_FRAGMENT_LINES`: the judge's own citation, completed. Otherwise why not."""
+    pointed = set(verdict.get(CITED_FRAGMENT_LINES) or ())
+    if not pointed:
+        return ("the judge's citation points at no single source line; implement the behaviour "
+                "only if it is really absent")
+    files = _source_files(output_dir)
+    rel_of = {full: rel for rel, full in files.items()}
+    parsed: dict[str, _Source] = {}
+    cache: dict = {}
+    sqlite = workspace_uses_sqlite(output_dir)
+    for citation in evidence:
+        found, failure, _ = _locate_citation(citation["path"], citation["line"], files, parsed, cache, sqlite)
+        if failure or not found or not all(
+                any(f"{rel_of[source.path]}:{n}" in pointed for first, last in spans for n in range(first, last + 1))
+                for source, _, spans in found):
+            return "cite only the whole line(s) the judge's citation quoted part of: " + ", ".join(sorted(pointed))
+    return ""
 
 _JS_SUFFIXES = frozenset({".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts", ".vue", ".svelte", ".astro"})
 # ``from './x'``, ``import './x'``, ``import('./x')``, ``require('./x')``: relative specifiers only.
@@ -2211,8 +2598,9 @@ class ImportIndex:
     def dependencies(self, cited: set[str]) -> set[str]:
         """What a cited file's behaviour rests on beyond its own bytes: its direct
         local imports, and the entry files mounting it (a file importing a cited
-        file that no judged file imports). One level only."""
-        imported = set().union(*(self.imports(rel) for rel in cited))
+        file that no judged file imports). One level only. A stylesheet a page imports is
+        not one: a style edit does not change what the page does."""
+        imported = {rel for rel in set().union(*(self.imports(rel) for rel in cited)) if not _is_stylesheet(rel)}
         entries = {other for rel in cited for other in self.importers(rel) if not self.importers(other)}
         return (imported | entries) - cited
 
@@ -2226,7 +2614,7 @@ def _ancestors(folder: str) -> list[str]:
 
 
 # Cited code no harness check runs (no screen is rendered); any other cited file is backend code.
-_FRONTEND_SUFFIXES = (".js", ".jsx", ".ts", ".tsx", ".vue", ".svelte", ".html", ".css")
+_FRONTEND_SUFFIXES = (".js", ".jsx", ".ts", ".tsx", ".vue", ".svelte", ".html", *sorted(_STYLESHEET_SUFFIXES))
 
 
 def _path_segments(path: str) -> tuple[str, ...]:
@@ -2292,11 +2680,83 @@ _SCREEN_REASONS = {"passed": "the frontend builds", "failed": "the frontend buil
                    "not_run": "the frontend build check did not run", "none": "no frontend"}
 
 
-def _cited_lines(full: str, quotes: list[str]) -> set[int]:
-    """The 1-based lines of a cited file the quotes locate on."""
-    source = _load_source(full, {}, False)
-    return {line for quote in quotes for first, last in _quote_spans(_evidence_quote(quote), source)
-            for line in range(first, last + 1)}
+def _route_ranges(full: str) -> dict[tuple, list[tuple[int, int]]] | None:
+    """Each route of a Python file with the line ranges its request runs: its declaration
+    (decorators and handler, or the ``add_api_route`` call), the handler an
+    ``add_api_route`` names, and the module functions the handler calls or depends on
+    (``Depends(f)``) by name. None when the file cannot be parsed."""
+    try:
+        tree = ast.parse(Path(full).read_text(encoding="utf-8-sig", errors="ignore"))
+    except (OSError, SyntaxError, ValueError, RecursionError):
+        return None
+    defs = {(_statement_start(node), node.end_lineno): node for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    module_functions = {node.name: node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    registrations = {(node.lineno, node.end_lineno): node for node in ast.walk(tree)
+                     if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                     and node.func.attr == "add_api_route"}
+
+    def span(node: ast.AST) -> tuple[int, int]:
+        return _statement_start(node), node.end_lineno
+
+    ranges = {}
+    for route in _declared_routes(full):
+        handler, call = defs.get(route[2:]), registrations.get(route[2:])
+        if call is not None:
+            endpoint = call.args[1] if len(call.args) > 1 else next(
+                (kw.value for kw in call.keywords if kw.arg == "endpoint"), None)
+            handler = module_functions.get(getattr(endpoint, "id", None))
+        own = [route[2:]] + ([span(handler)] if handler is not None and call is not None else [])
+        callees = set()
+        for node in ast.walk(handler) if handler is not None else ():
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                callees.add(node.func.id)
+            if (isinstance(node, ast.Call) and getattr(node.func, "id", getattr(node.func, "attr", None)) == "Depends"
+                    and node.args and isinstance(node.args[0], ast.Name)):
+                callees.add(node.args[0].id)
+        callees -= _local_names(handler) if handler is not None else set()
+        ranges[route] = own + [span(module_functions[name]) for name in sorted(callees)
+                               if name in module_functions and module_functions[name] is not handler]
+    return ranges
+
+
+def _local_names(function: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
+    """The names ``function`` binds itself (parameters, assignments, loop and ``with``
+    targets, nested definitions, imports, ``except`` names): a call of one is not a call
+    of the module function of that name."""
+    names = {arg.arg for arg in ast.walk(function.args) if isinstance(arg, ast.arg)}
+    for node in ast.walk(function):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+            names.add(node.id)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node is not function:
+            names.add(node.name)
+        elif isinstance(node, ast.alias):
+            names.add((node.asname or node.name).split(".")[0])
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            names.add(node.name)
+    return names
+
+
+def _cited_part_lines(full: str, path: str, quote: str, files: dict[str, str], parsed: dict,
+                      cache: dict) -> list[set[int]] | None:
+    """The 1-based lines of ``full`` each located part of a citation is on, as
+    :func:`verify_evidence` locates it; a decorator quoted alone is located on its own line.
+    None for an abridged citation located by its parts with a part too short to check:
+    the parts left may be code several routes share."""
+    located = _locate_citation(path, quote, files, parsed, cache, False)[0]
+    checked = _citation_parts(quote, path, files)
+    if ({part for _, part, _ in located} <= {part for _, part, _ in checked}
+            and len(_citation_parts(quote, path, files, min_part=1)) > len(checked)):
+        return None
+    parts = []
+    for source, part, spans in located:
+        if source.path != full:
+            continue
+        if not spans and part.startswith("@"):
+            spans = _quote_spans(part, source)
+        if spans:
+            parts.append({line for first, last in spans for line in range(first, last + 1)})
+    return parts
 
 
 def with_verification_levels(verdicts: list[dict], output_dir: str, *, frontend_build: str,
@@ -2305,15 +2765,19 @@ def with_verification_levels(verdicts: list[dict], output_dir: str, *, frontend_
     the screens half reported apart.
 
     The API half is exercised when a passing ``test_api`` call (``exercised``: method, path)
-    hit the route a cited line is on (its decorator or handler), or, when no cited line is
-    on a route, any route of a cited backend file; that call is named. No harness check
+    hit a route whose request runs every located part of a citation (:func:`_route_ranges`:
+    its decorator or handler, or a function of the file the handler calls or depends on);
+    that call is named. A citation no route runs (a model, an import) is found in code,
+    whatever ran, and so is cited code whose routes cannot be read (not Python). No harness check
     renders a screen, so a cited frontend file is never exercised (``frontend_build``:
     passed, failed, not_run or none says why). ``verification``: ``verified`` when every
     cited half was exercised, ``api_verified`` when the API half was and screens are cited,
     ``unverified`` otherwise. Never a blocker.
     """
     files = _source_files(output_dir)
-    routes_cache: dict[str, set] = {}
+    routes_cache: dict[str, dict | None] = {}
+    parsed: dict[str, _Source] = {}
+    quote_cache: dict = {}
     leveled = []
     for item in verdicts:
         if item.get("status") != "implemented":
@@ -2328,19 +2792,31 @@ def with_verification_levels(verdicts: list[dict], output_dir: str, *, frontend_
         backend = [(path, quote) for path, quote in cited if not path.lower().endswith(_FRONTEND_SUFFIXES)]
         halves, api_exercised = [], False
         if backend:
-            on_cited, in_files = set(), set()
+            on_cited, unreadable, ambiguous = set(), False, False
             for path, quote in backend:
-                full = files.get(path) or next((v for k, v in files.items() if k.endswith("/" + path)), None)
-                if full and full.endswith(".py"):
-                    routes = routes_cache.setdefault(full, _declared_routes(full))
-                    lines = _cited_lines(full, [quote])
-                    in_files |= routes
-                    on_cited |= {route for route in routes if any(route[2] <= line <= route[3] for line in lines)}
-            routes, which = (on_cited, "the cited route") if on_cited else (in_files, "a route of the cited file")
-            call = next((f"{method} {path}" for method, path in sorted(exercised) if _route_called(routes, method, path)),
-                        None)
+                homes = _resolve_cited_path(path, quote, files, quote_cache)
+                if len(homes) == 1 and homes[0].endswith(".py") and homes[0] not in routes_cache:
+                    routes_cache[homes[0]] = _route_ranges(homes[0])
+                ranges = routes_cache.get(homes[0]) if len(homes) == 1 else None
+                if ranges is None:
+                    unreadable = True
+                    continue
+                # A route counts when its request runs every located part of the citation.
+                parts = _cited_part_lines(homes[0], path, quote, files, parsed, quote_cache)
+                if parts is None:
+                    ambiguous = True
+                    continue
+                on_cited |= {route for route, spans in ranges.items() if parts and all(
+                    any(first <= line <= last for first, last in spans for line in lines) for lines in parts)}
+            call = next((f"{method} {path}" for method, path in sorted(exercised)
+                         if _route_called(on_cited, method, path)), None)
             api_exercised = call is not None
-            halves.append(f"API: a passing workflow called {call}, {which}" if call
+            halves.append(f"API: a passing workflow called {call}, the cited route" if call
+                          else "API: not run (the check cannot read the routes of the cited code)"
+                          if not on_cited and unreadable
+                          else "API: not run (a part of the abridged citation is too short to tell its route)"
+                          if not on_cited and ambiguous
+                          else "API: not run (no cited line is in a route handler)" if not on_cited
                           else "API: a workflow passed but called no cited route" if workflows_passed
                           else "API: no workflow passed")
         if screens:
@@ -2379,6 +2855,136 @@ def scope_to_output(verdicts: list[dict], has_frontend: bool) -> list[dict]:
             for v in verdicts]
 
 
+def source_hashes(output_dir: str) -> dict[str, str]:
+    """sha256 of every judged file, by its path."""
+    return {rel: cited_file_hash(full) for rel, full in _source_files(output_dir).items()}
+
+
+# Set on a modify run's verdict that is unmet now and was unmet when the previous run ended:
+# reported as still open, not a blocker of this run.
+INHERITED = "open_since_previous_run"
+# Set on a modify run's unmet verdict of a previous requirement a newer message changes or removes:
+# reported as such, neither a regression nor work for the fix loop.
+CHANGED_LATER = "changed_by_newer_message"
+UNMET_STATUSES = ("partial", "missing", "unverified")
+
+
+def _recorded_verdict(item) -> dict | None:
+    """A verdict read from a recipe, in the shape this module writes; None when it is not one
+    (the recipe may come from a repository anyone edited)."""
+    if not (isinstance(item, dict) and type(item.get("id")) is int and isinstance(item.get("text"), str)
+            and item["text"].strip() and item.get("status") in (*_STATUSES, NOT_PROVABLE, "out_of_scope")):
+        return None
+    evidence = item.get("evidence")
+    if isinstance(evidence, list):
+        evidence = [{"path": c["path"], "line": c["line"]} for c in evidence
+                    if isinstance(c, dict) and isinstance(c.get("path"), str) and isinstance(c.get("line"), str)]
+    elif not isinstance(evidence, str):
+        evidence = ""
+    paths = item.get("inspection_paths")
+    verdict = {"id": item["id"], "text": item["text"], "status": item["status"],
+               "kind": item["kind"] if isinstance(item.get("kind"), str) else "",
+               "evidence": evidence, "note": item["note"] if isinstance(item.get("note"), str) else "",
+               "inspection_paths": [p for p in paths if isinstance(p, str)] if isinstance(paths, list) else []}
+    if isinstance(item.get("ref"), str):
+        verdict["ref"] = item["ref"]
+    if item.get(MET_BY_FIELD) in MET_BY:
+        verdict[MET_BY_FIELD] = item[MET_BY_FIELD]
+    return verdict
+
+
+def previous_run_verdicts(recorded: list, output_dir: str) -> list[dict]:
+    """A previous run's recorded verdicts as of ``output_dir``, the tree it delivered (no call).
+
+    An "implemented" citation is checked again (:func:`verify_evidence`), which records its
+    file hashes; an "implemented" whose citation no longer matches stays implemented without
+    hashes, so it is judged again. An unmet verdict records the hashes of the files it names
+    (inspection paths and citations) and of the files they rest on, so a later pass can tell
+    they are unchanged; one that names no file records none.
+    """
+    items = [verdict for verdict in map(_recorded_verdict, recorded) if verdict][:MAX_REQUIREMENTS]
+    files = _source_files(output_dir)
+    imports = ImportIndex(output_dir, files)
+    verdicts = []
+    for item, checked in zip(items, verify_evidence(items, output_dir, imports)):
+        if item["status"] == "implemented" and checked["status"] != "implemented":
+            checked = item
+        elif item["status"] != "implemented":
+            named = resolved_focus_paths(files, [*item["inspection_paths"], *cited_paths(item["evidence"])])
+            if named:
+                checked["cited_file_hashes"] = {rel: cited_file_hash(files[rel]) for rel in named}
+                checked["dependency_file_hashes"] = {rel: cited_file_hash(files[rel])
+                                                     for rel in sorted(imports.dependencies(set(named)))}
+        verdicts.append(checked)
+    return verdicts
+
+
+def mark_inherited(verdicts: list[dict], previous: list[dict], *, inherit: bool = True,
+                   changed: frozenset[int] = frozenset()) -> list[dict]:
+    """``verdicts`` with each unmet one in ``changed`` (a newer message changes or removes it)
+    marked :data:`CHANGED_LATER`, each other unmet one whose ``previous`` verdict (by id) was
+    unmet too marked :data:`INHERITED` (unless ``inherit`` is off), and each unmet one whose
+    previous verdict was implemented noted so, a regression unless it is in ``changed``.
+    Only the ids in ``previous`` are compared."""
+    before = {item["id"]: item.get("status") for item in previous}
+    marked = []
+    for verdict in verdicts:
+        status, earlier = verdict.get("status"), before.get(verdict["id"])
+        if status in UNMET_STATUSES and earlier == "implemented":
+            verdict = {**verdict, "note": " ".join(
+                f"{verdict.get('note') or ''} It was implemented when the previous run ended.".split())}
+        if status in UNMET_STATUSES and verdict["id"] in changed:
+            verdict = {**verdict, CHANGED_LATER: True}
+        elif inherit and status in UNMET_STATUSES and earlier in UNMET_STATUSES:
+            verdict = {**verdict, INHERITED: True}
+        marked.append(verdict)
+    return marked
+
+
+def settle_uncitable(verdicts: list[dict], output_dir: str, imports: ImportIndex | None,
+                     baseline: dict[str, str] | None) -> list[dict]:
+    """The unverified absence and preservation verdicts, settled without a citation: never met.
+
+    Both are ``NOT_PROVABLE``. A preservation's note names the files the judge named for it, and
+    the files they rest on, that changed since ``baseline`` (:func:`source_hashes` of the previous
+    version; the stored generator output when None), or that none did.
+    """
+    if not any(v.get("status") == "unverified" and v.get("kind") in (ABSENCE_KIND, PRESERVATION_KIND)
+               for v in verdicts):
+        return verdicts
+    files = _source_files(output_dir)
+    settled = []
+    for verdict in verdicts:
+        kind = verdict.get("kind")
+        if verdict.get("status") != "unverified" or kind not in (ABSENCE_KIND, PRESERVATION_KIND):
+            settled.append(verdict)
+            continue
+        if kind == ABSENCE_KIND:
+            status, note = NOT_PROVABLE, ("Something the app must not have cannot be shown by citing code. "
+                                          "Not counted as a blocker.")
+        else:
+            named = resolved_focus_paths(files, [*verdict.get("inspection_paths", []),
+                                                 *cited_paths(verdict.get("evidence"))])
+            if baseline is None:
+                baseline = {rel: hashlib.sha256(generated.encode("utf-8")).hexdigest()
+                            for rel, generated in _generator_baselines(output_dir, files).items()}
+            resting = sorted((imports or ImportIndex(output_dir, files)).dependencies(set(named))) if named else []
+            changed = [rel for rel in [*named, *resting] if baseline.get(rel) != cited_file_hash(files[rel])]
+            if changed:
+                state = f"changed since the previous version: {', '.join(changed[:5])}"
+            elif named:
+                # Unchanged files do not show it still works: a caller, a route or the schema may have changed.
+                state = (f"unchanged since the previous version: {', '.join(named)}"
+                         + (f" and the {len(resting)} file(s) they import or are mounted by" if resting else "")
+                         + "; that does not show it still works")
+            else:
+                state = "no file implementing it was named"
+            status, note = NOT_PROVABLE, f"Behaviour kept as before cannot be shown by citing code; {state}. " \
+                                         "Not counted as a blocker."
+        settled.append({**verdict, "status": status, "evidence": "", "note": note})
+    return settled
+
+
 def ledger_issues(verdicts: list[dict]) -> list[str]:
     """Unresolved requirements block completion without claiming they are absent."""
     issues: list[str] = []
@@ -2386,9 +2992,21 @@ def ledger_issues(verdicts: list[dict]) -> list[str]:
         label = f"R{v['id']} — {v['text']}"
         note = f" ({v['note']})" if v.get("note") else ""
         status = v.get("status")
+        if v.get(INHERITED):
+            # Unclassified prefix: a warning, never a blocker.
+            issues.append(f"requirement still open from the previous run: {label} ({status}){note}")
+            continue
+        if v.get(CHANGED_LATER):
+            # Unclassified prefix: a warning, never a blocker.
+            issues.append(f"requirement changed by your newest message: {label} ({status}){note}")
+            continue
         if status == "out_of_scope":
             # Unclassified prefix: a warning, never a blocker.
             issues.append(f"requirement out of scope: {label}{note}")
+            continue
+        if status == NOT_PROVABLE:
+            # Unclassified prefix: a warning, never a blocker.
+            issues.append(f"requirement not provable: {label}{note}")
             continue
         if v.get("kind") == "verification":
             issues.append(f"requirement unverified: {label}{note}")
@@ -2402,10 +3020,19 @@ def ledger_issues(verdicts: list[dict]) -> list[str]:
             issues.append(f"requirement: {label} is not implemented{note}")
         elif status == "partial":
             issues.append(f"requirement partial: {label}{note}; inspect and complete the missing behaviour")
+        elif status == "unverified" and v.get(EVIDENCE_REFUTED):
+            what = ("names a file the app does not have" if v[EVIDENCE_REFUTED] == REFUTED_MISSING_FILE
+                    else "is not an implementation of it")
+            issues.append(
+                f"requirement unsupported: {label} — the cited evidence '{render_evidence(v.get('evidence'))}' "
+                f"{what}{note}; implement the behaviour: the requirement is judged again on the changed code")
         elif status == "unverified":
+            pointed = ", ".join(v.get(CITED_FRAGMENT_LINES) or ())
             issues.append(
                 f"requirement unverified: {label} — the cited evidence "
-                f"'{render_evidence(v.get('evidence'))}' does not verify it{note}; implement the behaviour only if it is really absent: "
-                "the citation is re-judged automatically"
+                f"'{render_evidence(v.get('evidence'))}' does not verify it{note}; implement the behaviour only if it is "
+                + (f"really absent; if it is present, cite the whole line the judge quoted part of ({pointed}): "
+                   f"validate_app citations=[{{requirement: {v['id']}, path, line}}]" if pointed else
+                   "really absent: the citation is re-judged automatically")
             )
     return issues

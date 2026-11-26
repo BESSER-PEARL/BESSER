@@ -16,14 +16,20 @@ from __future__ import annotations
 
 import math
 import re
-from typing import Any, Literal, Optional
+from typing import Any, List, Literal, Optional
 
 from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 
-from besser.spec_driven_agent.planning.specification import MAX_SPECIFICATION_CHARS
+from besser.BUML.metamodel.traceability import RequirementKind
+from besser.spec_driven_agent.planning.specification import (
+    MAX_REQUIREMENT_CHARS,
+    MAX_REQUIREMENTS,
+    MAX_SPECIFICATION_CHARS,
+)
 from besser.utilities.path_utils import is_repo_json_path
 from besser.utilities.web_modeling_editor.backend.models.project import ProjectInput
 from besser.utilities.web_modeling_editor.backend.models.responses import CommitStatus, ResponseModel
+from besser.utilities.web_modeling_editor.backend.constants.constants import TRACE_MAX_ACTOR_NAME_LENGTH
 from besser.utilities.web_modeling_editor.backend.settings import get_settings
 
 # Model IDs are provider-specific but all follow a conservative
@@ -32,6 +38,26 @@ from besser.utilities.web_modeling_editor.backend.settings import get_settings
 # else to catch typos and prompt-injection attempts embedded in the
 # model name.
 _LLM_MODEL_NAME_RE = re.compile(r"^[A-Za-z0-9_.:\-/]+$")
+
+# A requirement id is a trace artifact id: the assistant turn's id plus the
+# requirement's label, well under this.
+_MAX_REQUIREMENT_ID_CHARS = 200
+
+
+class RequirementInput(BaseModel):
+    """A requirement the modeling assistant extracted from the user's request.
+
+    ``id`` is the ``RequirementArtifact`` id in the project trace; the frontend
+    side of this shape is ``RequirementInput`` in the webapp's
+    ``features/spec-driven/services/specDrivenSseClient.ts``.
+    """
+
+    id: str = Field(..., min_length=1, max_length=_MAX_REQUIREMENT_ID_CHARS)
+    text: str = Field(..., min_length=1, max_length=MAX_REQUIREMENT_CHARS)
+    kind: RequirementKind
+    # What code meets it, as the requirements ledger's extraction labels it; left out, "check".
+    met_by: Optional[Literal["declaration", "type", "check"]] = None
+
 
 # GitHub login / repository name charset.
 _GITHUB_NAME_RE = re.compile(r"[A-Za-z0-9_.-]+")
@@ -60,10 +86,31 @@ class SmartGenerateRequest(BaseModel):
         Soft cap for LLM spend in USD. Clamped to the server hard cap.
     max_runtime_seconds
         Soft cap for total wall-clock runtime. Clamped to the server hard cap.
+    requirements
+        Optional requirements the modeling assistant extracted from the
+        user's request. When given, the requirements ledger is built from
+        them instead of extracting its own, and each verdict names its
+        requirement's trace id. Left out, the run extracts them.
+    followup_states_nothing_new
+        True when the modeling assistant judged that the newest message of
+        ``instructions`` (a retry, a fix) states nothing new: it does not stop
+        ``requirements`` from being used for the request before it.
+    actorName
+        Optional name of the person starting the run (the project owner), the
+        Person the run's trace (``done.trace``) records besides the agent.
+        Left out, the trace names only the Spec-Driven Agent.
+    traceabilityEnabled
+        Whether the project records traces (opt-in, off by default). Only
+        then does the run build its trace, send it as ``done.trace`` and ship
+        it in the ZIP.
     """
 
     project: ProjectInput
     instructions: str = Field(..., min_length=1, max_length=MAX_SPECIFICATION_CHARS)
+    requirements: Optional[List[RequirementInput]] = Field(default=None, max_length=MAX_REQUIREMENTS)
+    followup_states_nothing_new: bool = False
+    actorName: Optional[str] = Field(default=None, max_length=TRACE_MAX_ACTOR_NAME_LENGTH)
+    traceabilityEnabled: bool = False
     # Optional: the ``"free"`` provider needs no key (the server injects a
     # hosted open-weight model). Every other provider requires a non-empty key,
     # enforced provider-aware in ``_validate_key_matches_provider`` below.
@@ -134,6 +181,15 @@ class SmartGenerateRequest(BaseModel):
     def _validate_instructions_not_whitespace(cls, value: str) -> str:
         if not value.strip():
             raise ValueError("instructions cannot be empty or whitespace-only")
+        return value
+
+    @field_validator("requirements")
+    @classmethod
+    def _validate_requirement_ids_unique(
+        cls, value: Optional[List[RequirementInput]],
+    ) -> Optional[List[RequirementInput]]:
+        if value is not None and len({item.id for item in value}) != len(value):
+            raise ValueError("requirements must have unique ids")
         return value
 
     @field_validator("telemetry_session", mode="before")
@@ -627,6 +683,9 @@ class SmartPreviewResponse(ResponseModel):
     model_summary: SmartPreviewModelSummaryResponse
     # Modify with a known base run only; None = unknown, keep modifying.
     model_change: Optional[ModelChangeResponse]
+    # Modify only: whether the base run can still be edited (its workspace, else its
+    # download, is kept). False: a modify run of it builds the app again from scratch.
+    base_available: Optional[bool] = None
 
 
 class SpecDrivenCapsResponse(ResponseModel):

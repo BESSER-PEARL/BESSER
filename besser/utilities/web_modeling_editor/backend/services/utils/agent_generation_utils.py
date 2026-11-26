@@ -425,6 +425,7 @@ def handle_personalized_agent(
 def collect_agents_from_diagrams(
     agent_diagrams: List[Any],
     default_config: Any = None,
+    diagram_ids: Optional[Dict[str, Optional[str]]] = None,
 ) -> Tuple[List[Any], Dict[str, Any], Dict[str, Optional[str]]]:
     """Process every AgentDiagram in a project into BUML Agent models.
 
@@ -437,6 +438,8 @@ def collect_agents_from_diagrams(
             ``.model_dump()`` or already behaving like a dict works.
         default_config: Fallback config applied when a diagram has no per-diagram
             ``config`` entry.
+        diagram_ids: When given, filled with the id of the diagram each agent was
+            converted from, by ``agent.name`` (a trace refers to the model by it).
 
     Returns:
         ``(agent_models, agent_configs, agent_config_yamls)`` where both dicts are
@@ -464,7 +467,9 @@ def collect_agents_from_diagrams(
         # treat that as the unified contract so both paths reject blank diagrams.
         if isinstance(model, dict) and not model.get("elements"):
             continue
-        agent_model = process_agent_diagram(entry_dict)
+        # Every agent diagram of the project is read, used by the GUI or not: a transition
+        # BAF would refuse is logged, not raised, so one stale diagram does not block the app.
+        agent_model = process_agent_diagram(entry_dict, warnings=[])
         if agent_model is None:
             continue
 
@@ -477,6 +482,8 @@ def collect_agents_from_diagrams(
         agent_configs[name] = entry_dict.get("config") or default_config
         raw_yaml = entry_dict.get("configYaml")
         agent_config_yamls[name] = raw_yaml if isinstance(raw_yaml, str) else None
+        if diagram_ids is not None:
+            diagram_ids[name] = entry_dict.get("id")
 
     if duplicates:
         raise HTTPException(

@@ -26,23 +26,31 @@
 -- Enumerations
 -- =============================================================================
 {% for enum in enums %}
+{% trace enum.element, "enumeration" %}
 DO $$ BEGIN
     CREATE TYPE "{{ enum.name }}" AS ENUM (
 {% for lit in enum.literals %}
+{% trace enum.literal_elements[loop.index0], "literal" %}
         '{{ lit }}'{{ "," if not loop.last else "" }}
+{% endtrace %}
 {% endfor %}
     );
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
+{% endtrace %}
 {% endfor %}
 {% endif %}
 -- =============================================================================
 -- Tables
 -- =============================================================================
 {% for t in tables %}
+{% trace t.element, "table" %}
 CREATE TABLE IF NOT EXISTS public."{{ t.name }}" (
 {% for col in t.columns %}
+{% set column_element = t.column_elements[loop.index0] %}
+{% trace column_element[0], column_element[1] %}
     {{ col }}{{ "," if not loop.last else "" }}
+{% endtrace %}
 {% endfor %}
 );
 
@@ -50,8 +58,10 @@ CREATE TABLE IF NOT EXISTS public."{{ t.name }}" (
 CREATE INDEX IF NOT EXISTS "idx_{{ t.name }}_user_id" ON public."{{ t.name }}"("user_id");
 
 {% endif %}
+{% endtrace %}
 {% endfor %}
 {% if user_root %}
+{% trace user_root, "auth_trigger" %}
 -- =============================================================================
 -- auth.users -> public.{{ user_root_tbl }} trigger
 -- =============================================================================
@@ -74,15 +84,18 @@ CREATE TRIGGER on_auth_user_created
     AFTER INSERT ON auth.users
     FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
+{% endtrace %}
 {% endif %}
 -- =============================================================================
 -- Association foreign keys (added via ALTER so table order doesn't matter)
 -- =============================================================================
 {% for fk in fk_alters %}
+{% trace fk[4], "foreign_key" %}
 ALTER TABLE public."{{ fk[0] }}"
     ADD COLUMN IF NOT EXISTS "{{ fk[1] }}" UUID{% if not fk[3] %} NOT NULL{% endif %} REFERENCES public."{{ fk[2] }}"(id) ON DELETE CASCADE;
 CREATE INDEX IF NOT EXISTS "idx_{{ fk[0] }}_{{ fk[1] }}" ON public."{{ fk[0] }}"("{{ fk[1] }}");
 
+{% endtrace %}
 {% endfor %}
 -- =============================================================================
 -- Grants (Supabase ships sensible default privileges; emitted explicitly for
@@ -91,7 +104,9 @@ CREATE INDEX IF NOT EXISTS "idx_{{ fk[0] }}_{{ fk[1] }}" ON public."{{ fk[0] }}"
 GRANT USAGE ON SCHEMA public TO authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON
 {% for t in tables %}
+{% trace t.element, "grant" %}
     public."{{ t.name }}"{{ "," if not loop.last else "" }}
+{% endtrace %}
 {% endfor %}
 TO authenticated;
 
@@ -99,6 +114,7 @@ TO authenticated;
 -- Row Level Security
 -- =============================================================================
 {% if user_root %}
+{% trace user_root, "row_level_security" %}
 ALTER TABLE public."{{ user_root_tbl }}" ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "{{ user_root_tbl }}_select_own" ON public."{{ user_root_tbl }}";
@@ -126,8 +142,10 @@ CREATE POLICY "{{ user_root_tbl }}_delete_own" ON public."{{ user_root_tbl }}"
     TO authenticated
     USING ((SELECT auth.uid()) = id);
 
+{% endtrace %}
 {% endif %}
 {% for t in tables if t.is_per_user %}
+{% trace t.element, "row_level_security" %}
 ALTER TABLE public."{{ t.name }}" ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "{{ t.name }}_select_own" ON public."{{ t.name }}";
@@ -155,4 +173,5 @@ CREATE POLICY "{{ t.name }}_delete_own" ON public."{{ t.name }}"
     TO authenticated
     USING ((SELECT auth.uid()) = "user_id");
 
+{% endtrace %}
 {% endfor %}

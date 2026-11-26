@@ -1,15 +1,17 @@
-"""Phase 3: validate the delivered tree, repair it, and keep the best version.
+"""Phase 3: validate the delivered tree, repair it, and keep only repairs that help.
 
-The repair loop's guards are calibrated on recorded runs rather than chosen.
-A round of REJECTED edits is byte-identical on disk to a barren one, but the
-rejections reach the next prompt and the following round often writes source,
-so a rejected round gets a second attempt while a read-only replay ends
-immediately.
+Each fix attempt targets the editable blockers (``severity == "blocker"``) and
+may edit only the files they name, their neighbours and new files
+(``repair_scope``). No tool is forced. An attempt that edits nothing ends the
+loop; one that edits is kept only if it retires a blocker it faced without
+adding an observed failure or blockers (``_attempt_not_kept``), else the tree
+from before it is restored. An attempt that had retired or changed a blocker
+gets one more attempt from that tree, told what broke; otherwise, or after a
+second revert in a row, the loop ends.
 
 Snapshot/rollback lives here too because it is the same decision: the snapshot
-is re-taken on every strictly better tree and the BEST is restored, not the
-last, ranked runtime-first - a repair loop can oscillate and end worse than a
-state it already reached.
+is re-taken after every kept attempt, so it always holds the tree the next
+attempt starts from.
 
 Mixed into ``LLMOrchestrator``; all run state is reached through ``self``.
 """
@@ -25,26 +27,25 @@ import shutil
 import time
 from collections import Counter
 
+from besser.spec_driven_agent.agent.edit_apply import gutter_line
 from besser.spec_driven_agent.agent.history_eviction import (
     without_rejected_edit_drafts,
 )
-from besser.spec_driven_agent.errors import InvalidApiKeyError
+from besser.spec_driven_agent.errors import DeadlineReached, InvalidApiKeyError
 from besser.spec_driven_agent.planning import requirements_ledger as _requirements_ledger
 from besser.spec_driven_agent.planning.action_inventory import (
     collect_action_endpoints,
     format_action_inventory,
 )
 from besser.spec_driven_agent.agent.prompt_builder import DROPPED_RULES_NOTE, build_inventory
+from besser.spec_driven_agent.agent.tools import with_scope_widening
 from besser.spec_driven_agent.planning.model_rules import DROPPED
 from besser.spec_driven_agent.planning.mutation_inventory import build_mutation_manifest, route_serves
 from besser.spec_driven_agent.model_serializer import serialize_domain_model, to_prompt_json
 from besser.spec_driven_agent.pipeline.constants import (
     _MAX_TOOLCHAIN_FIX_ITERATIONS,
     _PHASE3_CREATE_EVIDENCE_REMINDER,
-    _PHASE3_FIX_TURNS,
-    _PHASE3_NO_EDIT_REMINDER,
-    _PHASE3_NO_PROGRESS_ROUNDS,
-    _PHASE3_PLATEAU_ROUNDS,
+    _PHASE3_FIX_CALLS,
     _ROLLBACK_DISCARD_DIR,
     _ROLLBACK_PRESERVED,
     _RUNTIME_FAILED,
@@ -56,25 +57,34 @@ from besser.spec_driven_agent.pipeline.constants import (
     _WRITE_TOOLS_ON_RECORD,
     _tool_use_blocks,
 )
+from besser.spec_driven_agent.pipeline.repair_scope import edit_scope, named_locations
 from besser.spec_driven_agent.state.checkpoint import _SNAPSHOT_DIR
 from besser.spec_driven_agent.state.tracing import (
+    EVENT_EDIT_SCOPE,
     EVENT_PHASE_ENTER,
     EVENT_PHASE_EXIT,
     EVENT_ROLLBACK,
     EVENT_SNAPSHOT,
+    EVENT_TURN_END,
     EVENT_TURN_START,
     EVENT_VALIDATION_ISSUE,
 )
 from besser.spec_driven_agent.validation.api_probe import confirmed_create_paths
 from besser.spec_driven_agent.validation.issues import (
+    PHASE3_SKIPPED,
     RUNTIME_CHECK_UNVERIFIED,
     ValidationIssue,
     _classify_issue,
     _hard_blockers,
+    could_not_run,
+    hidden_families,
+    is_completion_issue,
+    judge_ran,
     required_check_unverified,
+    requirement_status,
+    unresolved_defects,
 )
 from besser.spec_driven_agent.validation.toolchain import (
-    _build_toolchain_reminder,
     _toolchain_commands_for,
 )
 from besser.utilities.workspace_fs import copytree_plain, is_plain_entry, walk_plain
@@ -92,6 +102,25 @@ _FIX_PROMPT_BLOCKER_CHARS = 1_200
 _FIX_PROMPT_BLOCKER_TAIL_CHARS = 300
 # Same shape ``_apply_scenario_evidence`` matches: (backend, path).
 _CREATE_UNVERIFIED = re.compile(r"create unverified: (.+?): POST (\S+) -")
+# Paths the fix prompt lists: the files the run has edited, and an attempt's edit scope.
+_FIX_PROMPT_MAX_EDITED = 40
+_FIX_PROMPT_MAX_SCOPE_FILES = 40
+# Masked when attempts compare findings: an edit moves the lines and columns of the
+# errors it leaves. Other numbers (``/e2/`` and ``/e3/``) tell findings apart.
+_LINE_NUMBERS_RE = re.compile(r"line \d+|:\d+(?::\d+)?|\(\d+,\d+\)")
+# The route a runtime finding names: ``create contract: backend: POST /order/ - ...``
+# (``GET`` for a ``read contract:``).
+_POST_ROUTE_RE = re.compile(r": (?:POST|GET) (\S+) - ")
+# What a runtime finding tests: its kind, backend and route. Its text is the error seen there.
+_RUNTIME_TARGET_RE = re.compile(
+    r"(?:runtime unverified: )?(create contract|action call|create unverified|action unverified|read contract): "
+    r"(\S+): (?:POST|GET) (\S+) - ")
+# The probe's generated input, quoted in a runtime finding: not part of the error.
+_PROBE_INPUT_RE = re.compile(r"attempted input: .*?(?=\. Th(?:is|ese) )", re.S)
+# An object's memory address in an exception text (``<Order at 0x7f...>``): new in every process.
+_ADDRESS_RE = re.compile(r"\b0x[0-9a-fA-F]+\b")
+# Characters of the current text of the files the blockers name, pasted into a fix prompt.
+_FIX_PROMPT_FILE_CHARS = 24_000
 
 
 def clip_finding(text: str) -> str:
@@ -101,6 +130,20 @@ def clip_finding(text: str) -> str:
     head = _FIX_PROMPT_BLOCKER_CHARS - _FIX_PROMPT_BLOCKER_TAIL_CHARS
     cut = len(text) - _FIX_PROMPT_BLOCKER_CHARS
     return f"{text[:head]} [... {cut} chars cut ...] {text[-_FIX_PROMPT_BLOCKER_TAIL_CHARS:]}"
+
+
+def _finding_key(message: str):
+    """What a finding tests, as attempts compare findings: a runtime finding by its kind,
+    backend and route, any other by its message with line numbers masked (an edit moves
+    the lines of the errors it leaves)."""
+    target = _RUNTIME_TARGET_RE.match(message)
+    return target.groups() if target else _LINE_NUMBERS_RE.sub("#", message)
+
+
+def _finding_text(message: str) -> str:
+    """The error a finding reports, with line numbers, memory addresses and the probe's input masked."""
+    text = _PROBE_INPUT_RE.sub("attempted input: #", message)
+    return _LINE_NUMBERS_RE.sub("#", _ADDRESS_RE.sub("0x#", text))
 
 
 def _blocker_kind(message: str) -> str:
@@ -127,7 +170,7 @@ def _cite_ledger_requirements(message: str, requirements: list[dict]) -> str:
 
     A conversion-recovery requirement runs to ~900 chars and was pasted three
     times per prompt: the ledger, its ``requirement:`` blocker and its
-    ``task unverified:`` blocker. The ledger keeps the one full copy.
+    ``task incomplete:`` blocker. The ledger keeps the one full copy.
     """
     for requirement in requirements:
         rid, text = f"R{requirement['id']}", requirement["text"]
@@ -137,14 +180,26 @@ def _cite_ledger_requirements(message: str, requirements: list[dict]) -> str:
     return message
 
 
-def _fix_prompt_blocker_lines(ranked: list[ValidationIssue], requirements: list[dict]) -> list[str]:
-    """The fix prompt's blocker bullets, in priority order, capped in count and length.
+def _located(message: str, found: list[tuple[str, int | None]]) -> str:
+    """`` [in: a.py line 3, b.tsx]``: the workspace files a blocker names that it
+    does not already spell as workspace paths (a project-relative or partial path)."""
+    places = [f"{rel} line {line}" if line else rel for rel, line in found]
+    places = [place for place in places if place not in message]
+    return " [in: " + ", ".join(places) + "]" if places else ""
+
+
+def _fix_prompt_blocker_lines(ranked: list[ValidationIssue], requirements: list[dict],
+                              named: dict[str, list] | None = None) -> list[str]:
+    """The fix prompt's blocker bullets, in priority order, capped in count and length,
+    each with the workspace files it names (``named``, by message).
 
     Only the prompt is capped; Phase 3 records and reports every blocker.
     """
+    named = named or {}
     lines = []
     for issue in ranked[:_FIX_PROMPT_MAX_BLOCKERS]:
-        lines.append(f"- {clip_finding(_cite_ledger_requirements(issue.message, requirements))}")
+        lines.append(f"- {clip_finding(_cite_ledger_requirements(issue.message, requirements))}"
+                     f"{_located(issue.message, named.get(issue.message, []))}")
     rest = ranked[_FIX_PROMPT_MAX_BLOCKERS:]
     if rest:
         kinds = Counter(_blocker_kind(issue.message) for issue in rest)
@@ -159,7 +214,8 @@ def _no_edit_exit_reason(attempt: int, calls: list[dict]) -> str:
 
     Only a round with no tool call at all is a replay. A round of other tool
     calls stops the loop too, but earlier rounds may well have edited, so the
-    label must not read as though the repair never touched the editor.
+    label must not read as though the repair never touched the editor; a round
+    whose edits were all refused says so.
     """
     if not calls:
         return f"replay (attempt {attempt} called no tool)"
@@ -168,20 +224,45 @@ def _no_edit_exit_reason(attempt: int, calls: list[dict]) -> str:
         counts[entry["tool"]] = counts.get(entry["tool"], 0) + 1
     failed = sum(1 for entry in calls if not entry.get("success"))
     plural = "s" if len(calls) != 1 else ""
-    failed_note = f", {failed} failed" if failed else ""
     tools = ", ".join(f"{tool} x{n}" for tool, n in counts.items())
+    if any(entry["tool"] in _WRITE_TOOLS_ON_RECORD for entry in calls):
+        return (f"no successful edit (attempt {attempt} made {len(calls)} tool call{plural}, "
+                f"{failed} failed: {tools})")
+    failed_note = f", {failed} failed" if failed else ""
     return (f"no edit attempted (attempt {attempt} made {len(calls)} tool call{plural}, "
             f"none an edit{failed_note}: {tools})")
 
 
-def _judge_left_unverified(verdict: dict) -> bool:
-    """The judge gave no citation to reject, or only a malformed one (real code misquoted):
-    no rejected citation of absent or role-failing code."""
-    label = verdict.get(_requirements_ledger.EVIDENCE_UNLOCATED)
-    if label == _requirements_ledger.CITATION_MALFORMED:
-        return True
-    # Any other citation the verifier rejected is absent or fails its role.
-    return not label and not any(_requirements_ledger.cited_paths(verdict.get("evidence")))
+def counted(count: int, noun: str) -> str:
+    """``1 blocker`` / ``3 blockers``: a count as the run card's progress line says it."""
+    return f"{count} {noun}{'' if count == 1 else 's'}"
+
+
+def _fixing_blockers(blockers: list[ValidationIssue], round_issues: list[ValidationIssue]) -> str:
+    """A fix attempt's step: what it faces, by count, never by internal ids.
+
+    The round's blocker count (``FindingsEvent``) also counts checks that could
+    not run; no edit settles those, so the attempt says it leaves them.
+    """
+    not_run = sum(1 for issue in round_issues if issue.severity != "blocker" and is_completion_issue(issue))
+    about_requirements = sum(1 for issue in blockers if issue.message.startswith("requirement "))
+    notes = ([f"{about_requirements} about requirements"] if about_requirements else []) + (
+        [f"{not_run} {'is a check' if not_run == 1 else 'are checks'} that could not run"] if not_run else [])
+    head = (f"fixing {len(blockers)} of {counted(len(blockers) + not_run, 'blocker')}" if not_run
+            else f"fixing {counted(len(blockers), 'blocker')}")
+    return head + (f" ({'; '.join(notes)})" if notes else "")
+
+
+def _edited_paths(calls: list[dict]) -> list[str]:
+    """Workspace paths the successful, not rolled-back write calls in ``calls`` touched, last write last."""
+    paths: dict[str, None] = {}
+    for call in calls:
+        path = (call.get("input") or {}).get("path") if isinstance(call.get("input"), dict) else None
+        if (call.get("tool") in _WRITE_TOOLS_ON_RECORD and call.get("success")
+                and not call.get("rolled_back") and isinstance(path, str)):
+            paths.pop(path, None)
+            paths[path] = None
+    return list(paths)
 
 
 class Phase3RepairMixin:
@@ -189,26 +270,29 @@ class Phase3RepairMixin:
 
     #: When the run's first Phase 3 validation started (``time.monotonic``): the run record's phase timing.
     phase3_started_at: float | None = None
+    #: What the last kept fix attempt did, for the next attempt's prompt.
+    _repair_last_outcome: str | None = None
 
     def _complete_repair_if_verified(self) -> None:
-        if self._phase2_stop_reason == "validation_required":
+        # A handoff with checklist items still open or blocked stays one: nothing did that work.
+        # So does a cut at a budget share with no checklist to show the work was finished.
+        if self._phase2_stop_reason == "validation_required" and not (
+                self.executor.open_tasks() or self.executor.blocked_tasks()
+                or (self._phase2_cut_at_share and not self.executor.task_snapshot())):
             self._phase2_exited_cleanly = True
             self._phase2_stop_reason = "completed"
 
     def _phase3_stop_requested(self, *, check_turn_budget: bool = True) -> str | None:
-        """One stop gate for repair turns and the validation calls between them."""
+        """One stop gate for repair turns and the validation calls between them.
+
+        ``check_turn_budget=False`` asks for validation only, which needs time
+        before the cap for its checks and is free; a repair turn is an LLM call,
+        so it also needs spend, quota, turns and time for that call.
+        """
         reason = None
-        if self._start_time is not None and time.monotonic() - self._start_time > self.max_runtime_seconds:
+        if self.deadline.checks_out_of_time():
             reason = "runtime budget exhausted"
-        elif self.max_cost_usd is not None and self.client.usage.estimated_cost >= self.max_cost_usd:
-            reason = "cost budget exhausted"
-        elif self._phase2_quota_exhausted:
-            reason = "provider quota exhausted in Phase 2"
-        elif check_turn_budget and self.total_turns >= self.max_turns:
-            # No further edit turn, but final verification of the last accepted
-            # tool batch may still run. Do not poison that check as cancelled.
-            return "turn budget exhausted"
-        elif self._should_continue is not None and not self._should_continue():
+        elif self.deadline.cancelled:
             reason = "cancellation requested"
         elif self._phase3_interrupted:
             reason = "repair interrupted before verification completed"
@@ -216,28 +300,41 @@ class Phase3RepairMixin:
                 reason = f"{reason} ({self._phase3_interrupt_detail})"
         if reason:
             self._phase3_interrupted = True
-        return reason
+            return reason
+        if not check_turn_budget:
+            return None
+        # No further repair turn, but the attempt so far is still checked.
+        if self.max_cost_usd is not None and self.client.usage.estimated_cost >= self.max_cost_usd:
+            return "cost budget exhausted"
+        if self._phase2_quota_exhausted:
+            return "provider quota exhausted in Phase 2"
+        if self._tool_calls_executed() >= self._call_budget():
+            return "tool-call budget exhausted"
+        if self.total_turns >= self._turn_guard():
+            return "turn budget exhausted"
+        if self.deadline.out_of_time():
+            return "runtime budget exhausted"
+        return None
 
     def _repair_obligations_revision(self) -> str:
-        """Test corrections and checklist evidence are progress without source edits.
+        """Test corrections and checklist changes are progress without source edits,
+        and so are requirement citations ``validate_app`` accepted: a fix attempt
+        that moves one is checked again.
 
-        Two things deliberately do NOT move it, because neither discharges
-        anything and both would reset the no-progress streak:
-
-        * ``attempts`` in the task snapshot - a REFUSED ``task_list(done=...)``
-          increments it, so failing to close an item would read as closing one;
-        * the scenario KEY - the model may pass its own ``scenario_id``, so
-          re-registering identical requests under a new name would mint a new
-          entry. Only distinct scenario CONTENT counts, so a rename is not a
-          new obligation.
+        The scenario KEY deliberately does NOT move it: the model may pass its
+        own ``scenario_id``, so re-registering identical requests under a new
+        name would mint a new entry. Only distinct scenario CONTENT counts, so
+        a rename is not a new obligation.
         """
-        tasks = [{k: v for k, v in task.items() if k != "attempts"}
-                 for task in self.executor.task_snapshot()]
+        tasks = self.executor.task_snapshot()
         scenarios = sorted(
             json.dumps(record["scenario"], sort_keys=True)
             for record in self._api_scenarios.values()
         )
-        payload = {"tasks": tasks, "scenarios": sorted(set(scenarios))}
+        # ``validate_app`` citations change a verdict's status in place.
+        verdicts = sorted(json.dumps([verdict.get("id"), verdict.get("status")], default=str)
+                          for verdict in self._requirement_verdicts)
+        payload = {"tasks": tasks, "scenarios": sorted(set(scenarios)), "verdicts": verdicts}
         return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
     def _run_phase3_validation(self) -> None:
@@ -249,10 +346,39 @@ class Phase3RepairMixin:
         """
         if self.phase3_started_at is None:
             self.phase3_started_at = time.monotonic()
+        self._offer_test_api()
+        # Announced before the first check, which can take minutes (npm, tsc), so
+        # that time is counted as validation, not as the phase before it.
+        self._emit_progress(self.total_turns, "__validating__", "")
         try:
             self._run_phase3_repair_cycle()
         finally:
             self._apply_runtime_gate()
+        self._report_validation_step("Packaging the result")
+
+    def _report_validation_step(self, message: str) -> None:
+        """Name what Phase 3 is doing now on the run card: one check or LLM call can take minutes."""
+        self._emit_progress(self.total_turns, "__validation_step__", message)
+
+    def _report_round_step(self, step: str) -> None:
+        """A step of the current validation round, e.g. "First check: building the frontend"."""
+        self._report_validation_step(f"{self._validation_round}: {step}")
+
+    def _begin_validation_round(self, label: str) -> None:
+        self._validation_round = label
+        self._report_round_step("checking the code for errors")
+
+    def _report_findings(self, attempt: int, issues: list[ValidationIssue], restored: bool = False) -> None:
+        """Hand one validation round to ``on_findings`` (the run card's findings-and-repairs view).
+
+        Best-effort: a failing listener never stops the repair loop.
+        """
+        if not self.on_findings:
+            return
+        try:
+            self.on_findings(attempt, list(issues), restored=restored)
+        except Exception:
+            logger.warning("Phase 3: reporting findings of attempt %d failed", attempt, exc_info=True)
 
     def _run_phase3_repair_cycle(self) -> None:
         """
@@ -284,14 +410,18 @@ class Phase3RepairMixin:
         if stop_reason:
             logger.warning("Skipping Phase 3 -- %s", stop_reason)
             self._phase3_exit_reason = f"skipped: {stop_reason}"
-            self._validation_issues.append(ValidationIssue(
-                "blocker", f"requirement unverified: Phase 3 validation did not run: {stop_reason}. "
-                "The current application has not completed final verification.",
+            # Not confirmed: nothing was checked, so nothing was seen to fail.
+            self._validation_issues.append(_classify_issue(
+                f"{PHASE3_SKIPPED}: {stop_reason}. "
+                "The current application has not completed final verification."
             ))
             if self._checkpoint_phase == "phase3":
                 self._save_phase3_checkpoint()
             return
 
+        # A resumed repair has run attempts already: its first sweep is not the run's first check.
+        self._begin_validation_round(
+            "Check after resuming" if self._repair_progress.get("attempts_run") else "First check")
         issues = self._collect_validation_issues()
 
         if not issues:
@@ -320,12 +450,12 @@ class Phase3RepairMixin:
         if self._checkpoint_phase == "phase3":
             self._save_phase3_checkpoint()
 
-        if self.on_progress:
-            self.on_progress(
-                self.total_turns,
-                "validation",
-                f"{len(blockers_before)} blockers / {len(issues)} total",
-            )
+        self._emit_progress(
+            self.total_turns,
+            "validation",
+            f"{len(blockers_before)} blockers / {len(issues)} total",
+        )
+        self._report_findings(0, issues)
 
         # Auto-fix is opt-in (default off). Industry pattern: report by
         # default, fix on request. Avoid the LLM running ``npm install`` —
@@ -355,63 +485,34 @@ class Phase3RepairMixin:
         if self._create_snapshot():  # a failed one keeps the previous target, and is no trace event
             self._trace.write(EVENT_SNAPSHOT, before_phase="phase3_fix_loop")
 
-        # Repair within the remaining budgets. Fixing an upstream failure can
-        # expose downstream failures, so blocker counts are not a progress
-        # metric. One unchanged/repeated source state stops an unproductive loop.
+        # An attempt that edits the tree is kept only if it moves it forward
+        # (``_attempt_not_kept``); otherwise the tree before it is restored and
+        # the loop ends, after one more attempt from that tree when the reverted
+        # one had made progress. A kept tree is the next attempt's rollback target. An
+        # attempt that edits nothing continues the loop only if its evidence
+        # retired a blocker, or once after every write it tried was refused.
+        current_issues = list(issues)
         current_blockers = blockers_before
-        prev_blocker_count = len(blockers_before)
-        # Only a repair that actually wrote something can be rolled back.
-        source_ever_changed = False
-        # Set when an interrupted attempt's unvalidated edits were discarded.
-        discarded_unverified = False
+        current_score = self._phase3_tree_score(blockers_before, issues)
+        seen = {self._blocker_state_key(blockers_before)}
+        # Set when the tree an attempt left was replaced: an interrupted
+        # attempt's unvalidated edits, or an attempt that was not kept.
+        restored = False
+        # The notes of reverted attempts a retry followed: later findings replace them otherwise.
+        rollback_notes: list[ValidationIssue] = []
         last_issues = list(issues)
-        # Best tree seen so far, and the snapshot that holds it. The snapshot
-        # starts as the Phase 3 entry tree; every strictly better tree replaces
-        # it, so the restore at the end returns the BEST state reached rather
-        # than the last: a repair loop can oscillate and end worse than a state
-        # it already reached.
-        best_issues = list(blockers_before)
-        best_all_issues = list(issues)
-        best_score = prev_score = self._phase3_tree_score(blockers_before)
-        progress = self._repair_progress
-        attempts_run = progress.get("attempts_run", 0)
-        last_validated_revision = self._workspace_revision()
-        last_obligations_revision = self._repair_obligations_revision()
-        same_validated_state = (
-            progress.get("last_validated_revision") == last_validated_revision
-            and progress.get("last_obligations_revision") == last_obligations_revision
-        )
-        no_progress_streak = progress.get("no_progress_streak", 0) if same_validated_state else 0
-        # Rounds that edited the tree without improving its score. Not
-        # checkpointed: a resume re-derives the score from the tree it finds.
-        plateau_streak = 0
-        seen_states = {
-            (source, obligations, tuple(messages))
-            for source, obligations, messages in progress.get("seen_states", [])
-        }
+        attempts_run = self._repair_progress.get("attempts_run", 0)
+        self._repair_last_outcome = None
+        retried_refusals = retried_revert = False
 
         def checkpoint_progress() -> None:
-            self._repair_progress = {
-                "attempts_run": attempts_run,
-                "no_progress_streak": no_progress_streak,
-                "seen_states": [
-                    [source, obligations, list(messages)]
-                    for source, obligations, messages in sorted(seen_states)
-                ],
-                "last_validated_revision": last_validated_revision,
-                "last_obligations_revision": last_obligations_revision,
-            }
+            self._repair_progress = {"attempts_run": attempts_run}
             if self._may_save_phase3_checkpoint():
                 self._save_phase3_checkpoint()
 
-        max_attempts = max(_MAX_TOOLCHAIN_FIX_ITERATIONS, self.max_turns - self.total_turns)
-        # Which guard ends this loop, for the trace. Reconstructing it from
-        # phase_enter/phase_exit pairs after the fact is guesswork, and the
-        # guard histogram is the only way to tell a tight guard from a weak
-        # model. Report-only: nothing reads it back as a decision input.
+        max_attempts = max(_MAX_TOOLCHAIN_FIX_ITERATIONS, self._turn_guard() - self.total_turns)
+        # Which rule ends this loop, for the trace: report-only.
         exit_reason = "attempt cap"
-        faced_last: frozenset | None = None
-        last_edits_rejected = False
         for _ in range(max_attempts):
             stop_reason = self._phase3_stop_requested()
             if stop_reason:
@@ -423,17 +524,10 @@ class Phase3RepairMixin:
                                "locate after its citation-repair round; no fix attempt can change it")
                 exit_reason = "only unlocated requirement citations remain"
                 break
-            # The last attempt faced these very blockers, so it had this request. Not after
-            # an attempt whose edits were all rejected: the rejections reach the next prompt.
-            if (faced_last == self._blocker_identity(current_blockers) and not last_edits_rejected
-                    and self._only_rejudged_requirements_remain(current_blockers)):
-                logger.warning("Phase 3: every blocker is a requirement the judge still could not verify "
-                               "after its focused re-judge on this source; another attempt cannot change it")
-                exit_reason = "only requirements unverified after their re-judge remain"
-                break
             is_first_attempt = attempts_run == 0
             attempts_run += 1
-            faced_last = self._blocker_identity(current_blockers)
+            self._validation_round = f"Fix attempt {attempts_run}"
+            self._report_round_step(_fixing_blockers(current_blockers, last_issues))
             self._trace.write(
                 EVENT_PHASE_ENTER,
                 phase="phase3_fix_attempt",
@@ -442,6 +536,9 @@ class Phase3RepairMixin:
             )
             revision_before = self._workspace_revision()
             obligations_before = self._repair_obligations_revision()
+            installs_before = self._install_state()
+            probe_before = (getattr(self, "_runtime_probe_cache", None), getattr(self, "_runtime_probe_facts", None))
+            booted_before = self._booted(current_blockers, revision_before)
             checkpoint_progress()
             log_before = len(self.tool_calls_log)
             try:
@@ -451,25 +548,17 @@ class Phase3RepairMixin:
                 # the attempt's unverified edits behind as the deliverable.
                 if revision_before != self._workspace_revision():
                     self._discard_unverified_attempt(
-                        f"{type(exc).__name__}", best_all_issues, attempts_run)
+                        f"{type(exc).__name__}", current_issues, attempts_run)
                 raise
-            # Writes the attempt REACHED FOR, successful or not. A rejected
-            # edit is not nothing: the rejection is fed back into the next
-            # attempt's prompt as a recent-failure, so that attempt is not the
-            # same request again. See the replay test below.
             round_calls = self.tool_calls_log[log_before:]
-            attempted_writes = sum(
-                1 for entry in round_calls
-                if entry["tool"] in _WRITE_TOOLS_ON_RECORD
-            )
             source_changed = revision_before != self._workspace_revision()
-            last_edits_rejected = bool(attempted_writes) and not edits and not source_changed
-            source_ever_changed = source_ever_changed or source_changed
-            obligations_changed = obligations_before != self._repair_obligations_revision()
+            # Installed dependencies are outside the revision, yet decide what tsc and a build resolve.
+            obligations_changed = (obligations_before != self._repair_obligations_revision()
+                                   or installs_before != self._install_state()
+                                   or any(call["tool"] in ("install_dependencies", "run_command")
+                                          and call.get("success") for call in round_calls))
             checkpoint_progress()
             if not edits:
-                # Make it visible that the attempt burned its turns and
-                # changed nothing.
                 logger.warning(
                     "Phase 3: attempt %d ended with no successful edit (verification changed=%s)",
                     attempts_run, obligations_changed,
@@ -480,17 +569,38 @@ class Phase3RepairMixin:
             mid_attempt_stop = self._phase3_stop_requested(check_turn_budget=False)
             if mid_attempt_stop:
                 exit_reason = mid_attempt_stop
-                # This attempt's edits were never validated. Ship the best
-                # tree that was, not an unverified one (run qwen1 shipped a
-                # non-compiling page while its best snapshot sat unused).
-                discarded_unverified = source_changed and self._discard_unverified_attempt(
-                    mid_attempt_stop, best_all_issues, attempts_run)
+                # This attempt's edits were never validated. Ship the tree
+                # that was, not an unverified one.
+                if source_changed and self._discard_unverified_attempt(mid_attempt_stop, current_issues, attempts_run):
+                    restored = True
                 break
+            if not source_changed and not obligations_changed:
+                # Nothing moved on disk or in the evidence: a re-check would find the same.
+                self._trace.write(
+                    EVENT_PHASE_EXIT, phase="phase3_fix_attempt", attempt=attempts_run,
+                    blockers_remaining=len(current_blockers), source_changed=False,
+                    successful_writes=edits or 0,
+                )
+                refused = self._refused_writes(round_calls)
+                if refused and not retried_refusals:
+                    # Every write was refused: the next attempt is told why (measured: after
+                    # such a round the next one wrote 57% of the time and cut blockers 20%).
+                    retried_refusals = True
+                    self._repair_last_outcome = (
+                        f"Fix attempt {attempts_run} changed nothing: every write it tried was refused. "
+                        + " ".join(refused))
+                    logger.warning("Phase 3: attempt %d had every write refused; one more attempt", attempts_run)
+                    continue
+                logger.warning("Phase 3: attempt %d changed nothing; ending the fix loop", attempts_run)
+                exit_reason = _no_edit_exit_reason(attempts_run, round_calls)
+                break
+            retried_refusals = False
             # Re-validate: re-running the checks is the only evidence that
             # the repair actually compiles.
+            self._begin_validation_round(f"Re-check after fix attempt {attempts_run}")
             issues_after = self._collect_validation_issues()
             blockers_after = [i for i in issues_after if i.severity == "blocker"]
-            if (self._phase3_tree_score(blockers_after)[1] > best_score[1]
+            if (self._phase3_tree_score(blockers_after, issues_after)[1] > current_score[1]
                     and not self._phase3_stop_requested(check_turn_budget=False)):
                 # One probe that did not run can be a slow machine, not a hung
                 # startup: measure the same tree once more before ranking it.
@@ -499,10 +609,7 @@ class Phase3RepairMixin:
                 self._runtime_probe_cache = None
                 issues_after = self._collect_validation_issues()
                 blockers_after = [i for i in issues_after if i.severity == "blocker"]
-            last_issues = issues_after
-            self._validation_issues = self._with_model_contract(issues_after)
-            last_validated_revision = self._workspace_revision()
-            last_obligations_revision = self._repair_obligations_revision()
+            score_after = self._phase3_tree_score(blockers_after, issues_after)
             self._trace.write(
                 EVENT_PHASE_EXIT,
                 phase="phase3_fix_attempt",
@@ -512,159 +619,82 @@ class Phase3RepairMixin:
                 successful_writes=edits or 0,
             )
 
-            # A probe that did not run is a warning, so a repair that made
-            # startup hang leaves no blocker. Not "all fixed": fall through to
-            # the rollback check, which ranks an unmeasured tree behind a
-            # measured one (see _phase3_tree_score).
-            lost_measurement = (not blockers_after
-                                and self._phase3_tree_score(blockers_after)[1] > best_score[1])
-            if lost_measurement:
-                logger.warning(
-                    "Phase 3: attempt %d left no blocker, but the runtime probe could not "
-                    "measure a backend it measured before; checking for rollback.", attempts_run)
-                exit_reason = "runtime probe lost its measurement"
+            hidden = self._hidden_before(current_issues, probe_before[1], revision_before)
+            facts_after = getattr(self, "_runtime_probe_facts", None)
+            not_kept = self._attempt_not_kept(
+                current_blockers, blockers_after, hidden, judge_ran(issues_after),
+                booted_before, self._booted(blockers_after, self._workspace_revision()),
+                current_score, score_after,
+                before_facts=probe_before[1][1] if probe_before[1] and probe_before[1][0] == revision_before else None,
+                after_facts=facts_after[1] if facts_after and facts_after[0] == self._workspace_revision() else None)
+            if not_kept and source_changed:
+                progressed = (self._retired(current_blockers, blockers_after, judge_ran(issues_after))
+                              or self._still_failing(current_blockers, blockers_after))
+                restored = self._revert_attempt(attempts_run, not_kept, issues_after, probe_before)
+                if restored and progressed and not retried_revert:
+                    # It moved some blockers but broke something: one more attempt from the
+                    # restored tree, told what broke. A second revert in a row ends the loop.
+                    retried_revert = True
+                    rollback_notes.append(self._validation_issues[-1])  # the note _revert_attempt adds
+                    self._repair_last_outcome = (
+                        f"Fix attempt {attempts_run} was rolled back: {not_kept}. The tree from before it is "
+                        "restored, so the blockers below are the ones it faced. Repair them without causing that.")
+                    logger.warning("Phase 3: attempt %d was reverted after progress; one more attempt", attempts_run)
+                    continue
+                exit_reason = (f"attempt {attempts_run} reverted: {not_kept}" if restored
+                               else f"attempt {attempts_run} not kept, and its tree could not be restored: {not_kept}")
+                if not restored:
+                    last_issues = issues_after
+                    self._report_findings(attempts_run, issues_after)
                 break
+            # These findings describe the tree that ships; an edit here is a tree newer than any restored one.
+            restored = retried_revert = False
+            if source_changed:
+                self._phase3_rolled_back = False
+            last_issues = issues_after
+            self._validation_issues = self._with_model_contract(issues_after) + rollback_notes
+            self._report_findings(attempts_run, issues_after)
             if not blockers_after:
                 logger.info(
                     "Phase 3: All blockers fixed after %d attempt(s) "
                     "(%d non-blocker remain).",
                     attempts_run, len(issues_after),
                 )
-                self._validation_issues = self._with_model_contract(issues_after)
                 self._complete_repair_if_verified()
                 checkpoint_progress()
                 self._phase3_exit_reason = "all blockers fixed"
                 return
-
-            # Keep the best tree, not the last one. Strictly better only, so a
-            # flat round never overwrites the snapshot it would restore. The
-            # best findings move only with the snapshot: they must describe it.
-            score_after = self._phase3_tree_score(blockers_after)
-            if score_after < best_score and self._create_snapshot():
-                logger.info(
-                    "Phase 3: attempt %d is the best tree so far %s -> %s; "
-                    "re-snapshotted it as the rollback target.",
-                    attempts_run, best_score, score_after,
-                )
-                self._trace.write(
-                    EVENT_SNAPSHOT, before_phase="phase3_best",
-                    attempt=attempts_run, score=list(score_after),
-                )
-                best_issues, best_score = list(blockers_after), score_after
-                best_all_issues = list(issues_after)
-
-            # Fixing one import can expose several previously unreachable CRUD
-            # errors. A larger count is not evidence of regression. Continue on
-            # new source states; only unchanged/repeated states count as stalls.
-            state = (
-                last_validated_revision, last_obligations_revision,
-                tuple(i.message for i in _hard_blockers(blockers_after)),
-            )
-            # A round can move a run without writing a byte of source. Verifying
-            # a checklist item or correcting a scenario discharges a blocker on
-            # its own - that is exactly what ``_repair_obligations_revision``
-            # measures - and a re-validation can clear findings an earlier
-            # round's edits had already fixed. So the stall guard asks not "did
-            # it write" but "did anything measurably move": a better tree
-            # score, a changed source tree, or a discharged obligation. Zero
-            # writes is one no-progress round like any other.
-            improved = score_after < prev_score
-            # An attempt that changed nothing AND never reached for the editor
-            # leaves the next prompt identical to this one, so the next round
-            # really would be this round again: end it here, on the first
-            # occurrence. An attempt whose edits were all REJECTED is the
-            # opposite case - the commonest way a weak model spends a round -
-            # since the rejections reach the next prompt and the following
-            # round often writes source and cuts blockers. Those get a second
-            # round; granting it to every barren round would cost far more.
-            replay = edits == 0 and not source_changed and attempted_writes == 0
-            # A moved obligation is progress only if it discharged a blocker: a
-            # new test_api scenario or checklist edit that leaves every blocker
-            # standing otherwise buys a second identical round.
-            discharged = obligations_changed and (
-                {i.message for i in blockers_after} != {i.message for i in current_blockers})
-            if not improved and (
-                (not source_changed and not discharged)
-                or state in seen_states
-            ):
-                no_progress_streak += 1
-                budget_left = (
-                    self.max_cost_usd is None
-                    or self.client.usage.estimated_cost < self.max_cost_usd
-                )
-                if (replay or no_progress_streak >= _PHASE3_NO_PROGRESS_ROUNDS
-                        or not budget_left):
-                    logger.warning(
-                        "Phase 3: Attempt %d made no progress (%d -> %d "
-                        "blockers); ending fix loop (%d consecutive "
-                        "no-progress round(s), writes=%s, attempted_writes=%s, "
-                        "budget_left=%s).",
-                        attempts_run, prev_blocker_count, len(blockers_after),
-                        no_progress_streak, edits, attempted_writes, budget_left,
-                    )
-                    exit_reason = (
-                        "cost budget exhausted" if not budget_left
-                        else _no_edit_exit_reason(attempts_run, round_calls) if replay
-                        else "no-progress streak")
-                    break
-                logger.info(
-                    "Phase 3: Attempt %d made no progress (%d -> %d "
-                    "blockers); retrying once more (budget remains).",
-                    attempts_run, prev_blocker_count, len(blockers_after),
-                )
-                # Re-attempt against the current state on the next round.
-                current_blockers = blockers_after
-                checkpoint_progress()
-                continue
-
-            # The tree changed but the score did not improve ON THE PREVIOUS
-            # ROUND. ``state`` above can never catch this: it keys on a content
-            # hash, so any edit at all - including a different useless one each
-            # round - reads as a new state, and a run can burn its whole turn
-            # cap at a flat blocker count.
-            #
-            # Measured against the previous round rather than the best ever, on
-            # purpose: fixing one import legitimately exposes the errors behind
-            # it, and 11 -> 45 -> 40 -> 35 is a repair converging, not a stall.
-            # Oscillation is the best-tree snapshot's problem, not this guard's.
-            # A round that only added evidence and left a strict subset of the
-            # blockers neither counts nor resets: the score keys on probe facts
-            # evidence cannot move, and the shrinking set bounds such rounds.
-            retired_by_evidence = (
-                obligations_changed and not source_changed
-                and {i.message for i in blockers_after} < {i.message for i in current_blockers})
-            if score_after >= prev_score and not retired_by_evidence:
-                plateau_streak += 1
-                if plateau_streak >= _PHASE3_PLATEAU_ROUNDS:
-                    logger.warning(
-                        "Phase 3: attempt %d is consecutive no-improvement round "
-                        "%d (score %s, best %s); ending fix loop.",
-                        attempts_run, plateau_streak, score_after, best_score,
-                    )
-                    exit_reason = "plateau"
-                    break
-            elif score_after < prev_score:
-                plateau_streak = 0
-
-            # Progress this round: reset the stall counter and keep going.
-            seen_states.add(state)
-            no_progress_streak = 0
-            prev_blocker_count = len(blockers_after)
-            prev_score = score_after
-            current_blockers = blockers_after
+            if not_kept:
+                # Evidence alone moved (nothing to revert), and it did not move the tree forward.
+                exit_reason = f"{_no_edit_exit_reason(attempts_run, round_calls)}: {not_kept}"
+                break
+            retired = self._retired(current_blockers, blockers_after, judge_ran(issues_after))
+            # Kept (or evidence that retired a blocker): the next attempt starts
+            # from, and can only be rolled back to, this tree.
+            if source_changed and not self._create_snapshot():
+                exit_reason = f"attempt {attempts_run} kept, but its tree could not be snapshotted"
+                break
+            if source_changed:
+                self._trace.write(EVENT_SNAPSHOT, before_phase="phase3_kept", attempt=attempts_run,
+                                  score=list(score_after))
+            state = self._blocker_state_key(blockers_after)
+            if state in seen:
+                exit_reason = "repeated blocker set"
+                break
+            seen.add(state)
+            self._repair_last_outcome = self._attempt_outcome(
+                attempts_run, retired, self._still_failing(current_blockers, blockers_after),
+                len(blockers_after), round_calls, source_changed)
+            current_issues, current_blockers, current_score = list(issues_after), blockers_after, score_after
             checkpoint_progress()
 
-        # We get here either by ending the loop early (no progress)
-        # or by exhausting the attempt cap. Record whatever the final
-        # state is so the recipe surfaces it.
         self._phase3_exit_reason = exit_reason
-        if discarded_unverified:
+        if restored:
+            self._validation_issues += [note for note in rollback_notes if note not in self._validation_issues]
             last_issues = list(self._validation_issues)
-        elif self._rollback_phase3_if_worse(best_issues, last_issues, source_ever_changed,
-                                            entry_score=best_score):
-            last_issues = list(self._validation_issues)
+            self._report_findings(attempts_run, last_issues, restored=True)
         else:
-            self._validation_issues = self._with_model_contract(last_issues)
+            self._validation_issues = self._with_model_contract(last_issues) + rollback_notes
         checkpoint_progress()
         remaining_blockers = [
             i for i in last_issues if i.severity == "blocker"
@@ -678,48 +708,225 @@ class Phase3RepairMixin:
             for issue in last_issues:
                 logger.warning("  [%s] %s", issue.severity, issue.message)
 
+    @staticmethod
+    def _blocker_key(issue: ValidationIssue):
+        """What blocks, as attempts compare: a requirement by id (its status is compared
+        apart, see ``_retired``), anything else by what it tests (``_finding_key``)."""
+        requirement = requirement_status(issue.message)
+        return ("requirement", requirement[0]) if requirement else _finding_key(issue.message)
+
+    def _blocker_state_key(self, blockers: list[ValidationIssue]) -> frozenset:
+        """A blocker set as the repeated-state check compares it, statuses and runtime errors included."""
+        return frozenset(Counter((self._blocker_key(issue), requirement_status(issue.message),
+                                  _finding_text(issue.message) if _RUNTIME_TARGET_RE.match(issue.message) else None)
+                                 for issue in blockers).items())
+
+    @staticmethod
+    def _still_failing(before: list[ValidationIssue], after: list[ValidationIssue]) -> list[str]:
+        """The runtime blockers of ``after`` that test what a blocker of ``before`` tested, now
+        with another error: neither retired nor added."""
+        errors: dict = {}
+        for issue in before:
+            if _RUNTIME_TARGET_RE.match(issue.message):
+                errors.setdefault(_finding_key(issue.message), set()).add(_finding_text(issue.message))
+        return [issue.message for issue in after
+                if _finding_key(issue.message) in errors
+                and _finding_text(issue.message) not in errors[_finding_key(issue.message)]]
+
+    @staticmethod
+    def _removed_entities(before_facts: list | None, after_facts: list | None) -> list[str]:
+        """The entities the probe measured on a backend that booted before an attempt and
+        does not find on that backend, booted, after it: compared by entity name."""
+        if not before_facts or not after_facts:
+            return []
+        after = {backend.get("backend"): set(backend.get("entities") or {})
+                 for backend in after_facts if backend.get("boot") == "ok"}
+        return [f"{name} (POST {entry.get('path')})"
+                for backend in before_facts
+                if backend.get("boot") == "ok" and backend.get("backend") in after
+                for name, entry in (backend.get("entities") or {}).items()
+                if name not in after[backend.get("backend")]]
+
+    def _retired(self, before: list[ValidationIssue], after: list[ValidationIssue],
+                 judged_after: bool = True) -> list[str]:
+        """The blockers of ``before`` an attempt retired: gone from ``after``, or a requirement
+        whose status rose (missing -> partial is progress, though it still blocks). A
+        requirement that left the blockers counts only if the judge ran on ``after``."""
+        remaining = Counter(self._blocker_key(issue) for issue in after)
+        statuses = {r[0]: r[1] for r in map(requirement_status, (i.message for i in after)) if r}
+        retired = []
+        for issue in before:
+            key, requirement = self._blocker_key(issue), requirement_status(issue.message)
+            if remaining[key] > 0 and not (requirement and statuses.get(requirement[0], -1) > requirement[1]):
+                remaining[key] -= 1
+                continue
+            if requirement and not judged_after and requirement[0] not in statuses:
+                continue  # left only because no judge looked
+            retired.append(issue.message)
+        return retired
+
+    def _booted(self, blockers: list[ValidationIssue], revision: str) -> bool:
+        """Whether the tree starts: the probe's facts for ``revision`` when it measured
+        one, else no startup-class blocker."""
+        facts = getattr(self, "_runtime_probe_facts", None)
+        if facts and facts[0] == revision and facts[1]:
+            return all(backend.get("boot") == "ok" for backend in facts[1])
+        return not self._startup_blockers(blockers)
+
+    def _hidden_before(self, issues: list[ValidationIssue], facts, revision: str) -> set:
+        """The check families that could not run on the tree before an attempt: from its
+        findings (``hidden_families``) and the probe's facts for it. Where the probe
+        measured that tree, its boot verdict alone says whether runtime checks ran.
+        Creates and actions that needed a record are excused per entity instead
+        (``_newly_reachable``)."""
+        hidden = hidden_families(issues)
+        if facts and facts[0] == revision and facts[1]:
+            hidden.discard(("runtime", ""))
+            if any(backend.get("boot") != "ok" for backend in facts[1]):
+                hidden.add(("runtime", ""))
+        return hidden
+
+    @staticmethod
+    def _newly_reachable(before_facts: list | None, after_facts: list | None):
+        """``(finding, entity)`` predicates: whether a ``create contract:`` / ``action call:`` /
+        ``read contract:`` finding, or a probed entity, belongs to an entity the probe could not
+        create on the tree before the attempt. The route's entity comes from the probe's records of the
+        tree after it; without records of both trees nothing is excused."""
+        if not before_facts or not after_facts:
+            return (lambda message: False), (lambda entity: False)
+        created = {name for backend in before_facts for name, entry in (backend.get("entities") or {}).items()
+                   if entry.get("verdict") == "created"}
+        entity_of = {}
+        for backend in after_facts:
+            for name, entry in (backend.get("entities") or {}).items():
+                entity_of[("create contract:", entry.get("path"))] = name
+                for read in entry.get("reads") or []:
+                    entity_of[("read contract:", read.get("route"))] = name
+            for call in [*(backend.get("action_calls") or []), *(backend.get("actions") or [])]:
+                entity_of[("action call:", call.get("route"))] = call.get("entity")
+
+        def finding(message: str) -> bool:
+            prefix = next((p for p in ("create contract:", "action call:", "read contract:")
+                           if message.startswith(p)), None)
+            match = _POST_ROUTE_RE.search(message)
+            entity = entity_of.get((prefix, match.group(1))) if prefix and match else None
+            return entity is not None and entity not in created
+
+        return finding, (lambda entity: entity is not None and entity not in created)
+
+    def _attempt_not_kept(self, before: list[ValidationIssue], after: list[ValidationIssue],
+                          hidden: set, judged_after: bool, booted_before: bool, booted_after: bool,
+                          score_before: tuple, score_after: tuple, *, before_facts: list | None = None,
+                          after_facts: list | None = None) -> str | None:
+        """Why an attempt is not kept (or, with no edit, does not continue the loop), or None.
+
+        Never kept when the probe no longer finds an entity it measured before
+        (``_removed_entities``): a removed create is failing, not fixed. Else kept
+        only if (1) it retired a blocker it faced (``_retired``), or a runtime
+        blocker now fails with another error (``_still_failing``); (2) every
+        observed failure it added (``unresolved_defects``, compared by what it
+        tests) belongs to a check
+        family that could not run before (``hidden``): fixing the front failure
+        of a layer shows what it hid; (3) the blocker count, leaving out the
+        added findings of those families, is no higher, a requirement whose
+        status fell counting as one more; (4) a tree that started still starts;
+        (5) where runtime checks ran before, no more entities fail to be created,
+        and no more actions fail, leaving out those of entities the probe could
+        not create before (``_newly_reachable``).
+        """
+        reachable_finding, reachable_entity = self._newly_reachable(before_facts, after_facts)
+
+        def excused(message: str) -> bool:
+            return could_not_run(message, hidden) or reachable_finding(message)
+
+        removed = self._removed_entities(before_facts, after_facts)
+        if removed:
+            return f"the probe no longer finds what it tested before: {', '.join(removed)[:300]}"
+        if not self._retired(before, after, judged_after) and not self._still_failing(before, after):
+            return f"it retired none of the {counted(len(before), 'blocker')} it faced"
+        # A requirement verdict is a judgment, never an observed failure.
+        observed_before = Counter(_finding_key(i.message) for i in unresolved_defects(before)
+                                  if not requirement_status(i.message))
+        added = [i.message for i in unresolved_defects(after)
+                 if not requirement_status(i.message) and not excused(i.message)
+                 and _finding_key(i.message) not in observed_before]
+        if added:
+            return f"it added an observed failure: {added[0][:300]}"
+        new_keys = Counter(self._blocker_key(i) for i in after) - Counter(self._blocker_key(i) for i in before)
+        newly_visible = 0
+        for issue in after:
+            key = self._blocker_key(issue)
+            if new_keys[key] > 0 and excused(issue.message):
+                new_keys[key] -= 1
+                newly_visible += 1
+        statuses = {r[0]: r[1] for r in map(requirement_status, (i.message for i in before)) if r}
+        fell = sum(1 for r in map(requirement_status, (i.message for i in after))
+                   if r and r[0] in statuses and r[1] < statuses[r[0]])
+        count = len(after) - newly_visible + fell
+        if count > len(before):
+            return f"it left more blockers ({len(before)} -> {count})"
+        if booted_before and not booted_after:
+            return "the application no longer starts"
+        failing_actions = score_after[3] if not after_facts else sum(
+            1 for backend in after_facts for call in backend.get("action_calls") or []
+            if call.get("verdict") != "effective" and not reachable_entity(call.get("entity")))
+        if ("runtime", "") not in hidden and (score_after[2] > score_before[2]
+                                              or failing_actions > score_before[3]):
+            return (f"more entities or actions fail at runtime (entities {score_before[2]} -> {score_after[2]}, "
+                    f"actions {score_before[3]} -> {failing_actions})")
+        return None
+
+    def _install_state(self) -> tuple:
+        """The dependency-install markers of every frontend project (``node_modules`` is outside
+        the workspace revision)."""
+        from besser.spec_driven_agent.validation.frontend_build import install_markers
+
+        projects = sorted(rel.rpartition("/")[0] for rel in self._workspace_file_list()
+                          if rel.rpartition("/")[2] == "package.json")
+        return tuple(install_markers(os.path.join(self.output_dir, project)) for project in projects)
+
+    def _refused_writes(self, calls: list[dict]) -> list[str]:
+        """What refused each write of an attempt whose every write was refused; empty
+        when it wrote nothing or one write landed."""
+        writes = [call for call in calls if call["tool"] in _WRITE_TOOLS_ON_RECORD]
+        if not writes or any(call.get("success") for call in writes):
+            return []
+        # The newest write refusals on record (the record keeps the last few).
+        failures = [item for item in self._recent_tool_failures
+                    if item.get("tool") in _WRITE_TOOLS_ON_RECORD][-len(writes):] or [
+                       {"tool": call["tool"], "path": (call.get("input") or {}).get("path"), "error": "refused"}
+                       for call in writes]
+        return [f"{item.get('tool')} on {item.get('path')}: {str(item.get('error', ''))[:200]}"
+                for item in failures[-5:]]
+
+    def _attempt_outcome(self, attempt: int, retired: list[str], still_failing: list[str], remaining: int,
+                         calls: list[dict], source_changed: bool) -> str:
+        """What a kept attempt did, for the next attempt's prompt."""
+        edited = _edited_paths(calls)
+        what = f"edited {', '.join(edited)}" if source_changed and edited else "settled evidence without an edit"
+        return (f"Fix attempt {attempt} was kept. It {what} and retired "
+                f"{counted(len(retired), 'blocker')}"
+                + (": " + "; ".join(message[:160] for message in retired[:5]) if retired else "")
+                + (f" (+{len(retired) - 5} more)" if len(retired) > 5 else "")
+                + "".join(f". Still failing, now: {message[:300]}" for message in still_failing[:5])
+                + f". {counted(remaining, 'blocker')} remain, listed below.")
+
     def _only_unlocated_citations_remain(self, blockers: list[ValidationIssue]) -> bool:
         """Every blocker is a requirement whose cited code exists but whose citation the
         verifier could not locate (malformed), and the judge already had its
         citation-repair round on this source.
 
-        A fix attempt cannot clear such a blocker: the fix agent has no tool to change a
-        citation, and on unchanged source the next validation re-verifies the same cached
-        verdict (run r9-p81 spent 3 turns that way). A citation of code that exists
-        nowhere keeps its attempt: implementing the behaviour may be the fix.
+        A fix attempt cannot clear such a blocker: on unchanged source the next validation
+        re-verifies the same cached verdict (run r9-p81 spent 3 turns that way), and the fix
+        agent may cite a line only in place of a fragment that names one
+        (``CITED_FRAGMENT_LINES``). A citation of code that exists nowhere keeps its
+        attempt: implementing the behaviour may be the fix.
         """
         unlocated = {issue for verdict in self._requirement_verdicts
                      if verdict.get(_requirements_ledger.EVIDENCE_UNLOCATED) == _requirements_ledger.CITATION_MALFORMED
+                     and not verdict.get(_requirements_ledger.CITED_FRAGMENT_LINES)
                      for issue in _requirements_ledger.ledger_issues([verdict])}
         if not blockers or any(issue.message not in unlocated for issue in blockers):
-            return False
-        return self._requirement_cache_key(self._requirements_to_judge()) in self._requirement_evidence_retries
-
-    def _blocker_identity(self, blockers: list[ValidationIssue]) -> frozenset:
-        """What blocks, as the stop compares rounds: a requirement by id, status and unlocated
-        label (its message holds the judge's note, re-worded by every re-judge), anything
-        else by its message."""
-        by_message = {message: ("requirement", verdict.get("id"), verdict.get("status"),
-                                verdict.get(_requirements_ledger.EVIDENCE_UNLOCATED))
-                      for verdict in self._requirement_verdicts
-                      for message in _requirements_ledger.ledger_issues([verdict])}
-        return frozenset(by_message.get(issue.message, issue.message) for issue in blockers)
-
-    def _only_rejudged_requirements_remain(self, blockers: list[ValidationIssue]) -> bool:
-        """Every blocker is a requirement the judge itself left ``unverified`` (no citation
-        the verifier rejected, or only a malformed one), after its focused re-judge on this
-        exact source.
-
-        Asked only when the last attempt faced the same blockers: it had this request and
-        could not change it (r12-p81 attempt 3: four turns, no edit). A citation of code
-        that exists nowhere, or one whose cited body fails its role (a 501 scaffold, a
-        no-op), keeps its attempts: implementing it is the fix. Severity is kept.
-        """
-        unverified = {issue for verdict in self._requirement_verdicts
-                      if verdict.get("status") == "unverified" and verdict.get("kind") != "verification"
-                      and _judge_left_unverified(verdict)
-                      for issue in _requirements_ledger.ledger_issues([verdict])}
-        if not blockers or any(issue.message not in unverified for issue in blockers):
             return False
         return self._requirement_cache_key(self._requirements_to_judge()) in self._requirement_evidence_retries
 
@@ -729,7 +936,8 @@ class Phase3RepairMixin:
         return {i.message for i in issues
                 if i.message.lower().startswith(cls._STARTUP_BLOCKER_PREFIXES)}
 
-    def _phase3_tree_score(self, issues: list[ValidationIssue]) -> tuple[int, int, int, int, int]:
+    def _phase3_tree_score(self, issues: list[ValidationIssue],
+                           all_issues: list[ValidationIssue] | None = None) -> tuple[int, int, int, int, int]:
         """Rank one tree. LOWER is better; compare lexicographically.
 
         ``(boot broken, backends not measured, entities not confirmed created,
@@ -749,7 +957,8 @@ class Phase3RepairMixin:
         would re-derive facts already held and count what was rendered: an
         action the probe silently confirmed effective and one it never reached
         would score the same. Strings remain the fallback for a tree
-        no probe measured (no backend, or the probe did not run).
+        no probe measured (no backend, or the probe did not run), counted over
+        ``all_issues`` when given: an unconfirmed create may be only a warning.
         """
         boot_broken = int(bool(self._startup_blockers(issues)))
         facts = getattr(self, "_runtime_probe_facts", None)
@@ -768,7 +977,7 @@ class Phase3RepairMixin:
                     actions += int(call.get("verdict") != "effective")
         if measured is None:
             entities = actions = 0
-            for issue in issues:
+            for issue in issues if all_issues is None else all_issues:
                 message = issue.message.lower()
                 if "create contract:" in message or "create unverified:" in message:
                     entities += 1
@@ -793,8 +1002,14 @@ class Phase3RepairMixin:
         rule legitimately refuses (e.g. a correct 409) is the normal answer
         from a correct app, so an app can pass acceptance while its create
         routes come back ``create unverified:``. Those
-        routes stay reported through their own ``runtime unverified:`` blocker;
+        routes stay reported through their own ``runtime unverified:`` finding;
         they are not grounds for the gate to refuse a working application.
+
+        An app nothing started on this tree (no probe boot, no workflow that
+        booted it or passed; the probe timed out, a dependency was missing, or
+        no check ran) has no runtime evidence at all. That is not a failure:
+        the finding is ``validation unverified:`` and the run reports it as not
+        verified (``verification_gaps``), never as incomplete.
         """
         if not self._probeable_backends():
             return None
@@ -817,15 +1032,15 @@ class Phase3RepairMixin:
                 f"proven to accept a record - {what}, so this run is NOT complete: "
                 + "; ".join(sorted(observed or fatal_source)[:3])[:1200]
             )
-        if verdict is None and not any(
-            i.message.lower().startswith(("runtime unverified:", RUNTIME_CHECK_UNVERIFIED))
-            for i in self._validation_issues
-        ):
+        # Said once: a runtime check that did not run already says why nothing started it.
+        if self._never_started() and not any(
+                i.message.startswith(RUNTIME_CHECK_UNVERIFIED) and "(api scenario " not in i.message
+                for i in self._validation_issues):
             return (
-                f"{self._RUNTIME_GATE_PREFIX} the delivered application has no runtime "
-                "evidence at all - the boot-and-create probe did not produce a "
-                "verdict for this source revision and no test_api workflow was run, "
-                "so this run is NOT complete. An unrun check is not a passing check."
+                f"validation unverified: {self._RUNTIME_GATE_PREFIX} the delivered application has no "
+                "runtime evidence at all - nothing started it on this source revision (no "
+                "boot-and-create probe verdict, no test_api workflow that booted it), so it is "
+                "not verified. An unrun check is not a passing check."
             )
         return None
 
@@ -852,39 +1067,39 @@ class Phase3RepairMixin:
             return
         if not finding:
             return
-        if any(i.message.startswith(self._RUNTIME_GATE_PREFIX)
+        if any(i.message == finding or i.message.startswith(self._RUNTIME_GATE_PREFIX)
                for i in self._validation_issues):
             return
-        logger.warning("Phase 3 runtime gate refused completion: %s", finding[:300])
-        self._validation_issues.append(ValidationIssue("blocker", finding))
+        logger.warning("Phase 3 runtime gate: %s", finding[:300])
+        self._validation_issues.append(_classify_issue(finding))
         self._trace.write(
             EVENT_VALIDATION_ISSUE, phase="phase3_runtime_gate", message=finding[:1000],
         )
 
     def _discard_unverified_attempt(
-        self, reason: str, best_all_issues: list[ValidationIssue], attempt: int,
+        self, reason: str, kept_issues: list[ValidationIssue], attempt: int,
     ) -> bool:
-        """Restore the best validated tree over an attempt that was never validated.
+        """Restore the last kept tree over an attempt that was never validated.
 
         An interrupted repair (provider error, cost or runtime cap) leaves its
         last edits on disk with no validation behind them. The snapshot holds
-        the best tree the loop DID validate, and ``best_all_issues`` are that
-        tree's findings, so nothing needs re-validating - which a stop must
-        not pay for anyway.
+        the last tree the loop kept, and ``kept_issues`` are that tree's
+        findings, so nothing needs re-validating - which a stop must not pay
+        for anyway.
         """
         logger.warning(
             "Phase 3: attempt %d was interrupted (%s) before its edits were "
-            "validated; restoring the best validated tree.", attempt, reason,
+            "validated; restoring the last kept tree.", attempt, reason,
         )
         if not self._restore_snapshot():
-            logger.error("Phase 3: the best snapshot could not be restored; the "
+            logger.error("Phase 3: the last kept tree could not be restored; the "
                          "interrupted attempt's unvalidated edits remain.")
             return False
         self._phase3_rolled_back = True
         reopened = self.executor.reopen_unverifiable_tasks()
-        self._validation_issues = self._with_model_contract(best_all_issues) + [_classify_issue(
+        self._validation_issues = self._with_model_contract(kept_issues) + [_classify_issue(
             f"validation: Phase 3 repair attempt {attempt} was interrupted ({reason}) "
-            "before its edits were validated; they were discarded and the best "
+            "before its edits were validated; they were discarded and the last "
             "validated tree ships."
             + (f" {len(reopened)} checklist item(s) verified during that attempt are "
                "open again." if reopened else "")
@@ -893,113 +1108,47 @@ class Phase3RepairMixin:
                           attempt=attempt, reason=reason)
         return True
 
-    def _rollback_phase3_if_worse(
-        self, entry_blockers: list[ValidationIssue],
-        final_issues: list[ValidationIssue],
-        source_changed: bool,
-        entry_score: tuple[int, int, int, int, int] | None = None,
-    ) -> bool:
-        """Ship the pre-Phase-3 tree when repair ended worse than it began.
+    def _revert_attempt(self, attempt: int, reason: str, attempt_issues: list[ValidationIssue],
+                        probe_before: tuple) -> bool:
+        """Restore the tree from before ``attempt``, which was not kept, and check it again.
 
-        Three conditions, and all are needed. The repair must have actually
-        written something: a blocker that appears while nothing was edited is
-        newly-exposed truth or judge variance, and rolling back would hide it
-        (there would also be nothing to undo). A rising count *during* the
-        loop is expected, since fixing an import exposes the errors behind it,
-        so only the final state counts. And only hard blockers count, because
-        two judge passes on the same app can disagree widely.
-
-        Example: a repair that uses ``Table`` without importing it stops
-        ``sql_alchemy.py`` importing, so every router that star-imports it is
-        dead and the blocker count jumps; the pre-repair tree ships instead.
-
-        The code is reverted, the findings are not: what the repaired tree
-        revealed is recorded, so a real defect a partial fix exposed does not
-        become invisible again.
+        The code is reverted, the findings are not: what only the discarded
+        tree showed is recorded, so a real defect it exposed stays visible.
+        The runtime probe's result for the restored tree (``probe_before``,
+        tagged with its revision) is reused rather than measured again.
         """
-        if not source_changed:
-            return False
-        final_blockers = [i for i in final_issues if i.severity == "blocker"]
-        entry_hard = len(_hard_blockers(entry_blockers))
-        final_hard = len(_hard_blockers(final_blockers))
-        # Ranked on runtime evidence first (boot, entities created, actions
-        # callable) and only then on the hard count - see _phase3_tree_score.
-        # ``entry_blockers`` is the BEST state reached, which is what the
-        # snapshot now holds, not necessarily the Phase 3 entry state.
-        #
-        # The score MUST be the one computed while that tree was the tree on
-        # disk. _phase3_tree_score reads ``_runtime_probe_facts``, which by now
-        # describe the FINAL tree: recomputing the entry score here would give
-        # both trees the same middle two components, collapsing the comparison
-        # to (boot, hard count) - the component this ranking exists to demote.
-        # Callers inside the repair loop pass ``best_score``;
-        # ``None`` means "no probe has measured a different tree since", which
-        # only holds for a direct call.
-        if entry_score is None:
-            entry_score = self._phase3_tree_score(entry_blockers)
-        final_score = self._phase3_tree_score(final_blockers)
-        # A count cannot see a TRADE: swapping a hard blocker for a broken ORM
-        # mapper keeps the count flat while every endpoint returns 500.
-        # Introducing a blocker that
-        # stops the app starting is never an acceptable trade, at any count.
-        broke_startup = (self._startup_blockers(final_blockers)
-                         - self._startup_blockers(entry_blockers))
-        if final_score <= entry_score and not broke_startup:
-            return False
-        if broke_startup:
-            logger.warning(
-                "Phase 3 introduced %d blocker(s) that stop the app starting: %s",
-                len(broke_startup), "; ".join(sorted(broke_startup))[:300],
-            )
-        logger.warning(
-            "Phase 3 ended worse than the best tree it reached (%s -> %s; "
-            "%d -> %d hard blockers); restoring that tree.",
-            entry_score, final_score, entry_hard, final_hard,
-        )
+        logger.warning("Phase 3: fix attempt %d is not kept (%s); restoring the tree from before it.",
+                       attempt, reason)
         if not self._restore_snapshot():
-            logger.error(
-                "Phase 3 regressed but the snapshot could not be restored; "
-                "keeping the repaired tree and reporting it as it stands.",
-            )
-            self._validation_issues = self._with_model_contract(final_issues)
+            logger.error("Phase 3: the tree from before attempt %d could not be restored; "
+                         "keeping the attempt's tree and reporting it as it stands.", attempt)
             return False
         self._phase3_rolled_back = True
         # The tree went back; the checklist did not. Anything whose verifier
         # no longer passes was undone by this restore and must stop reporting
         # itself complete.
         reopened = self.executor.reopen_unverifiable_tasks()
-        if reopened:
-            logger.warning(
-                "Phase 3 rollback discarded the implementation of %d checklist "
-                "item(s), now reopened: %s", len(reopened), reopened,
-            )
+        self._runtime_probe_cache, self._runtime_probe_facts = probe_before
+        self._begin_validation_round("Check of the restored earlier version")
         restored = self._collect_validation_issues()
-        # Only what the DISCARDED tree added. Printing the whole final set
-        # listed findings that describe the tree that just shipped - the one
-        # text a human reads to decide whether the rollback hid a real defect,
-        # naming defects it did not hide.
-        kept = {i.message for i in entry_blockers}
-        only_in_discarded = sorted({i.message for i in final_blockers} - kept)
-        discarded = only_in_discarded[:10]
-        more = (f" (+{len(only_in_discarded) - len(discarded)} more not listed)"
-                if len(only_in_discarded) > len(discarded) else "")
-        seen_only = ("; ".join(discarded) + more if discarded
+        attempt_blockers = [i for i in attempt_issues if i.severity == "blocker"]
+        only_in_discarded = sorted({i.message for i in attempt_blockers} - {i.message for i in restored})
+        listed = only_in_discarded[:10]
+        more = (f" (+{len(only_in_discarded) - len(listed)} more not listed)"
+                if len(only_in_discarded) > len(listed) else "")
+        seen_only = ("; ".join(listed) + more if listed
                      else "none - every finding in the discarded tree is also in this one")
         undone = (f" The restore also undid completed work: {len(reopened)} checklist "
-                  f"item(s) verified during the repair are open again." if reopened else "")
+                  f"item(s) verified during the attempt are open again." if reopened else "")
         self._validation_issues = self._with_model_contract(restored) + [_classify_issue(
-            "validation: the Phase 3 repair was rolled back - it ended with "
-            f"{final_hard} hard blockers against {entry_hard} on entry, so the "
-            f"pre-repair output is what ships.{undone} Findings seen only in the "
-            "discarded tree (they may still be real): " + seen_only
+            f"validation: Phase 3 fix attempt {attempt} was rolled back - {reason} - to the tree "
+            f"from before it.{undone} Findings seen only in the discarded tree (they may "
+            "still be real): " + seen_only
         )]
         restored_blockers = [i for i in restored if i.severity == "blocker"]
         self._trace.write(
-            EVENT_ROLLBACK, phase="phase3",
-            # All three are HARD counts so they compare; the totals include
-            # ledger/checklist verdicts the decision deliberately ignores.
-            hard_blockers_on_entry=entry_hard,
-            hard_blockers_after_repair=final_hard,
+            EVENT_ROLLBACK, phase="phase3", attempt=attempt, reason=reason,
+            hard_blockers_after_attempt=len(_hard_blockers(attempt_blockers)),
             hard_blockers_after_rollback=len(_hard_blockers(restored_blockers)),
             total_blockers_after_rollback=len(restored_blockers),
         )
@@ -1013,15 +1162,36 @@ class Phase3RepairMixin:
         """Run one LLM fix attempt against ``blockers``; return the number
         of successful write-tool calls it made.
 
-        Factored out of ``_run_phase3_validation`` so the outer
-        toolchain-fix iteration cap can call it more than once. Each
-        invocation builds a fresh prompt (so the LLM doesn't see
-        stale context from a previous attempt) and exits when the LLM
-        emits ``end_turn`` or hits the per-attempt turn budget - except
-        that an attempt with no successful edit is re-prompted once,
-        with ``modify_file`` forced where the client supports
-        ``tool_choice`` and a reminder in the message either way.
-        Tool calls run through ``_execute_tool_blocks`` so they are
+        The write tools accept only the files the blockers name, their
+        neighbours (``repair_scope.edit_scope``) and new files while it runs;
+        a blocker that names no file leaves the attempt open.
+        """
+        if not blockers:
+            return 0
+        files = self._workspace_file_list()
+        named = {issue.message: named_locations(issue.message, files) for issue in blockers}
+        # A module missing from the dependencies may be fixed in their manifest.
+        manifests_for = frozenset(rel for issue in blockers if issue.message.startswith("missing module:")
+                                  for rel, _ in named[issue.message])
+        scope = (edit_scope({rel for found in named.values() for rel, _ in found}, self.output_dir, files,
+                            manifests_for)
+                 if all(named.values()) else None)
+        self.executor.set_edit_scope(scope)
+        self._trace.write(EVENT_EDIT_SCOPE, allowed=sorted(scope) if scope is not None else None)
+        try:
+            return self._phase3_fix_turns(blockers, is_first_attempt, named, scope)
+        finally:
+            self.executor.set_edit_scope(None)
+
+    def _phase3_fix_turns(self, blockers: list[ValidationIssue], is_first_attempt: bool,
+                          named: dict[str, list], scope: set[str] | None) -> int:
+        """The turns of one fix attempt; see ``_invoke_phase3_fix_loop``.
+
+        A fresh conversation whose prompt carries the files the run has
+        edited, the previous attempt's outcome and, within a character budget,
+        the current text of the files its blockers name. It ends when the model
+        ends its turn or the per-attempt turn budget is spent; no tool is
+        forced. Tool calls run through ``_execute_tool_blocks`` so they are
         recorded like Phase 2's.
 
         The prompt lists the current blockers in priority order, capped
@@ -1032,14 +1202,11 @@ class Phase3RepairMixin:
         the model verifies its own fixes instead of stopping at the
         first plausible-looking change.
         """
-        if not blockers:
-            return 0
-
         # Citation/coverage obligations and model-authored tests can be wrong.
         # A verified existing implementation or corrected test need not mutate
-        # production code. Keep forced edits only for concrete code defects.
+        # production code.
         verification_only = all(issue.message.startswith((
-            "requirement unverified:", "task unverified:", "api scenario:",
+            "requirement unverified:", "api scenario:",
             "runtime unverified:", "create unverified:", "verification setup:",
         )) for issue in blockers)
 
@@ -1079,6 +1246,16 @@ class Phase3RepairMixin:
                 "## Recent rejected operations (do not repeat unchanged requests)",
                 json.dumps(self._recent_tool_failures, ensure_ascii=False), "",
             ])
+        edited = _edited_paths(self.tool_calls_log)
+        if edited:
+            shown = edited[-_FIX_PROMPT_MAX_EDITED:]
+            prompt_parts.extend([
+                "## Files this run has edited (most recent last)",
+                ", ".join(shown) + (f" (+{len(edited) - len(shown)} earlier)" if len(edited) > len(shown) else ""),
+                "",
+            ])
+        if self._repair_last_outcome:
+            prompt_parts.extend(["## Previous fix attempt", self._repair_last_outcome, ""])
         if is_first_attempt:
             prompt_parts.append(
                 "Post-generation validation found these unresolved issues. "
@@ -1086,10 +1263,7 @@ class Phase3RepairMixin:
                 "and model judgments; resolve each against the original specification:"
             )
         else:
-            prompt_parts.append(
-                "After your previous fixes, these BLOCKER issues "
-                "still remain. Fix every one:"
-            )
+            prompt_parts.append("These blockers remain after the previous fix attempt:")
 
         prompt_parts.append("")
         prompt_parts.append(
@@ -1107,14 +1281,20 @@ class Phase3RepairMixin:
             "Do not invent authentication, new roles, or destructive data deletion "
             "from a generic usability or release requirement."
         )
-        prompt_parts.extend(_fix_prompt_blocker_lines(sorted(blockers, key=self._repair_priority), requirements))
+        prompt_parts.extend(_fix_prompt_blocker_lines(
+            sorted(blockers, key=self._repair_priority), requirements, named))
 
-        # Show the offending lines: with only "file line N" a model spends a
-        # turn on read_file; with the excerpt it calls modify_file immediately.
-        # A BOUNDED window is the point -- SWE-agent's ablation scores
-        # a 100-line window above the whole file (18.0 vs 12.7 on SWE-bench
-        # Lite), so this never pastes an entire file.
-        excerpts = self._excerpts_for(blockers)
+        # A fresh conversation: nothing read in an earlier round is in it.
+        self.executor.forget_shown_results()
+        seeded = {} if verification_only else self._seed_named_files(
+            [rel for issue in sorted(blockers, key=self._repair_priority) for rel, _ in named.get(issue.message, [])])
+        if seeded:
+            prompt_parts.extend(["", "The files these blockers name, as read_file returns them now (each read_id "
+                                     "is valid for replace_file_lines; quote old_text without the line-number "
+                                     "gutter):"])
+            prompt_parts.extend(seeded.values())
+        # A named file that did not fit the budget above gets the lines around its blocker instead.
+        excerpts = self._excerpts_for(blockers, shown=set(seeded))
         if excerpts:
             prompt_parts.append("")
             prompt_parts.append(
@@ -1125,9 +1305,9 @@ class Phase3RepairMixin:
 
         prompt_parts.append("")
         prompt_parts.append(
-            "Resolve authorized dependency setup through install_dependencies, then "
-            "validate_app; resolve missing evidence using current exact citations "
-            "or test_api. Do not manufacture source changes to "
+            "Resolve authorized dependency setup by installing with run_command, then "
+            "validate_app; resolve missing evidence using current exact citations"
+            + (" or test_api" if self._test_api_offered else "") + ". Do not manufacture source changes to "
             "satisfy bookkeeping; make an edit only if behavior is actually missing. "
             "The harness will recheck evidence when this attempt ends."
             if verification_only else
@@ -1136,15 +1316,20 @@ class Phase3RepairMixin:
             "replace_file_lines with its read_id and inclusive line numbers instead of "
             "quoting old_text again. Reading first "
             "is fine, but you are not done until defects are repaired and verified. "
-            "An evidence/citation error alone does not justify changing correct code. "
-            "Do NOT touch anything unrelated."
+            "An evidence/citation error alone does not justify changing correct code."
         )
+        if scope is not None:
+            listed = sorted(scope)
+            shown = listed[:_FIX_PROMPT_MAX_SCOPE_FILES]
+            prompt_parts.extend(["", (
+                "This attempt may edit the files these blockers name and the files those import "
+                f"or that import them: {', '.join(shown)}"
+                + (f" (+{len(listed) - len(shown)} more)" if len(listed) > len(shown) else "")
+                + ". It may also create new files. To edit any other file, add needed_for to that "
+                "call, naming the blocker the file is needed for.")])
 
-        # When the blockers include toolchain errors and shell tools are on,
-        # instruct the LLM to drive the toolchain itself with run_command — that's the
-        # only way to know whether a fix actually compiles. We do this
-        # as additional text in the same user turn (vs. a separate
-        # message) so the LLM sees the request as part of the brief.
+        # The one place the toolchain instruction is given: the diff alone does not
+        # show it compiles. validate_app runs the gate's check where it can.
         if toolchain_blockers and not self.allow_shell_tools:
             cmds = self._toolchain_commands_for(toolchain_blockers)
             prompt_parts.append("")
@@ -1161,75 +1346,44 @@ class Phase3RepairMixin:
             cmd_lines = "\n".join(f"  - {c}" for c in cmds)
             prompt_parts.append("")
             prompt_parts.append(
-                "After each edit, re-run the relevant toolchain check "
-                "using run_command to confirm the error is gone:"
+                "Fix the reported compile / type errors, then call validate_app: it re-runs "
+                "these checks as the end of this attempt does. Repeat until it reports none. "
+                "Where it lists a check as not run, run it with run_command:"
             )
             prompt_parts.append(cmd_lines)
             prompt_parts.append(
-                "Keep iterating (edit -> re-run) until the toolchain "
-                "reports zero errors. Do not declare done while any "
-                "compile / type error is still reported."
+                "Do not end the attempt while any compile / type error is still reported."
             )
 
         fix_prompt = "\n".join(prompt_parts)
         messages: list[dict] = [{"role": "user", "content": fix_prompt}]
-        # A fresh conversation: nothing read in an earlier round is in it.
-        self.executor.forget_shown_results()
-
-        # Inject a high-salience reminder as a separate user message
-        # right after the prompt. Matches the pattern used by the
-        # per-file modify-loop guard: a <system-reminder>-tagged block
-        # the LLM sees at response-time, not buried inside the prompt.
-        if toolchain_blockers:
-            reminder = self._build_toolchain_reminder(toolchain_blockers)
-            messages.append({
-                "role": "user",
-                "content": [{"type": "text", "text": reminder}],
-            })
 
         edits = 0                 # successful write-tool calls this attempt
-        nudged = False            # the one re-prompt an edit-less attempt gets
+        # needed_for is offered only while the attempt's edits are limited.
+        tools = with_scope_widening(self.tools) if scope is not None else self.tools
         unconfirmed_at_reminder: set | None = None
         truncations = 0           # "emit less" retries after a max_tokens stop
-        force_next: str | None = None
-        turn_cap = _PHASE3_FIX_TURNS
+        # Executed tool calls this attempt may make; its turns are guarded at the same number.
+        cap = _PHASE3_FIX_CALLS
+        calls_before = self._tool_calls_executed()
         turn = 0
         while True:
             stop_reason = self._phase3_stop_requested()
             if stop_reason:
                 logger.warning("Phase 3: %s", stop_reason)
                 return edits
-            if turn >= turn_cap:
-                if edits or nudged or verification_only:
-                    return edits
-                # Read until the cap and wrote nothing: one more turn, and
-                # it has to be the edit.
-                nudged, force_next = True, "modify_file"
-                turn_cap += 1
-                messages.append({
-                    "role": "user",
-                    "content": [{"type": "text", "text": _PHASE3_NO_EDIT_REMINDER}],
-                })
+            if max(turn, self._tool_calls_executed() - calls_before) >= cap:
+                return edits
             turn += 1
             self.total_turns += 1
             self._trace.write(EVENT_TURN_START, turn=self.total_turns, phase="phase3_fix")
-            # Recovery is shared with Phase 2. Do not force the failing text
-            # strategy again after the executor requested a fresh read/range edit.
-            force = self._force_tool_next or force_next
-            self._force_tool_next, force_next = None, None
             # Same compaction as Phase 2; the blockers ride in its work state.
             messages = self._maybe_compact(messages)
             request_messages = without_rejected_edit_drafts(messages)
             try:
-                if force and self._client_supports_structured_chat():
-                    response = self.client.chat(
-                        system=system, messages=request_messages, tools=self.tools,
-                        force_tool=force,
-                    )
-                else:
-                    response = self.client.chat(
-                        system=system, messages=request_messages, tools=self.tools,
-                    )
+                response = self.client.chat(
+                    system=system, messages=request_messages, tools=tools,
+                )
             except InvalidApiKeyError:
                 # Same rule as Phase 2: an auth failure must PROPAGATE so the
                 # runner reports INVALID_KEY. Swallowed here it would read as
@@ -1246,48 +1400,36 @@ class Phase3RepairMixin:
                     "Phase 3: LLM call failed on fix turn %d, aborting fix loop: %s",
                     turn, exc,
                 )
+                if isinstance(exc, DeadlineReached) and not exc.cancelled:
+                    return edits  # no time for another turn; the attempt so far is still checked
                 self._phase3_interrupted = True
-                self._phase3_interrupt_detail = f"provider call failed: {type(exc).__name__}"
+                self._phase3_interrupt_detail = (str(exc) if isinstance(exc, DeadlineReached)
+                                                 else f"provider call failed: {type(exc).__name__}")
                 return edits
             # Repair calls can trigger the outage fallback too, as in Phase 2.
             self._notify_model_switch()
             self._trace_cost_update(self.total_turns, phase="phase3_fix")
+            self._trace.write(EVENT_TURN_END, turn=self.total_turns, phase="phase3_fix")
             # A stop can arrive while a provider request is in flight. Do not
             # apply its returned mutations after cancellation. The final allowed
             # turn may still execute its tools; it is not a new provider call.
             if self._phase3_stop_requested(check_turn_budget=False):
                 return edits
             if response["stop_reason"] == "end_turn":
-                # An owed edit is nudged first: one made after the read-backs
-                # would leave them stale. Then listed creates still unread get
-                # a test_api turn while each reminder confirms at least one.
-                owes_edit = not (edits or nudged or verification_only)
-                unconfirmed = set() if owes_edit else self._unconfirmed_creates(blockers)
+                # Listed creates still unread get another turn while each
+                # reminder confirms at least one; otherwise the attempt ends.
+                unconfirmed = self._unconfirmed_creates(blockers)
                 if unconfirmed and (unconfirmed_at_reminder is None
                                     or unconfirmed < unconfirmed_at_reminder):
-                    unconfirmed_at_reminder, force_next = unconfirmed, "test_api"
-                    turn_cap = max(turn_cap, turn + 1)
+                    unconfirmed_at_reminder = unconfirmed
+                    cap = max(cap, turn + 1, self._tool_calls_executed() - calls_before + 1)
                     if response["content"]:
                         messages.append({"role": "assistant", "content": response["content"]})
                     paths = ", ".join(f"POST {path}" for _, path in sorted(unconfirmed))
                     messages.append({"role": "user", "content": [{
                         "type": "text", "text": _PHASE3_CREATE_EVIDENCE_REMINDER.format(paths=paths)}]})
                     continue
-                if not owes_edit:
-                    return edits
-                # Ended in prose with nothing written. Say so once, force the
-                # edit where tool_choice is honoured, and let the reminder
-                # carry it where the gateway ignores tool_choice.
-                nudged, force_next = True, "modify_file"
-                # Prose on the cap's own turn still gets the forced turn.
-                turn_cap = max(turn_cap, turn + 1)
-                if response["content"]:
-                    messages.append({"role": "assistant", "content": response["content"]})
-                messages.append({
-                    "role": "user",
-                    "content": [{"type": "text", "text": _PHASE3_NO_EDIT_REMINDER}],
-                })
-                continue
+                return edits
             if (response["stop_reason"] in ("max_tokens", "length")
                     and truncations < self._MAX_TRUNCATION_RETRIES):
                 # Recoverable, as in Phase 2: drop the cut-off turn, ask for less.
@@ -1318,6 +1460,12 @@ class Phase3RepairMixin:
                 1 for entry in self.tool_calls_log[logged_before:]
                 if entry["tool"] in _WRITE_TOOLS_ON_RECORD and entry["success"]
             )
+            for widening in self.executor.scope_widenings:
+                logger.info("Phase 3: %s widened the attempt's files to %s: %s",
+                            widening["tool"], widening["path"], widening["needed_for"])
+                self._trace.write(EVENT_EDIT_SCOPE, widened=widening["path"], tool=widening["tool"],
+                                  needed_for=widening["needed_for"])
+            self.executor.scope_widenings.clear()
             messages.append({"role": "user", "content": tool_results})
             # The same streak/repeat guards Phase 2 and the fix cycle get.
             # Without them the bounded repair loop would run on _is_stuck
@@ -1361,14 +1509,11 @@ class Phase3RepairMixin:
         """
         parts = [
             "You are fixing validation errors in generated code. "
-            "Fix each issue concisely. Call validate_app to recheck startup and "
-            "data entry after a coherent repair. When shell tools are unavailable, "
-            "validate_app and test_api are the supported verification tools. Use test_api "
-            "for specification-based workflow assertions and invalid inputs. When shell tools "
-            "are available and the report contains "
-            "toolchain errors (tsc / cargo / kotlinc), verify each fix by "
-            "re-running that toolchain with run_command; the diff alone does "
-            "not show that it compiles.", "",
+            "Fix each issue concisely. Call validate_app after a coherent repair: it runs "
+            "the checks that decide whether this attempt is kept, except the requirements "
+            "judgment."
+            + (" Use test_api for specification-based workflow assertions and invalid inputs."
+               if self._test_api_offered else ""), "",
         ]
         if self._instructions:
             parts.extend([
@@ -1394,10 +1539,40 @@ class Phase3RepairMixin:
             ])
         return "\n".join(parts).rstrip("\n")
 
+    def _seed_named_files(self, paths: list[str]) -> dict[str, str]:
+        """``{path: prompt block}``: the files the blockers name, in order, read through
+        ``read_file`` so a re-read in this conversation is answered with a stub. A file
+        that does not fit what is left of ``_FIX_PROMPT_FILE_CHARS`` is left out unread:
+        a read records the file as seen."""
+        seeded: dict[str, str] = {}
+        budget = _FIX_PROMPT_FILE_CHARS
+        for rel in dict.fromkeys(paths):
+            path = os.path.join(self.output_dir, rel)
+            try:
+                if os.path.getsize(path) > budget:
+                    continue
+                with open(path, encoding="utf-8") as handle:
+                    lines = handle.read().split("\n")
+            except (OSError, UnicodeDecodeError):
+                continue
+            # As read_file numbers it.
+            if sum(len(gutter_line(n, line)) + 1 for n, line in enumerate(lines, 1)) - 1 > budget:
+                continue
+            result = self.executor.execute_typed("read_file", {"path": rel})
+            payload = result.payload if result.succeeded else {}
+            content = payload.get("content")
+            if not content:
+                continue
+            budget -= len(content)
+            seeded[rel] = "\n".join(["", f"{rel} (read_id {payload.get('read_id')}, whole file):",
+                                     "```", content, "```"])
+        return seeded
+
     def _excerpts_for(
-        self, blockers: list[ValidationIssue], context: int = 5, limit: int = 3
+        self, blockers: list[ValidationIssue], context: int = 5, limit: int = 3,
+        shown: set[str] = frozenset(),
     ) -> list[str]:
-        """Numbered source windows around each blocker that names file+line."""
+        """Numbered source windows around each blocker that names file+line, except in ``shown`` files."""
         out: list[str] = []
         seen: set[tuple[str, int]] = set()
         for issue in blockers:
@@ -1405,7 +1580,7 @@ class Phase3RepairMixin:
             if not match:
                 continue
             rel, line_no = match.group(1), int(match.group(2))
-            if (rel, line_no) in seen or len(seen) >= limit:
+            if (rel, line_no) in seen or len(seen) >= limit or rel in shown:
                 continue
             path = os.path.realpath(os.path.join(self.output_dir, rel.replace("/", os.sep)))
             workspace = os.path.realpath(self.output_dir)
@@ -1436,10 +1611,6 @@ class Phase3RepairMixin:
         """Delegate to the toolchain module."""
         return _toolchain_commands_for(toolchain_blockers, shell_tools=self.allow_shell_tools)
 
-    def _build_toolchain_reminder(self, toolchain_blockers: list[ValidationIssue]) -> str:
-        """Delegate to the toolchain module."""
-        return _build_toolchain_reminder(toolchain_blockers, shell_tools=self.allow_shell_tools)
-
     @staticmethod
     def _repair_priority(issue: ValidationIssue) -> tuple[int, str]:
         message = issue.message.lower()
@@ -1448,12 +1619,12 @@ class Phase3RepairMixin:
         # They belong beside the startup classes, not below a lint finding.
         if message.startswith((
             "syntax", "python contract:", "mapper config:", "application startup:",
-            "missing module:", "create contract:", "action call:",
+            "missing module:", "create contract:", "action call:", "read contract:",
         )):
             return 0, message
         if message.startswith(("data contract:", "runtime unverified:")):
             return 1, message
-        if message.startswith(("requirement", "task unverified:")):
+        if message.startswith(("requirement", "task incomplete:")):
             return 3, message
         return 2, message
 
@@ -1461,9 +1632,8 @@ class Phase3RepairMixin:
         """Snapshot the output directory as the rollback target; True on success.
 
         Taken before Phase 3, again once entry validation has applied its own
-        rewrites, and after any repair attempt that reaches a strictly better
-        tree, so the snapshot always holds the BEST validated state the run
-        has reached rather than its first one.
+        rewrites, and after every kept repair attempt, so the snapshot always
+        holds the tree the next attempt starts from.
 
         Built in a staging directory and swapped in by rename: deleting the
         existing snapshot first and copying after leaves the run with no
@@ -1494,6 +1664,9 @@ class Phase3RepairMixin:
             if os.path.exists(snapshot_path):
                 shutil.rmtree(snapshot_path)
             os.replace(staging_path, snapshot_path)
+            # The calls whose edits the snapshot holds; a restore discards the later ones.
+            self._snapshot_calls = len(self.tool_calls_log)
+            self._snapshot_task_writes = self.executor.task_writes()
             logger.info("Snapshot created at %s", snapshot_path)
             return True
         except Exception as e:
@@ -1567,6 +1740,10 @@ class Phase3RepairMixin:
 
         self._carry_over_ignored_dirs(discard_path)
         shutil.rmtree(discard_path, ignore_errors=True)
+        if self._snapshot_calls is not None:
+            for call in self.tool_calls_log[self._snapshot_calls:]:
+                call["rolled_back"] = True
+            self.executor.restore_task_writes(self._snapshot_task_writes)
         logger.info("Restored from snapshot")
         return True
 

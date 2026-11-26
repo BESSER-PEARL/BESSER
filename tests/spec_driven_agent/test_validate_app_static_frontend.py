@@ -39,8 +39,11 @@ def test_validate_app_shows_a_frontend_blocker_phase3_would_report(tmp_path):
 
 
 def test_no_frontend_no_frontend_findings(tmp_path):
+    """Only the gate's own blocker: a web app was asked for and has no frontend."""
     report = _orch(tmp_path, frontend=False)._validate_app()
-    assert not any("frontend contract:" in issue or "acceptance:" in issue for issue in report["issues"])
+    assert not any("acceptance:" in issue for issue in report["issues"])
+    assert [issue for issue in report["issues"] if "frontend contract:" in issue] == [
+        issue for issue in report["issues"] if "output contains no frontend files" in issue]
 
 
 def test_with_a_gui_model_the_matrix_is_left_to_phase3(tmp_path):

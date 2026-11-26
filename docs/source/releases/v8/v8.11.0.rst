@@ -1,0 +1,288 @@
+Version 8.11.0
+==============
+
+Minor release: **traceability from the model to the code**, a trace view of
+Spec-Driven Agent runs, richer agents built from a conversation or a file,
+**generated apps with a typed API client and text columns without a length
+limit**, and Spec-Driven runs that report only observed failures as blockers.
+It adds the traceability metamodel and traced generation endpoints; the
+existing metamodels keep their structure. Recording traces is opt-in per
+project. The generator changes reach every user of the backend, React and web
+app generators: read `Upgrade notes`_ before regenerating an app that already
+has data. Deploy the modeling agent v8.2.0 alongside.
+
+Highlights
+----------
+
+* **Traceability.** A new metamodel records what happened to a project's
+  artifacts: which model elements were created or changed, by whom and with
+  which tool, and which generated code comes from which element. It follows
+  W3C PROV and is stored apart from the models, so recording never changes a
+  model file. Every generator now links the files it writes to the elements
+  they come from, down to attributes, methods and OCL constraints, through
+  ``traced_files`` in ``GeneratorInterface``. ``/traceability/generate-output``
+  and ``/traceability/generate-output-from-project`` return the same files as
+  the plain endpoints together with their trace. The editor gives the elements
+  of every diagram type their editor ids, so the traces reach the GUI, agent,
+  neural network, quantum, BPMN, deployment and component diagrams too. A
+  trace can travel with a JSON or B-UML export. See
+  :doc:`../../buml_language/model_types/traceability` and
+  :doc:`../../generators/traceable_generator`
+  (`#796 <https://github.com/BESSER-PEARL/BESSER/pull/796>`_).
+* **The Traceability page.** Once a project's recording is switched on (new
+  projects start with it off), the editor records the edits of every diagram,
+  every generation from the *Generate* menu, Spec-Driven runs and the
+  assistant's model and token counts. Templates, imports and diagrams the
+  assistant creates are credited to what created them, not to the user. The
+  page shows the trace as a timeline, per diagram, as coverage, as the lineage
+  of an artifact and against the requirements, and lists generators whose code
+  is out of date. Element popups open it with *Show traceability*. Traces stay
+  in the browser (IndexedDB), are safe with two tabs open, and keep the newest
+  runs per generator. The assistant can answer questions about the trace
+  ("which code came from Book?") from a size-capped summary the editor sends.
+  When a message names no element, the summary is about the elements selected
+  on the class diagram, so "what is the impact if I change this?" works too.
+  The editor's user guide gains a Traceability page that explains the page
+  and how to realign an out-of-date project
+  (`WME #290 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/290>`_,
+  `WME #307 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/307>`_,
+  `WME #308 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/308>`_).
+* **A trace view for Spec-Driven Agent runs.** *View files* shows for each
+  line whether the AI wrote it, a BESSER generator produced it or a person
+  edited it between runs, and flags a file changed after the run recorded it.
+  Each phase row shows its duration, LLM turns and estimated cost, and the
+  validation row lists the first check, each fix attempt and what it fixed.
+  The stream gains a ``findings`` event per validation round, and ``phase``
+  events carry the run's cost, turns and time at their start. The run record
+  and the ``spec-driven run end`` log line now hold the token counts and who
+  wrote the delivered lines
+  (`#803 <https://github.com/BESSER-PEARL/BESSER/pull/803>`_,
+  `#804 <https://github.com/BESSER-PEARL/BESSER/pull/804>`_,
+  `WME #295 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/295>`_).
+* **Agents with Markdown replies and option buttons.** An options reply can
+  carry its own label (``ws_options_label``) instead of BAF's English "Choose an
+  option"; it needs BAF 4.6.1, which BESSER now installs. Personalization now
+  covers Markdown replies and option buttons, keeps Markdown structure out of
+  the LLM, undoes a step that breaks a line's inline markup, and only
+  translates button labels so a click still matches its intent. Validation is
+  stricter where the agent is built (agent generation, the simulator, the
+  standalone chatbot deploy and diagram validation): a ``when_intent_matched``
+  transition that names no intent is an error instead of being dropped, and an
+  ``auto`` transition must be the only transition of its state. A project
+  export, ``/transform-agent-model-json``, web-app and Docker Compose
+  generation and the web-app deploy read every agent diagram of the project,
+  so there such a transition is still dropped (no intent) or kept (``auto``)
+  and logged as a warning, and one stale transition does not block the whole
+  project. A custom condition is wired to the function the generated agent
+  calls
+  (`#806 <https://github.com/BESSER-PEARL/BESSER/pull/806>`_,
+  `WME #296 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/296>`_).
+
+Generators
+----------
+
+* **Text without a length limit.** A ``str`` attribute maps to ``Text``
+  instead of ``String(100)``, so a value over 100 characters is no longer
+  rejected or cut on PostgreSQL, MySQL and the other servers that enforce the
+  length. The column is ``TEXT`` (MySQL: up to 64 KB; Oracle:
+  ``VARCHAR2(4000)``, since a ``CLOB`` cannot be compared). A ``str`` primary
+  key or external id, and the foreign keys that reference it, stay
+  ``VARCHAR(255)`` so they can be indexed. The SQLAlchemy, backend and web app
+  generators share the mapping, and the ``SQLGenerator`` DDL follows it. See
+  :doc:`../../generators/alchemy`.
+* **A required text attribute refuses a blank value.** The backend's
+  ``<Class>Create`` schema rejects an empty or whitespace-only value of a
+  required ``str`` with ``422``, on ``POST`` and on ``PUT`` (which takes the
+  same schema); the value is stored as sent. Optional ones accept any value
+  (:doc:`../../generators/backend`).
+* **An API contract and a typed client.** The backend writes
+  ``backend/api_contract.json`` (every route as data: method, path,
+  parameters, body keys, response shape) and ``backend/API.md`` (the same as a
+  reference). The React generator renders
+  ``frontend/src/api/generated/client.ts`` and ``types.ts`` from it, one object
+  per class with a function per route, and the runtime blocks send their
+  requests through its ``apiRequest`` (still on the app's ``axios``, so its
+  defaults and interceptors apply). ``frontend/src/components/runtime/humanize.ts``
+  holds the label helper the blocks share. See :doc:`../../generators/react`.
+* **Method routes.** Enumeration and duration parameters, a class-typed
+  parameter and a call without a body no longer answer ``500``.
+* **GUI conversion.** The radio buttons of one form that share a ``name``
+  become one ``RadioGroup``, a ``<select>`` takes its options from its
+  ``<option>`` children, an input inside a ``<label>`` is kept and labelled
+  with its text, and choices bound to an enumeration are fitted to its
+  literals (:doc:`../../buml_language/model_types/gui`).
+* **Tables and cards.** ``TableComponent`` applies its binding's filter and
+  takes four opt-in options (``rowLink``, ``initialFilters``, ``emptyText``,
+  ``rowActions``); a table that sets none renders as before.
+  ``MetricCardComponent`` loses its ``show-trend``, ``trend``,
+  ``positive-color`` and ``negative-color`` properties, which drew nothing; the
+  model's trend settings stay in the page's metric data. The default chart
+  palette is left out of inline styles (same rendering, smaller pages).
+* **WebAppGenerator.generate_model_output()** writes only what the domain
+  model alone decides, the backend and the typed client, byte for byte as
+  ``generate()`` writes them; it needs no GUI model
+  (:doc:`../../generators/full_web_app`).
+* **BAL** ``for`` loops name their variables the same way on every
+  generation, so two generations of one model are identical.
+
+Spec-Driven Agent
+-----------------
+
+* **Only observed failures block.** A run reports a blocker for what a check
+  observed: a build or start that fails, a ``5xx``, a failing workflow, a
+  ``read contract:`` failure (the runtime check reads back what it created),
+  or the requirements judge's own "missing" or "partial". A check that could
+  not conclude is **not confirmed**: listed, never a blocker, never repaired.
+  A citation that points at a stub, a no-op or a missing file is a
+  ``requirement unsupported:`` blocker. Warnings a check saw are listed as
+  "seen, not blocking" and change no count.
+* **Run states.** Besides ``completed``, a finished run ends
+  ``completed_with_blockers``, or ``completed_unverified`` when a whole class
+  of checks produced no evidence (requirements never checked, app never
+  started, no record created, build never ran), with the reason. Checks the
+  server has switched off are reported apart (``checksOff``) and do not make a
+  run unverified. The run store and the ``done`` event's new ``outcome`` use
+  these values; the ``done`` event also gains ``unresolvedBlockerCount``,
+  ``notConfirmedCount``, ``unverified``, ``unverifiedReason`` and
+  ``checksOff``, and ``blockerCount`` keeps its meaning
+  (:doc:`../../spec_driven_agent/runs`).
+* **Screen check.** After a frontend's build passed, Phase 3 creates records
+  through the API, opens every route of the built frontend in a headless
+  browser and warns about screens that throw, stay empty or get a ``5xx``, and
+  about records no screen shows; never a blocker. It needs the worker image
+  built with the browser (build arg ``SCREEN_CHECK_BROWSER``, default on,
+  about +300 MB); without it the run reports that the check did not run.
+  ``BESSER_LLM_SCREEN_CHECK=false`` turns it off.
+* **validate_app runs the gate's checks.** The model's own validation call
+  runs what the final check runs, except the requirements judge and the
+  authorization check: type check, frontend build and screen check, each only
+  when the files it reads changed and its dependencies are installed. A check
+  that did not run is listed as not run. ``test_api`` is offered only where a
+  FastAPI backend exists and sends form and file bodies.
+* **Repair.** Attempts start only for blockers, get an edit scope (the files
+  the blockers name and their neighbours), and are compared by what was
+  tested (route, entity or file). An attempt is kept only if it resolved a
+  blocker and left the app no worse; otherwise it is rolled back.
+* **Edit runs start from a baseline.** An edit run keeps the previous run's
+  requirements and verdicts, labels findings present when it started "open
+  since the previous version", replays the previous version's API workflows
+  (one that fails now is "regression to confirm", not a blocker), and counts a
+  fix as resolved only when a check exercised it. When the workspace has
+  expired it starts from the stored download. A web app's backend and typed
+  client are regenerated after a model change; pages are never replaced.
+* **Budgets by work.** The work budget is executed tool calls
+  (``max_turns`` x 4), turns are only a runaway guard, and Phase 2 leaves
+  Phase 3 a quarter of each budget. A spent cost cap or quota stops only the
+  paid calls. No cap value changed. One deadline covers every LLM call and
+  command, streamed replies included, and a cancel stops the running command
+  at once.
+* **Tools and context.** Four tools that returned nothing useful are gone,
+  ``install_dependencies`` is part of ``run_command``, and ``task_list`` has
+  one action-free shape (the old one is still accepted). With a generated
+  client in the workspace, the prompt names it and its functions. A provider
+  catalog can no longer raise the compaction threshold. A connection that
+  fails within seconds is retried on the same model before the fallback chain
+  moves on.
+* **AI commit headers.** A run pushed to GitHub records how AI took part in
+  the commit with the trailers Diomidis Spinellis proposes in
+  `Documenting AI-generated code commits <https://www.spinellis.gr/blog/20260702/>`_:
+  ``AI-Tool``, ``AI-Model``, ``AI-Role`` and, new, ``AI-Tokens``
+  (``input=…, cached=…, output=…``). ``AI-Role`` follows the proposal's
+  vocabulary: a run that modified an app is ``code-transformation`` (8.10 wrote
+  ``feature-modification``). The request's text is not written, since the
+  repository may be public (:doc:`../../web_editor_github`).
+* **History eviction, off by default.** ``BESSER_LLM_HISTORY_EVICTION``
+  replaces stale file bodies in older messages by stubs. On recorded runs it
+  sent 7.5% fewer input characters but cost about 2% more on a provider that
+  caches prompts, so it is meant for endpoints that do not cache.
+* **New settings** (:doc:`../../spec_driven_agent/configuration`):
+  ``BESSER_LLM_SCREEN_CHECK`` (on), ``BESSER_LLM_HISTORY_EVICTION`` (off),
+  ``BESSER_LLM_RUN_EVIDENCE_RETENTION_DAYS`` (30), and an opt-in server-side
+  run record, redacted, kept when ``BESSER_INCIDENT_LOG_DIR`` is set (on a
+  container it needs a mount). Request fields: ``followup_states_nothing_new``,
+  and ``met_by`` on ``RequirementInput``, both optional.
+
+Fixes
+-----
+
+* **Java updated for CVE-2026-114938.** Both images install the fixed OpenJDK
+  21 release, fail the build on an affected one, and set the mitigation flags
+  (`#810 <https://github.com/BESSER-PEARL/BESSER/pull/810>`_).
+* **Generated files stay inside the output folder.** A path that resolves
+  outside it (for example an agent skill named ``../../x``) is refused for
+  every generator, and BAF skill files are named from a valid identifier.
+* **Spec-Driven runs behind a proxy.** Proxy variables reach the agent's
+  ``npm`` and ``pip`` installs, which hung until their timeout without them. A
+  proxy URL with credentials is withheld.
+* **Free tier.** A second keyless cloud endpoint
+  (``BESSER_FREE_LLM_SECONDARY_BASE_URL`` / ``_TOKEN`` / ``_MODELS``) sits in the
+  fallback chain before the self-hosted model, and Command Code's newer
+  per-model refusals no longer skip every other model of the key.
+* **Traceability page.** GUI edits on a page other than the one shown are
+  recorded (`WME #306 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/306>`_).
+  The empty page has a *Turn recording on* button, the summary counts
+  "cross-artefact trace links", a bundled link on the lineage canvas shows how
+  many of its links are out of date (``×12 (⚠ 3 out of date)``), and the
+  summary figures, the legend and *Show history* have tooltips that also open
+  on keyboard focus
+  (`WME #307 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/307>`_).
+* **Full browser storage.** The "local storage is nearly full" warning says
+  how to free space and opens a *Free up space* dialog that lists the saved
+  projects by size and last edit, with export and delete
+  (`WME #298 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/298>`_).
+* **Removing OCL constraints with the assistant.** "Remove the
+  book_has_title constraint" removes that constraint instead of deleting its
+  class, and "remove the OCL constraints" removes all of them. When one box
+  holds several constraints, the others stay
+  (`#837 <https://github.com/BESSER-PEARL/BESSER/issues/837>`_,
+  `WME #313 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/313>`_,
+  `modeling-agent #101 <https://github.com/BESSER-PEARL/modeling-agent/pull/101>`_).
+* **Smaller fixes.** The SQL generator writes its DDL as UTF-8, so a class
+  named "Bücher" no longer breaks on Windows; a CNOT converts back as the
+  editor draws it; a project whose owner contains "PROJECT DEFINITION" imports
+  whole; on the Agent Customization page, applying a personalization no longer
+  resets the runtime settings
+  (`WME #296 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/296>`_).
+
+Upgrade notes
+-------------
+
+* **Existing databases keep their columns.** A regenerated app's ``create_all``
+  creates missing tables only; it does not ``ALTER`` existing ones, so a
+  ``str`` column created as ``VARCHAR(100)`` stays so until you migrate it.
+  ``SQLGenerator`` output changes accordingly (``TEXT`` instead of
+  ``VARCHAR(100)``).
+* **Blank text on update.** Because ``PUT`` takes the ``<Class>Create``
+  schema, a record that an older generated app stored with an empty required
+  text field can be updated only with that field filled. Fill such values (or
+  make the attribute optional) before upgrading an app that has them.
+* **New generated files.** ``backend/api_contract.json``, ``backend/API.md``,
+  ``frontend/src/api/generated/client.ts``, ``frontend/src/api/generated/types.ts``
+  and ``frontend/src/components/runtime/humanize.ts``. The runtime blocks now
+  call ``apiRequest``, so regenerating can conflict in a block file edited by
+  hand.
+* **Telemetry outcomes changed.** A run summary records
+  ``completed_with_blockers``, ``completed_unverified`` and ``cancelled`` where
+  it recorded ``success`` before, and the report has a column for each (the
+  CSV's are appended). Success rates from before and after the upgrade are not
+  comparable.
+* **Rolling back.** An 8.10.1 backend does not know the new stored run
+  statuses: it keeps the event stream of a run stored as
+  ``completed_with_blockers`` or ``completed_unverified`` open instead of
+  ending it.
+* **Deploy order.** Deploy the backend and the generation worker together,
+  then the editor, then the modeling agent. Rebuild the worker image for the
+  screen check.
+
+Deploy alongside
+----------------
+
+The modeling agent v8.2.0 answers questions about a project's trace from the
+``context.traceDigest`` the editor sends, opens the Traceability page with a
+``show_trace`` reply, reports the model and tokens of each turn
+(``llmUsage``), and lists the requirements of a long class-diagram request
+only when the project records traces (``context.traceabilityEnabled``). It
+builds agents with Markdown replies, option buttons and custom-condition
+transitions, routes voice and typed messages through the same classifier
+(so it no longer trains an intent classifier per state at startup), and keeps
+a request that is sent again at the replace/keep question.

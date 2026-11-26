@@ -2,7 +2,8 @@
 
 The endpoint-coherence check and the acceptance matrix swallowed their own
 exceptions at debug level, so a crash was indistinguishable from "no findings".
-A Phase 2 quota stop still let Phase 3 start its provider calls.
+A Phase 2 quota stop still let Phase 3 start its provider calls; it now runs
+only the free checks.
 """
 
 from __future__ import annotations
@@ -48,11 +49,14 @@ def test_a_crashing_validator_is_reported_as_not_run(
     assert _classify_issue(notes[0].message).severity == "warning"
 
 
-def test_phase3_does_not_start_after_a_phase2_quota_stop(simple_library_book_model, tmp_path):
+def test_phase3_makes_no_provider_call_after_a_phase2_quota_stop(simple_library_book_model, tmp_path):
     """An exhausted quota fails every later call the same way, so Phase 3's
-    validation and repair calls could only burn time on it."""
+    judge and repair calls could only burn time on it. Its checks are free and run."""
     class _QuotaClient(_Client):
+        calls = 0
+
         def chat(self, **kwargs):
+            _QuotaClient.calls += 1
             raise RuntimeError(
                 "OpenAI API call failed: Error code: 429 - You exceeded your current "
                 "quota (insufficient_quota)")
@@ -62,7 +66,12 @@ def test_phase3_does_not_start_after_a_phase2_quota_stop(simple_library_book_mod
         output_dir=str(tmp_path), enable_checkpointing=False, enable_tracing=False,
         enable_toolchain_validation=False, auto_fix_issues=True,
     )
+    validated = []
+    original = orch._collect_validation_issues
+    orch._collect_validation_issues = lambda: validated.append(_QuotaClient.calls) or original()
     orch.run("Build a library app")
 
     assert orch._phase2_stop_reason == "api_error"
-    assert orch._phase3_exit_reason == "skipped: provider quota exhausted in Phase 2"
+    assert validated, "Phase 3 ran no check"
+    assert _QuotaClient.calls == validated[0], "Phase 3 called the provider"
+    assert not orch._phase3_exit_reason.startswith("skipped")

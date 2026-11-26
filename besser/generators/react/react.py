@@ -9,12 +9,12 @@ import os
 import shutil
 from typing import Any, Dict, Tuple
 
-from jinja2 import Environment, FileSystemLoader
-
 from besser.BUML.metamodel.gui import GUIModel
 from besser.BUML.metamodel.structural import DomainModel
 from besser.generators import GeneratorInterface
+from besser.utilities.generation_trace import traced_environment
 
+from .api_client import API_CLIENT_TEMPLATES, api_client_context, register_api_client_filters
 from .page_builder import PageBuilderMixin
 from .serialization import GuiSerializationMixin
 
@@ -54,14 +54,15 @@ class ReactGenerator(GuiSerializationMixin, PageBuilderMixin, GeneratorInterface
         # The application's name as its users see it (browser tab, README)
         self.app_name = app_name
         templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
-        self.env = Environment(
-            loader=FileSystemLoader(templates_path),
+        self.env = traced_environment(
+            templates_path,
             trim_blocks=True,
             lstrip_blocks=True,
             extensions=["jinja2.ext.do"],
             variable_start_string="[[",
             variable_end_string="]]",
         )
+        register_api_client_filters(self.env)
         self._style_map: Dict[Tuple[str, ...], Dict[str, Any]] = {}
 
     def generate(self):
@@ -72,6 +73,7 @@ class ReactGenerator(GuiSerializationMixin, PageBuilderMixin, GeneratorInterface
         """
 
         context = self._build_generation_context()
+        context.update(api_client_context(self.model))
         used_component_types = self._get_used_component_types()
 
         def generate_file_from_template(rel_template_path: str):
@@ -85,10 +87,9 @@ class ReactGenerator(GuiSerializationMixin, PageBuilderMixin, GeneratorInterface
                 os.makedirs(os.path.dirname(file_path), exist_ok=True)
                 template = self.env.get_template(rel_template_path.replace("\\", "/"))
                 generated_code = template.render(**context)
-                # newline="\n": a text-mode write turns "\n" into os.linesep,
+                # Written with "\n" endings: a text-mode write turns "\n" into os.linesep,
                 # so a Windows host produced a CRLF workspace from LF templates.
-                with open(file_path, mode="w", encoding="utf-8", newline="\n") as f:
-                    f.write(generated_code)
+                self._write_traced(rel_output_path.replace("\\", "/"), generated_code)
             except Exception as exc:
                 logger.error("Error generating %s from %s: %s", file_path, rel_template_path, exc)
                 raise
@@ -111,6 +112,19 @@ class ReactGenerator(GuiSerializationMixin, PageBuilderMixin, GeneratorInterface
                     _copy_template_file(abs_template_path, dest_path)
 
         self._generate_pages()
+
+    def generate_api_client(self) -> list:
+        """Write only the typed API client (``src/api/generated/``), exactly as ``generate`` does.
+
+        It needs the domain model alone, so a frontend without a GUI model gets it too.
+        Returns the paths written, relative to the output directory.
+        """
+        context = api_client_context(self.model)
+        written = []
+        for template in API_CLIENT_TEMPLATES:
+            self._write_traced(template[:-3], self.env.get_template(template).render(**context))
+            written.append(template[:-3])
+        return written
 
     def _should_generate_file(self, rel_path: str, used_component_types: set) -> bool:
         """Determine if a file should be generated based on component usage."""

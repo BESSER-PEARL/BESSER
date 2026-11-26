@@ -1,5 +1,5 @@
 import React, { CSSProperties, useState } from "react";
-import axios from "axios";
+import { ApiError, apiRequest } from "../../api/generated/client";
 import { notifyDataChanged } from "./dataVersion";
 
 export interface FormBlockField {
@@ -41,14 +41,15 @@ const toValue = (type: string | undefined, raw: FormDataEntryValue | null): any 
 };
 
 const errorText = (err: unknown): string => {
-  if (axios.isAxiosError(err) && err.response) {
-    const detail = err.response.data?.detail;
+  if (err instanceof ApiError && err.status > 0) {
+    const data = err.body as any;
+    const detail = data?.detail;
     if (Array.isArray(detail)) {
       return detail.map((e: any) => `${e.loc ? e.loc[e.loc.length - 1] : "field"}: ${e.msg}`).join("; ");
     }
     if (typeof detail === "string") return detail;
     if (detail) return JSON.stringify(detail);
-    return err.response.data?.message || "Could not save. Please check your input.";
+    return data?.message || "Could not save. Please check your input.";
   }
   return "Network error. Please try again.";
 };
@@ -85,12 +86,10 @@ export const FormBlock: React.FC<FormBlockProps> = ({
       if (typeof value === "number" && Number.isNaN(value)) continue;
       payload[field.field] = value;
     }
-    const backendBase = import.meta.env.VITE_API_URL || "http://localhost:8000";
-    const url = endpoint.startsWith("/") ? backendBase + endpoint : endpoint;
     setSaving(true);
     setStatus(null);
     try {
-      await axios.post(url, payload);
+      await apiRequest("POST", endpoint, { body: payload });
       notifyDataChanged();
       form.reset();
       setStatus({ ok: true, text: `${entity || "Record"} saved.` });

@@ -6,7 +6,8 @@ or invented/pasted in an instruction.  Treat the artifact and SSE serializers
 as the final trust boundary: remove populated ``.env`` files and replace
 credential-shaped text everywhere else with a stable placeholder.
 
-The Spec-Driven agent's trace (:func:`redact_trace_text`), the LLM clients'
+The Spec-Driven agent's trace (:func:`redact_trace_text`), the file contents a
+generation trace keeps (:func:`redact_shared_file`), the LLM clients'
 error logs (:func:`redact_literal`) and the editor backend's generator-config
 logs (:func:`sanitize_config`) use this module too. The one other redactor is
 ``spec_driven_agent/validation/api_probe.py``'s ``_scrub``: its child process
@@ -40,10 +41,16 @@ _MAX_TEXT_FILE_BYTES = 2 * 1024 * 1024
 # placeholders. They are still scanned and redacted if a real token appears.
 _ENV_SAFE_SUFFIXES = (".example", ".sample", ".template", ".dist")
 
+# ``NAME = value`` where NAME holds a credential word. The value runs to the line end,
+# which must be a bare LF or the end: a CRLF line is not matched. After ``=``, blank
+# space may span lines, and when no value follows, the last blank before a line end
+# is the value (``TOKEN=`` then a line of spaces). Every part matches one way only,
+# so the rule is linear in time: the name starts on its own line, the name and the
+# spaces after it are atomic, and only a one-character blank value is backtracked to.
 _SECRET_ENV_ASSIGNMENT_RE = re.compile(
-    r"(?im)^(\s*[A-Za-z0-9_]*"
+    r"(?im)^[^\S\n]*+(?>[A-Za-z0-9_]*"
     r"(?:API[_-]?KEY|SECRET|TOKEN|PASSWORD|PASSWD|PRIVATE[_-]?KEY|ACCESS[_-]?KEY)"
-    r"[A-Za-z0-9_]*\s*=\s*)([^\r\n]+)$"
+    r"[A-Za-z0-9_]*)\s*+=(?:\s*+(?P<value>[^\r\n]++)$|\s*(?P<blank>[^\S\r\n])$)"
 )
 
 # Provider tokens with sufficiently specific prefixes to avoid redacting
@@ -83,6 +90,27 @@ _PEM_PRIVATE_KEY_RE = re.compile(
     r"-----BEGIN[ A-Z0-9_-]{0,100}PRIVATE KEY(?: BLOCK)?-----(?:\s|\\[nr]|[A-Za-z0-9+/=]){64,}"
     r"(?:-----END[ A-Z0-9_-]{0,100}PRIVATE KEY(?: BLOCK)?-----)?"
 )
+# Records only (redact_record_text): a web URL's password, as pip config and git
+# remotes print it. Delivered files and the event stream keep it.
+_WEB_URL_PASSWORD_RE = re.compile(
+    r"(?i)\bhttps?://[^:/?#@\s'\"]*:(?P<password>[^@/?#\s'\"]+)@(?P<host>[^:/?#,\s'\"]*)"
+)
+
+# Records only: a credential HTTP header as a request or response dump prints it, at
+# the start of a line (``> Cookie: ...``, ``< Set-Cookie: ...``, ``X-API-Key: ...``),
+# or as a ``-H`` / ``--header`` argument. Delivered files and the event stream keep
+# them: a README or a test script uses them to call the app.
+_CREDENTIAL_HEADER_NAMES = r"(?:cookie|set-cookie|x-[a-z0-9-]*-(?:key|token))"
+# Unambiguous on runs of spaces (each run belongs to one token), so linear in time.
+_HEADER_LINE_RE = re.compile(
+    rf"(?im)^([ \t]*(?:[<>][ \t]*)?{_CREDENTIAL_HEADER_NAMES}[ \t]*:[ \t]*)(\S(?:[^\r\n]*\S)?)(?=[ \t]*\r?$)"
+)
+_HEADER_ARGUMENT_RE = re.compile(
+    rf"(?i)((?:-H|--header)[ \t=]*(['\"])[ \t]*(?:{_CREDENTIAL_HEADER_NAMES}|authorization)[ \t]*:[ \t]*"
+    r"(?:(?:bearer|basic|token)[ \t]+)?)"
+    r"([^'\"\r\n]+?)(?=\2)"
+)
+
 # No value rule matches fewer characters (``redis://:x@``), so a shorter
 # string skips them: most strings of an SSE frame are short field values.
 _MIN_VALUE_SECRET_LENGTH = 10
@@ -256,7 +284,8 @@ def _redact_vendored_tokens(text: str) -> tuple[str, int]:
     return text, findings
 
 
-def _redact_db_url_passwords(text: str, *, keep_local: bool = True) -> tuple[str, int]:
+def _redact_db_url_passwords(text: str, *, keep_local: bool = True,
+                              pattern: re.Pattern[str] = _DB_URL_PASSWORD_RE) -> tuple[str, int]:
     findings = 0
 
     def _replacement(match: re.Match[str]) -> str:
@@ -268,7 +297,7 @@ def _redact_db_url_passwords(text: str, *, keep_local: bool = True) -> tuple[str
         findings += 1
         return match.group(0).replace(f":{password}@", f":{REDACTED_SECRET}@")
 
-    return _DB_URL_PASSWORD_RE.sub(_replacement, text), findings
+    return pattern.sub(_replacement, text), findings
 
 
 def _is_local_host(host: str) -> bool:
@@ -327,10 +356,11 @@ def redact_text(
 
     def _assignment_replacement(match: re.Match[str]) -> str:
         nonlocal findings
-        if _is_placeholder(match.group(2)):
+        group = "value" if match.group("value") is not None else "blank"
+        if _is_placeholder(match.group(group)):
             return match.group(0)
         findings += 1
-        return match.group(1) + REDACTED_SECRET
+        return match.string[match.start():match.start(group)] + REDACTED_SECRET
 
     # .env-family content ONLY - see the docstring.
     redacted = value
@@ -344,6 +374,21 @@ def redact_text(
     redacted, vendored_count = _redact_vendored_tokens(redacted)
     redacted, url_count = _redact_db_url_passwords(redacted)
     return redacted, findings + token_count + pem_count + vendored_count + url_count
+
+
+def _redact_credential_headers(text: str) -> tuple[str, int]:
+    findings = 0
+
+    def _replacement(prefix: str, value: str) -> str:
+        nonlocal findings
+        if _URL_TEMPLATE_RE.search(value) or _is_placeholder(value) or value == REDACTED_SECRET:
+            return prefix + value
+        findings += 1
+        return prefix + REDACTED_SECRET
+
+    text = _HEADER_LINE_RE.sub(lambda m: _replacement(m.group(1), m.group(2)), text)
+    text = _HEADER_ARGUMENT_RE.sub(lambda m: _replacement(m.group(1), m.group(3)), text)
+    return text, findings
 
 
 def redact_data(value: Any, secrets: Iterable[str] = ()) -> tuple[Any, int]:
@@ -387,7 +432,10 @@ _TRACE_CREDENTIAL_PATTERNS = (
 def redact_trace_text(text: str) -> str:
     """``text`` as the agent's trace records it: the value rules of
     :func:`redact_text`, then bearer tokens, token fields and JWTs."""
-    text = redact_text(text, env_style=False)[0]
+    return _redact_trace_patterns(redact_text(text, env_style=False)[0])
+
+
+def _redact_trace_patterns(text: str) -> str:
     for pattern, replacement in _TRACE_CREDENTIAL_PATTERNS:
         text = pattern.sub(replacement, text)
     return text
@@ -404,7 +452,9 @@ def redact_literal(text: str, secret: str) -> str:
 _CREDENTIAL_KEY_RE = re.compile(
     r"(?i)(?:^|[_-])(?:api[_-]?key|token|secret|password|passwd|private[_-]?key|access[_-]?key)$"
 )
-_YAML_ASSIGNMENT_RE = re.compile(r"(?m)^(\s*([A-Za-z0-9_-]+)\s*:[ \t]*)(\S[^\r\n]*)$")
+# Linear like the .env rule: the indent stays on its line and the key and the blank after it
+# are possessive, so a run of blank lines is not tried from every line start.
+_YAML_ASSIGNMENT_RE = re.compile(r"(?m)^([^\S\n]*+([A-Za-z0-9_-]++)\s*+:[ \t]*)(\S[^\r\n]*)$")
 
 
 def _redact_yaml_lines(text: str) -> tuple[str, int]:
@@ -523,6 +573,65 @@ def sanitize_config(config: Any) -> Any:
     if isinstance(config, str):
         return _redact_db_url_passwords(redact_text(config, env_style=False)[0], keep_local=False)[0]
     return config
+
+
+# A credential written as a quoted literal in code or config (``SECRET_KEY = "..."``,
+# ``"apiKey": "..."``, ``password: '...'``): the name ends with a credential word, the value is
+# the literal. Only the literal is replaced, so the line keeps its shape. The name starts at a
+# word start: trying every start inside a long word is quadratic.
+_CREDENTIAL_LITERAL_RE = re.compile(
+    r"(?im)((?<![A-Za-z0-9_])[A-Za-z0-9_]*(?:api[_-]?key|apikey|secret(?:[_-]?key)?|token|password|passwd"
+    r"|private[_-]?key|access[_-]?key)[\"']?\s*[:=]\s*)([\"'])([^\"'\r\n]{8,})\2"
+)
+
+
+def _redact_credential_literals(text: str) -> tuple[str, int]:
+    findings = 0
+
+    def _replacement(match: re.Match[str]) -> str:
+        nonlocal findings
+        value = match.group(3)
+        # No template check: a generated key may hold "%s" (Django's alphabet has % and s).
+        if _is_placeholder(value) or value == REDACTED_SECRET:
+            return match.group(0)
+        findings += 1
+        return f"{match.group(1)}{match.group(2)}{REDACTED_SECRET}{match.group(2)}"
+
+    return _CREDENTIAL_LITERAL_RE.sub(_replacement, text), findings
+
+
+def redact_shared_file(path: str, content: str) -> tuple[str, int]:
+    """A generated file as a record others may read keeps it (a generation trace), and a match count.
+
+    The delivered file stays as it is: the app needs its keys. The copy a record shares has
+    every credential the value rules of :func:`redact_text` find replaced, a ``.env`` file's
+    assignments, a YAML file's ``key: value`` credential lines, and a credential written as a
+    quoted literal (``SECRET_KEY = "..."``). Every rule replaces text within a line, except a
+    private key spanning lines.
+    """
+    name = path.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    findings = 0
+    if name.endswith((".yaml", ".yml")):
+        content, findings = _redact_yaml_lines(content)
+    redacted, value_findings = redact_text(content, env_style=name.startswith(".env"))
+    redacted, literal_findings = _redact_credential_literals(redacted)
+    return redacted, findings + value_findings + literal_findings
+
+
+def redact_record_text(text: str, *, path: str = "", secrets: Iterable[str] = ()) -> str:
+    """``text`` as a server-side record operators read keeps it.
+
+    The literal ``secrets`` first (a key partly shaped like a token goes whole),
+    then the rules of :func:`redact_shared_file` with ``.env``-style assignments
+    on for every text (``path`` picks the YAML rule), web URL passwords and
+    credential headers, then the trace rules (bearer tokens, token fields, JWTs).
+    """
+    text = redact_text(text, secrets=secrets)[0]
+    if path.replace("\\", "/").rsplit("/", 1)[-1].lower().endswith((".yaml", ".yml")):
+        text = _redact_yaml_lines(text)[0]
+    text = _redact_credential_literals(text)[0]
+    text = _redact_db_url_passwords(text, pattern=_WEB_URL_PASSWORD_RE)[0]
+    return _redact_trace_patterns(_redact_credential_headers(text)[0])
 
 
 def looks_like_secret_env(content: str) -> bool:

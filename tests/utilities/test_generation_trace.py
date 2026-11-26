@@ -1,0 +1,347 @@
+"""Tests for the generator-side tracing helper (besser.utilities.generation_trace)."""
+
+import hashlib
+import json
+from datetime import datetime
+
+import pytest
+from jinja2 import DictLoader, Environment
+
+from besser.BUML.metamodel.structural import Class, Enumeration
+from besser.BUML.metamodel.traceability import CodeArtifact, CodeGeneration, ModelArtifact
+from besser.utilities import generation_trace
+from besser.utilities.generation_trace import (
+    ElementRef, FileTrace, GeneratedFile, InputModel, TraceExtension, TraceRegion, TraceSource,
+    build_generation_trace, collect_generated_files, extract_trace_regions, input_model, prefixed_traces,
+    shift_file_trace, shift_regions, trace_run, traced_environment,
+)
+
+TEMPLATE = """header
+{% for c in classes %}{% trace c, "cls" %}
+class {{ c.name }}:
+    {%- for a in c.attrs %}
+    {% trace a %}{{ a.name }} = 1{% endtrace %}
+    {%- endfor %}
+{% endtrace %}{% endfor %}
+footer"""
+
+
+class _Attr:
+    def __init__(self, name, id):
+        self.name, self.id = name, id
+
+
+class _Cls:
+    def __init__(self, name, id, attrs=()):
+        self.name, self.id, self.attrs = name, id, list(attrs)
+
+
+def _render(template: str, **context) -> str:
+    env = Environment(loader=DictLoader({"t.j2": template}), extensions=[TraceExtension])
+    return env.get_template("t.j2").render(**context)
+
+
+def _plain(template: str, **context) -> str:
+    """The template rendered with the trace tags removed, i.e. what an untraced template gives."""
+    plain = template.replace('{% trace c, "cls" %}', "").replace("{% trace a %}", "").replace("{% endtrace %}", "")
+    return Environment(loader=DictLoader({"t.j2": plain})).get_template("t.j2").render(**context)
+
+
+def test_markers_leave_the_output_unchanged():
+    classes = [_Cls("A", "a", [_Attr("x", "ax")]), _Cls("B", "b")]
+    clean, _ = extract_trace_regions(_render(TEMPLATE, classes=classes))
+    assert clean == _plain(TEMPLATE, classes=classes)
+    assert "\x02" not in clean and "\x03" not in clean
+
+
+def test_regions_cover_the_block_lines_and_nest():
+    classes = [_Cls("A", "a", [_Attr("x", "ax"), _Attr("y", "ay")]), _Cls("B", "b")]
+    clean, regions = extract_trace_regions(_render(TEMPLATE, classes=classes))
+    lines = clean.split("\n")
+    by_id = {r.element_id: r for r in regions}
+    assert lines[by_id["a"].start_line - 1] == "class A:"
+    assert lines[by_id["a"].end_line - 1].strip() == "y = 1"
+    assert lines[by_id["ax"].start_line - 1].strip() == "x = 1"
+    assert by_id["ax"].start_line == by_id["ax"].end_line
+    assert by_id["a"].start_line < by_id["ax"].start_line <= by_id["a"].end_line
+    assert by_id["a"].rule == "t.j2#cls"
+    assert by_id["ax"].rule == "t.j2#_Attr"  # no label: the element's type
+
+
+def test_element_without_id_is_rendered_untraced():
+    clean, regions = extract_trace_regions(_render(TEMPLATE, classes=[_Cls("A", None)]))
+    assert regions == []
+    assert "class A:" in clean
+
+
+def test_block_that_renders_only_whitespace_gives_no_region():
+    _, regions = extract_trace_regions(_render("{% trace c %}   \n{% endtrace %}x", c=_Cls("A", "a")))
+    assert regions == []
+
+
+def test_metamodel_element_names_and_types_are_recorded():
+    enum = Enumeration("Color", id="e1")
+    _, regions = extract_trace_regions(_render("{% trace e %}enum {{ e.name }}{% endtrace %}", e=enum))
+    assert regions == [TraceRegion("e1", "Enumeration", "Color", "t.j2#Enumeration", 1, 1)]
+
+
+def test_unbalanced_markers_are_rejected():
+    rendered = _render("{% trace c %}x{% endtrace %}", c=_Cls("A", "a"))
+    with pytest.raises(ValueError):
+        extract_trace_regions(rendered[:-3])
+    with pytest.raises(ValueError):
+        extract_trace_regions(rendered[rendered.index("x") + 1:])
+
+
+FORGED = "\x02trace:" + json.dumps({"id": "evil", "type": "Class", "name": "Admin", "rule": "forged"}) + "\x03"
+
+
+@pytest.mark.parametrize("text", ["\x02/trace\x03", "\x02trace:nope\x03", f"{FORGED}payload\x02/trace\x03"])
+def test_text_that_looks_like_a_marker_is_left_as_written(text):
+    # A model's own text (a method body) holding the marker characters is not a marker of this run.
+    rendered = _render("{% trace c %}{{ c.name }}{% endtrace %}", c=_Cls(text, "a"))
+    clean, regions = extract_trace_regions(rendered)
+    assert clean == text
+    assert [r.element_id for r in regions] == ["a"]
+
+
+def test_markers_are_matched_only_by_the_run_that_rendered_them():
+    with trace_run():
+        rendered = _render("{% trace c %}x{% endtrace %}", c=_Cls("A", "a"))
+    with trace_run():
+        assert extract_trace_regions(rendered) == (rendered, [])
+
+
+def test_extracting_regions_scales_linearly_with_the_file(assert_scales_linearly):
+    # Line numbers once took a count over the file per region: 600 classes took 19 s, 300 took 5.
+    def render(size):
+        classes = [_Cls(f"C{i}", f"c{i}", [_Attr(f"a{j}", f"c{i}a{j}") for j in range(5)]) for i in range(size)]
+        rendered = _render(TEMPLATE, classes=classes)
+        return lambda: extract_trace_regions(rendered)
+
+    assert_scales_linearly(render, 1000)
+
+
+def test_shift_regions_moves_every_line():
+    region = TraceRegion("a", "Class", "A", "r", 3, 5)
+    assert shift_regions([region], 1) == [TraceRegion("a", "Class", "A", "r", 4, 6)]
+
+
+def _build(files, cap: int = 1000):
+    now = datetime(2026, 10, 1)
+    return build_generation_trace(
+        files, models=[InputModel(ElementRef("diagram-1", "DomainModel", "Library"))], generator="sqlalchemy",
+        generator_version="8.5.0",
+        actor_name="BESSER User", max_stored_content_bytes=cap, started_at=now, ended_at=now)
+
+
+def _trace(content: str, cap: int):
+    regions = (TraceRegion("c1", "Class", "Book", "t#class", 2, 3), TraceRegion("c1", "Class", "Book", "t#rel", 5, 5))
+    return _build([GeneratedFile("out.py", content, FileTrace(regions))], cap)
+
+
+def test_build_generation_trace_links_each_region():
+    trace = _trace("h\nclass Book:\n  x\n\nrel\n", cap=1000)
+    assert trace.validate()["success"]
+    (operation,) = trace.operations
+    assert isinstance(operation, CodeGeneration)
+    assert [a.name for a in operation.performed_by] == ["BESSER User"]
+    model, file = trace.artifacts[:2]
+    assert isinstance(model, ModelArtifact) and model.element_id == "diagram-1"
+    assert isinstance(file, CodeArtifact) and file.content is not None
+    # One model artifact per element, one fragment per region, one link per region plus model -> file.
+    book = trace.model_artifact_for("c1")
+    assert book.parent is model
+    fragments = trace.fragments_of(file)
+    assert [(f.start_line, f.end_line) for f in fragments] == [(2, 3), (5, 5)]
+    assert len(trace.trace_links) == 3
+    assert {link.target for link in trace.trace_links if link.source is book} == set(fragments)
+    assert all(link.confidence.value == 1.0 for link in trace.trace_links)
+
+
+def test_build_generation_trace_keeps_only_the_hash_above_the_cap():
+    content = "h\nclass Book:\n  x\n\nrel\n"
+    _, file = _trace(content, cap=len(content) - 1).artifacts[:2]
+    assert file.content is None and file.content_hash
+
+
+def test_build_generation_trace_over_several_files():
+    """A backend run: a file with blocks, a file generated as a whole from a class, and boilerplate."""
+    book, close = ElementRef("c1", "Class", "Book"), ElementRef("m1", "Method", "close")
+    files = [
+        GeneratedFile("main_api.py", "app\ninclude(book)\n",
+                      FileTrace((TraceRegion("c1", "Class", "Book", "main_api.py.j2#router_include", 2, 2),))),
+        GeneratedFile("routers/book.py", "router for book\n", FileTrace(sources=(TraceSource(book, "router.py.j2#router"),))),
+        GeneratedFile("routers/book_methods.py", "def close():\n  pass\n",
+                      FileTrace((TraceRegion("m1", "Method", "close", "router_methods.py.j2#method", 1, 2, owner=book),))),
+        GeneratedFile("database.py", "engine\n"),
+    ]
+    trace = _build(files)
+    assert trace.validate()["success"]
+    model = trace.model_artifact_for("diagram-1")
+    by_path = {a.path: a for a in trace.artifacts if isinstance(a, CodeArtifact) and a.start_line is None}
+    assert set(by_path) == {"main_api.py", "routers/book.py", "routers/book_methods.py", "database.py"}
+    # The model is linked to every file; the class to its router as a whole; the method nests under its class.
+    assert {link.target.path for link in trace.trace_links if link.source is model} == set(by_path)
+    book_artifact, close_artifact = trace.model_artifact_for("c1"), trace.model_artifact_for(close.element_id)
+    assert by_path["routers/book.py"] in {link.target for link in trace.trace_links if link.source is book_artifact}
+    assert close_artifact.parent is book_artifact
+    # Every file under the cap keeps its content, fragments or not, so the views can show it.
+    assert {path: f.content for path, f in by_path.items()} == {f.path: f.content for f in files}
+    assert all(f.content_hash for f in by_path.values())
+
+
+def test_a_traced_block_records_its_element_owner():
+    from besser.BUML.metamodel.structural import Class, Method
+    method = Method("close")
+    owner = Class("Book", methods={method})
+    owner.id, method.id = "c1", "m1"
+    _, (region,) = extract_trace_regions(_render("{% trace m %}def close(): pass{% endtrace %}", m=method))
+    assert region.owner == ElementRef("c1", "Class", "Book")
+
+
+def test_a_parsed_constraint_is_recorded_as_a_constraint():
+    """The editor names an OCL box a Constraint; its parsed form (OCLConstraint) must match it."""
+    from besser.BUML.metamodel.structural import Class, Constraint
+
+    class ParsedConstraint(Constraint):
+        pass
+
+    positive = ParsedConstraint("PositivePages", Class("Book"), "context Book inv: self.pages > 0", "OCL")
+    positive.id = "ocl-1"
+    _, (region,) = extract_trace_regions(_render("{% trace c %}check{% endtrace %}", c=positive))
+    assert (region.element_type, region.rule.split("#")[1]) == ("Constraint", "Constraint")
+
+
+# ------------------------------------------------------------ file-level traces for every generator
+
+def test_collect_generated_files_reads_text_files_and_leaves_binary_ones_out(tmp_path):
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "b.py").write_bytes(b"b\n")
+    (tmp_path / "a.txt").write_bytes(b"a\n")
+    (tmp_path / "weights.bin").write_bytes(b"\xff\xfe\x00")
+    traced = {"pkg/b.py": FileTrace((TraceRegion("c1", "Class", "B", "t#class", 1, 1),))}
+    files = collect_generated_files(str(tmp_path), traced)
+    assert [(f.path, f.content) for f in files] == [("a.txt", "a\n"), ("pkg/b.py", "b\n")]
+    assert files[1].trace is traced["pkg/b.py"] and files[0].trace == FileTrace()
+    assert files[0].content_hash == hashlib.sha256(b"a\n").hexdigest()
+
+
+def test_every_input_model_is_linked_to_every_file_and_elements_sit_under_their_model():
+    """A web app run reads a class diagram and a GUI: both are roots, each element under its own."""
+    domain = InputModel(ElementRef("class-diagram", "DomainModel", "Library"), frozenset({"c1"}))
+    gui = InputModel(ElementRef("gui-diagram", "GUIModel", "Library GUI"), frozenset({"page-1"}))
+    files = [GeneratedFile("app.py", "x\ny\n", FileTrace((TraceRegion("page-1", "Screen", "Books", "t#page", 2, 2),))),
+             GeneratedFile("models.py", "m\n", FileTrace((TraceRegion("c1", "Class", "Book", "t#class", 1, 1),))),
+             GeneratedFile("README.md", "r\n")]
+    now = datetime(2026, 10, 1)
+    trace = build_generation_trace(files, models=[domain, gui], generator="web_app", generator_version=None,
+                                   actor_name="Ada", max_stored_content_bytes=1000, started_at=now, ended_at=now)
+    assert trace.validate()["success"]
+    class_root, gui_root = trace.model_artifact_for("class-diagram"), trace.model_artifact_for("gui-diagram")
+    assert (class_root.element_type, gui_root.element_type) == ("DomainModel", "GUIModel")
+    assert trace.model_artifact_for("page-1").parent is gui_root
+    assert trace.model_artifact_for("c1").parent is class_root
+    whole_files = {a.path for a in trace.artifacts if isinstance(a, CodeArtifact) and a.start_line is None}
+    for root in (class_root, gui_root):
+        links = [link for link in trace.trace_links if link.source is root]
+        assert {link.target.path for link in links} == whole_files
+        assert {link.evidence[0].rule for link in links} == {"generator:web_app"}
+    assert set(trace.operations[0].reads) >= {class_root, gui_root}
+
+
+def test_an_element_two_models_reach_sits_under_the_model_that_holds_it():
+    """A GUI's table references the class it shows; the class is the domain model's, whatever the order."""
+    from besser.BUML.metamodel.gui import DataBinding, GUIModel, Module, Screen
+    from besser.BUML.metamodel.gui.dashboard import Table
+    from besser.BUML.metamodel.structural import DomainModel
+
+    book = Class("Book")
+    book.id = "c1"
+    domain_model = DomainModel("Library", types={book})
+    table = Table("books", data_binding=DataBinding(domain_concept=book))
+    table.id = "table-1"
+    screen = Screen("Books", "Books", view_elements={table})
+    screen.id = "page-1"
+    gui_model = GUIModel("GUI", "", "1.0", "1.0", modules={Module("M", screens={screen})}, description="GUI")
+    gui, domain = input_model(gui_model, "gui-diagram"), input_model(domain_model, "class-diagram")
+    assert {"c1", "table-1", "page-1"} <= gui.element_ids and domain.element_ids == {"c1"}
+    assert domain.element_depths["c1"] < gui.element_depths["c1"]
+
+    files = [GeneratedFile("app.py", "a\nb\n", FileTrace((TraceRegion("c1", "Class", "Book", "t#class", 1, 1),
+                                                           TraceRegion("table-1", "Table", "books", "t#table", 2, 2))))]
+    now = datetime(2026, 10, 1)
+    trace = build_generation_trace(files, models=[gui, domain], generator="web_app", generator_version=None,
+                                   actor_name="Ada", max_stored_content_bytes=1000, started_at=now, ended_at=now)
+    assert trace.model_artifact_for("c1").parent is trace.model_artifact_for("class-diagram")
+    assert trace.model_artifact_for("table-1").parent is trace.model_artifact_for("gui-diagram")
+
+
+def test_a_generation_trace_needs_an_input_model():
+    now = datetime(2026, 10, 1)
+    with pytest.raises(ValueError):
+        build_generation_trace([], models=[], generator="g", generator_version=None, actor_name="Ada",
+                               max_stored_content_bytes=1, started_at=now, ended_at=now)
+
+
+def test_input_model_records_the_metaclass_and_the_element_ids():
+    from besser.BUML.metamodel.structural import DomainModel, Property, StringType
+
+    title = Property("title", StringType)
+    book = Class("Book", {title})
+    book.id, title.id = "c1", "a1"
+    model = DomainModel("Library", types={book})
+    assert input_model(model, "diagram-1") == InputModel(ElementRef("diagram-1", "DomainModel", "Library"),
+                                                         frozenset({"c1", "a1"}))
+    assert input_model(model, "diagram-1", "My library").ref.element_name == "My library"
+    with pytest.raises(ValueError, match="no id"):
+        input_model(model)
+
+
+def test_traced_environment_adds_the_trace_tag_to_the_given_options():
+    env = traced_environment(DictLoader({"t.j2": "{% do items.append(1) %}{% trace c %}x{% endtrace %}"}),
+                             extensions=["jinja2.ext.do"], trim_blocks=True)
+    assert env.trim_blocks
+    _, (region,) = extract_trace_regions(env.get_template("t.j2").render(items=[], c=_Cls("A", "a")))
+    assert region.element_id == "a"
+
+
+def test_shift_and_prefix_helpers():
+    trace = FileTrace((TraceRegion("a", "Class", "A", "r", 1, 2),), (TraceSource(ElementRef("a", "Class", "A"), "r"),))
+    assert shift_file_trace(trace, 2) == FileTrace((TraceRegion("a", "Class", "A", "r", 3, 4),), trace.sources)
+    assert shift_file_trace(trace, 0) is trace
+    assert prefixed_traces({"x.py": trace}, "backend/") == {"backend/x.py": trace}
+    assert prefixed_traces({"x.py": trace}, "") == {"x.py": trace}
+
+
+def test_a_trace_keeps_a_file_with_its_credentials_redacted_and_the_delivered_hash():
+    content = 'h\nSECRET_KEY = "django-insecure-0123456789abcdef"\n'
+    _, file = _trace(content, cap=1000).artifacts[:2]
+    assert file.content == 'h\nSECRET_KEY = "[REDACTED]"\n'
+    assert file.content_hash == hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def test_a_trace_keeps_only_the_hash_when_redaction_would_move_lines():
+    key = "-----BEGIN PRIVATE KEY-----\n" + "\n".join(["A" * 64] * 3) + "\n-----END PRIVATE KEY-----\n"
+    _, file = _trace("h\nclass Book:\n  x\n\nrel\n" + key, cap=10_000).artifacts[:2]
+    assert file.content is None and file.content_hash
+
+
+def test_a_trace_keeps_contents_up_to_its_total_budget_in_path_order():
+    files = [GeneratedFile(f"f{i}.py", "x" * 10) for i in range(3)]
+    now = datetime(2026, 10, 1)
+    trace = build_generation_trace(files, models=[InputModel(ElementRef("d", "DomainModel", "L"))], generator="g",
+                                   generator_version=None, actor_name="Ada", max_stored_content_bytes=100,
+                                   max_total_content_bytes=25, started_at=now, ended_at=now)
+    kept = {a.path: a.content for a in trace.artifacts if isinstance(a, CodeArtifact)}
+    assert kept == {"f0.py": "x" * 10, "f1.py": "x" * 10, "f2.py": None}
+
+
+def test_files_past_the_region_cap_keep_file_level_links(monkeypatch):
+    monkeypatch.setattr(generation_trace, "MAX_TRACED_REGIONS", 3)
+    region = TraceRegion("c1", "Class", "Book", "t#class", 1, 1)
+    files = [GeneratedFile(f"f{i}.py", "class Book\n", FileTrace((region, region))) for i in range(3)]
+    trace = _build(files)
+    fragments = sorted(a.path for a in trace.artifacts if isinstance(a, CodeArtifact) and a.start_line is not None)
+    assert fragments == ["f0.py", "f0.py", "f1.py"]
+    assert len([a for a in trace.artifacts if isinstance(a, CodeArtifact) and a.start_line is None]) == 3

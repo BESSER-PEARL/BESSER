@@ -3,7 +3,7 @@
 The REAL orchestrator drives the REAL provider clients; only the SDK
 transport is scripted (``run_transport``). Each scenario plays a plausible run
 on the Shelf FastAPI scaffold: a plan, batched reads, an edit the executor
-refuses three times (which makes the loop force the next tool), the corrected
+refuses three times (the loop reminds, and forces no tool), the corrected
 edit, a new module, checklist bookkeeping, ``validate_app``, a premature
 end_turn that the checklist gate answers with a nudge, and a clean end_turn.
 The compaction threshold is lowered so the history is compacted mid-run.
@@ -29,6 +29,8 @@ import json
 import pytest
 
 import besser.spec_driven_agent.agent.compaction as compaction
+import besser.spec_driven_agent.pipeline.orchestrator as orchestrator_module
+from besser.spec_driven_agent.pipeline.constants import _PHASE3_BUDGET_SHARE
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 from besser.spec_driven_agent.state.checkpoint import load_checkpoint
 from tests.spec_driven_agent.run_transport import (
@@ -38,8 +40,8 @@ from tests.spec_driven_agent.run_transport import (
 from tests.spec_driven_agent.shelf_app import shelf_model
 
 # Low enough that the scripted history is compacted once, mid-run; high
-# enough that the forced turn's reply is replayed before that happens. The
-# forced re-read of the unchanged router is an "unchanged" stub, not the file.
+# enough that the re-read's reply is replayed before that happens. The
+# re-read of the unchanged router is an "unchanged" stub, not the file.
 COMPACT_AT_TOKENS = 9_500
 
 TASKS = [
@@ -103,8 +105,8 @@ def shelf_script() -> list:
              calls=[("read_file", {"path": "backend/main_api.py"}),
                     ("read_file", {"path": BOOK_ROUTER}),
                     ("read_file", {"path": "backend/sql_alchemy.py"})]),
-        # The same wrong quote three times: refused each time, so the loop
-        # forces read_file on the next request.
+        # The same wrong quote three times: refused each time, and the
+        # results name the rewrite step, which starts with a re-read.
         *[Step(thinking=f"Rename the search route (attempt {i}).",
                calls=[("modify_file", dict(REJECTED_EDIT))]) for i in range(1, 4)],
         Step(thinking="Re-read the router as asked.", calls=[("read_file", {"path": BOOK_ROUTER})]),
@@ -127,6 +129,9 @@ def shelf_script() -> list:
 @pytest.fixture(autouse=True)
 def _compact_mid_run(monkeypatch):
     monkeypatch.setattr(compaction, "_OPERATOR_CAP", COMPACT_AT_TOKENS)
+    # Eviction would keep this history under the threshold; its own run-level
+    # test is in test_history_eviction_batches.py.
+    monkeypatch.setattr(orchestrator_module, "_HISTORY_EVICTION_ENABLED", False)
 
 
 @pytest.fixture(autouse=True)
@@ -318,7 +323,7 @@ def _is_forced(request: dict) -> bool:
 def _assert_scripted_run_completed(orchestrator, phase2):
     assert orchestrator._phase2_stop_reason == "completed", orchestrator._phase2_api_error
     assert orchestrator._compaction_count >= 1, "the run never compacted; lower COMPACT_AT_TOKENS"
-    assert any(_is_forced(request) for request in phase2), "no request forced a tool"
+    assert not any(_is_forced(request) for request in phase2), "a request forced a tool"
     nudged = [request for request in phase2
               if "You ended the turn, but these checklist items" in json.dumps(plain(request["messages"]))]
     assert nudged, "the premature end_turn was not answered with a nudge"
@@ -390,17 +395,15 @@ def test_a_claude_5x_run_keeps_its_cache_prefix_and_valid_thinking(tmp_path):
     _assert_usage_matches_script(client, model, fake)
 
 
-def test_an_older_claude_run_streams_and_forces_the_tool(tmp_path):
-    """Sonnet 4.6: a forced tool_choice with thinking off; a short request is the first turn."""
+def test_an_older_claude_run_streams_and_forces_no_tool(tmp_path):
+    """Sonnet 4.6: no forced tool_choice in the loop; a short request is the first turn."""
     orchestrator, model, fake, client = _run(
         tmp_path, _claude("claude-sonnet-4-6", thinking=False), SHORT_REQUEST, streaming=True)
     phase2 = fake.of("phase2")
     _assert_scripted_run_completed(orchestrator, phase2)
     _assert_cache_prefix_stable(phase2, orchestrator._compaction_count)
 
-    forced = [request for request in phase2 if _is_forced(request)]
-    assert [request["tool_choice"] for request in forced] == [{"type": "tool", "name": "read_file"}]
-    assert forced[0]["thinking"] == {"type": "disabled"}
+    assert all(request.get("tool_choice") in (None, {"type": "auto"}) for request in phase2)
     compacted = False
     for index, request in enumerate(phase2):
         assert count_cache_markers(plain(request)) <= 4
@@ -411,10 +414,31 @@ def test_an_older_claude_run_streams_and_forces_the_tool(tmp_path):
     _assert_usage_matches_script(client, model, fake)
 
 
+def test_a_compaction_is_in_the_run_log_and_shrinks_the_request(tmp_path):
+    """The request-size counter and the run log agree on where the history was rewritten."""
+    orchestrator, model, fake, client = _run(
+        tmp_path, _claude("claude-sonnet-4-6", thinking=False), SHORT_REQUEST)
+    phase2 = fake.of("phase2")
+    sizes = fake.request_chars("phase2")
+
+    lines = (tmp_path / ".besser_trace.jsonl").read_text(encoding="utf-8").splitlines()
+    compactions = [r["payload"] for r in map(json.loads, lines) if r["event"] == "compaction"]
+    assert len(compactions) == orchestrator._compaction_count >= 1
+    at = next(index for index, request in enumerate(phase2) if _is_compaction(request))
+    assert compactions[0]["turn"] == at + 1
+    assert compactions[0]["tokens_after"] < compactions[0]["tokens_before"]
+    assert len(sizes) == len(phase2)
+    assert sizes[at]["messages"] < sizes[at - 1]["messages"]
+    assert all(row["messages"] > sizes[index - 1]["messages"]
+               for index, row in enumerate(sizes) if 0 < index < at)
+    assert {(row["system"], row["tools"]) for row in sizes} == {(sizes[0]["system"], sizes[0]["tools"])}
+    assert sizes[0]["system"] > 1_000 and sizes[0]["tools"] > 1_000
+
+
 def test_a_crashed_claude_run_resumes_with_a_valid_first_request(tmp_path):
-    """Crash on the request after the forced read, then resume on a fresh orchestrator."""
+    """Crash on the request after the re-read, then resume on a fresh orchestrator."""
     script = shelf_script()
-    # Plan, three refused edits, the forced read. Crashing after the corrected
+    # Plan, three refused edits, the re-read. Crashing after the corrected
     # edit would make leg 2's evidence for it refused: the executor's record of
     # this run's writes is not checkpointed (see the module docstring).
     done_before_crash = 5
@@ -453,9 +477,11 @@ def test_the_cost_cap_stops_the_run_before_another_request(tmp_path):
         tmp_path, _claude("claude-sonnet-5-5", thinking=True), SHORT_REQUEST,
         usage=expensive, max_cost_usd=cap)
 
-    assert orchestrator._phase2_stop_reason == "cost_cap"
-    assert client.usage.estimated_cost > cap
-    assert all(cost <= cap for cost in fake.costs_at_send), fake.costs_at_send
+    # Phase 2 stops on its share of the cap and hands off; the rest is Phase 3's.
+    assert orchestrator._phase2_stop_reason != "cost_cap"
+    assert orchestrator._phase2_stop_detail == "cost share used ($0.12 of $0.50 reserved for validation)"
+    assert client.usage.estimated_cost > cap * (1 - _PHASE3_BUDGET_SHARE)
+    assert all(cost <= cap * (1 - _PHASE3_BUDGET_SHARE) for cost in fake.costs_at_send), fake.costs_at_send
     assert 1 < len(fake.of("phase2")) < len(shelf_script())
     _assert_usage_matches_script(client, model, fake)
 
@@ -478,8 +504,7 @@ def test_an_openai_run_keeps_its_prefix_and_pairs_every_tool_call(tmp_path, stre
     assert plain(_openai_system(phase2[0]))["role"] == "system"
     for index, request in enumerate(phase2):
         assert _pairing_problems_openai(request) == [], index
-    forced = [request["tool_choice"] for request in phase2 if "tool_choice" in request]
-    assert forced == [{"type": "function", "function": {"name": "read_file"}}]
+    assert not [request["tool_choice"] for request in phase2 if "tool_choice" in request]
     _assert_usage_matches_script(client, model, fake, net_cached=True)
 
 

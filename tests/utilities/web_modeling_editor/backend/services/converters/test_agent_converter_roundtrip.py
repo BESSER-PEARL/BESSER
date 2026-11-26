@@ -576,6 +576,157 @@ def test_gui_reply_without_agent_gui_is_rejected():
         process_agent_diagram(diagram)
 
 
+def test_intent_matched_transition_without_intent_is_rejected():
+    diagram = _live_testing_diagram()
+    diagram["model"]["relationships"]["r-intent"]["predefined"]["intentName"] = ""
+    with pytest.raises(ValueError, match="names no intent"):
+        process_agent_diagram(diagram)
+
+
+def test_state_with_two_auto_transitions_is_rejected():
+    diagram = _live_testing_diagram()
+    diagram["model"]["relationships"]["r-auto2"] = _transition(
+        "r-auto2", "s-think", "s-ask", transitionType="predefined", predefined={"predefinedType": "auto"})
+    diagram["model"]["relationships"]["r-auto3"] = _transition(
+        "r-auto3", "s-think", "s-files", transitionType="predefined", predefined={"predefinedType": "auto"})
+    with pytest.raises(ValueError, match="has 2 'auto' transitions"):
+        process_agent_diagram(diagram)
+
+
+def test_auto_transition_next_to_another_transition_is_rejected():
+    """The quiz mistake: 'wrong answer' modelled as auto next to the intent transition of the same state."""
+    diagram = _live_testing_diagram()
+    # s-ask already has transitions to s-think (form) and s-files (intent); add an auto one
+    diagram["model"]["relationships"]["r-auto"] = _transition(
+        "r-auto", "s-ask", "s-files", transitionType="predefined", predefined={"predefinedType": "auto"})
+    with pytest.raises(ValueError, match="next to .* other transition"):
+        process_agent_diagram(diagram)
+
+
+def _transitions_of(agent, state_name):
+    state = next(s for s in agent.states if s.name == state_name)
+    return sorted(t.dest.name for t in state.transitions)
+
+
+def test_an_export_drops_an_intent_transition_that_names_no_intent_with_a_warning(caplog):
+    """One stale transition in a saved project blocked its export and web-app generation."""
+    diagram = _live_testing_diagram()
+    diagram["model"]["relationships"]["r-intent"]["predefined"]["intentName"] = ""
+    warnings = []
+    with caplog.at_level("WARNING"):
+        agent = process_agent_diagram(diagram, warnings=warnings)
+    assert _transitions_of(agent, "ask") == ["think"]
+    assert len(warnings) == 1 and "names no intent" in warnings[0] and "left out" in warnings[0]
+    assert any("names no intent" in record.getMessage() for record in caplog.records)
+
+
+def test_an_export_keeps_an_auto_transition_beside_another_with_a_warning():
+    diagram = _live_testing_diagram()
+    diagram["model"]["relationships"]["r-auto"] = _transition(
+        "r-auto", "s-ask", "s-files", transitionType="predefined", predefined={"predefinedType": "auto"})
+    warnings = []
+    agent = process_agent_diagram(diagram, warnings=warnings)
+    assert _transitions_of(agent, "ask") == ["files", "files", "think"]
+    assert [w for w in warnings if "'auto' transition" in w and "next to" in w]
+
+
+def test_warnings_mode_still_raises_every_other_error():
+    diagram = _live_testing_diagram()
+    del diagram["model"]["components"]["gui-1"]
+    with pytest.raises(ValueError, match="GUIReplyAction references GUI 'signup'"):
+        process_agent_diagram(diagram, warnings=[])
+
+
+def test_a_project_with_a_stale_agent_transition_exports_as_buml():
+    """``/export-project-as-buml`` answered an error for the whole project."""
+    import asyncio
+
+    import httpx
+    from httpx._transports.asgi import ASGITransport
+
+    from besser.utilities.web_modeling_editor.backend.backend import app
+
+    diagram = _live_testing_diagram()
+    diagram["model"]["relationships"]["r-intent"]["predefined"]["intentName"] = ""
+    project = {"id": "p-1", "type": "Project", "name": "StaleAgent", "description": "",
+               "createdAt": "2026-11-23T00:00:00Z", "currentDiagramType": "AgentDiagram",
+               "currentDiagramIndices": {"AgentDiagram": 0},
+               "diagrams": {"AgentDiagram": [{"id": "agent-1", **diagram}]}}
+
+    async def post():
+        async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+            return await client.post("/besser_api/export-project-as-buml", json=project)
+
+    response = asyncio.run(post())
+    assert response.status_code == 200, response.text
+    assert "LiveAgent" in response.text
+
+
+def test_the_project_agents_of_a_web_app_tolerate_a_stale_transition():
+    """Web-app generation and deployment read every agent diagram of the project."""
+    from besser.utilities.web_modeling_editor.backend.services.utils.agent_generation_utils import (
+        collect_agents_from_diagrams,
+    )
+
+    diagram = _live_testing_diagram()
+    diagram["model"]["relationships"]["r-intent"]["predefined"]["intentName"] = ""
+    agents, _, _ = collect_agents_from_diagrams([{"id": "agent-1", **diagram}], default_config={})
+    assert [a.name for a in agents] == ["LiveAgent"]
+
+
+def test_agent_generation_still_refuses_a_stale_transition(tmp_path):
+    """Where the agent is built (agent generation, the simulator) the rule stays an error."""
+    import asyncio
+
+    from besser.utilities.web_modeling_editor.backend.services.generation.agents import generate_agent_output
+
+    diagram = _live_testing_diagram()
+    diagram["model"]["relationships"]["r-intent"]["predefined"]["intentName"] = ""
+    with pytest.raises(ValueError, match="names no intent"):
+        asyncio.run(generate_agent_output(diagram))
+
+
+def test_custom_condition_code_is_wired_under_its_generated_name(tmp_path):
+    """Two custom conditions with the same authored function name must not collide, and the
+    transition must reference a function that exists."""
+    import re
+
+    from besser.generators.agents.baf_generator import BAFGenerator, GenerationMode
+
+    diagram = _live_testing_diagram()
+    for rel_id, dest, value in (("r-c1", "s-think", 1), ("r-c2", "s-ask", 2)):
+        diagram["model"]["relationships"][rel_id] = _transition(
+            rel_id, "s-files", dest, transitionType="custom",
+            custom={"event": "None", "condition": [f"def condition(session):\n    return session.get('q') == {value}"]})
+    agent = process_agent_diagram(diagram)
+    BAFGenerator(agent, output_dir=str(tmp_path), generation_mode=GenerationMode.CODE_ONLY).generate()
+    code = (tmp_path / f"{agent.name}.py").read_text(encoding="utf-8")
+
+    used = re.findall(r"\.when_condition\((\w+)\)", code)
+    assert len(used) == 2 and len(set(used)) == 2
+    for name in used:
+        assert re.search(rf"^def {name}\(", code, re.M), f"{name} is used but never defined"
+
+
+def test_a_helper_above_a_custom_condition_is_not_the_function_that_gets_renamed(tmp_path):
+    import re
+
+    from besser.generators.agents.baf_generator import BAFGenerator, GenerationMode
+
+    diagram = _live_testing_diagram()
+    code = ("def _came_from_q1(session):\n    return session.get('came_from') == 'q1'\n\n"
+            "def condition(session):\n    return _came_from_q1(session)")
+    diagram["model"]["relationships"]["r-c1"] = _transition(
+        "r-c1", "s-files", "s-think", transitionType="custom", custom={"event": "None", "condition": [code]})
+    agent = process_agent_diagram(diagram)
+    BAFGenerator(agent, output_dir=str(tmp_path), generation_mode=GenerationMode.CODE_ONLY).generate()
+    generated = (tmp_path / f"{agent.name}.py").read_text(encoding="utf-8")
+
+    (used,) = re.findall(r"\.when_condition\((\w+)\)", generated)
+    assert re.search(rf"^def {used}\(", generated, re.M)
+    assert re.search(r"^def _came_from_q1\(", generated, re.M)
+
+
 def test_undesigned_agent_gui_becomes_empty_gui_model():
     diagram = _live_testing_diagram()
     diagram["model"]["components"]["gui-1"]["guiModel"] = None

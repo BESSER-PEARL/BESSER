@@ -135,6 +135,22 @@ def test_load_older_checkpoint_without_tasks_is_backward_compatible(tmp_path):
     assert loaded.repair_progress == {}
 
 
+def test_a_validation_checkpoint_of_a_skipped_customization_resumes_as_finished(tmp_path):
+    """Before the skip recorded "completed", it left the old default "max_turns" behind."""
+    save_checkpoint(str(tmp_path), _make_checkpoint(
+        phase="phase3", phase2_stop_reason="max_turns", phase2_exited_cleanly=True))
+
+    assert load_checkpoint(str(tmp_path)).phase2_stop_reason == "completed"
+
+
+def test_a_real_turn_limit_and_a_missing_reason_are_not_read_as_finished(tmp_path):
+    save_checkpoint(str(tmp_path), _make_checkpoint(
+        phase="phase3", phase2_stop_reason="max_turns", phase2_exited_cleanly=False))
+    assert load_checkpoint(str(tmp_path)).phase2_stop_reason == "max_turns"
+
+    assert _make_checkpoint().phase2_stop_reason == ""
+
+
 def test_generator_files_round_trip(tmp_path):
     """A create run's generator-file tags drive the scaffold guardrail and the
     recipe's authorship split; a resume must get them back."""

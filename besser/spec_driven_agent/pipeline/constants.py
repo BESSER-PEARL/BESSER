@@ -57,6 +57,9 @@ _ROLLBACK_PRESERVED = {
     _ROLLBACK_DISCARD_DIR,
 }
 
+# A run's temporary workspace folder starts with this; it is removed after the run.
+RUN_DIR_PREFIX = "besser_llm_"
+
 # Dependency, build and run-internal directories that are not part of the app.
 _RECIPE_EXCLUDED_DIRS = {
     "target", "node_modules", "__pycache__", ".git", "dist", "build",
@@ -125,7 +128,7 @@ _TOOL_DETAIL_MAX_CHARS = 160
 # make a run readable afterwards.
 _TOOL_DETAIL_KEYS = (
     "path", "file_path", "filename", "target", "action", "id", "ids",
-    "text", "command", "pattern", "query", "class_name", "generator",
+    "done", "add", "drop", "blocked", "text", "command", "pattern", "query", "class_name", "generator",
 )
 
 
@@ -194,7 +197,7 @@ def _tool_call_detail(tool_name: str, tool_input: object, blocks_in_turn: int) -
 
 # Tools that are read-only and shouldn't count for loop detection
 _READONLY_TOOLS = frozenset({
-    "read_file", "list_files", "search_in_files", "check_syntax", "validate_app", "test_api",
+    "read_file", "list_files", "search_in_files", "validate_app", "test_api",
     # Checklist bookkeeping — marking several items done back-to-back is
     # exactly what the end_turn gate asks for, never a stuck loop.
     "task_list",
@@ -218,10 +221,8 @@ _MAX_PARALLEL_WORKERS = 4
 # 5-turn LLM fix loop, and the actual spend is bounded by ``max_cost_usd``
 # (the inner loop stops when the cost cap is hit), so this cap just keeps
 # a truly stuck run from looping forever. It is deliberately NOT tiny: as
-# long as each round keeps reducing blockers (or we still have cost
-# budget), the loop should keep going rather than abandon a run that is
-# steadily converging — the no-progress-streak guard below handles the
-# stuck case.
+# long as each kept attempt retires blockers, the loop keeps going; the
+# keep-or-revert rule in phase3_repair ends a stuck one.
 _MAX_TOOLCHAIN_FIX_ITERATIONS = 5
 
 # Ceiling on the one-off Phase 1 dependency install. A cold npm install of a
@@ -229,18 +230,14 @@ _MAX_TOOLCHAIN_FIX_ITERATIONS = 5
 # from delaying the whole run before the model has done anything.
 _SCAFFOLD_INSTALL_TIMEOUT_SECONDS = 180
 
-# Turns per fix attempt. An attempt that reaches the cap, or ends in prose,
-# without one successful write gets exactly one more turn with modify_file
-# forced, so an attempt cannot end having only described the fix.
-_PHASE3_FIX_TURNS = 10
-_PHASE3_NO_EDIT_REMINDER = (
-    "<system-reminder>This attempt has not edited any file, and the blocker is "
-    "still there. Explaining the fix does not apply it. Your next call must be "
-    "modify_file on the file the blocker names (quote old_text exactly from the "
-    "excerpt), or write_file if the file has to be rewritten. Then keep going "
-    "until every blocker is fixed.</system-reminder>"
-)
-# Sent when a verification-only attempt stops with listed creates not yet read back.
+# Work is counted in executed tool calls: each turn of ``max_turns`` allows this
+# many, so a model that makes one call per turn gets the work one that batches
+# four got. Turns stay a runaway guard at the same multiple.
+_CALLS_PER_TURN = 4
+# Executed tool calls per fix attempt (ten turns of four). No tool is forced: an
+# attempt ends when the model ends its turn.
+_PHASE3_FIX_CALLS = 10 * _CALLS_PER_TURN
+# Sent when a fix attempt stops with listed creates not yet read back.
 _PHASE3_CREATE_EVIDENCE_REMINDER = (
     "<system-reminder>These listed creates still have no read-back: {paths}. "
     "Each is settled only by a test_api scenario that POSTs it and then, in that "
@@ -251,34 +248,12 @@ _PHASE3_CREATE_EVIDENCE_REMINDER = (
     "</system-reminder>"
 )
 
-# Consecutive no-progress rounds tolerated before the repair loop ends.
-#
-# The loop decides per round (see ``replay``): a round that never reached for
-# the editor ends the loop on the spot; only a round that DID something it can
-# carry into the next prompt gets this allowance.
-#
-# Measured over 221 recorded runs, on the round that FOLLOWED a round which
-# wrote nothing and left the tree byte-identical:
-#
-#   the round attempted edits, all rejected  n= 30  next wrote 57%, cut 20%
-#   the round made tool calls, none an edit  n=209  next wrote 18%, cut 11%
-#   the round called no tool at all (prose)  n=  4  next wrote  0%, cut  0%
-#
-# and after TWO consecutive such rounds, whatever their kind, the next wrote
-# 6% and cut 4% (n=116) - so the streak still ends at two.
-_PHASE3_NO_PROGRESS_ROUNDS = 2
-
-# Rounds that edit the tree without improving its score before the loop ends.
-# The unchanged-state guard cannot see these: its key includes a content hash
-# of every source file, so ANY write - including a different useless one each
-# round - reads as a new state and the guard never fires.
-#
-# Same corpus, counting a round as non-improving when the blocker count did
-# not fall: after two consecutive non-improving rounds the NEXT round still
-# improved 36% of the time (n=125) against a 46% baseline with no plateau
-# behind it; only at three does the payoff halve (23%, n=60) and at four
-# collapse (15%, n=107).
-_PHASE3_PLATEAU_ROUNDS = 3
+# Share of each budget (seconds, cost and, with auto-fix on, tool calls) Phase 2
+# leaves to Phase 3's checks, judge and repair. Basis, the runs recorded on
+# 2026-11-17/18: where Phase 3 repaired, it made a median 25% of the run's tool
+# calls (10 runs); without an install hang it took 15-992 s (median 128 s, one
+# judge call 56-154 s), and a quarter of the 2400 s cap covers 4 of those 5.
+_PHASE3_BUDGET_SHARE = 0.25
 
 # Runtime-gate verdicts, ordered worst-last so a tuple compares as a score.
 _RUNTIME_OK, _RUNTIME_UNVERIFIED, _RUNTIME_FAILED = 0, 1, 2
@@ -292,7 +267,7 @@ _RUNTIME_OK, _RUNTIME_UNVERIFIED, _RUNTIME_FAILED = 0, 1, 2
 # An app can pass every acceptance check and still fail its own generated
 # scenario, so a gate keyed on it would refuse a working application.
 _RUNTIME_OBSERVED_FAILURE_PREFIXES = (
-    "mapper config:", "application startup:", "create contract:", "action call:",
+    "mapper config:", "application startup:", "create contract:", "action call:", "read contract:",
 )
 # Source the app cannot survive at runtime even where no probe reached it: it
 # does not parse, imports a module that is not there, or uses a name nothing
@@ -328,9 +303,18 @@ _APPLICATION_OUTPUT_DIRS = {
 }
 _APPLICATION_PRIMARY_TOOLS = frozenset(_APPLICATION_OUTPUT_DIRS)
 # The generators a modify run regenerates and merges after a model change (#659):
-# on 44 FastAPI runs, regenerating kept every app working. The web app's React
-# output has no determinism test yet, so it is not regenerated.
-REGENERABLE_GENERATORS = frozenset({"generate_fastapi_backend"})
+# on 44 FastAPI runs, regenerating kept every app working.
+REGENERABLE_GENERATORS = frozenset({"generate_fastapi_backend", "generate_web_app"})
+# A generator regenerated only in part: the workspace paths it regenerates, those
+# derived from the domain model alone. The web app's pages and components need
+# the GUI model, which a model change does not bring.
+REGENERATED_PATHS = {"generate_web_app": ("web_app/backend/", "web_app/frontend/src/api/generated/")}
+
+
+def is_regenerated(generator: str, rel_path: str) -> bool:
+    """Whether a regeneration of ``generator`` writes this workspace path (``/``-separated)."""
+    prefixes = REGENERATED_PATHS.get(generator)
+    return prefixes is None or rel_path.startswith(prefixes)
 
 # Sub-generator tools that a chosen PRIMARY generator already bundles (e.g. a
 # FastAPI backend already contains SQLAlchemy models, Pydantic schemas and REST

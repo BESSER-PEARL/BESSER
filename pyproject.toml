@@ -81,6 +81,7 @@ name = "Utilities do not import the generators, the agent or the editor backend"
 type = "forbidden"
 source_modules = [
     "besser.utilities.buml_code_builder",
+    "besser.utilities.generation_trace",
     "besser.utilities.identifiers",
     "besser.utilities.image_to_buml",
     "besser.utilities.kg_llm_to_buml",

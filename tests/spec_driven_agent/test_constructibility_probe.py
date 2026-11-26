@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import re
 import shutil
+import time
 from pathlib import Path
 
 import pytest
@@ -42,6 +43,7 @@ from besser.spec_driven_agent.validation.constructibility import (
 )
 from besser.spec_driven_agent.execution.process import _safe_subprocess_env
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator, ValidationIssue, _classify_issue
+from besser.spec_driven_agent.validation.issues import is_completion_issue, is_not_confirmed
 
 pytest.importorskip("fastapi")
 pytest.importorskip("httpx")
@@ -96,7 +98,8 @@ class _ScriptedClient:
 
 
 def test_the_phase3_sweep_carries_the_blocker(workspace):
-    """What shipped as "0 blockers" must come out of the sweep as one."""
+    """What shipped as "0 blockers" with nothing said must come out of the sweep: not confirmed,
+    since the probe's guessed input was refused, not seen to fail."""
     from besser.BUML.metamodel.structural import Class, DomainModel
 
     orch = LLMOrchestrator(
@@ -107,8 +110,8 @@ def test_the_phase3_sweep_carries_the_blocker(workspace):
         enable_toolchain_validation=False,
     )
     issues = orch._collect_validation_issues()
-    blockers = [i.message for i in issues if i.severity == "blocker"]
-    assert [b for b in blockers if UNVERIFIED_PREFIX in b], blockers
+    carried = [i for i in issues if UNVERIFIED_PREFIX in i.message]
+    assert carried and all(is_not_confirmed(i) and not is_completion_issue(i) for i in carried), issues
 
 
 # ----------------------------------------------------- a fresh generated app
@@ -421,6 +424,32 @@ def test_inherited_unique_identity_and_contact_fixtures_do_not_collide(workspace
     assert _sample("badge", {"type": "integer"}, 1, ordinal=1, unique=True) != _sample(
         "badge", {"type": "integer"}, 1, ordinal=2, unique=True)
     assert orm.read_text(encoding="utf-8") == source
+
+
+def test_a_date_time_fixture_is_the_same_on_every_probe():
+    """The input is quoted in the finding; a clock reading made it differ on each re-check."""
+    first = _sample("placed_at", {"type": "string", "format": "date-time"}, 1)
+    time.sleep(0.02)
+    assert _sample("placed_at", {"type": "string", "format": "date-time"}, 1) == first
+
+
+def test_date_time_fields_follow_their_declared_order_and_the_dates_variant_reverses_it():
+    """A start declared before its end must get the earlier value, or a correct ``end > start`` rule refuses it."""
+    schema = {"properties": {"title": {"type": "string"},
+                             "starts_at": {"type": "string", "format": "date-time"},
+                             "ends_at": {"type": "string", "format": "date-time"}},
+              "required": ["title", "starts_at", "ends_at"]}
+    base, _ = _build_payload(schema, {}, {}, {}, {}, ("base",), entity="Task")
+    assert base["starts_at"] < base["ends_at"]
+    swapped, _ = _build_payload(schema, {}, {}, {}, {}, ("dates",), entity="Task")
+    assert swapped["starts_at"] > swapped["ends_at"]
+
+
+def test_a_unique_date_time_column_gets_a_distinct_value_per_instance():
+    schema = {"properties": {"due_at": {"type": "string", "format": "date-time"}}, "required": ["due_at"]}
+    values = {_build_payload(schema, {}, {}, {}, {}, ("base",), entity="Task", ordinal=n,
+                             unique_fields=frozenset({"due_at"}))[0]["due_at"] for n in (1, 2, 3)}
+    assert len(values) == 3
 
 
 # ------------------------------------------------------------- network guard

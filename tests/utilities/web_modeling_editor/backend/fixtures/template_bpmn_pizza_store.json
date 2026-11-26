@@ -1,0 +1,988 @@
+{
+  "version": "3.0.0",
+  "type": "BPMNDiagram",
+  "size": {
+    "width": 1300,
+    "height": 710
+  },
+  "interactive": {
+    "elements": {},
+    "relationships": {}
+  },
+  "elements": {
+    "c-pool": {
+      "id": "c-pool",
+      "name": "Pizza Customer",
+      "type": "BPMNPool",
+      "owner": null,
+      "bounds": {
+        "x": 0,
+        "y": 0,
+        "width": 1300,
+        "height": 260
+      }
+    },
+    "c-start": {
+      "id": "c-start",
+      "name": "Hungry for pizza",
+      "type": "BPMNStartEvent",
+      "owner": null,
+      "bounds": {
+        "x": 60,
+        "y": 110,
+        "width": 40,
+        "height": 40
+      },
+      "eventType": "default"
+    },
+    "c-select": {
+      "id": "c-select",
+      "name": "Select a pizza",
+      "type": "BPMNTask",
+      "owner": null,
+      "bounds": {
+        "x": 150,
+        "y": 100,
+        "width": 110,
+        "height": 60
+      },
+      "taskType": "user",
+      "marker": "none"
+    },
+    "c-order": {
+      "id": "c-order",
+      "name": "Order a pizza",
+      "type": "BPMNTask",
+      "owner": null,
+      "bounds": {
+        "x": 320,
+        "y": 100,
+        "width": 110,
+        "height": 60
+      },
+      "taskType": "send",
+      "marker": "none"
+    },
+    "c-gw": {
+      "id": "c-gw",
+      "name": "",
+      "type": "BPMNGateway",
+      "owner": null,
+      "bounds": {
+        "x": 480,
+        "y": 110,
+        "width": 40,
+        "height": 40
+      },
+      "gatewayType": "event-based"
+    },
+    "c-timer": {
+      "id": "c-timer",
+      "name": "60 min",
+      "type": "BPMNIntermediateEvent",
+      "owner": null,
+      "bounds": {
+        "x": 480,
+        "y": 190,
+        "width": 40,
+        "height": 40
+      },
+      "eventType": "timer-catch"
+    },
+    "c-ask": {
+      "id": "c-ask",
+      "name": "Ask for pizza",
+      "type": "BPMNTask",
+      "owner": null,
+      "bounds": {
+        "x": 525,
+        "y": 180,
+        "width": 110,
+        "height": 60
+      },
+      "taskType": "user",
+      "marker": "none"
+    },
+    "c-msg": {
+      "id": "c-msg",
+      "name": "Pizza received",
+      "type": "BPMNIntermediateEvent",
+      "owner": null,
+      "bounds": {
+        "x": 795,
+        "y": 110,
+        "width": 40,
+        "height": 40
+      },
+      "eventType": "message-catch"
+    },
+    "c-pay": {
+      "id": "c-pay",
+      "name": "Pay for pizza",
+      "type": "BPMNTask",
+      "owner": null,
+      "bounds": {
+        "x": 900,
+        "y": 100,
+        "width": 110,
+        "height": 60
+      },
+      "taskType": "user",
+      "marker": "none"
+    },
+    "c-eat": {
+      "id": "c-eat",
+      "name": "Eat the pizza",
+      "type": "BPMNTask",
+      "owner": null,
+      "bounds": {
+        "x": 1070,
+        "y": 100,
+        "width": 110,
+        "height": 60
+      },
+      "taskType": "user",
+      "marker": "none"
+    },
+    "c-end": {
+      "id": "c-end",
+      "name": "Hunger satisfied",
+      "type": "BPMNEndEvent",
+      "owner": null,
+      "bounds": {
+        "x": 1240,
+        "y": 110,
+        "width": 40,
+        "height": 40
+      },
+      "eventType": "default"
+    },
+    "v-pool": {
+      "id": "v-pool",
+      "name": "Pizza Vendor",
+      "type": "BPMNPool",
+      "owner": null,
+      "bounds": {
+        "x": 0,
+        "y": 300,
+        "width": 1300,
+        "height": 390
+      }
+    },
+    "v-lane-clerk": {
+      "id": "v-lane-clerk",
+      "name": "Clerk",
+      "type": "BPMNSwimlane",
+      "owner": "v-pool",
+      "bounds": {
+        "x": 40,
+        "y": 300,
+        "width": 1260,
+        "height": 130
+      }
+    },
+    "v-lane-chef": {
+      "id": "v-lane-chef",
+      "name": "Pizza Chef",
+      "type": "BPMNSwimlane",
+      "owner": "v-pool",
+      "bounds": {
+        "x": 40,
+        "y": 430,
+        "width": 1260,
+        "height": 130
+      }
+    },
+    "v-lane-delivery": {
+      "id": "v-lane-delivery",
+      "name": "Delivery Boy",
+      "type": "BPMNSwimlane",
+      "owner": "v-pool",
+      "bounds": {
+        "x": 40,
+        "y": 560,
+        "width": 1260,
+        "height": 130
+      }
+    },
+    "v-start": {
+      "id": "v-start",
+      "name": "Order received",
+      "type": "BPMNStartEvent",
+      "owner": null,
+      "bounds": {
+        "x": 355,
+        "y": 350,
+        "width": 40,
+        "height": 40
+      },
+      "eventType": "message"
+    },
+    "v-pgw": {
+      "id": "v-pgw",
+      "name": "",
+      "type": "BPMNGateway",
+      "owner": null,
+      "bounds": {
+        "x": 450,
+        "y": 350,
+        "width": 40,
+        "height": 40
+      },
+      "gatewayType": "parallel"
+    },
+    "v-askmsg": {
+      "id": "v-askmsg",
+      "name": "Where is my pizza?",
+      "type": "BPMNIntermediateEvent",
+      "owner": null,
+      "bounds": {
+        "x": 560,
+        "y": 350,
+        "width": 40,
+        "height": 40
+      },
+      "eventType": "message-catch"
+    },
+    "v-calm": {
+      "id": "v-calm",
+      "name": "Calm customer",
+      "type": "BPMNTask",
+      "owner": null,
+      "bounds": {
+        "x": 650,
+        "y": 340,
+        "width": 110,
+        "height": 60
+      },
+      "taskType": "user",
+      "marker": "none"
+    },
+    "v-bake": {
+      "id": "v-bake",
+      "name": "Bake the pizza",
+      "type": "BPMNTask",
+      "owner": null,
+      "bounds": {
+        "x": 520,
+        "y": 465,
+        "width": 110,
+        "height": 60
+      },
+      "taskType": "user",
+      "marker": "none"
+    },
+    "v-deliver": {
+      "id": "v-deliver",
+      "name": "Deliver the pizza",
+      "type": "BPMNTask",
+      "owner": null,
+      "bounds": {
+        "x": 760,
+        "y": 595,
+        "width": 110,
+        "height": 60
+      },
+      "taskType": "user",
+      "marker": "none"
+    },
+    "v-receive": {
+      "id": "v-receive",
+      "name": "Receive payment",
+      "type": "BPMNTask",
+      "owner": null,
+      "bounds": {
+        "x": 900,
+        "y": 595,
+        "width": 110,
+        "height": 60
+      },
+      "taskType": "user",
+      "marker": "none"
+    },
+    "v-end": {
+      "id": "v-end",
+      "name": "Order complete",
+      "type": "BPMNEndEvent",
+      "owner": null,
+      "bounds": {
+        "x": 1060,
+        "y": 605,
+        "width": 40,
+        "height": 40
+      },
+      "eventType": "default"
+    }
+  },
+  "relationships": {
+    "f-c1": {
+      "id": "f-c1",
+      "name": "",
+      "type": "BPMNFlow",
+      "owner": null,
+      "bounds": {
+        "x": 100,
+        "y": 130,
+        "width": 50,
+        "height": 1
+      },
+      "path": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 50,
+          "y": 0
+        }
+      ],
+      "source": {
+        "direction": "Right",
+        "element": "c-start"
+      },
+      "target": {
+        "direction": "Left",
+        "element": "c-select"
+      },
+      "isManuallyLayouted": false,
+      "flowType": "sequence",
+      "isDefault": false
+    },
+    "f-c2": {
+      "id": "f-c2",
+      "name": "",
+      "type": "BPMNFlow",
+      "owner": null,
+      "bounds": {
+        "x": 260,
+        "y": 130,
+        "width": 60,
+        "height": 1
+      },
+      "path": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 60,
+          "y": 0
+        }
+      ],
+      "source": {
+        "direction": "Right",
+        "element": "c-select"
+      },
+      "target": {
+        "direction": "Left",
+        "element": "c-order"
+      },
+      "isManuallyLayouted": false,
+      "flowType": "sequence",
+      "isDefault": false
+    },
+    "f-c3": {
+      "id": "f-c3",
+      "name": "",
+      "type": "BPMNFlow",
+      "owner": null,
+      "bounds": {
+        "x": 430,
+        "y": 130,
+        "width": 50,
+        "height": 1
+      },
+      "path": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 50,
+          "y": 0
+        }
+      ],
+      "source": {
+        "direction": "Right",
+        "element": "c-order"
+      },
+      "target": {
+        "direction": "Left",
+        "element": "c-gw"
+      },
+      "isManuallyLayouted": false,
+      "flowType": "sequence",
+      "isDefault": false
+    },
+    "f-c4": {
+      "id": "f-c4",
+      "name": "",
+      "type": "BPMNFlow",
+      "owner": null,
+      "bounds": {
+        "x": 500,
+        "y": 150,
+        "width": 1,
+        "height": 40
+      },
+      "path": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 0,
+          "y": 40
+        }
+      ],
+      "source": {
+        "direction": "Down",
+        "element": "c-gw"
+      },
+      "target": {
+        "direction": "Up",
+        "element": "c-timer"
+      },
+      "isManuallyLayouted": false,
+      "flowType": "sequence",
+      "isDefault": false
+    },
+    "f-c5": {
+      "id": "f-c5",
+      "name": "",
+      "type": "BPMNFlow",
+      "owner": null,
+      "bounds": {
+        "x": 520,
+        "y": 130,
+        "width": 275,
+        "height": 1
+      },
+      "path": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 275,
+          "y": 0
+        }
+      ],
+      "source": {
+        "direction": "Right",
+        "element": "c-gw"
+      },
+      "target": {
+        "direction": "Left",
+        "element": "c-msg"
+      },
+      "isManuallyLayouted": false,
+      "flowType": "sequence",
+      "isDefault": false
+    },
+    "f-c6": {
+      "id": "f-c6",
+      "name": "",
+      "type": "BPMNFlow",
+      "owner": null,
+      "bounds": {
+        "x": 520,
+        "y": 210,
+        "width": 5,
+        "height": 1
+      },
+      "path": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 5,
+          "y": 0
+        }
+      ],
+      "source": {
+        "direction": "Right",
+        "element": "c-timer"
+      },
+      "target": {
+        "direction": "Left",
+        "element": "c-ask"
+      },
+      "isManuallyLayouted": false,
+      "flowType": "sequence",
+      "isDefault": false
+    },
+    "f-c7": {
+      "id": "f-c7",
+      "name": "",
+      "type": "BPMNFlow",
+      "owner": null,
+      "bounds": {
+        "x": 835,
+        "y": 130,
+        "width": 65,
+        "height": 1
+      },
+      "path": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 65,
+          "y": 0
+        }
+      ],
+      "source": {
+        "direction": "Right",
+        "element": "c-msg"
+      },
+      "target": {
+        "direction": "Left",
+        "element": "c-pay"
+      },
+      "isManuallyLayouted": false,
+      "flowType": "sequence",
+      "isDefault": false
+    },
+    "f-c8": {
+      "id": "f-c8",
+      "name": "",
+      "type": "BPMNFlow",
+      "owner": null,
+      "bounds": {
+        "x": 1010,
+        "y": 130,
+        "width": 60,
+        "height": 1
+      },
+      "path": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 60,
+          "y": 0
+        }
+      ],
+      "source": {
+        "direction": "Right",
+        "element": "c-pay"
+      },
+      "target": {
+        "direction": "Left",
+        "element": "c-eat"
+      },
+      "isManuallyLayouted": false,
+      "flowType": "sequence",
+      "isDefault": false
+    },
+    "f-c9": {
+      "id": "f-c9",
+      "name": "",
+      "type": "BPMNFlow",
+      "owner": null,
+      "bounds": {
+        "x": 1180,
+        "y": 130,
+        "width": 60,
+        "height": 1
+      },
+      "path": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 60,
+          "y": 0
+        }
+      ],
+      "source": {
+        "direction": "Right",
+        "element": "c-eat"
+      },
+      "target": {
+        "direction": "Left",
+        "element": "c-end"
+      },
+      "isManuallyLayouted": false,
+      "flowType": "sequence",
+      "isDefault": false
+    },
+    "f-v1": {
+      "id": "f-v1",
+      "name": "",
+      "type": "BPMNFlow",
+      "owner": null,
+      "bounds": {
+        "x": 395,
+        "y": 370,
+        "width": 55,
+        "height": 1
+      },
+      "path": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 55,
+          "y": 0
+        }
+      ],
+      "source": {
+        "direction": "Right",
+        "element": "v-start"
+      },
+      "target": {
+        "direction": "Left",
+        "element": "v-pgw"
+      },
+      "isManuallyLayouted": false,
+      "flowType": "sequence",
+      "isDefault": false
+    },
+    "f-v2": {
+      "id": "f-v2",
+      "name": "",
+      "type": "BPMNFlow",
+      "owner": null,
+      "bounds": {
+        "x": 470,
+        "y": 390,
+        "width": 50,
+        "height": 105
+      },
+      "path": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 0,
+          "y": 105
+        },
+        {
+          "x": 50,
+          "y": 105
+        }
+      ],
+      "source": {
+        "direction": "Down",
+        "element": "v-pgw"
+      },
+      "target": {
+        "direction": "Left",
+        "element": "v-bake"
+      },
+      "isManuallyLayouted": false,
+      "flowType": "sequence",
+      "isDefault": false
+    },
+    "f-v3": {
+      "id": "f-v3",
+      "name": "",
+      "type": "BPMNFlow",
+      "owner": null,
+      "bounds": {
+        "x": 490,
+        "y": 370,
+        "width": 70,
+        "height": 1
+      },
+      "path": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 70,
+          "y": 0
+        }
+      ],
+      "source": {
+        "direction": "Right",
+        "element": "v-pgw"
+      },
+      "target": {
+        "direction": "Left",
+        "element": "v-askmsg"
+      },
+      "isManuallyLayouted": false,
+      "flowType": "sequence",
+      "isDefault": false
+    },
+    "f-v4": {
+      "id": "f-v4",
+      "name": "",
+      "type": "BPMNFlow",
+      "owner": null,
+      "bounds": {
+        "x": 600,
+        "y": 370,
+        "width": 50,
+        "height": 1
+      },
+      "path": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 50,
+          "y": 0
+        }
+      ],
+      "source": {
+        "direction": "Right",
+        "element": "v-askmsg"
+      },
+      "target": {
+        "direction": "Left",
+        "element": "v-calm"
+      },
+      "isManuallyLayouted": false,
+      "flowType": "sequence",
+      "isDefault": false
+    },
+    "f-v5": {
+      "id": "f-v5",
+      "name": "",
+      "type": "BPMNFlow",
+      "owner": null,
+      "bounds": {
+        "x": 575,
+        "y": 525,
+        "width": 185,
+        "height": 100
+      },
+      "path": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 0,
+          "y": 100
+        },
+        {
+          "x": 185,
+          "y": 100
+        }
+      ],
+      "source": {
+        "direction": "Down",
+        "element": "v-bake"
+      },
+      "target": {
+        "direction": "Left",
+        "element": "v-deliver"
+      },
+      "isManuallyLayouted": false,
+      "flowType": "sequence",
+      "isDefault": false
+    },
+    "f-v6": {
+      "id": "f-v6",
+      "name": "",
+      "type": "BPMNFlow",
+      "owner": null,
+      "bounds": {
+        "x": 870,
+        "y": 625,
+        "width": 30,
+        "height": 1
+      },
+      "path": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 30,
+          "y": 0
+        }
+      ],
+      "source": {
+        "direction": "Right",
+        "element": "v-deliver"
+      },
+      "target": {
+        "direction": "Left",
+        "element": "v-receive"
+      },
+      "isManuallyLayouted": false,
+      "flowType": "sequence",
+      "isDefault": false
+    },
+    "f-v7": {
+      "id": "f-v7",
+      "name": "",
+      "type": "BPMNFlow",
+      "owner": null,
+      "bounds": {
+        "x": 1010,
+        "y": 625,
+        "width": 50,
+        "height": 1
+      },
+      "path": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 50,
+          "y": 0
+        }
+      ],
+      "source": {
+        "direction": "Right",
+        "element": "v-receive"
+      },
+      "target": {
+        "direction": "Left",
+        "element": "v-end"
+      },
+      "isManuallyLayouted": false,
+      "flowType": "sequence",
+      "isDefault": false
+    },
+    "mf-1": {
+      "id": "mf-1",
+      "name": "Pizza order",
+      "type": "BPMNFlow",
+      "owner": null,
+      "bounds": {
+        "x": 375,
+        "y": 160,
+        "width": 1,
+        "height": 190
+      },
+      "path": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 0,
+          "y": 190
+        }
+      ],
+      "source": {
+        "direction": "Down",
+        "element": "c-order"
+      },
+      "target": {
+        "direction": "Up",
+        "element": "v-start"
+      },
+      "isManuallyLayouted": false,
+      "flowType": "message",
+      "isDefault": false
+    },
+    "mf-2": {
+      "id": "mf-2",
+      "name": "Where is my pizza?",
+      "type": "BPMNFlow",
+      "owner": null,
+      "bounds": {
+        "x": 580,
+        "y": 240,
+        "width": 1,
+        "height": 110
+      },
+      "path": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 0,
+          "y": 110
+        }
+      ],
+      "source": {
+        "direction": "Down",
+        "element": "c-ask"
+      },
+      "target": {
+        "direction": "Up",
+        "element": "v-askmsg"
+      },
+      "isManuallyLayouted": false,
+      "flowType": "message",
+      "isDefault": false
+    },
+    "mf-3": {
+      "id": "mf-3",
+      "name": "Pizza delivered",
+      "type": "BPMNFlow",
+      "owner": null,
+      "bounds": {
+        "x": 815,
+        "y": 150,
+        "width": 1,
+        "height": 445
+      },
+      "path": [
+        {
+          "x": 0,
+          "y": 445
+        },
+        {
+          "x": 0,
+          "y": 0
+        }
+      ],
+      "source": {
+        "direction": "Up",
+        "element": "v-deliver"
+      },
+      "target": {
+        "direction": "Down",
+        "element": "c-msg"
+      },
+      "isManuallyLayouted": false,
+      "flowType": "message",
+      "isDefault": false
+    },
+    "mf-4": {
+      "id": "mf-4",
+      "name": "Payment",
+      "type": "BPMNFlow",
+      "owner": null,
+      "bounds": {
+        "x": 955,
+        "y": 160,
+        "width": 1,
+        "height": 435
+      },
+      "path": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 0,
+          "y": 435
+        }
+      ],
+      "source": {
+        "direction": "Down",
+        "element": "c-pay"
+      },
+      "target": {
+        "direction": "Up",
+        "element": "v-receive"
+      },
+      "isManuallyLayouted": false,
+      "flowType": "message",
+      "isDefault": false
+    }
+  },
+  "assessments": {}
+}

@@ -32,7 +32,7 @@ import logging
 import os
 import threading
 import time
-from typing import Any
+from typing import Any, Callable
 from besser.utilities.workspace_fs import open_plain, open_plain_write
 
 logger = logging.getLogger(__name__)
@@ -50,21 +50,47 @@ EVENT_RUN_START = "run_start"
 EVENT_PHASE_ENTER = "phase_enter"
 EVENT_PHASE_EXIT = "phase_exit"
 EVENT_TURN_START = "turn_start"
+# The turn's LLM response arrived: what the client spends after it (validation, the requirements
+# judge, a runtime gate's checks) is not the turn's.
+EVENT_TURN_END = "turn_end"
 EVENT_TOOL_CALL = "tool_call"
 EVENT_COST_UPDATE = "cost_update"
 # One LLM call outside the Phase 2 tool loop (planner, requirements judge,
 # repair, ...). Payload: ``purpose``, ``outcome``, the call's ``*_tokens``
 # counters and ``cost_usd``, so a run's whole cost is visible in the trace.
 EVENT_LLM_CALL = "llm_call"
+# The loop's history was summarized (``tokens_before``/``tokens_after``) or had stale
+# file bodies stubbed (``stubbed``) before the request of ``turn``: either rewrites the
+# prefix the provider caches, so that turn's cache miss is expected.
 EVENT_COMPACTION = "compaction"
+EVENT_EVICTION = "eviction"
 EVENT_SNAPSHOT = "snapshot"
 EVENT_ROLLBACK = "rollback"
+# A Phase 3 fix attempt's edit scope (``allowed``: the files it may edit, None
+# when open), or one write outside it justified by ``needed_for``.
+EVENT_EDIT_SCOPE = "edit_scope"
 EVENT_REGENERATION = "regeneration"
 EVENT_TARGET = "target"
 EVENT_VALIDATION_ISSUE = "validation_issue"
+# The fix agent's verified citation of a requirement (validate_app citations).
+EVENT_REQUIREMENT_CITED = "requirement_cited"
 EVENT_CHECKPOINT = "checkpoint"
 EVENT_ERROR = "error"
 EVENT_RUN_END = "run_end"
+# A BESSER generator wrote files: its tool, generator key, the model kinds it
+# read and, per file written, the SHA-256 and the regions/sources it recorded
+# (``GeneratorInterface.traced_files``). Read back by ``state/trace_model.py``.
+EVENT_GENERATOR_OUTPUT = "generator_output"
+# The requirements ledger was built: its source ("editor" or "extracted"), its
+# items and, for an extraction, the tokens that call used.
+EVENT_REQUIREMENTS = "requirements"
+
+# Events stamped with the LLM client's cumulative token counters (``usage``),
+# when the writer has a ``usage`` source. They bound the run's LLM turns, so the
+# tokens of one turn are the difference between two of them.
+USAGE_EVENTS = frozenset({
+    EVENT_RUN_START, EVENT_PHASE_ENTER, EVENT_PHASE_EXIT, EVENT_TURN_START, EVENT_TURN_END, EVENT_RUN_END,
+})
 
 
 class TraceWriter:
@@ -85,6 +111,14 @@ class TraceWriter:
         stamped onto every record so downstream tools don't have to
         cross-reference another file to know what kind of run produced
         the trace.
+    usage
+        Optional callable returning the LLM client's cumulative token
+        counters; its result is stamped as ``usage`` on the
+        :data:`USAGE_EVENTS`.
+    mirror
+        Optional callable given every record as well, with the ``uncut``
+        fields of :meth:`write` in its payload. The backend keeps the
+        run's full record server-side through it.
     """
 
     def __init__(
@@ -92,23 +126,33 @@ class TraceWriter:
         output_dir: str,
         run_id: str = "",
         primary_kind: str | None = None,
+        usage: Callable[[], dict[str, Any]] | None = None,
+        mirror: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         self.output_dir = output_dir
         self.run_id = run_id
         self.primary_kind = primary_kind
+        self._usage = usage
+        self._mirror = mirror
         self._path = os.path.join(output_dir, TRACE_FILENAME)
 
     @property
     def path(self) -> str:
         return self._path
 
-    def write(self, event: str, **payload: Any) -> None:
+    def write(self, event: str, uncut: dict[str, Any] | None = None, **payload: Any) -> None:
         """Append a single trace record. Never raises.
 
         Extra keyword arguments become the ``payload`` object. The
         framing fields (``ts``, ``run_id``, ``primary_kind``, ``event``)
         are written unconditionally so every record is self-describing.
+        ``uncut`` fields replace payload fields in the mirror's copy only.
         """
+        if self._usage is not None and event in USAGE_EVENTS:
+            try:
+                payload = {**payload, "usage": self._usage()}
+            except Exception as exc:
+                logger.debug("Token counters unavailable for %s: %s", event, exc)
         record = {
             "ts": time.time(),
             "run_id": self.run_id,
@@ -127,6 +171,11 @@ class TraceWriter:
         except Exception as exc:
             # Instrumentation must not break the run.
             logger.debug("Failed to write trace record (%s): %s", event, exc)
+        if self._mirror is not None:
+            try:
+                self._mirror({**record, "payload": {**payload, **(uncut or {})}})
+            except Exception as exc:
+                logger.debug("Failed to mirror trace record (%s): %s", event, exc)
 
     def tail(self, limit: int = 50) -> list[dict[str, Any]]:
         """Return the last ``limit`` records from the trace file.
@@ -165,7 +214,7 @@ class NullTraceWriter:
 
     path = ""
 
-    def write(self, event: str, **payload: Any) -> None:  # noqa: D401
+    def write(self, event: str, uncut: dict[str, Any] | None = None, **payload: Any) -> None:  # noqa: D401
         return None
 
     def tail(self, limit: int = 50) -> list[dict[str, Any]]:

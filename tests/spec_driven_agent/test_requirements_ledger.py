@@ -146,7 +146,7 @@ def test_extraction_keeps_the_billing_tail_and_saturation_cannot_look_complete(t
     assert extracted[-1]["text"] == requirements[-1]["text"]
 
     # A noncompliant provider returning over maxItems must not lose any item.
-    for count in (ledger._MAX_REQUIREMENTS, ledger._MAX_REQUIREMENTS + 1):
+    for count in (ledger.MAX_REQUIREMENTS, ledger.MAX_REQUIREMENTS + 1):
         response = [{"text": f"Rule {i}", "kind": "rule"} for i in range(count)]
         extracted = ledger.extract_requirements(INSTRUCTIONS, _ToolClient([{"requirements": response}]))
         assert len(extracted) == count + 1
@@ -161,7 +161,8 @@ def test_extraction_keeps_the_billing_tail_and_saturation_cannot_look_complete(t
         assert gate["text"] not in client.calls[0][1], "code judgment cannot repair incomplete extraction"
         checked = ledger.verify_evidence([dict(gate, status="implemented", evidence="app.py: return True")], str(tmp_path))
         assert checked[0]["status"] == "unverified"
-        assert _classify_issue(ledger.ledger_issues(checked)[0]).severity == "blocker"
+        # Incomplete extraction is not confirmed: listed, never a blocker.
+        assert _classify_issue(ledger.ledger_issues(checked)[0]).severity == "warning"
         assert ledger.judge_coverage([gate], "", _ToolClient([]))[0]["status"] == "unverified"
     assert ledger.extract_requirements(INSTRUCTIONS, _ToolClient([{"requirements": {"text": "bad shape"}}])) is None
 
@@ -416,10 +417,10 @@ def test_an_action_cannot_be_proven_by_a_relationship_declaration():
 
 def test_a_data_statement_labelled_rule_keeps_its_column():
     """The extractor pads the ledger with 'a person must have a first name'
-    and may call it a rule; the column is that requirement, not a gap."""
+    and may call it a rule; met by a declaration, the column is that requirement."""
     out = ledger.verify_evidence(
-        [_verdict("implemented", f"web_app/backend/sql_alchemy.py: {_DECLARING_LINE}",
-                  kind="rule", text="Each booking must have an employee handling it")],
+        [{**_verdict("implemented", f"web_app/backend/sql_alchemy.py: {_DECLARING_LINE}",
+                     kind="rule", text="Each booking must have an employee handling it"), "met_by": "declaration"}],
         FIXTURE,
     )
     assert out[0]["status"] == "implemented"
@@ -436,10 +437,10 @@ def test_an_at_least_rule_needs_more_than_a_relationship():
 
 def test_a_must_have_field_labelled_validation_keeps_its_column():
     """The extractor labels 'each person must have a first name' a validation;
-    with no constraint in the text, the column is the implementation."""
+    met by a declaration, the column is the implementation."""
     out = ledger.verify_evidence(
-        [_verdict("implemented", f"web_app/backend/sql_alchemy.py: {_DECLARING_LINE}",
-                  kind="validation", text="Each booking must have an employee")],
+        [{**_verdict("implemented", f"web_app/backend/sql_alchemy.py: {_DECLARING_LINE}",
+                     kind="validation", text="Each booking must have an employee"), "met_by": "declaration"}],
         FIXTURE,
     )
     assert out[0]["status"] == "implemented"
@@ -455,7 +456,7 @@ def test_escape_sequences_quote_style_and_later_lines_are_normalised():
         + "\\n    # abridged continuation that is not in the file"
     )
     out = ledger.verify_evidence([
-        _verdict("implemented", quoted, kind="rule", text="Each booking has an employee"),
+        {**_verdict("implemented", quoted, kind="rule", text="Each booking has an employee"), "met_by": "declaration"},
     ], FIXTURE)
     assert out[0]["status"] == "implemented"
 
@@ -599,8 +600,8 @@ class BookingCreate:
     statuses = [v["status"] for v in ledger.verify_evidence(verdicts, str(tmp_path))]
     assert statuses == ["unverified"] * len(invalid) + ["implemented"] * len(valid)
     declarative = [
-        _verdict("implemented", 'app.py: status = mapped_column(default="AWAITING_PAYMENT")',
-                 kind="transition", text="A booking starts awaiting payment"),
+        {**_verdict("implemented", 'app.py: status = mapped_column(default="AWAITING_PAYMENT")',
+                    kind="transition", text="A booking starts awaiting payment"), "met_by": "declaration"},
         _verdict("implemented", 'app.py: amount = mapped_column(Computed("price * nights"))',
                  kind="computed", text="The amount is computed from the price and nights"),
     ]
@@ -672,8 +673,9 @@ class Room:
         ("transition", "status = mapped_column(default=Status.AWAITING_PAYMENT)"),
         ("rule", '__table_args__ = (CheckConstraint("capacity > 0", name="positive_capacity"),)'),
     ]
-    verdicts = [_verdict("implemented", f"models.py: {line}", kind=kind,
-                         text="A record starts awaiting payment" if kind == "transition" else "The value must be valid")
+    verdicts = [{**_verdict("implemented", f"models.py: {line}", kind=kind,
+                            text="A record starts awaiting payment" if kind == "transition" else "The value must be valid"),
+                 "met_by": "declaration" if kind == "transition" else "check"}
                 for kind, line in invalid + valid]
     checked = ledger.verify_evidence(verdicts, str(tmp_path))
     assert [v["status"] for v in checked] == ["unverified"] * len(invalid) + ["implemented"] * len(valid)
@@ -710,7 +712,7 @@ def test_a_requirement_the_judge_skipped_is_unverified_not_missing():
 # --------------------------------------------------------- issues + severity
 
 
-def test_unresolved_requirements_block_completion_without_inventing_missing_code():
+def test_missing_and_partial_requirements_block_and_unverified_ones_are_not_confirmed():
     issues = ledger.ledger_issues([
         {"id": 1, "text": "Room numbers are unique", "status": "missing", "note": "no unique constraint"},
         {"id": 2, "text": "Bills can be paid", "status": "partial", "note": "no refusal when paid"},
@@ -721,7 +723,7 @@ def test_unresolved_requirements_block_completion_without_inventing_missing_code
     assert issues[0].startswith("requirement: R1 — Room numbers are unique is not implemented")
     assert _classify_issue(issues[0]).severity == "blocker"
     assert _classify_issue(issues[1]).severity == "blocker"
-    assert _classify_issue(issues[2]).severity == "blocker"
+    assert _classify_issue(issues[2]).severity == "warning"
     assert issues[1].startswith("requirement partial:")
     assert issues[2].startswith("requirement unverified:")
     assert "implement the behaviour only if it is really absent" in issues[2]
@@ -795,7 +797,7 @@ def test_ui_requirements_on_a_backend_only_output_are_out_of_scope(
 
     assert len(issues) == 1
     if frontend:
-        assert issues[0].severity == "blocker"
+        assert issues[0].severity == "warning"
         assert issues[0].message.startswith("requirement unverified: R1")
     else:
         assert issues[0].severity == "warning"
@@ -804,7 +806,7 @@ def test_ui_requirements_on_a_backend_only_output_are_out_of_scope(
 
 
 def test_the_ledger_can_be_switched_off(simple_model, tmp_path, monkeypatch):
-    from besser.spec_driven_agent.validation.issues import is_completion_issue
+    from besser.spec_driven_agent.validation.issues import is_completion_issue, is_not_confirmed
 
     monkeypatch.setattr(ledger, "extract_requirements",
                         lambda *_: (_ for _ in ()).throw(AssertionError("must not run")))
@@ -816,7 +818,8 @@ def test_the_ledger_can_be_switched_off(simple_model, tmp_path, monkeypatch):
     issues = orch._collect_validation_issues()
     assert not [i for i in issues if i.message.startswith("requirement")]
     findings = [i for i in issues if i.message.startswith("validation unverified: original-specification coverage")]
-    assert len(findings) == 1 and findings[0].severity == "warning" and is_completion_issue(findings[0])
+    assert len(findings) == 1 and findings[0].severity == "warning"
+    assert is_not_confirmed(findings[0]) and not is_completion_issue(findings[0])
     orch.auto_fix_issues = True
     monkeypatch.setattr(orch, "_collect_validation_issues", lambda: findings)
     monkeypatch.setattr(orch.client, "chat", lambda *a, **kw: pytest.fail("disabled checking must not request code repairs"))
@@ -883,14 +886,15 @@ def test_a_flapping_requirement_verdict_never_rolls_back_a_fix(simple_model, tmp
     assert restored is False
 
 
-def test_a_new_hard_blocker_is_reported_without_count_based_rollback(simple_model, tmp_path, monkeypatch):
+def test_an_attempt_that_wrote_nothing_is_neither_rolled_back_nor_rechecked(simple_model, tmp_path, monkeypatch):
+    """Nothing to undo, and a re-check of the same tree could only add variance."""
     from besser.spec_driven_agent.pipeline.orchestrator import ValidationIssue
     syntax = ValidationIssue("blocker", "Syntax error in backend/main_api.py line 3: invalid syntax")
     orch = LLMOrchestrator(llm_client=_MockClient(), domain_model=simple_model,
                            output_dir=str(tmp_path), auto_fix_issues=True)
     restored = _run_phase3_with(orch, [[_req(1)], [_req(1), syntax]], monkeypatch)
     assert restored is False
-    assert orch._validation_issues == [_req(1), syntax]
+    assert orch._validation_issues == [_req(1)]
 
 
 # ------------------------------------------- the ledger reaches Phase 2 too

@@ -4,6 +4,11 @@ Agent diagram processing for converting JSON to BUML format.
 
 import logging
 import operator
+from typing import Optional
+
+from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.condition_code import (
+    rename_condition_function,
+)
 
 from deep_translator import GoogleTranslator
 
@@ -47,6 +52,7 @@ from besser.BUML.metamodel.structural import DomainModel, Metadata
 from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.gui_diagram_processor import (
     process_gui_diagram,
 )
+from besser.utilities.web_modeling_editor.backend.services.converters.element_ids import EditorIds
 from besser.utilities.web_modeling_editor.backend.services.converters.parsers import sanitize_text
 from besser.utilities.web_modeling_editor.backend.services.validators.python_code_validator import (
     validate_custom_code_action,
@@ -284,7 +290,8 @@ def _build_body_from_action_elements(body_name, action_element_ids, elements,
         elif action_type == "WebSocketReplyOptionsAction":
             opts_raw = element.get("ws_options", "")
             options = [o.strip() for o in opts_raw.split('\n') if o.strip()]
-            body.add_action(WebSocketReplyOptions(options=options))
+            options_label = (element.get("ws_options_label") or "").strip() or None
+            body.add_action(WebSocketReplyOptions(options=options, label=options_label))
             action_added = True
 
         elif action_type == "WebSocketReplyLocationAction":
@@ -348,7 +355,16 @@ def _build_body_from_action_elements(body_name, action_element_ids, elements,
     return body if action_added else None
 
 
-def process_agent_diagram(json_data):
+def process_agent_diagram(json_data, warnings: Optional[list] = None):
+    """Build the B-UML ``Agent`` of an agent diagram's JSON, validated.
+
+    Pass a ``warnings`` list where the agent is exported or converted rather than
+    run: two transitions BAF cannot run are then reported there (and logged)
+    instead of raising. A ``when_intent_matched`` transition naming no intent is
+    dropped, and an ``auto`` transition beside another transition of its state is
+    kept. Agent generation and the simulator pass none, so both raise.
+    """
+    first_warning = len(warnings) if warnings is not None else 0
     # Extract language from config if present
     config = json_data.get('config') or {}
     lang_value = config.get('language', '')
@@ -396,6 +412,9 @@ def process_agent_diagram(json_data):
     title = sanitize_name(json_data.get('title', 'Generated_Agent'))
 
     agent = Agent(title)
+    # States, intents, transitions, tools, skills, workspaces and RAGs take the id of the editor
+    # element they are built from: the id a trace refers to them by.
+    editor_ids = EditorIds()
 
     # Get elements and relationships from the JSON data
     model_data = json_data.get('model') or {}
@@ -460,11 +479,12 @@ def process_agent_diagram(json_data):
                 continue
             if any(t.name == tool_name for t in agent.tools):
                 continue
-            agent.new_tool(
+            tool = agent.new_tool(
                 name=tool_name,
                 description=element.get("description", "") or "",
                 code=element.get("code", "") or "",
             )
+            editor_ids.assign(tool, element_id)
             continue
         elif element_type == "AgentSkill":
             skill_name = sanitize_text((element.get("name") or "").strip())
@@ -472,11 +492,12 @@ def process_agent_diagram(json_data):
                 continue
             if any(s.name == skill_name for s in agent.skills):
                 continue
-            agent.new_skill(
+            skill = agent.new_skill(
                 name=skill_name,
                 content=element.get("content", "") or "",
                 description=element.get("description") or None,
             )
+            editor_ids.assign(skill, element_id)
             continue
         elif element_type == "AgentWorkspace":
             ws_name = sanitize_text((element.get("name") or "").strip())
@@ -490,13 +511,14 @@ def process_agent_diagram(json_data):
             max_read_bytes = element.get("max_read_bytes")
             if max_read_bytes is None:
                 max_read_bytes = 200_000
-            agent.new_workspace(
+            workspace = agent.new_workspace(
                 name=ws_name,
                 path=element.get("path", "") or "",
                 description=element.get("description") or None,
                 writable=bool(writable),
                 max_read_bytes=int(max_read_bytes),
             )
+            editor_ids.assign(workspace, element_id)
             continue
         elif element_type == "AgentReasoningState":
             # Reasoning states are created in the state-construction passes below.
@@ -520,6 +542,7 @@ def process_agent_diagram(json_data):
             # Create intent and add to agent
             intent = Intent(intent_name, training_sentences, description=intent_description)
             agent.add_intent(intent)
+            editor_ids.assign(intent, element_id)
             intents_by_id[element_id] = intent
             intent_count += 1
         elif element_type == "AgentGUI":
@@ -608,6 +631,7 @@ def process_agent_diagram(json_data):
                 use_hybrid_rag=rag_use_hybrid,
                 bm25_weight=rag_bm25_weight,
             )
+            editor_ids.assign(rag_config, element_id)
             rag_dbs_by_id[element_id] = rag_config
             rag_dbs_by_name[rag_name] = rag_config
 
@@ -664,6 +688,7 @@ def process_agent_diagram(json_data):
         if element.get("fallback_message") is not None:
             kwargs["fallback_message"] = element.get("fallback_message")
         rs = agent.new_reasoning_state(**kwargs)
+        editor_ids.assign(rs, element_id)
         # Tools, skills and workspaces are registered at the agent level and
         # shared by every reasoning state; the metamodel has no per-state
         # subset concept, so no per-state ref lists are parsed here.
@@ -674,6 +699,7 @@ def process_agent_diagram(json_data):
         """Create a standard AgentState and its body/fallback body from the new schema."""
         state_name = element.get("name", "")
         agent_state = agent.new_state(name=state_name, initial=is_initial)
+        editor_ids.assign(agent_state, element_id)
         states_by_id[element_id] = agent_state
 
         # Resolve action element IDs — new key "actions", backward-compat key "bodies"
@@ -734,7 +760,10 @@ def process_agent_diagram(json_data):
 
     # Third pass: Process transitions and comment links
     transition_count = 0
-    for relationship in relationships.values():
+    for relationship_id, relationship in relationships.items():
+        # The state a transition is being added to, and how many it had before: the one this
+        # relationship adds takes its id.
+        transition_from = None
         if relationship.get("type") == "Link":
             # Handle comment links
             source_element_id = relationship.get("source", {}).get("element")
@@ -773,6 +802,7 @@ def process_agent_diagram(json_data):
                 continue
 
             if source_state and target_state:
+                transition_from = (source_state, len(source_state.transitions))
                 transition_type = relationship.get("transitionType")
                 predefined_block = relationship.get("predefined") or {}
                 custom_block = relationship.get("custom") or {}
@@ -858,6 +888,16 @@ def process_agent_diagram(json_data):
                             conditions=[IntentMatcher(unresolved_intent)],
                         ).go_to(target_state)
                         transition_count += 1
+                    else:
+                        message = (
+                            f"Transition from '{source_state.name}' to '{target_state.name}' is "
+                            "'when_intent_matched' but names no intent. Select the intent that "
+                            "triggers it, or use 'auto' to continue without waiting, or "
+                            "'when_no_intent_matched' for a fallback transition."
+                        )
+                        if warnings is None:
+                            raise ValueError(message)
+                        warnings.append(f"{message} It was left out.")
 
                 elif condition_name == "when_no_intent_matched":
                     source_state.when_no_intent_matched().go_to(target_state)
@@ -995,7 +1035,11 @@ def process_agent_diagram(json_data):
                     for condition_index, custom_condition_code in enumerate(custom_conditions, start=1):
                         generated_name = f"condition_{transition_count + 1}_{condition_index}"
                         custom_condition = Condition(name=generated_name, callable=None)
-                        custom_condition.code = custom_condition_code
+                        # The generated agent wires the transition to ``generated_name``, so the
+                        # function must carry that name whatever the author called it (the
+                        # editor's template is ``def condition(...)``): two transitions would
+                        # otherwise collide, or reference a function that does not exist.
+                        custom_condition.code = rename_condition_function(custom_condition_code, generated_name)
                         condition_objects.append(custom_condition)
 
                     transition_builder = None
@@ -1022,6 +1066,11 @@ def process_agent_diagram(json_data):
                     # Default to no_intent_matched if no condition specified
                     source_state.when_no_intent_matched().go_to(target_state)
                     transition_count += 1
+
+        if transition_from is not None:
+            state, before = transition_from
+            if len(state.transitions) == before + 1:
+                editor_ids.assign(state.transitions[-1], relationship.get("id") or relationship_id)
 
     # Process comments
     for comment_id, comment_text in comment_elements.items():
@@ -1058,6 +1107,10 @@ def process_agent_diagram(json_data):
             agent.set_default_llm(default_llm_name_cfg)
 
     # Validate the agent model at build time so all callers get validation for free
-    agent.validate(raise_exception=True)
+    agent.validate(raise_exception=True, check_auto_transitions=warnings is None)
+    if warnings is not None:
+        warnings.extend(agent.auto_transition_problems())
+        for message in warnings[first_warning:]:
+            logger.warning("Agent '%s': %s", agent.name, message)
 
     return agent

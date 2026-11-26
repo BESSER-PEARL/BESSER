@@ -63,6 +63,11 @@ _CHARTS = (LineChart, BarChart, PieChart, RadarChart, RadialBarChart)
 _ENDPOINT_READERS = (*_CHARTS, MetricCard)
 
 
+def _enum_options(enumeration: Enumeration) -> List[str]:
+    """The literal names of an enumeration, in model order."""
+    return [literal.name for literal in sort_by_timestamp(enumeration.literals)]
+
+
 class GuiSerializationMixin:
     def _build_generation_context(self) -> Dict[str, Any]:
         components_payload, styles_payload, meta = self._serialize_gui_model()
@@ -90,6 +95,7 @@ class GuiSerializationMixin:
         pages: List[Dict[str, Any]] = []
         pages_meta: List[Dict[str, str]] = []
         self._style_map = {}
+        self._node_elements = {}
 
         modules = self._sorted_by_name(self.gui_model.modules)
         module_name = modules[0].name if modules else "AppModule"
@@ -153,7 +159,7 @@ class GuiSerializationMixin:
         for element in elements:
             node["components"].append(self._serialize_component(element))
 
-        return self._clean_dict(node)
+        return self._remember_element(self._clean_dict(node), screen)
 
     def _serialize_component(self, element: ViewComponent) -> Dict[str, Any]:
         component_type = self._map_component_type(element)
@@ -286,7 +292,7 @@ class GuiSerializationMixin:
                                         param_data["lookup_field"] = lookup_field
                                 elif isinstance(param_type, Enumeration):
                                     param_data["input_kind"] = "enum"
-                                    param_data["options"] = sorted([literal.name for literal in param_type.literals])
+                                    param_data["options"] = _enum_options(param_type)
 
                                 input_params[param.name] = param_data
 
@@ -569,7 +575,7 @@ class GuiSerializationMixin:
                     if isinstance(field_type, Enumeration):
                         column_dict["type"] = "enum"
                         # Extract enumeration literal names as options
-                        column_dict["options"] = sorted([literal.name for literal in field_type.literals])
+                        column_dict["options"] = _enum_options(field_type)
                     else:
                         column_dict["type"] = field_type.name if hasattr(field_type, "name") else "str"
 
@@ -633,11 +639,13 @@ class GuiSerializationMixin:
 
                     if isinstance(field_type, Enumeration):
                         column_dict["type"] = "enum"
-                        column_dict["options"] = sorted([literal.name for literal in field_type.literals])
+                        column_dict["options"] = _enum_options(field_type)
                     elif field_type and getattr(field_type, "name", None):
                         column_dict["type"] = field_type.name
 
                     is_optional = getattr(attr, "is_optional", False)
+                    # The backend schema accepts null exactly for these (as Optional[...])
+                    column_dict["nullable"] = bool(is_optional) and not getattr(attr, "is_id", False)
                     if not is_optional:
                         multiplicity = getattr(attr, "multiplicity", None)
                         if multiplicity and getattr(multiplicity, "min", 0) > 0:
@@ -678,7 +686,6 @@ class GuiSerializationMixin:
                     "positiveColor": element.positive_color,
                     "negativeColor": element.negative_color,
                     "value": 0,  # Default placeholder - will be populated from API
-                    "trend": 12,  # Default placeholder trend percentage
                 }
             )
             node["color"] = element.primary_color or element.value_color or "#2c3e50"
@@ -747,7 +754,20 @@ class GuiSerializationMixin:
         if binding_data:
             node["data_binding"] = binding_data
 
-        return self._clean_dict(node)
+        return self._remember_element(self._clean_dict(node), element)
+
+    def _remember_element(self, node: Dict[str, Any], element: ViewComponent) -> Dict[str, Any]:
+        """Note which GUI element a serialized node came from, so that the page built from it can be traced.
+
+        The node is kept alongside the element so that its ``id()`` stays its own.
+        """
+        self._node_elements[id(node)] = (node, element)
+        return node
+
+    def _element_of(self, node: Dict[str, Any]) -> Optional[ViewComponent]:
+        """The GUI element ``node`` was serialized from (None for any other dict)."""
+        entry = self._node_elements.get(id(node))
+        return entry[1] if entry and entry[0] is node else None
 
     def _settable_ends(self, domain_concept) -> List[Any]:
         """The association ends a create/edit form of the class can set, oldest first."""
@@ -1342,8 +1362,10 @@ class GuiSerializationMixin:
             style["--chart-line-color"] = color.line_color
         if getattr(color, "bar_color", None):
             style["--chart-bar-color"] = color.bar_color
-        if getattr(color, "color_palette", None):
-            style["--chart-color-palette"] = color.color_palette
+        # "default" is what a pie chart falls back to anyway, unless a bar colour would take its place.
+        palette = getattr(color, "color_palette", None)
+        if palette and (palette != "default" or style.get("--chart-bar-color") not in (None, "#CCCCCC")):
+            style["--chart-color-palette"] = palette
         return style
 
     def _extract_layout_style(self, layout) -> Dict[str, Any]:
@@ -1541,7 +1563,7 @@ class GuiSerializationMixin:
 
             if isinstance(attr_type, Enumeration):
                 field_dict["type"] = "enum"
-                field_dict["options"] = sorted([literal.name for literal in attr_type.literals])
+                field_dict["options"] = _enum_options(attr_type)
             elif attr_type is not None and getattr(attr_type, "name", None):
                 field_dict["type"] = attr_type.name
 

@@ -76,6 +76,7 @@ from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner im
     SmartRunRegistry,
     create_run_workspace,
     run_changes,
+    run_download_dir,
 )
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.workspace_tree import (
     read_run_json,
@@ -242,10 +243,14 @@ async def push_run_to_github(
         # That new README says what the project is and when it was generated (#750).
         model_source = f"{repo_model.MODEL_DIR}/{repo_model.DOMAIN_SOURCE}"
         project = repo_model.project_of(effective_export) if isinstance(effective_export, dict) else {}
+        # The editor's ?buml= link reads the file without a token, so it fails for a private repo. Only a
+        # new repo's visibility is known here; an existing repo keeps the link.
         add_readme_block(workdir, readme_besser_block(
             owner, repo_name, target_branch,
             model_source=model_source if os.path.isfile(os.path.join(workdir, *model_source.split("/"))) else None,
             has_provenance=os.path.isfile(os.path.join(workdir, PROVENANCE_FILENAME)),
+            is_private=is_first_push and bool(deploy_config.is_private),
+            has_trace=bool(project.get("trace")),
         ), title=repo_name if is_first_push else None,
             about=readme_about(project.get("description"), "Generated"))
 
@@ -288,7 +293,8 @@ async def push_run_to_github(
             {
                 "AI-Tool": f"besser-spec-driven-agent/{get_besser_version()}",
                 "AI-Model": run_recipe.get("llm_model"),
-                "AI-Role": "feature-modification" if modified else "code-generation",
+                "AI-Role": "code-transformation" if modified else "code-generation",
+                "AI-Tokens": _ai_tokens(run_recipe.get("usage")),
             },
         )
         pull_request_url = None
@@ -416,6 +422,19 @@ async def _hold_repo_agents_md(
     return True
 
 
+# The recipe's usage counters, under the names of the AI-Tokens trailer (github.com/dspinellis/ai-commit-headers).
+_AI_TOKEN_COUNTS = (("input", "input_tokens"), ("cached", "cache_read_tokens"), ("output", "output_tokens"))
+
+
+def _ai_tokens(usage) -> Optional[str]:
+    """The ``AI-Tokens`` value (``input=…, cached=…, output=…``) of a run's usage, or None when it recorded none."""
+    if not isinstance(usage, dict):
+        return None
+    counts = [(name, usage.get(key)) for name, key in _AI_TOKEN_COUNTS]
+    counts = [(name, n) for name, n in counts if isinstance(n, int) and not isinstance(n, bool) and n > 0]
+    return ", ".join(f"{name}={n}" for name, n in counts) or None
+
+
 def _model_changes(entry) -> list[str]:
     """What the run changed in the model, from its recipe (empty when it changed none)."""
     recipe = read_run_json(os.path.join(entry.temp_dir, ".besser_recipe.json"))
@@ -478,10 +497,13 @@ def _run_seed(run_dir: str, owner: str, repo: str) -> tuple[Optional[str], Optio
 
 
 def _record_run_seed(run_dir: str, owner: str, repo: str, commit_sha: str, files: dict[str, str]) -> None:
-    """Record that the run's files now match ``commit_sha``, as ``repo path -> content_hash`` (best effort)."""
+    """Record that the run's files now match ``commit_sha``, as ``repo path -> content_hash`` (best effort);
+    also beside the run's download, from which a modify run seeds once the workspace is gone."""
+    record = {"owner": owner, "repo": repo, "commitSha": commit_sha, "paths": files}
     try:
-        write_run_json(os.path.join(run_dir, GITHUB_SOURCE_FILENAME),
-                       {"owner": owner, "repo": repo, "commitSha": commit_sha, "paths": files})
+        write_run_json(os.path.join(run_dir, GITHUB_SOURCE_FILENAME), record)
+        if os.path.isdir(run_download_dir(run_dir)):
+            write_run_json(os.path.join(run_download_dir(run_dir), GITHUB_SOURCE_FILENAME), record)
     except OSError:
         logger.warning("Could not record the pushed commit in run %s", run_dir, exc_info=True)
 
@@ -573,13 +595,15 @@ MAX_GENERATED_CODE_BYTES = MAX_REQUEST_SIZE
 GENERATED_CODE_FILENAME = ".besser_generated_code"
 
 
-def _extract_generated_zip(archive: zipfile.ZipFile, dest_dir: str) -> None:
+def _extract_generated_zip(archive: zipfile.ZipFile, dest_dir: str, keep: frozenset[str] = frozenset()) -> None:
     """Extract ``archive`` into ``dest_dir``; refuses unsafe paths and an archive past the caps.
 
     Links and other non-regular members are skipped, and so are BESSER's own
-    run records (``.besser_*``): the run's are written by BESSER alone.
-    Everything is checked before anything is written, so a refused archive
-    writes nothing.
+    run records (``.besser_*``) other than the member names in ``keep``: the
+    run's are written by BESSER alone. Everything is checked before anything
+    is written, so a refused archive writes nothing. Of a member's mode only
+    its execute bits are applied (``mvnw``, ``*.sh``), never setuid, setgid,
+    sticky or write bits.
     """
     dest_abs = os.path.abspath(dest_dir)
     members = []
@@ -587,7 +611,8 @@ def _extract_generated_zip(archive: zipfile.ZipFile, dest_dir: str) -> None:
     for info in archive.infolist():
         if info.is_dir() or stat.S_IFMT(info.external_attr >> 16) not in (0, stat.S_IFREG):
             continue
-        if any(fnmatch.fnmatch(part, _RUN_INTERNAL_FILES) for part in info.filename.replace("\\", "/").split("/")):
+        if info.filename not in keep and any(
+                fnmatch.fnmatch(part, _RUN_INTERNAL_FILES) for part in info.filename.replace("\\", "/").split("/")):
             continue
         target = os.path.abspath(os.path.join(dest_abs, info.filename))
         if not target.startswith(dest_abs + os.sep):
@@ -602,6 +627,12 @@ def _extract_generated_zip(archive: zipfile.ZipFile, dest_dir: str) -> None:
             # The reader stops at the declared size, which the caps above counted.
             with archive.open(info) as source, open_plain_write(target, "wb", root=dest_abs) as handle:
                 shutil.copyfileobj(source, handle)
+                executable = (info.external_attr >> 16) & 0o111
+                if executable:
+                    # Through the open descriptor where the platform has one, as copy_plain_file does.
+                    fd = handle.fileno()
+                    mode = stat.S_IMODE(os.fstat(fd).st_mode) & 0o775 | executable
+                    os.chmod(fd if os.chmod in os.supports_fd else target, mode)
     except OSError as exc:
         # E.g. both ``a`` and ``a/b``: the archive has no tree a run can hold.
         raise ValueError("The generated ZIP could not be unpacked.") from exc

@@ -13,7 +13,7 @@ import sys
 import pytest
 
 from besser.utilities.secret_redaction import (
-    redact_literal, redact_text, redact_trace_text, sanitize_config,
+    redact_literal, redact_shared_file, redact_text, redact_trace_text, sanitize_config,
 )
 
 JWT = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhbm4ifQ.c2lnbmF0dXJlLXZhbHVl"
@@ -96,11 +96,14 @@ def test_sanitize_config_leaves_ordinary_values_and_the_input_alone():
     assert sanitize_config(config) is not config
 
 
-def test_the_agent_transform_endpoint_logs_its_config_redacted(caplog):
+def test_the_agent_transform_endpoint_logs_its_config_redacted(caplog, monkeypatch):
     # /transform-agent-model-json logged the raw config at DEBUG, OpenAI key included.
     from fastapi.testclient import TestClient
+    from besser.utilities.web_modeling_editor.backend import backend
     from besser.utilities.web_modeling_editor.backend.backend import app
 
+    # The lifespan's cleanup sweeps the machine's temp folder and the incident log's run records.
+    monkeypatch.setattr(backend, "cleanup_old_temp_files", lambda: None)
     caplog.set_level(logging.DEBUG)
     with TestClient(app, raise_server_exceptions=False) as client:
         client.post("/besser_api/transform-agent-model-json", json={
@@ -135,3 +138,19 @@ def test_the_module_needs_neither_the_agent_nor_the_backend():
             "print(sorted(m for m in sys.modules if m.startswith(("
             "'besser.utilities.web_modeling_editor', 'besser.spec_driven_agent', 'besser.generators'))))")
     assert _run(code) == "[]"
+
+
+@pytest.mark.parametrize("path, text, expected", [
+    # A quoted credential literal in code: only the literal goes, the line keeps its shape.
+    ("site/settings.py", 'SECRET_KEY = "django-insecure-ab%sx$y!@#"\n', 'SECRET_KEY = "[REDACTED]"\n'),
+    ("src/config.ts", 'const c = { apiKey: "AIzaNotAProviderShape12", type: "password" };',
+     'const c = { apiKey: "[REDACTED]", type: "password" };'),
+    # A YAML credential line without a provider prefix.
+    ("config.yaml", "nlp:\n  api_key: q8Zt3vLm9Rk2Wx7Np4Hs\n", "nlp:\n  api_key: '[REDACTED]'\n"),
+    (".env", "OPENAI_API_KEY=abc123def456\n", "OPENAI_API_KEY=[REDACTED]\n"),
+    # Code that names a credential without holding one is left alone.
+    ("models.py", 'password = Column(String(50))\nTOKEN_URL = os.environ["T"]\n',
+     'password = Column(String(50))\nTOKEN_URL = os.environ["T"]\n'),
+])
+def test_a_shared_copy_of_a_generated_file_has_its_credentials_redacted(path, text, expected):
+    assert redact_shared_file(path, text)[0] == expected

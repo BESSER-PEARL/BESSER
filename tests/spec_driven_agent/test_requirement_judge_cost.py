@@ -15,14 +15,21 @@ a run re-sent it without any chance of a different answer:
 
 import hashlib
 import logging
+import time
 
 import pytest
 
 from besser.BUML.metamodel.structural import Class, DomainModel, PrimitiveDataType, Property
+from besser.spec_driven_agent.execution.deadline import PACKAGING_RESERVE_SECONDS
 from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator
 from besser.spec_driven_agent.planning import requirements_ledger as ledger
 from besser.spec_driven_agent.providers.llm_client import UsageTracker
-from besser.spec_driven_agent.validation.issues import _classify_issue, is_completion_issue
+from besser.spec_driven_agent.validation.issues import (
+    _classify_issue,
+    is_completion_issue,
+    is_not_confirmed,
+    unresolved_defects,
+)
 
 SPEC = "Room numbers are unique."
 REQUIREMENT = {"id": 1, "text": "Room numbers are unique", "kind": "uniqueness"}
@@ -121,14 +128,13 @@ def test_a_changed_specification_is_judged_again(orch, judge_calls):
 
 
 # A judge outage is an unknown, not a defect: no code edit brings the judge
-# back, so it must not drive the blocker-only fix loop - but it still refuses
-# verified completion.
+# back, so it must not drive the blocker-only fix loop: it is not confirmed.
 _JUDGE_FAILED = "validation unverified: the requirements judge did not run completely (it returned no verdicts"
 
 
 def _is_unverified_warning(message):
     issue = _classify_issue(message)
-    return issue.severity == "warning" and is_completion_issue(issue)
+    return issue.severity == "warning" and is_not_confirmed(issue) and not is_completion_issue(issue)
 
 
 def test_a_failed_judgment_is_not_asked_again_for_the_same_source(orch, monkeypatch):
@@ -247,9 +253,24 @@ def test_the_spend_cap_is_checked_before_every_paid_judge_call(tmp_path, monkeyp
     issues = orch._collect_requirement_issues()
 
     assert client.calls == ["cheap-model"]
-    assert issues == ["requirement unverified: verification stopped or budget exhausted; "
+    assert issues == ["requirement unverified: not checked, the $1.00 cost cap is spent ($1.25 used); "
                       "original-specification coverage is not verified."]
     assert not orch._requirement_judge_failures, "a budget stop is not a judge failure"
+
+
+def test_a_judge_with_too_little_time_left_is_not_started(orch, judge_calls):
+    """A judge call started near the cap ran the run 49 s past it: with less
+    time left than a call needs, the requirements are reported as not checked
+    for lack of time, an unknown, not as failed."""
+    orch._start_time = time.monotonic() - orch.max_runtime_seconds + PACKAGING_RESERVE_SECONDS + 5
+
+    issues = orch._collect_requirement_issues()
+
+    assert judge_calls == []
+    assert issues == [f"requirement unverified: not checked, too little of the {orch.max_runtime_seconds}s runtime cap "
+                      "is left; original-specification coverage is not verified."]
+    assert not orch._requirement_judge_failures
+    assert unresolved_defects([_classify_issue(issue) for issue in issues]) == []
 
 
 # ------------------------------------- an edit elsewhere, and the citation repair
@@ -405,7 +426,7 @@ def test_the_citation_repair_reads_every_file_a_structured_citation_names(orch, 
     # The focused round also needs its gaps (a file it left out gets one more round).
     digest = ledger.build_app_digest_details
     monkeypatch.setattr(ledger, "build_app_digest_details",
-                        lambda out, focus_paths=None: focused.append(focus_paths) or digest(out, focus_paths=focus_paths))
+                        lambda out, focus_paths=None, **kw: focused.append(focus_paths) or digest(out, focus_paths=focus_paths, **kw))
     orch._collect_requirement_issues()
 
     assert focused[-1] == ["routers/room.py", "routers/guest.py"]

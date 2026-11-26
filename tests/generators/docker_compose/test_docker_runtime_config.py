@@ -11,6 +11,7 @@ import yaml
 
 from besser.BUML.metamodel.state_machine.agent import Agent
 from besser.BUML.metamodel.uml_deployment import Artifact, DeploymentModel, DeploymentRelation, Locality, Node
+from besser.generators import GeneratorInterface
 from besser.generators.docker_compose.docker_compose_generator import DockerComposeGenerator
 from besser.generators.docker_compose.runtime_config import resolve_runtime_yaml
 
@@ -137,11 +138,11 @@ def test_deployment_route_forwards_uuid_settings_and_normalizes_profiles(monkeyp
                             config={'personalizationMapping': [{'user_profile': {'raw': True}}]},
                             configYaml=_yaml(a2a=9002))]
     saved = deepcopy(entries)
-    diagram = SimpleNamespace(model_dump=lambda: {})
+    diagram = SimpleNamespace(id='deployment', title='Deployment', model_dump=lambda: {})
     project = SimpleNamespace(name='Example', diagrams={'AgentDiagram': entries},
                               get_active_diagram=lambda kind: diagram)
-    monkeypatch.setattr(route, 'process_deployment_diagram', lambda payload: 'deployment')
-    monkeypatch.setattr(route, 'process_agent_diagram', lambda payload: Agent('SameName'))
+    monkeypatch.setattr(route, 'process_deployment_diagram', lambda payload: DeploymentModel('deployment'))
+    monkeypatch.setattr(route, 'process_agent_diagram', lambda payload, warnings=None: Agent('SameName'))
     monkeypatch.setattr(route, 'annotate_agent_with_a2a', lambda *args: None)
 
     def normalize(config, payload, callback):
@@ -150,17 +151,17 @@ def test_deployment_route_forwards_uuid_settings_and_normalizes_profiles(monkeyp
 
     monkeypatch.setattr(route, 'normalize_personalization_mapping', normalize)
 
-    class CaptureGenerator:
+    class CaptureGenerator(GeneratorInterface):
         def __init__(self, model, output_dir, **kwargs):
+            super().__init__(model, output_dir)
             captured.update(kwargs)
-            self.output_dir = output_dir
 
         def generate(self):
             Path(self.output_dir, 'docker-compose.yml').write_text('services: {}\n', encoding='utf-8')
 
     response = asyncio.run(route._handle_deployment_project_generation(
         project, SimpleNamespace(generator_class=CaptureGenerator), 'docker_compose'))
-    assert response.media_type == 'application/zip'
+    assert response.output.media_type == 'application/zip'
     assert set(captured['agent_models_by_id']) == {'first', 'second'}
     assert captured['agent_configs_by_id']['first'] == entries[0].config
     assert captured['agent_configs_by_id']['second']['personalizationMapping'][0]['user_profile'] == {

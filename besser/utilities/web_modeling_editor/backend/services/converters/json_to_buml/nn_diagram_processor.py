@@ -31,6 +31,7 @@ from besser.BUML.metamodel.nn import (
     TensorOp,
 )
 from besser.utilities.buml_code_builder.nn_explicit_attrs import mark_explicit
+from besser.utilities.web_modeling_editor.backend.services.converters.element_ids import EditorIds
 from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.utils import (
     sanitize_name,
 )
@@ -621,6 +622,9 @@ def process_nn_diagram(json_data):
 
     elements = model_data.get('elements', {})
     relationships = model_data.get('relationships', {})
+    # Networks (containers), layers, tensor ops and datasets take the id of the editor element they
+    # are built from: the id a trace refers to them by.
+    editor_ids = EditorIds()
 
     # Step 1: Identify all NNContainers and their names + attributes
     containers = {}  # container_id -> (container_name, input_var, return_vars)
@@ -706,6 +710,7 @@ def process_nn_diagram(json_data):
 
         # Add to appropriate container
         if owner_id and owner_id in containers:
+            editor_ids.assign(layer or tensor_op, element_id)
             if layer:
                 layers_by_container[owner_id][element_id] = layer
             if tensor_op:
@@ -785,6 +790,7 @@ def process_nn_diagram(json_data):
         # Convert return_vars list to comma-separated string (metamodel expects string)
         return_vars_str = ", ".join(return_vars) if return_vars else None
         nn = NN(name=container_name, input_var=input_var, return_vars=return_vars_str)
+        editor_ids.assign(nn, container_id)
         nn_by_name[container_name] = nn
 
         # Get all modules (layers + tensor_ops + refs) for this container
@@ -896,10 +902,11 @@ def process_nn_diagram(json_data):
             f"NN diagram contains {len(test_datasets)} TestDataset elements; "
             f"only one is supported per NN model"
         )
-    if train_datasets:
-        main_nn.add_train_data(create_dataset(train_datasets[0], elements))
-    if test_datasets:
-        main_nn.add_test_data(create_dataset(test_datasets[0], elements))
+    for datasets, add in ((train_datasets, main_nn.add_train_data), (test_datasets, main_nn.add_test_data)):
+        if datasets:
+            dataset = create_dataset(datasets[0], elements)
+            editor_ids.assign(dataset, datasets[0].get('id'))
+            add(dataset)
 
     # Run model-level validation here so any caller (validation endpoint,
     # code generation, BUML export) surfaces errors before producing output.

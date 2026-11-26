@@ -9,11 +9,13 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 from types import SimpleNamespace
 
 import pytest
 
+from besser.spec_driven_agent.validation.issues import ValidationIssue
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import run_record
 from besser.utilities.web_modeling_editor.backend.services.spec_driven import runner as runner_module
 from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import (
@@ -62,6 +64,8 @@ class _Orchestrator(seed._StubOrchestrator):
 
 
 class _Usage(seed._FakeUsage):
+    input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens = 1200, 340, 5000, 42000
+
     def summary(self):
         return {"estimated_cost_usd": round(self.estimated_cost, 4), "model": "claude-sonnet-4-5"}
 
@@ -103,9 +107,20 @@ def test_a_generate_run_records_a_fresh_project(orchestrator):
     assert (run["target"], run["target_decided_by"], run["generator"]) == ("backend", "not decided",
                                                                            "generate_fastapi_backend")
     assert run["stopped_by"] == "finished" and run["outcome"] == "completed"
-    assert run["counts"] == {"turns": 4, "tool_calls": 3, "files_written": 1, "files_edited": 1, "blockers": 0}
+    assert run["counts"] == {"turns": 4, "tool_calls": 3, "files_written": 1, "files_edited": 1, "blockers": 0,
+                             "not_confirmed": 0}
     assert run["limits"]["time_seconds"] == 60 and run["request_chars"] == len(REQUEST)
     assert run["estimated_cost_usd"] == 0.01 and run["besser_version"]
+
+
+def test_the_section_counts_the_delivered_lines_by_author(orchestrator):
+    run = _run(SmartGenerationRunner(_build_request(), runtime=current_runtime()))
+
+    lines = run["lines"]
+    assert list(lines) == ["total", "generator", "ai", "human", "unknown", "ai_this_run"]
+    assert lines["total"] > 0
+    assert lines["total"] == lines["generator"] + lines["ai"] + lines["human"] + lines["unknown"]
+    assert 0 < lines["ai_this_run"] <= lines["ai"]
 
 
 def test_a_modify_run_records_the_edited_base(tmp_path, orchestrator):
@@ -147,6 +162,102 @@ def test_a_cancelled_run_that_left_output_records_the_cancel(orchestrator):
     assert run["stop_message"] == "The run was cancelled before it finished."
 
 
+def test_a_handoff_that_validation_did_not_complete_is_never_plain_completed(orchestrator):
+    """Phase 3 promotes a handoff to "completed" only with no checklist item left open,
+    so one still recorded as handed off left work undone."""
+    _Orchestrator.stop_reason = "validation_required"
+    run = _run(SmartGenerationRunner(_build_request(), runtime=current_runtime()))
+
+    assert run["stopped_by"] == "handed off to validation"
+    assert run["outcome"] == "completed_unverified"
+
+
+def test_repeated_output_truncation_is_not_a_provider_error(orchestrator):
+    _Orchestrator.stop_reason = "output_limit"
+    run = _run(SmartGenerationRunner(_build_request(), runtime=current_runtime()))
+
+    assert run["stopped_by"] == "output limit" and run["outcome"] != "failed"
+    assert "output limit" in run["stop_message"]
+
+
+class _BlockedOrchestrator(_Orchestrator):
+    """Leaves two unresolved findings behind."""
+
+    cancel = None
+    severity, prefix = "blocker", "runtime: route"
+    # Whether Phase 3 saw the cancel and stopped, or had already finished when it came.
+    interrupted = True
+
+    def _finish(self, method):
+        out = super()._finish(method)
+        cls = type(self)
+        self._validation_issues = [ValidationIssue(cls.severity, f"{cls.prefix} {n} fails") for n in (1, 2)]
+        self._phase3_interrupted = cls.interrupted
+        if type(self).cancel is not None:
+            type(self).cancel.set()  # the cancel arrives after Phase 2 ended cleanly
+        return out
+
+
+def test_a_run_cut_short_logs_and_records_its_real_blocker_count(monkeypatch, caplog):
+    monkeypatch.setattr(runner_module, "LLMOrchestrator", _BlockedOrchestrator)
+    monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _Client())
+    _BlockedOrchestrator.stop_reason, _BlockedOrchestrator.cancel = "max_turns", None
+    caplog.set_level(logging.INFO, logger=run_record.run_log.name)
+
+    run = _run(SmartGenerationRunner(_build_request(), runtime=current_runtime()))
+
+    assert (run["outcome"], run["counts"]["blockers"]) == ("budget_stop", 2)
+    end = next(r.getMessage() for r in caplog.records if r.getMessage().startswith("spec-driven run end"))
+    assert " blockers=2 " in end
+
+
+@pytest.mark.parametrize("interrupted", [True, False])
+def test_a_cancel_after_a_clean_phase_2_is_incomplete_only_when_it_cut_validation(monkeypatch, interrupted):
+    monkeypatch.setattr(runner_module, "LLMOrchestrator", _BlockedOrchestrator)
+    monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _Client())
+    _BlockedOrchestrator.stop_reason, _BlockedOrchestrator.cancel = "completed", asyncio.Event()
+    monkeypatch.setattr(_BlockedOrchestrator, "interrupted", interrupted)
+    # Checks that could not run: alone they leave a finished run complete.
+    monkeypatch.setattr(_BlockedOrchestrator, "severity", "warning")
+    monkeypatch.setattr(_BlockedOrchestrator, "prefix", "validation unverified: the boot check")
+    try:
+        runner = SmartGenerationRunner(_build_request(), runtime=current_runtime(),
+                                       reserved_cancel_event=_BlockedOrchestrator.cancel)
+        done = _parse(asyncio.run(seed._collect_frames(runner))[-1])
+    finally:
+        _BlockedOrchestrator.cancel = None
+
+    assert done["cancelled"] is True and done["recipe"]["run"]["outcome"] == "cancelled"
+    if interrupted:
+        # Cut short, not "finished with N unresolved issues".
+        assert (done["incomplete"], done["blockerCount"]) == (True, 0)
+        assert done["incompleteReason"] == "The run was cancelled before it finished."
+    else:
+        # The cancel came after the work had finished: nothing was cut. Checks that could not
+        # run are not confirmed, not blockers; the legacy blockerCount of a finished run shows them.
+        assert (done["incomplete"], done["blockerCount"], done["incompleteReason"]) == (False, 2, None)
+        assert done["notConfirmedCount"] == 2
+        assert done["recipe"]["run"]["counts"] == {**done["recipe"]["run"]["counts"], "blockers": 0,
+                                                   "not_confirmed": 2}
+
+
+def test_a_cancel_after_a_clean_phase_2_with_defects_says_it_was_cancelled(monkeypatch):
+    monkeypatch.setattr(runner_module, "LLMOrchestrator", _BlockedOrchestrator)
+    monkeypatch.setattr(runner_module, "create_llm_client", lambda **_: _Client())
+    _BlockedOrchestrator.stop_reason, _BlockedOrchestrator.cancel = "completed", asyncio.Event()
+    try:
+        runner = SmartGenerationRunner(_build_request(), runtime=current_runtime(),
+                                       reserved_cancel_event=_BlockedOrchestrator.cancel)
+        done = _parse(asyncio.run(seed._collect_frames(runner))[-1])
+    finally:
+        _BlockedOrchestrator.cancel = None
+
+    assert (done["cancelled"], done["incomplete"], done["blockerCount"]) == (True, True, 0)
+    reason = done["incompleteReason"]
+    assert reason.startswith("The run was cancelled before it finished. ")
+    assert "2 unresolved" in reason
+
+
 def test_the_section_is_small_and_holds_no_key_path_or_request(orchestrator):
     runner = SmartGenerationRunner(_build_request(), runtime=current_runtime())
     run = _run(runner)
@@ -176,6 +287,9 @@ def test_the_log_says_when_a_run_starts_and_ends_without_its_request(orchestrato
     assert "model=anthropic/claude-sonnet-4-5" in start
     assert f"run_id={runner.run_id}" in end and "outcome=completed" in end and "archive_written=true" in end
     assert "estimated_cost_usd=0.0100" in end and "blockers=0" in end
+    assert "input_tokens=1200 output_tokens=340 cache_creation_tokens=5000 cache_read_tokens=42000" in end
+    assert re.search(r"lines_total=[1-9]\d* lines_generator=\d+ lines_ai=[1-9]\d* lines_human=0 lines_unknown=\d+ "
+                     r"lines_ai_this_run=[1-9]\d* ", end), end
     for line in (start, end):
         assert REQUEST not in line and KEY not in line
 
@@ -256,7 +370,8 @@ def test_the_run_log_has_its_own_handler_once_the_backend_enables_it():
     written nowhere; the run log gets one of its own at startup, and only one."""
     import io
 
-    before = (list(run_record.run_log.handlers), run_record.run_log.level)
+    package_log = logging.getLogger("besser")
+    before = (list(run_record.run_log.handlers), run_record.run_log.level, list(package_log.handlers))
     try:
         run_record.enable_run_log()
         run_record.enable_run_log()
@@ -265,7 +380,7 @@ def test_the_run_log_has_its_own_handler_once_the_backend_enables_it():
         run_record.run_log.info("spec-driven run start run_id=abc")
         assert written.getvalue().splitlines() == ["INFO:     spec-driven run start run_id=abc"]
     finally:
-        run_record.run_log.handlers[:], run_record.run_log.level = before
+        run_record.run_log.handlers[:], run_record.run_log.level, package_log.handlers[:] = before
 
 
 def test_the_backend_enables_the_run_log_at_startup():

@@ -23,7 +23,10 @@ interface TableContextValue {
   // Runs the action on the table (update/delete on its selected row) and
   // returns why it could not, or null. With `whenMounted` a table that is not
   // on screen yet runs it once it mounts (a create button on another page).
-  runTableAction: (tableId: string, action: TableActionName, whenMounted?: boolean) => string | null;
+  // `confirm` is asked only once the action can run; false cancels it.
+  runTableAction: (
+    tableId: string, action: TableActionName, whenMounted?: boolean, confirm?: () => boolean,
+  ) => string | null;
 }
 
 const TableContext = createContext<TableContextValue | undefined>(undefined);
@@ -67,7 +70,9 @@ export const TableProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     };
   }, []);
 
-  const runTableAction = (tableId: string, action: TableActionName, whenMounted = false): string | null => {
+  const runTableAction = (
+    tableId: string, action: TableActionName, whenMounted = false, confirm?: () => boolean,
+  ): string | null => {
     const actions = tableActions.current[tableId];
     if (!actions) {
       if (whenMounted && action === "create") {
@@ -76,15 +81,16 @@ export const TableProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
       return "The table for this action is not on this page.";
     }
-    if (action === "create") {
-      actions.create();
-      return null;
-    }
     const row = selectedRows[tableId];
-    if (!row) {
+    if (action !== "create" && !row) {
       return "Select a row in the table first.";
     }
-    if (action === "update") {
+    if (confirm && !confirm()) {
+      return null;
+    }
+    if (action === "create") {
+      actions.create();
+    } else if (action === "update") {
       actions.edit(row);
     } else {
       actions.remove(row);

@@ -38,6 +38,13 @@ folder and it will look as follows.
    that names none of its literals raises ``InvalidDefaultValueError`` at
    generation time. See the :doc:`release notes </releases/v8/v8.0.0>`.
 
+With ``backend=True``, a required ``str`` attribute (one that is not optional) rejects an empty or
+whitespace-only value: each ``<Class>Create`` schema has a ``field_validator`` named
+``validate_<Class>_text_not_blank`` for its own required ``str`` fields, and so does the
+``<AssociationClass>LinkCreate`` payload of a link created from an association end. The value is kept as sent,
+not stripped. Optional ``str`` attributes accept any value, and the classes generated without
+``backend`` are unchanged.
+
 OCL Constraint Validation
 -------------------------
 

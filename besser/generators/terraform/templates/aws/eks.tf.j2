@@ -62,6 +62,7 @@ resource "aws_iam_role" "{{public_cluster.name}}" {
   
 {% set default_dep = 1 %}
 {% for dep in public_cluster.deployments%}
+{% trace dep, "deployment" %}
 resource "kubernetes_deployment_v1" "default-{{default_net}}" {
 {% set default_dep = default_dep + 1 %}
   wait_for_rollout = true
@@ -112,10 +113,12 @@ resource "kubernetes_deployment_v1" "default-{{default_net}}" {
     }
     depends_on = ["aws_eks_node_group.private-nodes"]
   }
+  {% endtrace %}
   {%endfor%}
 
   {% set default_service = 1 %}
   {% for service in public_cluster.services%}
+  {% trace service, "service" %}
 resource "kubernetes_service_v1" "default-{{default_service}}" {
   {% set default_service = default_service + 1 %}
   metadata {
@@ -134,10 +137,12 @@ resource "kubernetes_service_v1" "default-{{default_service}}" {
     type = "{{service.type | to_str}}"
   }
 }
+{% endtrace %}
 {%endfor%}
 
 {% for service in public_cluster.services%}
 {% if "Ingress" in service.type | to_str %}
+{% trace service, "ingress" %}
 resource "kubernetes_ingress_v1" "example" {
   metadata {
     name = "example"
@@ -160,5 +165,6 @@ resource "kubernetes_ingress_v1" "example" {
     }
   }
 }
+{% endtrace %}
         {% endif %}
 {%endfor%}

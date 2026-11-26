@@ -6,14 +6,14 @@ Requirements
   conda: https://conda.io/projects/conda/en/latest/user-guide/tasks/manage-environments.html)
 - Install the package: https://pypi.org/project/besser-agentic-framework/
 
-    pip install besser-agentic-framework[all]
+    pip install besser-agentic-framework[all]=={{ baf_version }}
 {% if classical_ic_fallback %}
 
 This agent has no intent classifier set and no LLM configured, so it matches
 intents with BAF's classical intent classifier, which needs PyTorch. The [all]
 extra installs it; for a smaller install use:
 
-    pip install besser-agentic-framework[extras,llms,torch]
+    pip install besser-agentic-framework[extras,llms,torch]=={{ baf_version }}
 {% endif %}
 
 To start the agent, run:

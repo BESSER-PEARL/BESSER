@@ -78,9 +78,11 @@ def isolate_backend_test_artifacts(tmp_path, monkeypatch):
 
     Applies to every test in this directory. It used to live only in
     ``test_api_integration.py``, so the endpoint tests added alongside the KG
-    work ran with the repository as their working directory.
+    work ran with the repository as their working directory. The incident
+    log, which keeps every run's record, goes under ``tmp_path`` too.
     """
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("BESSER_INCIDENT_LOG_DIR", str(tmp_path / "incidents"))
 
 
 @pytest.fixture(scope="session")

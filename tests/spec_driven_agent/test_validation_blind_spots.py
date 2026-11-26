@@ -158,6 +158,12 @@ def test_the_detail_shows_which_task_ids_were_marked():
     assert "1,2,3" in detail
 
 
+def test_the_detail_shows_what_an_action_free_checklist_call_did():
+    detail = _tool_call_detail("task_list", {"done": [3], "add": ["Export orders"],
+                                             "drop": [{"id": 2, "reason": "not asked"}], "blocked": []}, 1)
+    assert "done=3" in detail and "add=Export orders" in detail and "drop=" in detail
+
+
 def test_batching_is_visible_only_when_it_happened():
     """1 call per turn was the invisible default across every live run."""
     assert "batched" not in _tool_call_detail("write_file", {"path": "a.py"}, 1)

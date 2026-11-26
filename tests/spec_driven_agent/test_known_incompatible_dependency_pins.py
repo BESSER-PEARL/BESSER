@@ -1,6 +1,6 @@
 """Known-incompatible dependency pairs are pinned at every stage.
 
-Production run 438889bc: Phase 2's install_dependencies installed bcrypt 5.0.0
+Production run 438889bc: Phase 2's dependency install installed bcrypt 5.0.0
 beside passlib 1.7.4. passlib's startup self-test hashes a >72-byte secret,
 bcrypt 5 rejects it, and every password hash raised "ValueError: password
 cannot be longer than 72 bytes". The harness pinned bcrypt==4.0.1 only inside
@@ -13,7 +13,6 @@ from besser.spec_driven_agent.repair.dependency_pins import pin_known_incompatib
 from besser.spec_driven_agent.repair.scaffold_repair import _ensure_requirements_txt
 
 RUN_438889BC = "fastapi>=0.103.0\nuvicorn>=0.15.0\npasslib[bcrypt]>=1.7.4\npython-jose[cryptography]>=3.3.0\n"
-_OK = {"success": True, "exit_code": 0, "stdout": "", "stderr": ""}
 
 
 def _bcrypt_lines(content):
@@ -64,48 +63,42 @@ def test_restored_scaffold_requirements_carry_the_pin(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
-# Stage (b): install_dependencies, before pip runs
+# Stage (b): a write tool writing a requirements.txt
 # --------------------------------------------------------------------------- #
-def _install(tmp_path, requirements):
-    (tmp_path / "requirements.txt").write_text(requirements, encoding="utf-8")
-    ex = ToolExecutor(workspace=str(tmp_path), allow_shell=True)
-    seen = []
-
-    def run(args, **_):
-        seen.append((tmp_path / "requirements.txt").read_text(encoding="utf-8"))
-        return _OK
-
-    ex._run_command = run
-    return ex._install_dependencies({}), seen
+def _write(tmp_path, requirements):
+    ex = ToolExecutor(workspace=str(tmp_path))
+    result = ex.execute_typed("write_file", {"path": "backend/requirements.txt", "content": requirements})
+    return result.payload, (tmp_path / "backend" / "requirements.txt").read_text(encoding="utf-8")
 
 
-def test_install_dependencies_pins_before_installing(tmp_path):
-    result, seen = _install(tmp_path, RUN_438889BC)
-    assert _bcrypt_lines(seen[0]) == ["bcrypt==4.0.1"], "pip ran against the unpinned file"
+def test_a_written_requirements_file_is_pinned_and_says_so(tmp_path):
+    result, written = _write(tmp_path, RUN_438889BC)
+    assert result["status"] == "written", result
+    assert _bcrypt_lines(written) == ["bcrypt==4.0.1"]
     assert any("bcrypt==4.0.1" in note for note in result["pinned"])
-    assert "success" not in result or result["success"] is not False
+    assert "install" in result["pinned_note"]
 
 
-def test_install_dependencies_pins_before_a_custom_command(tmp_path):
-    (tmp_path / "requirements.txt").write_text(RUN_438889BC, encoding="utf-8")
-    ex = ToolExecutor(workspace=str(tmp_path), allow_shell=True)
-    ex._run_command = lambda args, **_: _OK
-    result = ex._install_dependencies({"command": "pip install -r requirements.txt"})
-    assert result["pinned"]
-    assert "bcrypt==4.0.1" in (tmp_path / "requirements.txt").read_text()
+def test_an_edit_that_adds_the_trigger_is_pinned(tmp_path):
+    ex = ToolExecutor(workspace=str(tmp_path))
+    (tmp_path / "requirements.txt").write_text("fastapi>=0.103.0\n", encoding="utf-8")
+    result = ex.execute_typed("modify_file", {"path": "requirements.txt", "old_text": "fastapi>=0.103.0",
+                                              "new_text": "fastapi>=0.103.0\npasslib[bcrypt]>=1.7.4"}).payload
+    assert result["status"] == "modified", result
+    assert _bcrypt_lines((tmp_path / "requirements.txt").read_text()) == ["bcrypt==4.0.1"]
 
 
-def test_install_dependencies_respects_a_compatible_pin(tmp_path):
+def test_a_write_with_a_compatible_pin_is_left_as_written(tmp_path):
     requirements = "passlib[bcrypt]==1.7.4\nbcrypt<4.1\n"
-    result, seen = _install(tmp_path, requirements)
-    assert seen[0] == requirements
+    result, written = _write(tmp_path, requirements)
+    assert written == requirements
     assert "pinned" not in result
 
 
-def test_install_dependencies_leaves_unrelated_requirements_alone(tmp_path):
+def test_a_write_of_unrelated_requirements_is_left_alone(tmp_path):
     requirements = "fastapi==0.110.0\nbcrypt==5.0.0\n"
-    result, seen = _install(tmp_path, requirements)
-    assert seen[0] == requirements
+    result, written = _write(tmp_path, requirements)
+    assert written == requirements
     assert "pinned" not in result
 
 

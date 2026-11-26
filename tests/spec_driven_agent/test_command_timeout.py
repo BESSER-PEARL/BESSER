@@ -71,12 +71,6 @@ def test_timeout_error_names_the_timeout_that_applied(tmp_path):
     assert "after 300 seconds" in result["error"]
 
 
-def test_install_dependencies_gets_the_install_timeout(executor, tmp_path):
-    (tmp_path / "requirements.txt").write_text("six\n")
-    executor._install_dependencies({})
-    assert executor._shell.timeouts == [te.INSTALL_TIMEOUT]
-
-
 def test_the_schema_offers_the_timeout():
     tool = next(t for t in EXECUTION_TOOLS if t["name"] == "run_command")
     prop = tool["input_schema"]["properties"]["timeout"]

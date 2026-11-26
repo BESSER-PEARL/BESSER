@@ -15,6 +15,7 @@ from besser.BUML.metamodel.structural import (
     TimeDeltaType,
     TimeType,
 )
+from besser.utilities.generation_trace import trace_source
 from besser.generators.spring._sub_generator import SpringSubGenerator, build_environment
 from besser.generators.spring.java_types import (
     java_type_for,
@@ -166,6 +167,7 @@ class SpringEntityGenerator(SpringSubGenerator):
                 )
 
             relations.append({
+                "element": assoc,
                 "assoc": join_table,
                 "source_property": to_java_field_name(source.name),
                 "target_property": to_java_field_name(target.name),
@@ -214,7 +216,8 @@ class SpringEntityGenerator(SpringSubGenerator):
             "relations": relations,
         }
 
-        self.write(f"{class_name}.java", entity_template.render(**context))
+        self.write(f"{class_name}.java", entity_template.render(**context),
+                   trace_source(cls, "entity.java.j2#class"))
 
     def _prepare_attributes(self, cls: Class) -> List[dict]:
         attributes: List[dict] = []
@@ -229,6 +232,7 @@ class SpringEntityGenerator(SpringSubGenerator):
                 attr_type = f"List<{attr_type}>"
 
             attributes.append({
+                "element": attr,
                 "is_id": attr.is_id,
                 # Hibernate can only auto-generate identifiers of an integral
                 # type; a natural key such as an ISBN is supplied by the caller.
@@ -286,6 +290,7 @@ class SpringEntityGenerator(SpringSubGenerator):
             ]
 
             methods.append({
+                "element": method,
                 "name": to_java_field_name(method.name),
                 "visibility": java_visibility(method.visibility) or "public",
                 "return_type": java_type_for(method.type, self.model_type_names) if method.type else "void",
@@ -313,7 +318,8 @@ class SpringEntityGenerator(SpringSubGenerator):
             ),
         }
 
-        self.write(f"{enum_name}.java", enum_template.render(**context))
+        self.write(f"{enum_name}.java", enum_template.render(**context),
+                   trace_source(enum, "enum.java.j2#enumeration"))
 
     # ------------------------------------------------------------------
     # Imports

@@ -306,3 +306,26 @@ def test_mutation_observations_use_executed_paths_body_shapes_and_freshness_not_
     assert "NOT invariant coverage" in manifest and "not a requirement to test every route" in manifest
     unknown = build_mutation_manifest(d, scenario_records=records[:1])
     assert "unknown-revision" in unknown and "current supplied JSON=NONE observed" in unknown
+
+
+def test_mutation_observations_read_the_fields_of_a_form_or_file_write(tmp_path):
+    # A form or multipart write sent fields: it is not a write that sent no body.
+    d = _mk(tmp_path, {
+        "backend/main.py": (
+            "app = FastAPI()\n"
+            "class Document(Base):\n    __tablename__ = 'document'\n"
+            "class Owner(Base):\n    __tablename__ = 'owner'\n"
+            "Document.owner = relationship('Owner')\n"
+            "@app.post('/documents/')\ndef upload_document(title: str = Form(...)):\n    return Document()\n"
+        ),
+    })
+    records = [{"scenario_id": "upload", "revision": "now",
+                "scenario": {"backend": "backend", "requests": [{
+                    "method": "POST", "path": "/documents/", "form": {"title": "Notes"},
+                    "files": {"upload": {"filename": "a.txt", "content": "hello"}}}]},
+                "report": {"boot": "ok", "status": "passed", "responses": [
+                    {"index": 0, "method": "POST", "path": "/documents/", "status": 201, "json": {"id": 1}}]}}]
+    manifest = build_mutation_manifest(d, scenario_records=records, current_revision="now")
+    post = next(line for line in manifest.splitlines() if "POST /documents/: requests=" in line)
+    assert '"title"=string:nonempty' in post and '"upload"=' in post
+    assert "no JSON" not in post

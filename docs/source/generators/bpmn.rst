@@ -175,3 +175,17 @@ additive.
 Engine-specific variants (Camunda 7 / 8 / Flowable BPMN XML with execution
 attributes) are out of scope for this generator and can be added as separate
 generators in the future.
+
+Trace Links
+-----------
+
+The generator builds the XML with ``ElementTree`` rather than templates, so it records which lines come from which
+model element by reading the written file back: after ``generate()``, ``generator.traced_files["<file name>"].regions``
+holds the line range of each XML element (flow nodes, sequence and message flows, data object references, data
+associations, participants, the collaboration, lanes, annotations and groups, and the ``BPMNShape`` / ``BPMNEdge`` of
+each, rule ``bpmn_generator#<xml tag>``, ``#shape`` or ``#edge``) matched to its model element through the id the
+generator gave it, so a renamed id is matched exactly. An element is recorded when it has an ``id``: the web editor's
+processor gives every element and flow its editor element id, which it also keeps in ``layout["id"]`` for the XML to
+reuse (``layout["id"]`` alone names the XML element but does not trace it). Processes, the lane set and the derived
+data store and data object definitions have no editor id and no region; elements without an id are not traced.
+Recording the trace does not change the written file. See :doc:`traceable_generator`.

@@ -1,4 +1,6 @@
 import configparser
+import functools
+import json
 import logging
 import os
 from besser.BUML.metamodel.structural import DomainModel
@@ -7,11 +9,16 @@ from besser.generators.generator_interface import require_valid_identifiers
 from besser.generators.rest_api import RESTAPIGenerator
 from besser.generators.sql_alchemy import SQLAlchemyGenerator
 from besser.generators.pydantic_classes import PydanticGenerator
+from besser.generators.backend.api_contract import build_api_contract, render_api_markdown
 from besser.generators.backend.api_generator import generate_modular_api
 from besser.generators.backend.docker_files import generate_docker_files
 from besser.generators.backend.nn_methods import NN_PACKAGE, TORCH_REQUIREMENT, generate_nn_methods
 
 logger = logging.getLogger(__name__)
+
+#: The API's routes and shapes, machine-readable and as a reference, next to ``main_api.py``.
+API_CONTRACT_FILE = "api_contract.json"
+API_DOC_FILE = "API.md"
 
 
 class BackendGenerator(GeneratorInterface):
@@ -35,6 +42,11 @@ class BackendGenerator(GeneratorInterface):
         api_description (str, optional): Description shown in the generated API docs. Defaults to a generic
                                 description of the generated API.
         api_version (str, optional): Version of the generated API. Defaults to ``"1.0.0"``.
+
+    Attributes:
+        traced_files (dict[str, FileTrace]): After ``generate()``, what each traced file was rendered from,
+            by path relative to the output folder: ``sql_alchemy.py``, ``pydantic_classes.py``,
+            ``main_api.py`` and the routers (see ``besser.utilities.generation_trace``).
     """
 
     regenerable = True
@@ -94,7 +106,8 @@ class BackendGenerator(GeneratorInterface):
         If the output directory was not specified, the code generated will be stored in the <current directory>/output_backend folder.
 
         Returns:
-            None, but stores the generated code as files main_api.py, sql_alchemy.py and pydantic_classes.py
+            None, but stores the generated code as files main_api.py, sql_alchemy.py and pydantic_classes.py,
+            and the API's routes as api_contract.json and API.md
         """
         require_valid_identifiers(self.model)
         if self.output_dir is not None:
@@ -121,16 +134,26 @@ class BackendGenerator(GeneratorInterface):
             nested_creations=self.nested_creations,
             port=docker_port,
             output_dir=backend_folder_path,
+            write=functools.partial(self._write_traced, output_dir=backend_folder_path),
             api_title=self.api_title,
             api_description=self.api_description,
             api_version=self.api_version,
         )
+
+        # The routes above as data, and as a reference for people and coding agents.
+        contract = build_api_contract(self.model, self.http_methods)
+        self._write_file(API_CONTRACT_FILE, json.dumps(contract, indent=2) + "\n", output_dir=backend_folder_path)
+        self._write_file(API_DOC_FILE, render_api_markdown(contract), output_dir=backend_folder_path)
 
         sql_alchemy = SQLAlchemyGenerator(model=self.model, output_dir=backend_folder_path)
         sql_alchemy.generate()
 
         pydantic_model = PydanticGenerator(model=self.model, output_dir=backend_folder_path, backend=True, nested_creations=self.nested_creations)
         pydantic_model.generate()
+
+        # The files of the generators this one is built from, by path in the output folder.
+        self._merge_traced_files(sql_alchemy)
+        self._merge_traced_files(pydantic_model)
 
         # Methods implemented by a neural network: PyTorch modules + runtime + torch requirement.
         self.has_nn_methods = generate_nn_methods(self.model, backend_folder_path)

@@ -23,12 +23,13 @@ router = APIRouter()
 ############################################
 #   {{ class.name }} Method Endpoints
 ############################################
-{% for method in class.methods|sort(attribute='name') %}
+{% for method in class.methods|sort(attribute='name') %}{% trace method, "method" %}
 {% set clean_name = method.name | clean_method_name %}
 {% set method_params = [] %}
 {% for param in method.parameters %}
 {% set param_type = 'Any' %}
 {% set needs_fk_access = true %}
+{% set conversion = none %}
 {% if param.type.name == 'str' %}{% set param_type = 'str' %}{% set needs_fk_access = false %}
 {% elif param.type.name == 'int' %}{% set param_type = 'int' %}{% set needs_fk_access = false %}
 {% elif param.type.name == 'float' %}{% set param_type = 'float' %}{% set needs_fk_access = false %}
@@ -36,25 +37,18 @@ router = APIRouter()
 {% elif param.type.name == 'date' %}{% set param_type = 'date' %}{% set needs_fk_access = false %}
 {% elif param.type.name == 'datetime' %}{% set param_type = 'datetime' %}{% set needs_fk_access = false %}
 {% elif param.type.name == 'time' %}{% set param_type = 'time' %}{% set needs_fk_access = false %}
+{% elif param.type.name == 'timedelta' %}{% set param_type = 'timedelta' %}{% set needs_fk_access = false %}{% set conversion = 'timedelta' %}
 {% elif param.type.name == 'any' %}{% set needs_fk_access = false %}
+{% elif param.type.__class__.__name__ == 'Enumeration' %}{% set param_type = param.type.name %}{% set needs_fk_access = false %}{% set conversion = 'enum' %}
 {% else %}{% set param_type = param.type.name %}
 {% endif %}
 {# param[4] is the MODELLED type. param[1] is the rendered annotation ('Any', or an FK class name), which is not what python_default keys on. #}
-{% do method_params.append((param.name, param_type, param.default_value, needs_fk_access, param.type.name)) %}
+{% do method_params.append((param.name, param_type, param.default_value, needs_fk_access, param.type.name, conversion)) %}
 {% endfor %}
 
-{% set method_code = "" %}
-{% if method.implementation_type.name == "BAL" %}
-{% set method_code = bal_to_rest(parse_bal(model, class, method.code), class.name) %}
-{% elif method.implementation_type.name == "CODE" %}
-{% set method_code = method.code %}
-{% elif method.implementation_type.name == "NEURAL_NETWORK" %}
-{% set method_code = nn_method_code(method) %}
-{% endif %}
-
-{# Normalize (expand tabs, dedent, compile-gate) the body so a method authored
-   with mixed indentation or invalid Python cannot break the generated app. #}
-{% set method_code = normalize_code(method_code, method.name) %}
+{# The body, normalized (expanded tabs, dedented, compile-gated) so a method authored with mixed
+   indentation or invalid Python cannot break the generated app. api_contract.py reads the same. #}
+{% set method_code = method_route_code(class, method) %}
 
 {# A method is class-level only when its CODE says so (no 'self' parameter). A
    method with no body is an unimplemented INSTANCE method - B-UML has no static
@@ -105,10 +99,14 @@ async def {{ class.name | lower }}_{{ clean_name }}(
         params = params or {}
         {% for param in method_params %}
         {% if param[3] %}
-        from routers.{{ param[1] | lower }} import get_{{ param[1] | lower }}
-        {{ param[0] }} = await get_{{ param[1] | lower }}(params.get('{{ param[0] }}'{% if param[2] is not none %}, {{ param[2] | python_default(param[4], owner=class.name ~ '.' ~ param[0]) }}{% endif %}), database)
+        {{ param[0] }} = method_record_param(database, {{ param[1] }}, {{ param[1] }}.{{ param[1] | pk }}, params.get('{{ param[0] }}'{% if param[2] is not none %}, {{ param[2] | python_default(param[4], owner=class.name ~ '.' ~ param[0]) }}{% endif %}))
         {% else %}
         {{ param[0] }} = params.get('{{ param[0] }}'{% if param[2] is not none %}, {{ param[2] | python_default(param[4], owner=class.name ~ '.' ~ param[0]) }}{% endif %})
+        {% endif %}
+        {% if param[5] == 'enum' %}
+        {{ param[0] }} = method_enum_param({{ param[1] }}, '{{ param[0] }}', {{ param[0] }})
+        {% elif param[5] == 'timedelta' %}
+        {{ param[0] }} = method_timedelta_param('{{ param[0] }}', {{ param[0] }})
         {% endif %}
         {% endfor %}
         {% endif %}
@@ -207,12 +205,19 @@ async def execute_{{ class.name | lower }}_{{ clean_name }}(
     )
     {% else %}
     # {{ class.name }}.{{ clean_name }}: parameters
+    {% if method_params %}
+    params = params or {}
+    {% endif %}
     {% for param in method_params %}
     {% if param[3] %}
-    from routers.{{ param[1] | lower }} import get_{{ param[1] | lower }}
-    {{ param[0] }} = await get_{{ param[1] | lower }}(params.get('{{ param[0] }}'{% if param[2] is not none %}, {{ param[2] | python_default(param[4], owner=class.name ~ '.' ~ param[0]) }}{% endif %}), database)
+    {{ param[0] }} = method_record_param(database, {{ param[1] }}, {{ param[1] }}.{{ param[1] | pk }}, params.get('{{ param[0] }}'{% if param[2] is not none %}, {{ param[2] | python_default(param[4], owner=class.name ~ '.' ~ param[0]) }}{% endif %}))
     {% else %}
     {{ param[0] }} = params.get('{{ param[0] }}'{% if param[2] is not none %}, {{ param[2] | python_default(param[4], owner=class.name ~ '.' ~ param[0]) }}{% endif %})
+    {% endif %}
+    {% if param[5] == 'enum' %}
+    {{ param[0] }} = method_enum_param({{ param[1] }}, '{{ param[0] }}', {{ param[0] }})
+    {% elif param[5] == 'timedelta' %}
+    {{ param[0] }} = method_timedelta_param('{{ param[0] }}', {{ param[0] }})
     {% endif %}
     {% endfor %}
     # {{ class.name }}.{{ clean_name }}: execute
@@ -268,5 +273,5 @@ async def execute_{{ class.name | lower }}_{{ clean_name }}(
 {% endif %}
 {% endif %}
 
-{% endfor %}
+{% endtrace %}{% endfor %}
 {% endif %}

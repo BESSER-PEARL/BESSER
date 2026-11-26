@@ -80,6 +80,15 @@ editor's Save, the agent's push, Go live) uses the same layout, defined once in
 - Commits BESSER makes end with ``BESSER-Origin: editor`` or
   ``BESSER-Origin: spec-driven-agent``; the history uses it to tell them from a
   person's commits.
+- A Spec-Driven Agent push also records how AI took part, as the
+  `AI commit headers <https://github.com/dspinellis/ai-commit-headers>`_
+  trailers just before ``BESSER-Origin``: ``AI-Tool``
+  (``besser-spec-driven-agent/<version>``), ``AI-Model`` (the model's public
+  label), ``AI-Role`` (``code-generation`` for a new app,
+  ``code-transformation`` for a run that modified one) and ``AI-Tokens``
+  (``input=…, cached=…, output=…``). A trailer the run has no value for is
+  left out. The request's text is not written, since the repository may be
+  public.
 
 Agent credentials (LLM keys, bot tokens, database passwords in the agent
 diagram's config) are replaced with ``[REDACTED]`` before ``diagrams.json`` is
@@ -164,9 +173,10 @@ compares the run's files with GitHub's recursive tree of the base commit:
 - a repository path the run could not hold (build and dependency output,
   ``*.db``, BESSER's other ``.besser_*`` files, a scrubbed secret ``.env``) is
   never deleted. The records a run carries (``.besser_recipe.json``,
-  ``.besser_attribution.json``, ``.besser_generator_output.json``) are the run's
-  own: a seeded run deletes one it no longer has;
-- the push marks those three records ``linguist-generated`` in
+  ``.besser_attribution.json``, ``.besser_generator_output.json``,
+  ``.besser_api_workflows.json``) are the run's own: a seeded run deletes one it
+  no longer has;
+- the push marks those records ``linguist-generated`` in
   ``.gitattributes``, so GitHub folds their diffs. The repository's own lines are
   kept, and a record a line already sets ``linguist-generated`` for keeps that
   setting;

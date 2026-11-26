@@ -401,7 +401,7 @@ class TestPushSmartToGitHub:
         body = {
             "run_id": run_id,
             "projectExport": _project_export(),
-            "deploy_config": {"repo_name": "my-generated-app"},
+            "deploy_config": {"repo_name": "my-generated-app", "is_private": False},
         }
         r = _post(body, headers={"X-GitHub-Session": "sess"})
         assert r.status_code == 200, r.text
@@ -409,10 +409,43 @@ class TestPushSmartToGitHub:
         assert readme.startswith("# Library\n\nRun `python main.py`.\n\n<!-- besser:begin -->")
         assert ("https://editor.besser-pearl.org/?buml=https://github.com/test-owner/my-generated-app/"
                 "blob/main/buml/domain_model.py") in readme
-        assert "https://github.com/BESSER-PEARL/Built-with-BESSER" in readme
+        assert "Built-with-BESSER" not in readme
+        assert "**Continue from GitHub**" in readme
+        assert ".besser_recipe.json" in readme
         # The stored run keeps the agent's README; only the pushed copy carries the block.
         with open(os.path.join(tmp, "README.md"), encoding="utf-8") as fh:
             assert "besser:begin" not in fh.read()
+
+    def test_push_to_a_private_repo_does_not_link_the_editor_to_its_model(self, monkeypatch):
+        # The editor reads ?buml= files without a token, so the link cannot open a private repo's model.
+        run_id = "4" * 32
+        _seed_run(run_id)
+        fake = _FakeGitHubService()
+        _install(monkeypatch, fake)
+
+        body = {
+            "run_id": run_id,
+            "projectExport": _project_export(),
+            "deploy_config": {"repo_name": "my-generated-app", "is_private": True},
+        }
+        r = _post(body, headers={"X-GitHub-Session": "sess"})
+        assert r.status_code == 200, r.text
+        readme = fake.push["readme"]
+        assert "?buml=" not in readme
+        assert "**Continue from GitHub**" in readme
+        assert "This repository is private" in readme
+
+    def test_readme_names_where_the_trace_is_kept_when_the_project_has_one(self, monkeypatch):
+        run_id = "5" * 32
+        _seed_run(run_id)
+        fake = _FakeGitHubService()
+        _install(monkeypatch, fake)
+
+        export = {**_project_export(), "trace": {"links": []}}
+        body = {"run_id": run_id, "projectExport": export, "deploy_config": {"repo_name": "my-generated-app"}}
+        r = _post(body, headers={"X-GitHub-Session": "sess"})
+        assert r.status_code == 200, r.text
+        assert "under `trace`" in fake.push["readme"]
 
     def test_push_without_a_readme_adds_one_named_after_the_repo(self, monkeypatch):
         run_id = "2" * 32
@@ -533,6 +566,7 @@ class TestMarkGenerated:
             "# mine\n* text=auto\n.besser_attribution.json linguist-generated=false\n"
             "/.besser_recipe.json linguist-generated=true\n"
             "/.besser_generator_output.json linguist-generated=true\n"
+            "/.besser_api_workflows.json linguist-generated=true\n"
         )
 
     def test_without_records_or_a_repo_file_no_file_is_written(self, tmp_path):

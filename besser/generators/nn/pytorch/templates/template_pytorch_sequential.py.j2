@@ -9,10 +9,10 @@
 
 {% if model.train_data is not none %}
 
-def prepare_datasets():
+{% trace model.train_data, "train_dataset" %}{% trace model.test_data, "test_dataset" %}def prepare_datasets():
     """Prepare training and testing datasets."""
 {{ nn_components.prepare_data(model.train_data, model.test_data, model.configuration) | indent(4, first=True) }}
-    return train_loader, test_loader
+    return train_loader, test_loader{% endtrace %}{% endtrace %}
 
 def train(model, train_loader, criterion, optimizer, epochs):
     """Train the neural network."""

@@ -1,5 +1,8 @@
 """Build a React app from editor-shaped GUI JSON (class diagram + GrapesJS pages)."""
+import json
 import os
+import shutil
+import subprocess
 
 import pytest
 
@@ -122,3 +125,46 @@ def jsx_tag(source, tag, contains=None):
 @pytest.fixture
 def jsx():
     return jsx_tag
+
+
+def _node_running_typescript():
+    """Node.js 22.6+ runs TypeScript by stripping its types; None without one."""
+    node = shutil.which("node")
+    if not node:
+        return None
+    version = subprocess.run([node, "--version"], capture_output=True, text=True).stdout.strip().lstrip("v")
+    try:
+        major, minor = (int(part) for part in version.split(".")[:2])
+    except ValueError:
+        return None
+    return node if (major, minor) >= (22, 6) else None
+
+
+def function_source(source, start):
+    """The text of the arrow function of a generated file that begins with ``start``
+    (indented two spaces, ending at the first ``  };`` line)."""
+    begin = source.index(start)
+    return source[begin:source.index("\n  };\n", begin) + 5]
+
+
+@pytest.fixture
+def ts_function():
+    return function_source
+
+
+@pytest.fixture
+def run_ts(tmp_path):
+    """Run a TypeScript snippet with Node.js and return what it prints as JSON;
+    skips the test when no Node.js 22.6+ is installed."""
+    node = _node_running_typescript()
+    if node is None:
+        pytest.skip("needs Node.js 22.6+ to run TypeScript")
+
+    def run(code, name="snippet.ts"):
+        script = tmp_path / name
+        script.write_text(code, encoding="utf-8")
+        result = subprocess.run([node, "--experimental-strip-types", "--no-warnings", str(script)],
+                                capture_output=True, text=True, check=True, cwd=str(tmp_path))
+        return json.loads(result.stdout)
+
+    return run

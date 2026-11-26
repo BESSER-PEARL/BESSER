@@ -29,6 +29,7 @@ from besser.BUML.metamodel.uml_deployment import (
     InterfaceRequired,
     Node,
 )
+from besser.utilities.web_modeling_editor.backend.services.converters.element_ids import EditorIds
 from besser.utilities.web_modeling_editor.backend.services.converters.multiplicity_format import (
     parse_from_name,
 )
@@ -68,10 +69,12 @@ def process_deployment_diagram(json_data: dict) -> DeploymentModel:
     relationships = model_data.get("relationships") or {}
     name = json_data.get("title") or "Generated_Deployment_Model"
 
-    nodes_by_id, parsed_multiplicities = _build_nodes(elements)
+    # Elements and relationships take their editor id: the id a trace refers to them by.
+    editor_ids = EditorIds()
+    nodes_by_id, parsed_multiplicities = _build_nodes(elements, editor_ids)
     owner_links = _reconstruct_containment(elements, nodes_by_id)
     relationship_objects = _build_relationships(
-        relationships, nodes_by_id, parsed_multiplicities, owner_links,
+        relationships, nodes_by_id, parsed_multiplicities, owner_links, editor_ids,
     )
 
     root_nodes = {obj for obj in nodes_by_id.values()
@@ -89,7 +92,7 @@ def process_deployment_diagram(json_data: dict) -> DeploymentModel:
     )
 
 
-def _build_nodes(elements: dict) -> tuple:
+def _build_nodes(elements: dict, editor_ids: EditorIds) -> tuple:
     """Pass 1 — create every element object, indexed by WME id.
 
     Returns ``(nodes_by_id, parsed_multiplicities)`` — the second map keys
@@ -127,6 +130,7 @@ def _build_nodes(elements: dict) -> tuple:
         if parsed_mult is not None and raw_name != obj.name:
             layout["original_name"] = raw_name
         obj.layout = layout
+        editor_ids.assign(obj, elem_id)
         nodes_by_id[elem_id] = obj
     return nodes_by_id, parsed_multiplicities
 
@@ -215,7 +219,7 @@ def _reconstruct_containment(elements: dict, nodes_by_id: dict) -> dict:
 
 
 def _build_relationships(relationships: dict, nodes_by_id: dict,
-                         parsed_multiplicities: dict, owner_links: dict) -> list:
+                         parsed_multiplicities: dict, owner_links: dict, editor_ids: EditorIds) -> list:
     """Pass 3 — build relationship objects, discriminating
     ``DeploymentAssociation`` by endpoint type, applying parsed multiplicity
     on ``DeploymentRelation``, and deduplicating against owner links.
@@ -263,6 +267,7 @@ def _build_relationships(relationships: dict, nodes_by_id: dict,
             "wme_type": rel.get("type"),
             "wme_origin": "association",
         }
+        editor_ids.assign(obj, rel_id)
         out.append(obj)
 
     # Synthesise DeploymentRelation for owner-link artifact-on-node pairs

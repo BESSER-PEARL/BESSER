@@ -11,11 +11,12 @@ class ValidationIssue:
 
     severity:
       - ``blocker``: an execution, implementation or acceptance defect
-        requiring repair (including missing behavior or invalid evidence),
+        requiring repair (including behaviour the judge found missing),
         or explicitly authorized dependency setup needed for verification.
-      - ``warning``: advisory findings or checks whose outcome is unknown.
-        Explicit ``validation unverified:`` warnings prevent verified
-        completion but do not justify spending source-repair turns.
+      - ``warning``: advisory findings, and findings that are not confirmed
+        (``NOT_CONFIRMED_PREFIXES``): a check that reached no conclusion. These
+        prevent "verified" but never block, never count in ``blockerCount`` and
+        are never repaired.
       - ``style``: a count, not a defect: the ``(+N more ... truncated)`` notes of
         ruff and the compilers. Never blocks a release. The lint selects no cosmetic rule.
 
@@ -36,43 +37,193 @@ def _hard_blockers(issues: list) -> list:
     Excluded: the requirements ledger's ``requirement:`` verdicts, which an
     LLM judge produces, and the ``unverified`` family, whose own text says a
     guessed request being refused "does not prove this endpoint is broken".
-    They stay blockers - an unverified app is not a verified one - but they
-    may not rank one tree above another or force a rollback, because we do
-    not know that they describe a defect (e.g. an app correctly refusing to
-    create an ABSTRACT entity).
+    Those that are blockers may not rank one tree above another or force a
+    rollback, because we do not know that they describe a defect (e.g. an app
+    correctly refusing to create an ABSTRACT entity).
     """
     return [i for i in issues if not i.message.startswith((
-        "requirement:", "requirement unverified:",
-        "requirement partial:", "task unverified:",
+        "requirement:", "requirement unverified:", REQUIREMENT_UNSUPPORTED,
+        "requirement partial:", "task unverified:", "task incomplete:",
         "runtime unverified:", "create unverified:",
     ))]
 
 
-# Findings that mean "we could not check", never "the app is broken". Each is
-# an UNKNOWN: the run did not establish the behaviour either way. They belong in
-# the ledger's could-not-verify bucket, which the UI already renders separately.
-_UNKNOWN_PREFIXES = (
-    "requirement unverified:", "requirement partial:", "task unverified:",
-    "runtime unverified:", "create unverified:", "action unverified:",
-    "validation unverified:", "verification setup:", "api scenario:",
-    "requirement:",
+# Not confirmed: a check that reached no conclusion, never an observed failure.
+# Listed for the user; never a blocker, never repaired, except on a fix run when
+# it matches the failure the user reported. One prefix per line.
+NOT_CONFIRMED_PREFIXES = (
+    # The judge said implemented and its citation was not located, or the judge or
+    # the extraction did not run.
+    "requirement unverified:",
+    # The probe's own guessed request was refused (``runtime unverified:`` once no
+    # scenario settled it).
+    "runtime unverified:",
+    "create unverified:",
+    "action unverified:",
+    # A required check did not run.
+    "validation unverified:",
+    # A checklist item no check and no ``task_list`` close settled.
+    "task unverified:",
+    # A modify run's defect the previous version already had, and a workflow that passed on
+    # the previous version and fails now (``modify_run.py``): not this run's to repair.
+    "open since the previous version:",
+    "regression to confirm:",
+)
+OPEN_SINCE_PREVIOUS = "open since the previous version: "
+REGRESSION_TO_CONFIRM = "regression to confirm: "
+
+# The judge said implemented, but the code it cited is not an implementation (a
+# stub, a no-op validator, a comment or import, a declaration where behaviour is
+# needed) or the cited file does not exist: a blocker, repaired like a missing one.
+REQUIREMENT_UNSUPPORTED = "requirement unsupported:"
+
+
+def is_not_confirmed(issue) -> bool:
+    """A finding (or its message) that says a check reached no conclusion."""
+    return str(getattr(issue, "message", issue)).strip().lower().startswith(NOT_CONFIRMED_PREFIXES)
+
+
+# Findings that do not show the app fails to work. The not-confirmed ones are no
+# completion issue at all; the others here still count in ``blockerCount``.
+_UNKNOWN_PREFIXES = NOT_CONFIRMED_PREFIXES + (
+    "requirement partial:", "verification setup:", "api scenario:", "requirement:",
+    REQUIREMENT_UNSUPPORTED,
 )
 
 
 def unresolved_defects(issues: list) -> list:
     """Completion issues that describe a DEFECT, not an unknown.
 
-    The whole unverified family classifies as ``blocker`` severity, but an
-    app whose only open items are could-not-verify checks is not broken.
     "Incomplete" is reserved for output that does not work: a tree that will
-    not parse, an app that cannot boot or create a record, a requirement the
-    code demonstrably does not implement. An unknown keeps its place in the
-    ledger and in ``blockerCount``; it does not set the headline.
+    not parse, an app that cannot boot or create a record. A requirement
+    blocker or a failed agent-written workflow keeps its place in the ledger
+    and in ``blockerCount``; it does not set the headline.
     """
     return [
         i for i in issues
         if not str(getattr(i, "message", i)).startswith(_UNKNOWN_PREFIXES)
     ]
+
+
+# Requirement blockers by status rank: a requirement whose rank rises is progress,
+# one whose rank falls is a new blocker (``requirement_status``). Equal ranks are
+# neither: a stub that turns "missing" into "unsupported" settles nothing.
+REQUIREMENT_STATUSES = {
+    "requirement:": 0,
+    "requirement unsupported:": 0,
+    "requirement partial:": 1,
+}
+_REQUIREMENT_ID_RE = _re.compile(r"\s*R(\d+)\b")
+
+
+def requirement_status(message: str) -> tuple[int, int] | None:
+    """``(requirement id, status rank)`` of a requirement blocker, else None."""
+    for prefix, rank in REQUIREMENT_STATUSES.items():
+        if message.startswith(prefix):
+            match = _REQUIREMENT_ID_RE.match(message, len(prefix))
+            return (int(match.group(1)), rank) if match else None
+    return None
+
+
+# Phase 3's note when the requirement judge was not run on a tree.
+JUDGMENT_DEFERRED = "validation: business-requirement judgment deferred"
+# Phase 3 was skipped; the requirements could not be extracted (retried on the next round).
+PHASE3_SKIPPED = "requirement unverified: Phase 3 validation did not run"
+REQUIREMENTS_NOT_EXTRACTED = "requirement unverified: requirement extraction failed"
+# Findings that say the requirement judge did not run on a tree: deferred, failed
+# (it returned no verdicts), stopped (deadline or budget), or given no requirements.
+JUDGE_DID_NOT_RUN = (
+    JUDGMENT_DEFERRED,
+    "validation unverified: the requirements judge",
+    "requirement unverified: not checked",
+    REQUIREMENTS_NOT_EXTRACTED,
+    PHASE3_SKIPPED,
+)
+
+# The check family of a finding, and what stops that family running ("dependent"
+# findings are excused per entity from the probe's records: see Phase 3's
+# ``_newly_reachable``). A finding
+# whose family could not run on the tree before an edit is newly visible, not
+# newly broken (``could_not_run``). A family in ``toolchain`` / ``build`` is
+# per project (``[P]`` in the message), in ``file`` per file; a finding of no
+# family is always counted. One row per message prefix (lower case).
+FINDING_FAMILIES = (
+    ("application startup:", ("runtime",)),
+    ("mapper config:", ("runtime",)),
+    ("create contract:", ("runtime", "dependent")),
+    ("action call:", ("runtime", "dependent")),
+    ("read contract:", ("runtime", "dependent")),
+    ("api scenario:", ("runtime",)),
+    ("requirement", ("judge",)),
+    ("task ", ("judge",)),
+    ("tsc [", ("toolchain",)),
+    ("frontend build [", ("toolchain", "build")),
+    ("ruff:", ("file",)),
+    ("python contract:", ("file",)),
+)
+HIDDEN_BY = (
+    ("missing module:", "runtime"),
+    ("application startup:", "runtime"),
+    ("mapper config:", "runtime"),
+    *((note.lower(), "judge") for note in JUDGE_DID_NOT_RUN),
+    ("verification setup: tsc [", "toolchain"),
+    ("verification setup: frontend build [", "toolchain"),
+    ("validation unverified: tsc [", "toolchain"),
+    ("validation unverified: frontend build [", "toolchain"),
+    ("tsc [", "build"),
+    ("syntax error in ", "file"),
+)
+_PROJECT_RE = _re.compile(r"\[([^\]]+)\]")
+# The first path a finding names with a line: ``x.py:3``, ``x.py line 3``, ``x.tsx(3,5)``.
+_FILE_RE = _re.compile(r"([\w./\-]+\.\w+)(?::\d| line \d|\(\d)")
+
+
+def _family_key(family: str, message: str) -> tuple[str, str] | None:
+    """``(family, parameter)``; None when a per-project or per-file family names none."""
+    if family in ("toolchain", "build"):
+        match = _PROJECT_RE.search(message)
+        return (family, match.group(1)) if match else None
+    if family == "file":
+        match = _FILE_RE.search(message)
+        return (family, match.group(1).replace("\\", "/").removeprefix("./")) if match else None
+    return family, ""
+
+
+def finding_families(message: str) -> set[tuple[str, str]]:
+    """The check families ``message`` belongs to (``FINDING_FAMILIES``)."""
+    lower = message.lower()
+    return {key for prefix, families in FINDING_FAMILIES if lower.startswith(prefix)
+            for key in (_family_key(family, message) for family in families) if key}
+
+
+def hidden_families(issues: list) -> set[tuple[str, str]]:
+    """The check families that could not run on the tree ``issues`` (warnings included) describe.
+    A finding labelled as open since the previous version hides what it hid unlabelled."""
+    hidden = set()
+    for issue in issues:
+        message = str(getattr(issue, "message", issue)).removeprefix(OPEN_SINCE_PREVIOUS)
+        lower = message.lower()
+        for prefix, family in HIDDEN_BY:
+            key = _family_key(family, message) if lower.startswith(prefix) else None
+            if key:
+                hidden.add(key)
+    return hidden
+
+
+def judge_ran(issues: list) -> bool:
+    """Whether the requirement judge ran on the tree ``issues`` (warnings included) describe."""
+    return not any(str(getattr(i, "message", i)).startswith(JUDGE_DID_NOT_RUN) for i in issues)
+
+
+def could_not_run(message: str, hidden: set[tuple[str, str]]) -> bool:
+    """Whether a check family of ``message`` is in ``hidden``; files match by path suffix."""
+    for family, param in finding_families(message):
+        if (family, param) in hidden:
+            return True
+        if family == "file" and any(kind == "file" and (other.endswith("/" + param) or param.endswith("/" + other))
+                                    for kind, other in hidden):
+            return True
+    return False
 
 
 def _check_did_not_run(tool: str, reason: str) -> str:
@@ -137,6 +288,10 @@ _DID_NOT_RUN_NOTE_RE = _re.compile(
     r"^validation: (?P<check>.+?) did not run \((?P<reason>.*)\) - its checks were SKIPPED", _re.S)
 
 
+# The reason of a ``runtime`` class no check can cover: the run built a server none starts.
+RUNTIME_NOT_CHECKABLE = "no check can start this kind of backend"
+
+
 def runtime_check_unverified(check: str, reason: str) -> str:
     """A runtime check that did not run: an unknown no source edit can settle."""
     return (
@@ -158,16 +313,58 @@ def required_dependency_setup(check: str, project: str) -> str:
     return (
         f"verification setup: {check} requires installed project dependencies. "
         f"Toolchain and shell tools are enabled and npm is available. Use "
-        f"install_dependencies with working_dir={project!r} to install the declared "
+        f"run_command with working_dir={project!r} and timeout=300 to install the declared "
         "dependencies, then call validate_app to run the required checks. "
         "Do not edit application code solely to satisfy this verification prerequisite."
     )
 
 
+# What a not-confirmed finding says when the server has the check switched off (the
+# toolchain, shell tools, the requirements ledger, the startup check): the same on every
+# run there, so the done event's ``notConfirmedCount`` leaves it out (``checksOff`` says it).
+CONFIGURED_OFF_REASONS = (
+    "toolchain validation is disabled",
+    "require explicitly enabled shell tools",
+    "requirements ledger is disabled",
+    "these checks are disabled for this run",
+)
+
+
+def is_configured_off(issue) -> bool:
+    """A not-confirmed finding about a check the server has switched off."""
+    message = str(getattr(issue, "message", issue)).lower()
+    return is_not_confirmed(message) and any(reason in message for reason in CONFIGURED_OFF_REASONS)
+
+
+# The reason a check carries once the dependency install it needed was left undone.
+DEPENDENCIES_NOT_INSTALLED = "its project dependencies were not installed"
+_SETUP_CHECK_RE = _re.compile(r"^verification setup: (?P<check>.+?) requires installed project dependencies"
+                               r"(?:.*?working_dir=(?P<project>'[^']*'|\"[^\"]*\"))?")
+
+
+def dependencies_not_installed(setup: str) -> str:
+    """A ``verification setup:`` still open when the run ends: the checks behind it did not run."""
+    match = _SETUP_CHECK_RE.match(setup)
+    return required_check_unverified(match["check"] if match else "a check", DEPENDENCIES_NOT_INSTALLED)
+
+
+def dependency_setup_not_run(setup: str) -> str:
+    """A ``verification setup:`` before the final check: a check waiting for the install it names."""
+    match = _SETUP_CHECK_RE.match(setup)
+    project = match["project"] if match and match["project"] else "the project folder"
+    return required_check_unverified(
+        match["check"] if match else "a check",
+        f"its project dependencies are not installed; run npm install with run_command, "
+        f"working_dir={project}, timeout=300, to run it")
+
+
 def is_completion_issue(issue: ValidationIssue) -> bool:
-    """Missing required verification blocks completion, but not source repair."""
-    return (getattr(issue, "severity", None) == "blocker"
-            or str(getattr(issue, "message", "")).startswith("validation unverified:"))
+    """A blocker the run ends with: counted in ``blockerCount``.
+
+    The prefix wins over the stored severity: a not-confirmed finding built as a
+    blocker, or read back from an older recipe or checkpoint, is not one.
+    """
+    return getattr(issue, "severity", None) == "blocker" and not is_not_confirmed(issue)
 
 # F811 joins the undefined-name codes: a redefinition means the later name
 # silently wins — the ORM `User` shadowed by the Pydantic `User` and then
@@ -188,8 +385,10 @@ def _classify_issue(message: str) -> ValidationIssue:
     text = message.strip()
     lower = text.lower()
 
-    if lower.startswith("validation unverified:"):
+    if lower.startswith(NOT_CONFIRMED_PREFIXES):
         return ValidationIssue("warning", text)
+    # Could not check either, but an authorized dependency install settles it and
+    # unblocks the compile and build checks behind it: kept for the repair loop.
     if lower.startswith("verification setup:"):
         return ValidationIssue("blocker", text)
 
@@ -216,6 +415,17 @@ def _classify_issue(message: str) -> ValidationIssue:
         return ValidationIssue("blocker", text)
     if lower.startswith("form field type:"):
         return ValidationIssue("warning", text)
+    # Reserved for ui_probe.py screen findings; a warning until their precision is measured.
+    if lower.startswith("screen:"):
+        return ValidationIssue("warning", text)
+    # A project agent the web app leaves out because no screen uses it: a notice, never repaired.
+    if lower.startswith("agent left out:"):
+        return ValidationIssue("warning", text)
+    # A frontend call whose JSON body or response use contradicts its route's
+    # handler (api_call_shapes.py): the data never reaches the handler, every
+    # call is a 422, or the screen reads keys the response does not have.
+    if lower.startswith("api call:"):
+        return ValidationIssue("blocker", text)
     # Data contract: the generated code disagrees with the domain model's
     # declared id types / server-owned fields, or fakes success for an
     # unimplemented method. High-precision patterns only (see
@@ -236,18 +446,22 @@ def _classify_issue(message: str) -> ValidationIssue:
         return ValidationIssue("blocker", text)
 
     # The ORM module failed to import or to configure its mappers in the import
-    # smoke check: every request that touches the database is a 500.
+    # smoke check: every request that touches the database is a 500. A workflow
+    # that ran against the app and failed is an observed failure too, and so is
+    # the runtime gate's refusal (its "no runtime evidence" finding is
+    # ``validation unverified:``, not confirmed, above).
     if lower.startswith((
         "mapper config:", "application startup:", "python contract:",
-        "runtime unverified:", "api scenario:",
+        "api scenario:", "runtime gate:",
     )):
         return ValidationIssue("blocker", text)
 
-    # Missing behavior and incomplete requirement verification both prevent
-    # verified completion; unknown evidence is not proof of absent behavior.
+    # The judge's own verdict that behaviour is missing or partial, a cited
+    # implementation the verifier found does not do it, a checklist item whose
+    # deterministic check fails, and a modeled operation left as an HTTP 501 placeholder.
     if lower.startswith((
-        "requirement:", "requirement partial:", "requirement unverified:",
-        "action contract:", "task unverified:",
+        "requirement:", "requirement partial:", REQUIREMENT_UNSUPPORTED,
+        "action contract:", "task incomplete:",
     )):
         return ValidationIssue("blocker", text)
 
@@ -264,8 +478,9 @@ def _classify_issue(message: str) -> ValidationIssue:
     #
     # ``action call:`` is the action-endpoint twin of ``create contract:`` -
     # constructibility.py observed a 500 from a handler it invoked. It must be
-    # a blocker, or the blocker-only fix loop never consumes it.
-    if lower.startswith(("create contract:", "action call:")):
+    # a blocker, or the blocker-only fix loop never consumes it. ``read contract:`` is
+    # a 5xx reading back a record the probe created.
+    if lower.startswith(("create contract:", "action call:", "read contract:")):
         return ValidationIssue("blocker", text)
 
     # A collector's "+N more ... truncated" note is a count, not a defect; it

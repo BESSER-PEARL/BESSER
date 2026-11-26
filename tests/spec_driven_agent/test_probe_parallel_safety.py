@@ -170,7 +170,7 @@ def test_run_command_calls_in_one_turn_run_in_order(tmp_path, monkeypatch):
     assert all(event[2] == 1 for event in starts), f"run_command calls overlapped: {events}"
 
 
-@pytest.mark.parametrize("name", ["run_command", "install_dependencies"])
+@pytest.mark.parametrize("name", ["run_command"])
 def test_shell_tools_share_one_serial_group(tmp_path, name):
     from besser.BUML.metamodel.structural import Class, DomainModel
     from besser.spec_driven_agent.pipeline.orchestrator import LLMOrchestrator

@@ -17,6 +17,7 @@ from .responses import (
 )
 from .spec_driven import SmartGenerateRequest
 from .sdmx import SdmxImportRequest, SdmxProvider, SdmxProvidersResponse
+from .traceability import TracedGenerationInput, TracedGenerationResponse, TracedProjectGenerationInput
 
 __all__ = [
     'DiagramInput',
@@ -41,4 +42,7 @@ __all__ = [
     'SdmxImportRequest',
     'SdmxProvider',
     'SdmxProvidersResponse',
+    'TracedGenerationInput',
+    'TracedGenerationResponse',
+    'TracedProjectGenerationInput',
 ]

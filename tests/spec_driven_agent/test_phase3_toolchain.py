@@ -187,11 +187,11 @@ def test_collect_tsc_issues_soft_skips_when_binary_missing(tmp_path) -> None:
     # Force a "binary not found" outcome by patching the resolver
     # rather than mutating PATH (cleaner across platforms).
     with patch("besser.spec_driven_agent.pipeline.orchestrator.shutil.which", return_value=None):
-        from besser.spec_driven_agent.validation.issues import is_completion_issue
+        from besser.spec_driven_agent.validation.issues import is_completion_issue, is_not_confirmed
         findings = orch._collect_tsc_issues()
         assert len(findings) == 1 and "unavailable" in findings[0]
         assert _classify_issue(findings[0]).severity == "warning"
-        assert is_completion_issue(_classify_issue(findings[0]))
+        assert is_not_confirmed(findings[0]) and not is_completion_issue(_classify_issue(findings[0]))
         orch.enable_toolchain_validation = False
         assert "disabled" in orch._collect_tsc_issues()[0]
 
@@ -288,12 +288,11 @@ def test_fix_loop_prompt_contains_toolchain_error_and_rerun_command(tmp_path) ->
 
     # Verbatim error line surfaced in the prompt
     assert "TS2322" in text
-    # Explicit instruction to re-run the toolchain
+    # Explicit instruction to re-run the toolchain, given once: it was in the
+    # system prompt, the brief and a separate reminder that repeated the errors.
     assert "npx tsc --noEmit" in text
-    # High-salience reminder injected as a second user turn
-    assert "<system-reminder>" in text
-    # System prompt makes the contract explicit too
-    assert "run_command" in system
+    assert (system + text).count("re-run") == 1 and "run_command" not in system
+    assert "<system-reminder>" not in text and len(messages) == 1
 
 
 def test_fix_loop_prompt_never_asks_for_run_command_with_shell_tools_off(tmp_path) -> None:
@@ -446,7 +445,7 @@ def test_toolchain_fix_iteration_cap_bounded(tmp_path) -> None:
     # And we DID at least call the LLM once — otherwise the test
     # would pass vacuously.
     assert len(client.calls) >= 1
-    assert call_count["n"] == 2  # initial sweep plus one genuinely unchanged attempt
+    assert call_count["n"] == 1  # the initial sweep; an attempt that moved nothing is not re-checked
 
 
 @pytest.mark.parametrize("reveals_crud_errors", [False, True])
@@ -470,8 +469,9 @@ def test_toolchain_fix_loop_exits_when_blockers_clear(tmp_path, reveals_crud_err
     source = tmp_path / "app.py"
     source.write_text("status = MissingStatus.ready\n", encoding="utf-8")
     first = [ValidationIssue("blocker", "application startup: app.py line 1: invalid enum default")]
-    downstream = [ValidationIssue("blocker", f"data contract: app.py line 2: missing field {field}")
-                  for field in ("total", "booking", "id")]
+    # The creates an app that did not start could not run.
+    downstream = [ValidationIssue("blocker", f"create contract: app: POST /{name}/ - observed a server failure (500)")
+                  for name in ("total", "booking", "item")]
     final_source = "status = 'READY'\ncontracts_fixed = True\n"
     intermediate_source = "status = 'READY'\ncontracts_fixed = False\n"
     changes = [intermediate_source, final_source] if reveals_crud_errors else [final_source]

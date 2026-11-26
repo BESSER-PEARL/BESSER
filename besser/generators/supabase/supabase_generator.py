@@ -4,13 +4,12 @@ import re
 from collections import deque
 from datetime import datetime
 
-from jinja2 import Environment, FileSystemLoader
-
 from besser.BUML.metamodel.structural import (
     DomainModel, Class, Enumeration, AssociationClass,
 )
 from besser.generators import GeneratorInterface
 from besser.generators.structural_utils import get_foreign_keys
+from besser.utilities.generation_trace import traced_environment
 from besser.utilities.utils import sort_by_timestamp
 
 logger = logging.getLogger(__name__)
@@ -39,6 +38,11 @@ class SupabaseGenerator(GeneratorInterface):
         break out of the quoted identifier and inject DDL.
       - Enum literal values are escaped (``'`` doubled to ``''``) for the
         single-quoted ``CREATE TYPE ... AS ENUM`` string.
+
+    Attributes:
+        traced_files (dict[str, FileTrace]): After ``generate()``, the migration file with the lines rendered
+            from each class, attribute, association (junction table or foreign key), enumeration and literal
+            that has an ``id``. The file name carries a timestamp, so it is the key.
     """
 
     POSTGRES_TYPES = {
@@ -149,9 +153,11 @@ class SupabaseGenerator(GeneratorInterface):
     # ---------------- Column / table builders ----------------
 
     def _build_table_columns(self, cls, user_root, per_user):
-        """Return list of column-definition strings for a class."""
+        """Return the column-definition strings of a class and, for each, ``(element, trace label)``: the
+        attribute it is generated from, or ``(None, ...)`` for a column the generator adds."""
         is_user_root = (user_root is not None and cls is user_root)
         cols = []
+        elements = []
         emitted_pk = False
         # Every FK references "<table>"(id) as UUID, so a plain attribute named
         # id (no is_id) becomes that key instead of a second "id" column.
@@ -180,6 +186,7 @@ class SupabaseGenerator(GeneratorInterface):
             else:
                 null_clause = "" if attr.is_optional else " NOT NULL"
                 cols.append(f'"{attr_name}" {self._pg_type(attr)}{null_clause}')
+            elements.append((attr, "attribute"))
 
         # The user-root MUST have an id column referencing auth.users. If the
         # modeler forgot is_id on every attribute, force-emit the canonical id
@@ -189,10 +196,12 @@ class SupabaseGenerator(GeneratorInterface):
                 0,
                 '"id" UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE',
             )
+            elements.insert(0, (None, "column"))
         # Every FK and junction column REFERENCES <table>(id), so a class
         # modelled without is_id still needs that surrogate key.
         elif not emitted_pk:
             cols.insert(0, '"id" UUID PRIMARY KEY DEFAULT gen_random_uuid()')
+            elements.insert(0, (None, "column"))
 
         # Denormalized user_id for per-user classes (skip the user-root itself)
         if cls in per_user:
@@ -200,8 +209,9 @@ class SupabaseGenerator(GeneratorInterface):
             cols.append(
                 f'"user_id" UUID NOT NULL REFERENCES public."{user_tbl}"(id) ON DELETE CASCADE'
             )
+            elements.append((None, "column"))
 
-        return cols
+        return cols, elements
 
     def _junction_tables(self, user_root, per_user):
         """
@@ -221,6 +231,7 @@ class SupabaseGenerator(GeneratorInterface):
                 continue  # not M:N
 
             cols = []
+            elements = []
             fk_col_names = []
             for end in ends:
                 target_tbl = self._table_name(end.type)
@@ -230,6 +241,7 @@ class SupabaseGenerator(GeneratorInterface):
                     f'"{col_name}" UUID NOT NULL '
                     f'REFERENCES public."{target_tbl}"(id) ON DELETE CASCADE'
                 )
+                elements.append((end, "association_end"))
 
             is_per_user = any(
                 (user_root is not None and e.type is user_root) or e.type in per_user
@@ -243,13 +255,17 @@ class SupabaseGenerator(GeneratorInterface):
                     f'"user_id" UUID NOT NULL '
                     f'REFERENCES public."{user_tbl}"(id) ON DELETE CASCADE'
                 )
+                elements.append((None, "column"))
 
             # Composite PK on the two FK columns (last so constraints follow columns)
             pk_cols = ", ".join(f'"{c}"' for c in fk_col_names)
             cols.append(f"PRIMARY KEY ({pk_cols})")
+            elements.append((None, "column"))
 
             yield {
                 "cls": None,
+                "element": assoc,
+                "column_elements": elements,
                 "name": self._safe_ident(assoc.name.lower()),
                 "columns": cols,
                 "is_user_root": False,
@@ -259,7 +275,7 @@ class SupabaseGenerator(GeneratorInterface):
 
     def _association_fks(self, user_root, fkeys):
         """
-        Yield ``(table, column, target_table, nullable)`` for each association
+        Yield ``(table, column, target_table, nullable, association)`` for each association
         FK to emit via ALTER TABLE. Suppresses FKs pointing AT the user-root
         because the denormalized ``user_id`` already covers that relationship.
         """
@@ -283,6 +299,7 @@ class SupabaseGenerator(GeneratorInterface):
                 self._safe_ident(f"{fk_end_name}_id"),
                 self._table_name(target_cls),
                 target_end.multiplicity.min == 0,
+                assoc,
             )
 
     def _build_safe_enums(self):
@@ -291,9 +308,12 @@ class SupabaseGenerator(GeneratorInterface):
         for enum in self.model.get_enumerations():
             if not enum.literals:
                 continue
+            literals = list(enum.literals)
             safe.append({
+                "element": enum,
                 "name": self._safe_ident(enum.name.lower()),
-                "literals": [self._safe_string(lit.name) for lit in enum.literals],
+                "literals": [self._safe_string(lit.name) for lit in literals],
+                "literal_elements": literals,
             })
         return safe
 
@@ -302,8 +322,8 @@ class SupabaseGenerator(GeneratorInterface):
     def generate(self) -> None:
         """Render the SQL file to ``output_dir``. Filename is a Supabase migration-style ``<timestamp>_<slug>.sql``."""
         templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
-        env = Environment(
-            loader=FileSystemLoader(templates_path),
+        env = traced_environment(
+            templates_path,
             trim_blocks=True,
             lstrip_blocks=True,
             keep_trailing_newline=True,
@@ -321,10 +341,13 @@ class SupabaseGenerator(GeneratorInterface):
         classes = self._classes_for_emit(user_root)
         tables = []
         for cls in classes:
+            columns, column_elements = self._build_table_columns(cls, user_root, per_user)
             tables.append({
                 "cls": cls,
+                "element": cls,
                 "name": self._table_name(cls),
-                "columns": self._build_table_columns(cls, user_root, per_user),
+                "columns": columns,
+                "column_elements": column_elements,
                 "is_user_root": user_root is not None and cls is user_root,
                 "is_per_user": cls in per_user,
             })
@@ -351,7 +374,5 @@ class SupabaseGenerator(GeneratorInterface):
             filename=filename,
         )
 
-        file_path = self.build_generation_path(file_name=filename)
-        with open(file_path, mode="w", encoding="utf-8") as f:
-            f.write(rendered)
-        logger.info("Supabase SQL generated at: %s", file_path)
+        self._write_traced(filename, rendered)
+        logger.info("Supabase SQL generated at: %s", self.build_generation_path(file_name=filename))

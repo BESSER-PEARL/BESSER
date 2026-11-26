@@ -67,17 +67,17 @@ class Lambda(nn.Module):
 
     {%- for module_name, module_details in modules_details.items() %}
         {%- if module_name.endswith("nn") %}
-{{ module_name[:-3] }} = nn.Sequential(
+{% trace element_of(modules_details, module_name), "sub_nn" %}{{ module_name[:-3] }} = nn.Sequential(
     {%- for subnn_key, subnn_value in module_details.items() %}
         {%- if subnn_key not in ["in_out_variable", "subnn_input", "subnn_output"] %}
             {%- if subnn_key.endswith("activ") or subnn_key.endswith("layer") %}
-    {{ subnn_value[0].split('=', 1)[1].strip() }},
+    {% trace element_of(module_details, subnn_key), "layer" %}{{ subnn_value[0].split('=', 1)[1].strip() }},{% endtrace %}
             {%- else %}
-    {{ subnn_value[0] }},
+    {% trace element_of(module_details, subnn_key), "tensorop" %}{{ subnn_value[0] }},{% endtrace %}
             {%- endif -%}
         {%- endif -%}
     {%- endfor %}
-)
+){% endtrace %}
         {%- endif -%}
     {%- endfor %}
 
@@ -86,11 +86,11 @@ class Lambda(nn.Module):
 {%- for module_name, module_details in modules_details.items() %}
     {%- if module_name not in ["_lambda_needed"] %}
         {%- if module_name.endswith("nn") %}
-    {{ module_name[:-3] }},
+    {% trace element_of(modules_details, module_name), "sub_nn" %}{{ module_name[:-3] }},{% endtrace %}
         {%- elif module_name.endswith("activ") or module_name.endswith("layer") %}
-    {{ module_details[0].split('=', 1)[1].strip() }},
+    {% trace element_of(modules_details, module_name), "layer" %}{{ module_details[0].split('=', 1)[1].strip() }},{% endtrace %}
         {%- else %}
-    {{ module_details[0] }},
+    {% trace element_of(modules_details, module_name), "tensorop" %}{{ module_details[0] }},{% endtrace %}
         {%- endif -%}
     {%- endif -%}
 {%- endfor %}
@@ -104,17 +104,17 @@ class Lambda(nn.Module):
     {%- set activ_func_list = [] -%}
     {%- for module_name, module_details in modules_details.items() %}
         {%- if module_name.endswith("nn") %}
-        self.{{ module_name[:-3] }} = nn.Sequential(
+        {% trace element_of(modules_details, module_name), "sub_nn" %}self.{{ module_name[:-3] }} = nn.Sequential(
             {%- for subnn_key, subnn_value in module_details.items() %}
                 {%- if subnn_key not in ["in_out_variable", "subnn_input", "subnn_output"] %}
                     {%- if "op" in subnn_key %}
-            {{ subnn_value[0] }},
+            {% trace element_of(module_details, subnn_key), "tensorop" %}{{ subnn_value[0] }},{% endtrace %}
                     {%- else %}
-            {{ subnn_value[0].split('=', 1)[1].strip() }},
+            {% trace element_of(module_details, subnn_key), "layer" %}{{ subnn_value[0].split('=', 1)[1].strip() }},{% endtrace %}
                     {%- endif -%}
                 {%- endif -%}
             {%- endfor %}
-        )
+        ){% endtrace %}
         {%- elif module_name.endswith("activ") %}
                 {%- if module_details[0] not in activ_func_list %}
                 {%- set _ = activ_func_list.append(module_details[0])%}
@@ -124,7 +124,7 @@ class Lambda(nn.Module):
         {%- if module_details[3] is defined and module_details[3].is_layer_call %}
         {# Skip layer definition if is_layer_call is True - it will be called in forward #}
         {%- else %}
-        {{ module_details[0] }}
+        {% trace element_of(modules_details, module_name), "layer" %}{{ module_details[0] }}{% endtrace %}
         {%- endif -%}
         {%- endif -%}
     {%- endfor -%}
@@ -138,21 +138,21 @@ class Lambda(nn.Module):
         {%- if tensorop and tensorop.tns_type == 'split' and tensorop.split_sizes is defined %}
             {%- set num_splits = tensorop.split_sizes|length if tensorop.split_sizes is iterable and tensorop.split_sizes is not string else tensorop.split_sizes -%}
             {%- if num_splits == 1 %}
-        ({{ module_details[1] }},) = {{ module_details[0] }}
+        {% trace element_of(modules_details, module_name), "tensorop" %}({{ module_details[1] }},) = {{ module_details[0] }}{% endtrace %}
             {%- else %}
-        {{ module_details[1] }} = {{ module_details[0] }}
+        {% trace element_of(modules_details, module_name), "tensorop" %}{{ module_details[1] }} = {{ module_details[0] }}{% endtrace %}
             {%- endif -%}
         {%- else %}
-        {{ module_details[1] }} = {{ module_details[0] }}
+        {% trace element_of(modules_details, module_name), "tensorop" %}{{ module_details[1] }} = {{ module_details[0] }}{% endtrace %}
         {%- endif %}
     {% elif module_name.endswith("nn") %}
         {% if "subnn_input" in module_details and "subnn_output" in module_details -%}
-        {{ module_details["subnn_output"] }} = self.{{ module_name[:-3] }}({{ module_details["subnn_input"] }})
+        {% trace element_of(modules_details, module_name), "sub_nn_forward" %}{{ module_details["subnn_output"] }} = self.{{ module_name[:-3] }}({{ module_details["subnn_input"] }}){% endtrace %}
         {% else -%}
-        {{ module_details["in_out_variable"] }} = self.{{ module_name[:-3] }}({{ module_details["in_out_variable"] }})
+        {% trace element_of(modules_details, module_name), "sub_nn_forward" %}{{ module_details["in_out_variable"] }} = self.{{ module_name[:-3] }}({{ module_details["in_out_variable"] }}){% endtrace %}
         {% endif %}
     {% else -%}
-        {%- if 'INLINE_ONLY' not in module_details %}
+        {%- if 'INLINE_ONLY' not in module_details %}{% trace element_of(modules_details, module_name), "layer_forward" %}
         {# Strip counter suffix from layer name for forward calls if flag is set #}
         {%- set layer_name = module_details[3].name|strip_counter_suffix if (strip_layer_counter_suffix and module_details|length > 3) else (module_details[3].name if module_details|length > 3 else '') -%}
         {%- if module_name.endswith("activ") -%}
@@ -226,7 +226,7 @@ class Lambda(nn.Module):
         {%- else -%}
         {{ module_details[1] }} = self.{{ layer_name }}({{ module_details[2] }})
         {%- endif -%}
-        {%- endif -%}
+        {% endtrace %}{%- endif -%}
     {%- endif -%}
     {# Update return_variable for non-RNN layers or RNN layers without special subscripting #}
     {%- if module_name.endswith("nn") %}

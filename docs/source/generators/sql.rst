@@ -107,3 +107,17 @@ The generated output for this example is shown below.
 .. literalinclude:: ../../../tests/BUML/metamodel/structural/library/output/tables_sqlite.sql
    :language: sql
    :linenos:
+
+Trace Links
+-----------
+
+The DDL is produced by running the SQLAlchemy module that :doc:`alchemy` generates, so it has no template of its
+own. After ``generate()``, ``generator.traced_files["tables_<dialect>.sql"].regions`` still maps each statement back
+to its element: every ``CREATE TABLE`` (rule ``sql_generator.py#create_table``) of a class, association class or
+many-to-many association that has an ``id``, and every ``CREATE TYPE`` (``sql_generator.py#create_type``, PostgreSQL
+only) of an enumeration that has an ``id``. A statement is matched by the table or type name the SQLAlchemy
+generator gave it (the lower-cased class, association or enumeration name); a statement matching no traced element
+is left untraced, and the columns inside a statement are not traced individually. The SQL file itself is not
+changed. ``build_generation_trace`` in ``besser.utilities.generation_trace`` turns the regions into a
+:doc:`traceability model <../buml_language/model_types/traceability>`; the web editor shows them on its
+*Traceability* page.

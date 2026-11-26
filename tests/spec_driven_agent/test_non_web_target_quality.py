@@ -8,6 +8,7 @@ two buttons were cut off. Phase 3 reported none of it: the acceptance matrix
 that measures a web app's entities does not read a native one.
 """
 
+import json
 import os
 import shutil
 
@@ -255,6 +256,122 @@ def test_no_agent_task_or_requirement_without_an_agent_model(tmp_path):
     orch = _orch(tmp_path, DESKTOP)
     assert not [t for t in orch._deterministic_gap_tasks() if "agent" in str(t).lower()]
     assert not [r for r in orch._requirements_to_judge() if r["kind"] == AGENT_DATA_KIND]
+
+
+# A class + GUI project can hold an agent diagram that no screen uses. Like the
+# editor's own web app generation, the web app includes an agent only when a
+# screen uses it, and the checklist does not ask to connect it to the data. The
+# agent stays in the run, so a request that targets it (a chatbot, generate_baf)
+# still has it.
+
+def _gui(with_agent: bool):
+    from besser.BUML.metamodel.gui import GUIModel, Module, Screen, Text
+    from besser.BUML.metamodel.gui.dashboard import AgentComponent
+
+    elements = {Text(name="intro", content="Tasks", description="")}
+    if with_agent:
+        elements.add(AgentComponent(name="chat", agent_name="TaskAssistant"))
+    screen = Screen(name="Home", description="", view_elements=elements, is_main_page=True)
+    return GUIModel(name="Tasks", package="tasks", versionCode="1", versionName="1",
+                    modules={Module(name="Main", screens={screen})}, description="")
+
+
+def _web_model():
+    # _model() has a class named Base, which the SQLAlchemy generator refuses.
+    task = Class(name="Task")
+    task.attributes = {Property(name="id", type=PrimitiveDataType("int"), is_id=True),
+                       Property(name="title", type=PrimitiveDataType("str"))}
+    return DomainModel(name="Tasks", types={task})
+
+
+@pytest.mark.parametrize("screen_uses_agent", [False, True])
+def test_the_web_app_ships_the_agent_only_when_a_screen_uses_it(tmp_path, screen_uses_agent):
+    from besser.spec_driven_agent.agent.tool_executor import ToolExecutor
+
+    executor = ToolExecutor(workspace=str(tmp_path), domain_model=_web_model(),
+                            gui_model=_gui(screen_uses_agent), agent_model=_agent())
+    assert executor._gen_web_app({})["status"] == "ok"
+    assert (tmp_path / "web_app" / "agents").is_dir() is screen_uses_agent
+
+
+def _web_app_orch(tmp_path, generated_with_agent):
+    """A run whose web app was generated with or without the agent, on disk."""
+    orch = LLMOrchestrator(llm_client=_OfflineClient(), domain_model=_web_model(), agent_model=_agent(),
+                           gui_model=_gui(generated_with_agent), output_dir=str(tmp_path),
+                           enable_checkpointing=False, enable_tracing=False, enable_import_smoke_check=False,
+                           enable_toolchain_validation=False)
+    assert json.loads(orch.executor.execute("generate_web_app", {}))["status"] == "ok"
+    orch._generator_used = "generate_web_app"
+    return orch
+
+
+def _left_out(issues):
+    return [i for i in issues if str(getattr(i, "message", i)).startswith("agent left out:")]
+
+
+def test_an_agent_left_out_of_the_web_app_is_a_warning_in_the_run_summary(tmp_path):
+    from besser.spec_driven_agent.validation.issues import _classify_issue
+    from besser.utilities.web_modeling_editor.backend.services.spec_driven.runner import build_verification_report
+
+    [note] = _left_out(_web_app_orch(tmp_path, generated_with_agent=False)._collect_validation_issues())
+    assert "TaskAssistant" in note.message
+    assert note.severity == "warning" and _classify_issue(note.message).severity == "warning"
+    report = build_verification_report({"validation_issues": [{"severity": "warning", "message": note.message}]})
+    [item] = report.notVerified
+    assert "TaskAssistant" in item.what and "agent component" in item.what
+
+
+@pytest.mark.parametrize("generated_with_agent,gui_now_uses_agent,reported", [
+    (False, False, True), (True, True, False),
+    # A modify run edits the GUI model but does not regenerate the web app: the files decide.
+    (False, True, True), (True, False, False),
+])
+def test_the_left_out_agent_notice_follows_the_web_app_on_disk(tmp_path, generated_with_agent, gui_now_uses_agent,
+                                                               reported):
+    orch = _web_app_orch(tmp_path, generated_with_agent)
+    orch.gui_model = _gui(gui_now_uses_agent)
+    assert bool(_left_out(orch._agent_left_out_issues())) is reported
+
+
+def test_the_left_out_agent_notice_covers_a_web_app_generated_by_a_tool_call(tmp_path):
+    orch = _web_app_orch(tmp_path, generated_with_agent=False)
+    orch._generator_used = "generate_fastapi_backend"
+    assert not orch._agent_left_out_issues()
+    orch.tool_calls_log.append({"turn": 3, "tool": "generate_web_app", "input": {}, "success": True})
+    assert _left_out(orch._agent_left_out_issues())
+
+
+def _gui_agent_orch(tmp_path, screen_uses_agent, **kwargs):
+    return LLMOrchestrator(llm_client=_OfflineClient(), domain_model=_model(), agent_model=_agent(),
+                           gui_model=_gui(screen_uses_agent), output_dir=str(tmp_path), **kwargs)
+
+
+def test_an_agent_no_screen_uses_gets_no_task_and_no_judge_check(tmp_path):
+    orch = _gui_agent_orch(tmp_path, screen_uses_agent=False)
+    assert not _agent_task(orch)
+    assert not _agent_requirement(orch)
+
+
+def test_an_agent_a_screen_uses_gets_the_task(tmp_path):
+    orch = _gui_agent_orch(tmp_path, screen_uses_agent=True)
+    assert _agent_task(orch)
+    assert _agent_requirement(orch)
+
+
+def test_a_run_that_targets_the_agent_gets_the_task_next_to_any_gui(tmp_path):
+    orch = _gui_agent_orch(tmp_path, screen_uses_agent=False, primary_kind="agent")
+    assert _agent_task(orch)
+    assert _agent_requirement(orch)
+
+
+@pytest.mark.parametrize("field", ["_generator_used", "target_generator"])
+def test_a_baf_run_next_to_a_gui_gets_the_task(tmp_path, field):
+    # A class-primary project asking for "the chatbot": keyword routing picks
+    # generate_baf, so the agent is the app even though no screen uses it.
+    orch = _gui_agent_orch(tmp_path, screen_uses_agent=False)
+    setattr(orch, field, "generate_baf")
+    assert _agent_task(orch)
+    assert _agent_requirement(orch)
 
 
 def test_an_agent_that_never_uses_the_data_is_a_blocker():

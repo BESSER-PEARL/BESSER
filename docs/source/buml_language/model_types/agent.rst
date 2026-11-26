@@ -128,7 +128,8 @@ require the agent to use a ``WebSocketPlatform``:
   HTML-formatted message.
 - ``WebSocketReplySpeech(message, audio_speed, use_session_vars=False)`` —
   convert text to speech and send the audio.
-- ``WebSocketReplyOptions(options)`` — present a list of selectable options.
+- ``WebSocketReplyOptions(options, label=None)`` — present a list of selectable options, with an
+  optional text shown with the buttons (e.g. a prompt in the agent's language).
 - ``WebSocketReplyLocation(latitude, longitude)`` — send a geographic
   coordinate.
 - ``WebSocketReplyFile()`` — send a file; the body must supply a ``File``
@@ -339,7 +340,11 @@ Example agent model
 As a simple example, we modeled the `Greetings Agent <https://besser-agentic-framework.readthedocs.io/latest/your_first_agent.html#the-greetings-agent>`_ from the BAF documentation.
 State and intent names must differ (``agent.validate()`` rejects a model in
 which a state and an intent share a name), hence the ``_intent`` suffix on the
-intents.
+intents. It also rejects an ``auto`` transition that is not the only transition
+of its state, since BAF refuses such a state at startup;
+``validate(check_auto_transitions=False)`` leaves that rule out, for a model that
+is exported or converted rather than run, and ``auto_transition_problems()`` lists
+what it finds.
 
 .. code-block:: python
 

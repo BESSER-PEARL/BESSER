@@ -201,6 +201,127 @@ def test_valid_frontend_source_is_not_flagged(source):
     assert frontend_source.json_container_faults(source) == []
 
 
+# Quoted-key containers holding JavaScript values: valid TSX that is not JSON.
+@pytest.mark.parametrize("source", [
+    'const A = () => <div style={{"width": `${ratio * 100}%`, "height": "8px"}} />;\n',
+    'const A = () => <div style={{"color": accent, "padding": 4}} />;\n',
+    'const A = () => <div style={{"width": ratio * 100 + "%"}} />;\n',
+    'const A = () => <div style={{"display": open ? "block" : "none"}} />;\n',
+    'const A = () => <div style={{"margin": 0, ...extra}} />;\n',
+    'const A = () => <div style={{"width": Math.min(total, 10) + "px"}} />;\n',
+    'const A = () => <div style={{"margin": 0, // spacing\n  "padding": 4}} />;\n',
+    "const A = () => <div style={{\"margin\": '0 auto'}} />;\n",
+    'const A = () => <div style={{"opacity": .5, "zIndex": 0x10}} />;\n',
+    'const A = () => <T options={{"size": [10, 20][1]}} />;\n',
+    'const A = () => <T options={{"offset": 10 -2}} />;\n',
+    'const A = () => <T options={{"a": 1, 2: "two"}} />;\n',
+    'const A = () => <T options={{"a": 1, ["b"]: 2}} />;\n',
+    'const A = () => <T options={{"cells": [1, , 3]}} />;\n',
+    'const A = () => <T options={{"label": "a\tb"}} />;\n',
+    'const A = () => <T options={{"label": "x", true: "Yes", false: "No"}} />;\n',
+    'const A = () => <T labels={{"none": "-", null: "n/a"}} />;\n',
+    'const A = () => <T options={{"icon": "\\u{1F600}"}} />;\n',
+    'const A = () => <T options={{"a": 1}} />;\n',
+    'const A = () => <T options={{"a": 1}, {"b": 2}} />;\n',
+    'const A = () => <div>{/* e.g. options={{"a": 1 "b": 2}} */}</div>;\n',
+    '// set style={{"note": "don\'t, w: 1}} on the row\nconst A = 1;\n',
+    'const A = () => <T options={{"fmt": (v): {\n  "a": 1\n  "b": 2\n} => v as any}} />;\n',
+    'const A = () => <T options={{"icon": <b>Total: {"x"}</b>, "a": n / 2, "b": [1]}} />;\n',
+], ids=["template", "identifier", "arithmetic", "ternary", "spread", "call", "comment",
+        "single-quote", "js-number", "member", "subtraction", "numeric-key", "computed-key",
+        "array-hole", "tab-in-string", "boolean-keys", "null-key", "code-point-escape",
+        "non-breaking-space", "comma-expression", "in-block-comment", "in-line-comment",
+        "return-type-literal", "jsx-text-colon"])
+def test_javascript_values_in_a_quoted_key_container_are_not_flagged(source):
+    assert frontend_source.structure_error(source) is None
+    assert frontend_source.json_container_faults(source) == []
+
+
+@pytest.mark.parametrize("source", [
+    'const A = () => <T options={{"columns": [{"a": 1} {"b": 2}]}} />;\n',
+    'const A = () => <T options={{"a": 1 "b": 2}} />;\n',
+    'const A = () => <T options={{"a": "x,\n  "b": 2}} />;\n',
+    'const A = () => <T options={{"a": 1,, "b": 2}} />;\n',
+], ids=["missing-comma-objects", "missing-comma-pairs", "unterminated-string", "double-comma"])
+def test_broken_json_container_is_still_flagged(source):
+    assert frontend_source.json_container_faults(source)
+
+
+MISSING_COMMA = PAGE.replace('              "type": "int"\n            },\n',
+                             '              "type": "int"\n            }\n')
+
+
+@pytest.mark.parametrize("old, new", [
+    ('"rowsPerPage": 5,', '"rowsPerPage": pageSize,'),
+    ('"label": "Id"', '"label": `Id ${n}`'),
+    ('"showHeader": true,', '"showHeader": true, // header row'),
+    ('"type": "str"', "\"type\": 'str'"),
+    ('"rowsPerPage": 5', '"rowsPerPage": .5'),
+    ('"showHeader": true,', '"showHeader": true,\n          "onRowClick": (row) => open(row),'),
+    ('"rowsPerPage": 5', '"rowsPerPage": [5, 10][0]'),
+    ('"type": "int"\n            }\n', '"type": "int"\n            } // first column\n'),
+    ('"rowsPerPage": 5,', '"rowsPerPage": total / 2,'),
+    ('"rowsPerPage": 5,', '"rowsPerPage": n < 5 ? n : 5,'),
+    ('"rowsPerPage": 5,', '"rowsPerPage": 5, "pattern": /^[a-z]+$/i,'),
+], ids=["identifier", "template", "comment", "single-quote", "js-number", "arrow", "member",
+        "comment-at-the-gap", "division", "comparison", "regex"])
+def test_a_dropped_comma_next_to_a_new_javascript_value_is_refused(old, new):
+    """The JSON-only parts of a container that also holds JS are still judged."""
+    after = MISSING_COMMA.replace(old, new, 1)
+    assert after != MISSING_COMMA
+    broke = frontend_source.new_syntax_error(PAGE, after)
+    assert broke and "no longer parses" in broke[0], broke
+
+
+@pytest.mark.parametrize("old, new", [
+    ('"rowsPerPage": 5,\n          "columns": [', '"rowsPerPage": 5,\n          "columns": [extra,'),
+    ('"rowsPerPage": 5,', '"rowsPerPage": 5, "icon": <Icon />,'),
+], ids=["same-level", "after-jsx"])
+def test_a_dropped_comma_beside_javascript_at_the_same_level_is_not_judged(old, new):
+    """Not covered: JS at the same level, or anything after JSX, needs a JavaScript parser."""
+    after = MISSING_COMMA.replace(old, new, 1)
+    assert after != MISSING_COMMA
+    assert frontend_source.new_syntax_error(PAGE, after) is None
+
+
+UPLOAD = '    <div id="page">\n      <input type="file" accept="image/*" />\n'
+
+
+def test_a_glob_in_a_string_does_not_hide_later_containers():
+    """``image/*`` is a string, not the start of a comment."""
+    before = PAGE.replace('    <div id="page">\n', UPLOAD)
+    after = MISSING_COMMA.replace('    <div id="page">\n', UPLOAD)
+    broke = frontend_source.new_syntax_error(before, after)
+    assert broke and "no longer parses" in broke[0], broke
+
+
+def test_editing_a_glob_string_is_not_blamed_on_a_broken_container_below():
+    before = MISSING_COMMA.replace('    <div id="page">\n', UPLOAD)
+    after = before.replace("image/*", "image/png")
+    assert frontend_source.new_syntax_error(before, after) is None
+
+
+def test_a_url_earlier_on_the_line_does_not_hide_a_container():
+    after = PAGE.replace('    <div id="page">\n', '    <div id="page">\n'
+                         '      <a href="https://example.org">Docs</a> <span style={{"color": "red" "x": 1}} />\n')
+    broke = frontend_source.new_syntax_error(PAGE, after)
+    assert broke and "no longer parses" in broke[0], broke
+
+
+def test_an_edit_adding_a_template_literal_style_applies(executor):
+    """A quoted-key style object with a template-literal value is valid TSX."""
+    tools, path = executor
+    result = call(
+        tools, "modify_file", path="Booking.tsx",
+        old_text='    <div id="page">\n',
+        new_text='    <div id="page">\n'
+                 '      <div style={{"width": `${done * 100}%`, "height": "8px"}} />\n',
+    )
+    assert result.get("rejection_kind") is None, result
+    with open(path, encoding="utf-8") as handle:
+        assert '`${done * 100}%`' in handle.read()
+
+
 def test_diagnostics_name_the_damage_in_a_file_that_arrived_broken():
     findings = diagnose_written_content("src/pages/Booking.tsx", PAGE.replace('            {\n              "label": "Bill",', '            {\n             {\n              "label": "Bill",'))
     assert findings and findings[0]["source"] == "frontend-source"

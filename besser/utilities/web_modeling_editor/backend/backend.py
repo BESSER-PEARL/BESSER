@@ -31,6 +31,7 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     MAX_REQUEST_SIZE,
     API_VERSION,
     DEFAULT_CORS_ORIGINS,
+    EXPORT_WARNING_HEADER,
 )
 
 # Pre-load services.converters before config to avoid circular import:
@@ -72,6 +73,7 @@ from besser.utilities.web_modeling_editor.backend.routers import (
     spec_driven_router,
     telemetry_router,
     agent_simulator_router,
+    traceability_router,
 )
 
 # Per-app state, built in the lifespan (see dependencies.py)
@@ -294,7 +296,7 @@ app.add_middleware(
     # that failed at the transport layer (see spec_driven_router).
     allow_headers=["Content-Type", "X-GitHub-Session", "Content-Disposition",
                    "Authorization", "Idempotency-Key"],
-    expose_headers=["Content-Disposition", "X-BESSER-Run-Id"],
+    expose_headers=["Content-Disposition", "X-BESSER-Run-Id", EXPORT_WARNING_HEADER],
 )
 
 # Request logging middleware (outermost – added last so it wraps everything)
@@ -315,6 +317,7 @@ app.include_router(deployment_router.router)
 app.include_router(spec_driven_router.router)
 app.include_router(telemetry_router.router)
 app.include_router(agent_simulator_router.router)
+app.include_router(traceability_router.router)
 
 
 # Exception handlers

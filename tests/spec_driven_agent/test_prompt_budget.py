@@ -20,33 +20,36 @@ HEADROOM = 0.06
 # `python -m tests.spec_driven_agent.prompt_budget` from the repo root: it
 # prints chars per fixture, section and tool.
 BASELINES = {
-    "shelf": {"system_chars": 23_259, "tools_chars": 14_868},
-    "shelf_no_requirements": {"system_chars": 20_238, "tools_chars": 14_868},
-    "conference": {"system_chars": 44_122, "tools_chars": 14_868},
-    "state_machine": {"system_chars": 13_585, "tools_chars": 12_618},
+    "shelf": {"system_chars": 23_002, "tools_chars": 10_657},
+    # shelf with the generated typed client: its section replaces the client's routes in the manifest.
+    "shelf_client": {"system_chars": 23_310, "tools_chars": 10_657},
+    "shelf_no_requirements": {"system_chars": 19_981, "tools_chars": 10_657},
+    "conference": {"system_chars": 44_028, "tools_chars": 10_657},
+    "state_machine": {"system_chars": 13_374, "tools_chars": 6_817},
 }
 
 # Per-section and per-tool sizes at the same point, only to name what grew.
 BASELINE_SECTIONS = {
-    "shelf": {"role_plan": 1589, "rules": 9635, "model_tools": 375, "tail_header": 31, "models": 803,
+    "shelf": {"role_plan": 1589, "rules": 9635, "tail_header": 31, "models": 803,
               "data_contract": 1618, "inventory": 2071, "endpoint_manifest": 4747, "requirements": 351,
-              "request": 302, "checklist": 1124, "phase2_appendix": 613},
-    "shelf_no_requirements": {"role_plan": 1589, "rules": 9635, "model_tools": 375, "tail_header": 31,
+              "request": 302, "checklist": 1098, "phase2_appendix": 613},
+    "shelf_client": {"role_plan": 1589, "rules": 9635, "tail_header": 31, "models": 803,
+                     "data_contract": 1618, "inventory": 2660, "endpoint_manifest": 5192, "requirements": 351,
+                     "request": 302, "checklist": 516, "phase2_appendix": 613},
+    "shelf_no_requirements": {"role_plan": 1589, "rules": 9635, "tail_header": 31,
                               "models": 803, "data_contract": 1618, "inventory": 2071,
-                              "endpoint_manifest": 2077, "request": 302, "checklist": 1124,
+                              "endpoint_manifest": 2077, "request": 302, "checklist": 1098,
                               "phase2_appendix": 613},
-    "conference": {"role_plan": 1589, "rules": 9635, "model_tools": 375, "tail_header": 31, "models": 5205,
+    "conference": {"role_plan": 1589, "rules": 9635, "tail_header": 31, "models": 5205,
                    "data_contract": 1725, "inventory": 5758, "endpoint_manifest": 17310, "requirements": 351,
-                   "request": 302, "checklist": 1228, "phase2_appendix": 613},
-    "state_machine": {"role_plan": 993, "rules": 9822, "tail_header": 32, "models": 464, "requirements": 351,
-                      "request": 275, "checklist": 1035, "phase2_appendix": 613},
+                   "request": 302, "checklist": 1202, "phase2_appendix": 613},
+    "state_machine": {"role_plan": 993, "rules": 9821, "tail_header": 32, "models": 464, "requirements": 351,
+                      "request": 275, "checklist": 1009, "phase2_appendix": 429},
 }
 BASELINE_TOOLS = {
     "generate_python_classes": 195, "generate_java_classes": 170, "generate_rdf": 156, "generate_supabase": 358,
-    "list_files": 245, "read_file": 1238, "write_file": 673, "modify_file": 1473, "replace_file_lines": 1175,
-    "search_in_files": 701, "delete_file": 558, "query_class": 416, "list_classes_with": 414,
-    "get_constraints_for": 375, "test_api": 2745, "validate_app": 495, "validate_model": 166, "check_syntax": 384,
-    "task_list": 2931,
+    "list_files": 245, "read_file": 734, "write_file": 673, "modify_file": 1144, "replace_file_lines": 910,
+    "search_in_files": 701, "delete_file": 343, "test_api": 2745, "validate_app": 495, "task_list": 985,
 }
 
 

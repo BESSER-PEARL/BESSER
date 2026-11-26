@@ -12,9 +12,10 @@ Two entry points:
 
 Design points (mirror of the processor):
 
-* **Stable round-trip ids.** ``id_for(obj)`` reuses the original WME id stashed in
-  ``obj.layout["id"]`` when present, falling back to a fresh uuid. The metamodel
-  stays id-free; ``layout`` is the per-element side-channel.
+* **Stable round-trip ids.** ``id_for(obj)`` reuses the element's ``id`` (the WME id the
+  processor gives it), else the original WME id stashed in ``obj.layout["id"]``, falling
+  back to a fresh uuid (``element_ids.element_id_taker``). ``layout`` is the per-element
+  side-channel.
 * **Layout fallback.** When ``layout`` is missing / partial (a freshly-built model, or
   one loaded from BUML code that didn't emit layout), a deterministic grid layout fills
   the gaps; flow paths reuse ``services.utils.layout_calculator``.
@@ -24,7 +25,6 @@ Design points (mirror of the processor):
 """
 
 import logging
-import uuid
 
 from besser.BUML.metamodel.bpmn import (
     AgentRole,
@@ -71,6 +71,7 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
 from besser.utilities.web_modeling_editor.backend.services.converters.bpmn_event_mapping import (
     serialise_event_type,
 )
+from besser.utilities.web_modeling_editor.backend.services.converters.element_ids import element_id_taker
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._safe_buml_loader import (
     safe_load_buml,
 )
@@ -184,14 +185,15 @@ def bpmn_object_to_json(model: BPMNModel) -> dict:
     elements: dict = {}
     relationships: dict = {}
 
-    # Per-call id map: stable round-trip ids via the layout stash; fresh uuids otherwise.
+    # Per-call id map: stable round-trip ids (the element's id, else the layout stash); fresh uuids otherwise.
     id_map: dict = {}
     grid = _GridLayout()
 
+    take_id = element_id_taker()
+
     def id_for(obj) -> str:
         if obj not in id_map:
-            stashed = (obj.layout or {}).get("id") if hasattr(obj, "layout") else None
-            id_map[obj] = stashed or str(uuid.uuid4())
+            id_map[obj] = take_id(obj)
         return id_map[obj]
 
     # --- 1. Pools (and their lanes) ----------------------------------------

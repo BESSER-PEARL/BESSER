@@ -22,6 +22,7 @@ into the HTTP response. Endpoints are organized by concern:
 - **``routers/spec_driven_router.py``** -- The :doc:`Spec-Driven Agent <spec_driven_agent/index>`: SSE generation runs, preview, config, durable run status and event replay, resume, cancel, download, and GitHub push/import
 - **``routers/telemetry_router.py``** -- Opt-in run telemetry collection and reporting
 - **``routers/agent_simulator_router.py``** -- Live agent simulation (see `Agent Simulation`_)
+- **``routers/traceability_router.py``** -- Code generation that also returns the trace of the run (see `Traceability`_)
 - **``routers/error_handler.py``** -- Centralized ``@handle_endpoint_errors`` decorator
 - **``routers/auth.py``** -- Shared GitHub-session gate (``require_github_session``, HTTP 401)
 - **``routers/github_oauth.py``** -- GitHub sign-in, sign-out and the session lookup (``get_user_token``)
@@ -34,14 +35,16 @@ Additional infrastructure:
 - **``services/exceptions.py``** -- Custom exception hierarchy: ``BesserError`` (base) with ``ConversionError``, ``ValidationError``, ``GenerationError``, ``ConfigurationError`` and ``UpstreamError`` (an external service such as GitHub refused or failed; carries the HTTP status).
   ``CodeValidationError`` (invalid custom Python code in an agent) is a ``ValidationError`` and maps to HTTP 400.
 - **Request validation (422)** -- ``backend.py`` replaces FastAPI's handler: each ``detail`` entry keeps ``type``, ``loc`` and ``msg`` but drops pydantic's ``input`` and ``ctx``, since a failing model validator puts the whole request body there, API keys included.
-- **``services/generation/``** -- Generator dispatch behind ``/generate-output`` and ``/generate-output-from-project``: ``dispatch.py`` picks the path from the generator's registry entry (``category``, ``required_diagram_type``, ``output_type``; ``needs_beyond_one_diagram`` refuses a generator one diagram cannot feed; generators with request options have a builder in ``_CLASS_DIAGRAM_BUILDERS``) and runs it, ``agents.py`` generates agents (BAF), ``downloads.py`` packs the output as a ``GeneratedOutput`` (a ZIP with its provenance file, or one file with its version comment), which the router sends as the download
+- **``services/generation/``** -- Generator dispatch behind ``/generate-output`` and ``/generate-output-from-project``: ``dispatch.py`` picks the path from the generator's registry entry (``category``, ``required_diagram_type``, ``output_type``; ``needs_beyond_one_diagram`` refuses a generator one diagram cannot feed; generators with request options have a builder in ``_CLASS_DIAGRAM_BUILDERS``) and runs it, ``agents.py`` generates agents (BAF), ``downloads.py`` packs the output as a ``GeneratedOutput`` (a ZIP with its provenance file, or one file with its version comment, carrying the traces the generators recorded by path in the download), which the router sends as the download. Every path returns a ``Generation``: that download and the diagrams it was generated from (``DiagramRead``), which the traced endpoints turn into the trace of the run
 - **``services/kg/``** -- The machinery behind the Knowledge Graph endpoints: ``payloads.py`` (parsing a KG diagram from a request, the ``kgSignature`` check, report-to-response mapping), ``decisions.py`` (applying Refine-KG decisions), ``llm.py`` (reaching the user's own LLM provider under one request deadline) and ``validation.py`` (the consistency check under its concurrency cap, and the KG findings of ``/validate-diagram``)
+- **``services/traceability/``** -- ``traced_generation.py``: runs a generation through ``services/generation`` (the same path as the plain endpoints) and builds the trace fragment of the run from its ``Generation`` with ``besser.utilities.generation_trace``
 - **``services/spec_driven/``** -- The machinery behind the Spec-Driven Agent: ``runner.py`` (drives a run and emits SSE), ``run_manager.py`` (durable ownership, SQLite-backed event store, replay), ``runtime.py`` (the per-app state of the runs, see `Runtime State`_), ``model_assembly.py`` (project payload to B-UML models), ``preview.py`` (pre-flight plan, no LLM call), ``github_sync.py`` (a run pushed to GitHub, a GitHub repo imported as a run), ``sse_events.py`` (the typed event schema), ``telemetry.py``, ``incidents.py``. Frames, packaged workspaces and repo writes are redacted by ``besser.utilities.secret_redaction``
 - **``constants/constants.py``** -- API version, temp prefixes, generator defaults and the built-in CORS origins
 - **``settings.py``** -- ``BackendSettings``, every environment variable the backend reads (see `Environment Variables`_)
 - **``models/responses.py``** -- Standardized Pydantic response models. They derive from ``ResponseModel``, which marks every field the backend sends (defaults included) as required in the OpenAPI schema, and use ``Literal`` types and nested models for fields with a fixed set of values or a fixed shape, so the editor's generated client needs no casts. ``KGIssueResponse`` and ``KGActionResponse`` stay plain ``BaseModel`` classes: they are also part of a request body
 - **``models/kg.py``** -- Request models of the KG endpoints: ``KGDiagramInput`` (a ``DiagramInput`` plus the refinement fields, with typed ``resolutions`` and ``llmIssues``) and the LLM requests, which share ``KGLLMCredentials`` (``provider``, ``llm_model``, and the key as a ``SecretStr``). Data fields are camelCase; only the credentials keep the snake_case names of the other LLM features
-- **``models/spec_driven.py``** -- Request/response models for the spec-driven endpoints (the API key is a ``SecretStr``; the caps are clamped by field validators)
+- **``models/traceability.py``** -- ``TracedGenerationInput`` (a ``DiagramInput`` plus ``actorName``), ``TracedProjectGenerationInput`` (a ``ProjectInput`` plus ``actorName``) and ``TracedGenerationResponse``
+- **``models/spec_driven.py``** -- Request/response models for the spec-driven endpoints (the API key is a ``SecretStr``; the caps are clamped by field validators; ``traceabilityEnabled``, off by default, makes a run record its trace)
 - **``dependencies.py``** -- FastAPI dependencies that hand routes the state built in the lifespan
 
 Runtime State
@@ -500,7 +503,15 @@ Backend-side notes that do not belong in the contract:
 - The pushed ``README.md`` keeps the agent's text and ends with a block between
   ``<!-- besser:begin -->`` and ``<!-- besser:end -->``: a "Built with BESSER"
   badge, a link that opens ``buml/domain_model.py`` in the editor (``?buml=``),
-  the Built with BESSER catalog and ``BESSER_GENERATION.md``. A new repo whose
+  ``BESSER_GENERATION.md``, a "Continue from GitHub" line and a list that says
+  what ``.besser_recipe.json``, ``.besser_attribution.json``,
+  ``.agent-trace/<run id>.json``, the AI commit headers (``AI-Tool``,
+  ``AI-Model``, ``AI-Role``, ``AI-Tokens``, ``BESSER-Origin``) and
+  ``buml/diagrams.json`` are; when the project has a trace, it says the trace is
+  in ``buml/diagrams.json`` under ``trace``. The editor reads the ``?buml=`` file
+  without a token, so a new private repo gets no such link, and its block says
+  to use "Continue from GitHub". The backend does not look up the visibility
+  of an existing repo, so that block keeps the link. A new repo whose
   run has no README gets one titled with the repo name, followed by the
   project's description (left out when blank) and the date it was generated.
   Each push renders the block again in
@@ -545,7 +556,10 @@ What is recorded, per tab session id and participant label:
 - ``prompt`` (from the modeling agent) -- the message text (at most 2000
   characters), what the assistant did with it, and the diagram type.
 - ``run_summary`` (recorded in-process by the Spec-Driven runner, never
-  accepted over HTTP) -- outcome, duration, turns, tokens, cost, model,
+  accepted over HTTP) -- outcome (``success`` for a completed run,
+  ``completed_with_blockers`` or ``completed_unverified`` for a finished run the
+  run record calls so, ``incomplete``, ``cancelled`` for a run cancelled after it wrote
+  files, or ``failed:<code>``), duration, turns, tokens, cost, model,
   validation blockers, and how many output files the generator wrote versus
   the LLM. For these runs the run trace (which includes the first 500
   characters of the instructions) is also copied to
@@ -599,11 +613,15 @@ Conversion
 ^^^^^^^^^^
 
 - ``POST /export-buml`` -- Diagram JSON to BUML Python code
-- ``POST /export-project-as-buml`` -- Full project to BUML Python code
+- ``POST /export-project-as-buml`` -- Full project to BUML Python code. An optional ``trace`` (trace file JSON) is written as a ``TRACEABILITY`` section, without file contents (hashes, paths and line ranges are kept; the editor's JSON export keeps the contents); an invalid trace is a 400. When the file with the trace would be over ``MAX_BUML_SIZE`` (2 MB, what the import accepts), the trace is left out: the file starts with a ``# BESSER: trace left out:`` comment and the response carries the reason in the ``X-BESSER-Warning`` header
 - ``POST /get-json-model`` -- BUML Python file to JSON (auto-detects diagram type)
 - ``POST /get-project-json-model`` -- BUML project file to JSON. Both import endpoints answer 400 with the
   reason when a model cannot be read, and list in ``warnings`` (``{code, message}``) what they repaired to
-  load it, e.g. a composition whose owner end was not navigable
+  load it, e.g. a composition whose owner end was not navigable. ``trace`` holds the trace file JSON of the
+  file's ``TRACEABILITY`` section (null when it has none). That section is loaded with the same AST
+  allowlist as the models, restricted to the traceability metamodel, with the size caps of a whole project
+  file (2 MB). The trace is best effort: a section that fails to load, or a file exported without its trace,
+  gives ``trace: null`` and a ``warnings`` entry with code ``trace-not-imported``; the project imports
 - ``POST /get-json-model-from-image`` -- Image to ClassDiagram JSON (requires OpenAI API key)
 - ``POST /get-json-model-from-kg`` -- **Deprecated.** Knowledge graph (TTL/RDF/JSON) to ClassDiagram JSON through OpenAI (requires an OpenAI API key). Use ``/kg/import-owl`` and ``/kg/to-class-diagram`` instead
 - ``POST /csv-to-domain-model`` -- CSV **or XLSX** files to domain model JSON (both extensions are accepted; XLSX needs ``openpyxl``)
@@ -635,6 +653,17 @@ Refine KG dialog that precedes it.
 - ``POST /kg/llm-clean`` -- LLM-suggested cleanup of the graph, using the caller's own LLM key (see above); the optional ``description`` adds context, otherwise the model infers the domain from the KG
 - ``POST /kg/classify-orphans`` -- Per-node classification for orphan nodes deferred from the Refine dialog (``description`` is optional here too)
 - ``POST /kg/apply-refinement`` -- Apply Refine KG decisions (``source`` selects the static analyzer or the LLM suggestions in ``llmIssues``) and return the cleaned KG
+
+Traceability
+^^^^^^^^^^^^
+
+The editor records modeling traces itself and keeps the project trace in the
+browser (see :doc:`buml_language/model_types/traceability`); the backend records
+what only it sees, the trace links of a generation run. Under
+``/besser_api/traceability`` (OpenAPI tag ``traceability``).
+
+- ``POST /traceability/generate-output`` -- The ``/generate-output`` request plus ``actorName`` (the project owner; blank means ``anonymous``), for any generator ``/generate-output`` accepts (it runs the same dispatch); the diagram ``id`` is required. Returns JSON ``{fileName, mediaType, contentBase64, trace}``: the file or ZIP ``/generate-output`` would deliver, byte for byte, and the run's trace fragment (trace file JSON, ``projectId`` null) whose paths and line numbers refer to that delivery (paths inside the ZIP; ``BESSER_GENERATION.md`` and binary files are left out). Each diagram the run read is a root model artifact (the diagram id as ``elementId``, its B-UML metaclass as ``elementType``) linked to every text file of the delivery (``RuleEvidence`` ``generator:<key>``); a generator that records traces (see :doc:`generators/traceable_generator` and its :ref:`coverage table <traceable-generator-coverage>`) adds links from its elements, by the editor ids the converters give them, to their line ranges. A file an LLM step of the run wrote (the agent personalization) is linked by ``AIEvidence`` of that LLM, which the run then also calls. A file's content is kept in the trace up to ``TRACE_MAX_STORED_CONTENT_BYTES`` (1 MB) per file and ``TRACE_MAX_TOTAL_CONTENT_BYTES`` (4 MB, shared with Spec-Driven run traces) in all, in path order; past either only its hash is. The first 10,000 regions get line-range fragments; the files past them keep file-level links. The content kept has its credentials replaced by ``[REDACTED]`` (the delivery keeps them; ``contentHash`` is the delivered file's), see :doc:`buml_language/model_types/traceability`. 400 for a missing diagram id, and for what ``/generate-output`` refuses
+- ``POST /traceability/generate-output-from-project`` -- The same for a ``/generate-output-from-project`` request plus ``actorName``: generators that read several diagrams (``web_app``: class, GUI and agent diagrams; ``docker_compose``: deployment, agent and BPMN diagrams; ``backend``: the class diagram and the NN diagrams its methods use) or a project's diagram. Every diagram the run reads needs its ``id`` (400 otherwise)
 
 Validation
 ^^^^^^^^^^
@@ -756,8 +785,8 @@ untouched file can differ from its blob), a changed file keeps its mode,
 links and submodules are never touched, and a repository path the run could
 not hold (build and dependency output, ``*.db``, BESSER's other ``.besser_*``
 records, a scrubbed secret ``.env``) is not taken as a deletion. The records a
-run carries (``.besser_recipe.json``, ``.besser_attribution.json`` and
-``.besser_generator_output.json``) are its own: a push from a run seeded from
+run carries (``.besser_recipe.json``, ``.besser_attribution.json``,
+``.besser_generator_output.json`` and ``.besser_api_workflows.json``) are its own: a push from a run seeded from
 the repository deletes them when the run no longer has them. The push marks
 them ``linguist-generated`` in ``.gitattributes``, keeping the repository's own
 lines (and a ``linguist-generated`` setting a line already gives one of them),

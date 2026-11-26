@@ -5,12 +5,8 @@ interface Props {
   "metric-title"?: string;
   "value-color"?: string;
   "value-size"?: number;
-  "show-trend"?: boolean;
-  "positive-color"?: string;
-  "negative-color"?: string;
   format?: "number" | "currency" | "percentage" | "time";
   value?: number;
-  trend?: number;
   data_binding?: {
     entity?: string;
     endpoint?: string;
@@ -50,12 +46,8 @@ export const MetricCardComponent: React.FC<Props> = ({
   "metric-title": metricTitle = "Metric Title",
   "value-color": valueColor = "#2c3e50",
   "value-size": valueSize = 32,
-  "show-trend": showTrend = true,
-  "positive-color": positiveColor = "#27ae60",
-  "negative-color": negativeColor = "#e74c3c",
   format = "number",
   value = 0,
-  trend = 0,
   data_binding,
   styles,
   className,
@@ -69,8 +61,6 @@ export const MetricCardComponent: React.FC<Props> = ({
   
   // For now, just show formatted placeholder value
   const displayValue = formatValue(value, format);
-
-  const trendColor = trend >= 0 ? positiveColor : negativeColor;
 
   const containerStyle: CSSProperties = {
     background: "white",
@@ -111,25 +101,6 @@ export const MetricCardComponent: React.FC<Props> = ({
       >
         {displayValue}
       </div>
-
-      {/* Trend Indicator (optional) */}
-      {showTrend && (
-        <div
-          style={{
-            color: trendColor,
-            fontSize: "12px",
-            marginTop: "8px",
-            fontWeight: "500",
-          }}
-        >
-          {/* TODO: Uncomment when backend aggregation is ready */}
-          {/* {hasDataBinding
-            ? "📊 Data bound to " + (data_binding.entity || "entity")
-            : formatTrend(trend)} */}
-          {/* {formatTrend(trend)} */}
-          Latest value
-        </div>
-      )}
 
       {/* TODO: Uncomment when backend aggregation is ready */}
       {/* Data Binding Info (only in development) */}

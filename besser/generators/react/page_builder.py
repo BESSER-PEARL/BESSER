@@ -6,6 +6,10 @@ import os
 import re
 from typing import Any, Dict, List, Optional, Set
 
+from jinja2 import DictLoader
+
+from besser.utilities.generation_trace import trace_source, traced_environment
+
 from .routes import page_route
 
 logger = logging.getLogger(__name__)
@@ -18,6 +22,13 @@ _SVG_TAGS = {name.lower(): name for name in (
     "filter", "feGaussianBlur", "feOffset", "feDropShadow", "feFlood", "feComposite",
     "feColorMatrix", "feBlend", "feMerge", "feMergeNode",
 )}
+
+
+# Wraps text built in Python in the trace markers of the element it renders: the pages are built from strings
+# rather than templates, but their regions are recorded by the same tag.
+_TRACED_TEXT = traced_environment(
+    DictLoader({"page_builder.py": "{% trace element, label %}{{ text }}{% endtrace %}"})
+).get_template("page_builder.py")
 
 
 class _PageRenderContext:
@@ -93,12 +104,12 @@ class PageBuilderMixin:
                 + f"export default {component_name};\n"
             )
 
-            file_path = os.path.join(pages_dir, f"{component_name}.tsx")
-            with open(file_path, "w", encoding="utf-8", newline="\n") as f:
-                f.write(file_contents)
+            self._write_traced(f"src/pages/{component_name}.tsx", file_contents,
+                               trace_source(self._element_of(page), "page_builder.py#screen"))
 
             page_infos.append(
                 {
+                    "element": self._element_of(page),
                     "component_name": component_name,
                     "file_name": f"./pages/{component_name}",
                     "route_path": page.get("route_path") or "/",
@@ -209,9 +220,18 @@ class PageBuilderMixin:
         rendered = []
         for component in components:
             rendered.append(
-                self._render_component(component, selector_style_map, context, indent)
+                self._traced_component(
+                    component, self._render_component(component, selector_style_map, context, indent)
+                )
             )
         return "\n".join([line for line in rendered if line])
+
+    def _traced_component(self, node: Dict[str, Any], jsx: str) -> str:
+        """``jsx`` inside the trace markers of the GUI element ``node`` was serialized from, if it has an id."""
+        element = self._element_of(node)
+        if element is None or not jsx:
+            return jsx
+        return _TRACED_TEXT.render(element=element, label="component", text=jsx)
 
     def _render_component(
         self,
@@ -234,6 +254,8 @@ class PageBuilderMixin:
             selector_style_map=selector_style_map,
             has_children=bool(children),
         )
+        if comp_type == "menu" or (node.get("tag") or "").lower() == "nav":
+            style = self._nav_style(style)
 
         indent_str = " " * indent
         # Continuation lines of a multi-line prop align under this component.
@@ -760,10 +782,12 @@ class PageBuilderMixin:
             row_style = self._format_prop("style", {"display": "flex", "alignItems": "center", "gap": "6px"})
             grp_style = self._format_prop("style", {"display": "flex", "flexDirection": "column", "gap": "6px"})
             lines = [f'{indent_str}<div role="radiogroup" id={json.dumps(component_id)} {grp_style}>']
+            radio_required = " required" if required else ""
             for o in options:
                 lines.append(
                     f'{indent_str}  <label {row_style}>'
-                    f'<input type="radio" name={json.dumps(component_id)} value={json.dumps(o.get("value", ""))} />'
+                    f'<input type="radio" name={json.dumps(component_id)} value={json.dumps(o.get("value", ""))}'
+                    f'{radio_required} />'
                     f' {{{json.dumps(o.get("label", ""))}}}</label>'
                 )
             lines.append(f"{indent_str}</div>")
@@ -1158,6 +1182,23 @@ class PageBuilderMixin:
     # ------------------------------------------------------------------ #
     # Style helpers for page rendering
     # ------------------------------------------------------------------ #
+    @staticmethod
+    def _nav_style(style: Dict[str, Any]) -> Dict[str, Any]:
+        """A navigation bar's fixed height becomes its minimum height, so the bar
+        grows when its items wrap on a narrow screen (``src/index.css``) instead
+        of spilling over the page. A bar that scrolls inside its height, is laid
+        out against the viewport (fixed, absolute) or is collapsed (0) keeps it."""
+        height = str(style.get("height", "")).strip()
+        if not height or height == "auto" or "minHeight" in style or re.fullmatch(r"0(\.0*)?[a-z%]*", height):
+            return style
+        if str(style.get("position", "")).strip() in ("fixed", "absolute"):
+            return style
+        if any(str(style.get(key, "visible")).strip() != "visible" for key in ("overflow", "overflowX", "overflowY")):
+            return style
+        style = {key: value for key, value in style.items() if key != "height"}
+        style["minHeight"] = height
+        return style
+
     def _compute_style(
         self,
         component_id: str,
@@ -1332,13 +1373,19 @@ class PageBuilderMixin:
         import_lines = []
         for page in page_infos:
             import_lines.append(
-                f"import {page['component_name']} from \"{page['file_name']}\";"
+                _TRACED_TEXT.render(
+                    element=page.get("element"), label="import",
+                    text=f"import {page['component_name']} from \"{page['file_name']}\";",
+                )
             )
         imports = "\n".join(import_lines)
 
         routes = "\n".join(
             [
-                f"            <Route path={json.dumps(p['route_path'])} element={{<{p['component_name']} />}} />"
+                _TRACED_TEXT.render(
+                    element=p.get("element"), label="route",
+                    text=f"            <Route path={json.dumps(p['route_path'])} element={{<{p['component_name']} />}} />",
+                )
                 for p in page_infos
             ]
         )
@@ -1368,9 +1415,7 @@ class PageBuilderMixin:
             "export default App;\n"
         )
 
-        app_path = self.build_generation_path("src/App.tsx")
-        with open(app_path, "w", encoding="utf-8", newline="\n") as f:
-            f.write(app_contents)
+        self._write_traced("src/App.tsx", app_contents)
     # --------------------------------------------------------------------- #
     # Context builders
     # --------------------------------------------------------------------- #

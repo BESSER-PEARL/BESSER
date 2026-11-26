@@ -115,9 +115,7 @@ class BESSERActionLanguageVisitor(ParseTreeVisitor):
 
     # Visit a parse tree produced by BESSERActionLanguageParser#for.
     def visitFor(self, ctx:BESSERActionLanguageParser.ForContext):
-        iterators:set[Iterator] = set()
-        for it in ctx.iterators:
-            iterators.add(self.visit(it))
+        iterators = [self.visit(it) for it in ctx.iterators]
         return For(iterators, self.visit(ctx.body))
 
 

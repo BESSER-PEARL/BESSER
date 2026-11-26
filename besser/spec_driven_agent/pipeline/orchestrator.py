@@ -19,6 +19,7 @@ Phase 3 (validation & fix):
 """
 
 import contextlib
+import contextvars
 import hashlib
 import json
 import logging
@@ -56,7 +57,8 @@ from besser.spec_driven_agent.planning.user_request import user_request
 from besser.spec_driven_agent.run_recap import request_text
 from besser.spec_driven_agent.planning.specification import validate_specification
 from besser.spec_driven_agent.agent.history_eviction import (
-    evict_stale_file_bodies,
+    evict_superseded_file_bodies,
+    unseen_after_eviction,
     without_thinking_blocks,
 )
 from besser.spec_driven_agent.validation.frontend_contract import (
@@ -74,6 +76,7 @@ from besser.spec_driven_agent.repair.scaffold_repair import (
     _project_has_npm_lockfile,
     _strip_missing_lockfile_copy,
     ensure_frontend_scaffold,
+    rewritten_build_scripts,
 )
 from besser.spec_driven_agent.state.checkpoint import (
     CHECKPOINT_SCHEMA_VERSION,
@@ -86,16 +89,16 @@ from besser.spec_driven_agent.state.checkpoint import (
 )
 from besser.spec_driven_agent.errors import (
     CheckpointMismatchError,
+    DeadlineReached,
     EmptyInstructionsError,
     InvalidApiKeyError,
 )
 from besser.spec_driven_agent.planning.gap_analyzer import (
-    _placement_advice, analyze_gaps_via_llm, derived_attribute_tasks,
+    _note_derived_enum_initial_state, _placement_advice, analyze_gaps_via_llm, derived_attribute_tasks,
 )
 from besser.spec_driven_agent.planning.action_inventory import (
     collect_action_endpoints, action_gap_tasks, action_implementation_issues, merge_action_tasks,
 )
-from besser.llm.pricing import is_free_local_model
 from besser.spec_driven_agent.providers.llm_client import (
     ClaudeLLMClient,
     FROM_SCRATCH_MAX_TOKENS,
@@ -107,17 +110,18 @@ from besser.spec_driven_agent.agent.prompt_builder import (
     build_inventory,
     build_endpoint_manifest,
     mutation_coverage_applies,
-    requests_frontend,
     ROUTER_TEMPLATE_GENERATORS,
-    _FRONTEND_ASK_RE,
 )
-from besser.spec_driven_agent.planning.agent_wiring import AGENT_DOMAIN_TASK, agent_data_requirement
+from besser.spec_driven_agent.planning.agent_wiring import (
+    AGENT_DOMAIN_TASK, agent_data_requirement, agent_left_out_note, gui_uses_agent,
+)
 from besser.spec_driven_agent.planning.requested_routes import requested_route_tasks
 from besser.spec_driven_agent.planning.generator_keywords import (
     default_generator,
     keyword_generator,
 )
 from besser.spec_driven_agent.planning.target import (
+    BACKEND,
     MODIFY_TOOL_PROPERTIES,
     OTHER,
     entity_requirements,
@@ -134,12 +138,18 @@ from besser.spec_driven_agent.planning.stack_metadata import (
     detect_routed_stack,
     detect_stack,
     pre_generate_metadata,
+    routed_frontend_framework,
     stack_label,
 )
-from besser.spec_driven_agent.agent.runbook import RuntimeFileRemoval, remove_app_runtime_files
+from besser.spec_driven_agent.agent.runbook import (
+    RuntimeFileRemoval,
+    remove_app_runtime_files,
+    remove_run_folder_bound_files,
+)
 from besser.spec_driven_agent.agent.tool_executor import ToolExecutor, ends_shell_session
-from besser.spec_driven_agent.agent.tools import dumps_for_model
-from besser.spec_driven_agent.execution.process import _safe_subprocess_env
+from besser.spec_driven_agent.agent.tools import _SHELL_TOOLS, dumps_for_model
+from besser.spec_driven_agent.execution.deadline import Deadline, under_deadline
+from besser.spec_driven_agent.execution.process import _safe_subprocess_env, timeout_cause
 from besser.spec_driven_agent.execution.sandbox import SandboxUnavailable, run_confined
 from besser.spec_driven_agent.validation.docker_context import (
     compose_build_contexts,
@@ -171,17 +181,27 @@ from besser.spec_driven_agent.validation.toolchain import (
     _RUFF_MAX_REPORTED as _RUFF_MAX_REPORTED,
     _TSC_PROBE_NAME,
 )
+from besser.utilities.provenance import get_besser_version
 from besser.utilities.secret_redaction import redact_trace_text
 from besser.utilities.workspace_fs import open_plain, open_plain_write, walk_plain
 # Preserve established imports while lower-level consumers use these leaves.
 from besser.spec_driven_agent.validation.issues import (
+    JUDGMENT_DEFERRED,
+    PHASE3_SKIPPED,
+    REQUIREMENTS_NOT_EXTRACTED,
     ValidationIssue,
     _check_did_not_run,
     _classify_issue,
     _hard_blockers,
     dependency_check_issue,
     is_completion_issue,
+    is_not_confirmed,
+    RUNTIME_CHECK_UNVERIFIED,
+    RUNTIME_NOT_CHECKABLE,
     required_check_unverified,
+    DEPENDENCIES_NOT_INSTALLED,
+    dependencies_not_installed,
+    dependency_setup_not_run,
     required_dependency_setup as required_dependency_setup,
     runtime_check_unverified,
     runtime_note_unverified,
@@ -197,19 +217,27 @@ from besser.spec_driven_agent.validation.python_source import (
     _CREATE_FIELD_RE as _CREATE_FIELD_RE,
     _ROUTER_READ_RE as _ROUTER_READ_RE,
 )
+from besser.spec_driven_agent.state.agent_trace import harness_writes, record_generated_files
+from besser.spec_driven_agent.state.api_workflows import save_workflows as save_api_workflows
 from besser.spec_driven_agent.state.recipe_size import bounded_recipe
 from besser.spec_driven_agent.state.tracing import (
     EVENT_CHECKPOINT,
+    EVENT_COMPACTION,
     EVENT_ERROR,
     EVENT_COST_UPDATE,
+    EVENT_EVICTION,
+    EVENT_GENERATOR_OUTPUT,
     EVENT_LLM_CALL,
     EVENT_PHASE_ENTER,
     EVENT_PHASE_EXIT,
+    EVENT_REQUIREMENT_CITED,
+    EVENT_REQUIREMENTS,
     EVENT_RUN_END,
     EVENT_RUN_START,
     EVENT_SNAPSHOT,
     EVENT_TARGET,
     EVENT_TOOL_CALL,
+    EVENT_TURN_END,
     EVENT_TURN_START,
     EVENT_VALIDATION_ISSUE,
     TRACE_FILENAME,
@@ -219,8 +247,32 @@ from besser.spec_driven_agent.state.tracing import (
 
 logger = logging.getLogger(__name__)
 
+# The findings that say no requirement verdict exists for the delivered tree
+# (``verification_gaps``). The first is phase3_repair's: Phase 3 did not run at all.
+_PHASE3_SKIPPED = PHASE3_SKIPPED
+_REQUIREMENTS_NOT_CHECKED = "requirement unverified: not checked,"
+_REQUIREMENTS_NOT_EXTRACTED = REQUIREMENTS_NOT_EXTRACTED
+_REQUIREMENTS_JUDGE_FAILED = "validation unverified: the requirements judge did not run"
+_REQUIREMENTS_NO_VERDICT = (_PHASE3_SKIPPED, _REQUIREMENTS_NOT_CHECKED, _REQUIREMENTS_NOT_EXTRACTED,
+                            _REQUIREMENTS_JUDGE_FAILED)
+
+
+def _stopped_by(text: str) -> str:
+    """Which limit stopped a check, as a fixed phrase: the run record never holds a finding's text."""
+    lower = text.lower()
+    if "cancel" in lower:
+        return "the run was cancelled"
+    if "quota" in lower:
+        return "the model provider's quota ran out"
+    if "cost" in lower:
+        return "the cost limit was reached"
+    if "time" in lower:
+        return "too little time was left"
+    return "it was stopped before it finished"
+
 
 from besser.spec_driven_agent.pipeline.constants import (  # noqa: F401
+    EXCLUDED_OUTPUT_NAMES,
     WORKSPACE_SKIP_DIRS,
     TOOL_INPUTS_FILENAME,
     _LOG_VALUE_BUDGET,
@@ -231,10 +283,9 @@ from besser.spec_driven_agent.pipeline.constants import (  # noqa: F401
     _EDIT_TOOLS,
     _MAX_PARALLEL_WORKERS,
     _MAX_TOOLCHAIN_FIX_ITERATIONS,
-    _PHASE3_FIX_TURNS,
-    _PHASE3_NO_EDIT_REMINDER,
-    _PHASE3_NO_PROGRESS_ROUNDS,
-    _PHASE3_PLATEAU_ROUNDS,
+    _CALLS_PER_TURN,
+    _PHASE3_BUDGET_SHARE,
+    _PHASE3_FIX_CALLS,
     _READONLY_TOOLS,
     _RECIPE_EXCLUDED_DIRS,
     _REDUNDANT_GENERATOR_TOOLS_BY_PRIMARY,
@@ -259,6 +310,7 @@ from besser.spec_driven_agent.pipeline.constants import (  # noqa: F401
     _TOOL_DETAIL_MAX_CHARS,
     _runtime_verdict,
     _tool_call_detail,
+    RUN_DIR_PREFIX,
     _tool_use_blocks,
     is_excluded_output_file,
 )
@@ -266,22 +318,20 @@ from besser.spec_driven_agent.pipeline.constants import (  # noqa: F401
 
 from besser.spec_driven_agent.pipeline.edit_loop_guards import EditLoopGuardsMixin
 from besser.spec_driven_agent.pipeline.modify_run import ModifyRunMixin
-from besser.spec_driven_agent.pipeline.phase3_repair import Phase3RepairMixin, clip_finding
+from besser.spec_driven_agent.pipeline.phase3_repair import Phase3RepairMixin, clip_finding, counted
 from besser.spec_driven_agent.pipeline.regeneration import Regeneration
 from besser.spec_driven_agent.settings import AgentSettings
 
-# Checkpoint history eviction (see history_eviction.py). When enabled, stale
-# file bodies in older messages are stubbed at the compaction checkpoint to cut
-# the re-sent context. OFF by default: it rewrites history the provider
-# re-serializes and is not yet verified end to end. Enable with
-# BESSER_LLM_HISTORY_EVICTION=1.
+# History eviction (see history_eviction.py): stale file bodies are stubbed in
+# batches, and every older body at the compaction checkpoint. Off unless
+# BESSER_LLM_HISTORY_EVICTION is set (it does not lower cost on a caching provider).
 _HISTORY_EVICTION_ENABLED = AgentSettings().llm_history_eviction
 
 
 # Told to a run resumed after packaging removed what it had installed.
 DEPENDENCIES_REMOVED_NOTE = (
     "The installed dependencies (node_modules, virtual environments, build output) were removed after "
-    "the previous run finished; install them again with the install_dependencies tool before validating."
+    "the previous run finished; install them again with run_command before validating."
 )
 
 
@@ -305,10 +355,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     # How many times the end_turn checklist gate sends the model back to
     # its open items before letting the run finish anyway.
     _MAX_TASK_NUDGES = 2
-    # End-of-turn nudges that show static frontend blockers; each also counts as a task nudge.
-    _MAX_FRONTEND_BLOCKER_NUDGES = 1
-    _PHASE2_STAGNANT_TURNS = 10
-    _PHASE2_INSPECTION_TURNS = 20
+    # Executed calls with no source change and no new result before Phase 2
+    # hands off, and with no source change before it is reminded to implement.
+    _PHASE2_STAGNANT_CALLS = 20
+    _PHASE2_INSPECTION_CALLS = 40
 
     def __init__(
         self,
@@ -324,6 +374,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         on_progress: Callable[..., None] | None = None,
         on_text: Callable[[str], None] | None = None,
         on_phase_details: Callable[[str, str], None] | None = None,
+        on_findings: Callable[..., None] | None = None,
         use_streaming: bool = True,
         object_model=None,
         state_machines=None,
@@ -336,7 +387,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         run_id: str = "",
         enable_tracing: bool = True,
         enable_checkpointing: bool = True,
-        # Both default OFF: they enable run_command / install_dependencies, the
+        # Given every trace record with its uncut tool inputs and results (the
+        # backend keeps them server-side); None writes nothing besides the trace.
+        run_evidence: Callable[[dict], None] | None = None,
+        # Both default OFF: they enable run_command, the
         # arbitrary-shell capability the hosted gate exists to withhold. Opt in
         # explicitly; generation does not need them.
         enable_toolchain_validation: bool = False,
@@ -348,6 +402,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         per_write_diagnostics: bool = True,
         enable_import_smoke_check: bool = True,
         enable_requirements_ledger: bool = True,
+        stated_requirements: list[dict] | None = None,
+        followup_states_nothing_new: bool = False,
         assembly_issues: list[dict] | None = None,
     ):
         self.client = llm_client
@@ -389,19 +445,16 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 "agent, state_machine, object, BPMN, neural network, or quantum)"
             )
         # Absolute: checks pin their cwd to it, which resolves a relative path twice.
-        self.output_dir = os.path.abspath(output_dir or tempfile.mkdtemp(prefix="besser_llm_"))
+        self.output_dir = os.path.abspath(output_dir or tempfile.mkdtemp(prefix=RUN_DIR_PREFIX))
         self.max_turns = max_turns or self.MAX_TURNS
         self.max_cost_usd = max_cost_usd
         self.max_runtime_seconds = max_runtime_seconds
         self.on_progress = on_progress
         self.on_text = on_text
         self.on_phase_details = on_phase_details
+        # Phase 3 reports each validation round: (attempt, issues, restored=False).
+        self.on_findings = on_findings
         self.use_streaming = use_streaming
-        # Weak / free-tier open models (e.g. qwen3-coder) ignore "don't switch
-        # frameworks" and delete the whole deterministic scaffold to rebuild it.
-        # Make that scaffold delete-proof for them only; capable cloud models are
-        # unaffected and keep full delete_file.
-        _model_name = (getattr(self.client, "model", "") or "").lower()
         self.executor = ToolExecutor(
             workspace=self.output_dir,
             domain_model=domain_model,
@@ -412,15 +465,23 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             object_model=object_model,
             bpmn_model=bpmn_model,
             nn_model=nn_model,
-            protect_scaffold=is_free_local_model(_model_name),
             per_write_diagnostics=per_write_diagnostics,
             # The executor enforces this too. Hiding the tools from the
             # advertised list is not a gate: the model can name a tool it was
             # never offered, and a dispatch table alone would run it anyway.
             allow_shell=allow_shell_tools,
+            # The class diagram's title names the model; the project names the app.
+            app_name=(source_project_export or {}).get("name") or None,
         )
         self.executor.app_validator = self._validate_app
-        self.executor.time_left = self._time_left
+        self.executor.requirement_citer = self._cite_requirements
+        # The run's cap and cancel, read by every LLM call and command it starts.
+        self.deadline = Deadline(
+            self._time_left, lambda: self._should_continue is None or self._should_continue())
+        self.executor.time_left = self.deadline.work_remaining
+        # Each generator call's files and traced regions go to the run log, which
+        # the run trace is built from (state/trace_model.py).
+        self.executor.on_generated = self._record_generator_output
         self.executor.api_tester = self._test_api
         self._app_validation_cache: tuple[tuple, dict] | None = None
         self._api_scenarios: dict[str, dict] = {}
@@ -431,7 +492,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # that need a domain model (pydantic/sqlalchemy/django/react/…)
         # are hidden when there isn't one so the LLM doesn't waste turns
         # calling generators that will just error. See tools.get_tools_for.
-        # ``allow_shell_tools=False`` drops run_command/install_dependencies —
+        # ``allow_shell_tools=False`` drops run_command —
         # the arbitrary-shell tools. On a hosted, multi-tenant, BYOK box those
         # are user-steerable RCE (the cwd lock + denylist are UX, not a
         # sandbox), so the web runner disables them; trusted local/CLI/bench
@@ -449,6 +510,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             has_nn_model=self.nn_model is not None,
             allow_shell=allow_shell_tools,
         )
+        # Kept out of the list while no backend it can drive exists (``_offer_test_api``).
+        self._test_api_tool = next((t for t in self.tools if t["name"] == "test_api"), None)
+        self._test_api_offered = self._test_api_tool is not None
         # Phase 3 auto-fix policy. False = report-only (industry default
         # for static analysers — fix on request, never blindly).
         self.auto_fix_issues = auto_fix_issues
@@ -468,9 +532,29 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # extracted; the verdicts of the last pass go to the recipe.
         self.enable_requirements_ledger = enable_requirements_ledger
         self._requirements: list[dict] | None = None
+        # Requirements the editor sent ({"id", "text", "kind"}, the modeling
+        # assistant's extraction): the ledger is built from them instead of
+        # extracting again, so its verdicts name the trace's requirements.
+        self._stated_requirements = stated_requirements
+        # The assistant's verdict that the request's newest message states nothing new.
+        self._followup_states_nothing_new = followup_states_nothing_new
+        # Where the ledger came from, for the recipe: "editor", "extracted" or None.
+        self._requirements_source: str | None = None
         self._requirement_verdicts: list[dict] = []
         self._requirement_verdicts_scope = ""  # the requirements and request they answered
         self._requirement_verdicts_key = ""  # the judge's cache key (source, requirements) they answer
+        # A modify run's judged files as the run found them (path -> sha256): a requirement to keep
+        # behaviour as it was is met by its files left unchanged.
+        self._seed_source_hashes: dict[str, str] | None = None
+        # A modify run's verdicts of the previous run on the tree it delivered
+        # (requirements_ledger.previous_run_verdicts); None in a create run.
+        self._previous_verdicts: list[dict] | None = None
+        self._previous_instructions: str | None = None  # the previous run's request, from its recipe
+        # Ids of the previous run's requirements this run still holds, and whether the
+        # newest messages only ask to retry or finish earlier work (then those are in scope).
+        self._previous_ids: set[int] = set()
+        self._follow_up_continues = False
+        self._replaced_ids: set[int] = set()  # previous requirements a newer message changes or removes
         # (requirement cache key, import index): one index per judged tree; see _import_index.
         self._import_index_cache: tuple[str, _requirements_ledger.ImportIndex] | None = None
         self._requirement_judgments: dict[str, list[dict]] = {}
@@ -493,6 +577,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # ``POST /cancel-smart-gen/{run_id}`` without killing the thread.
         self._should_continue = should_continue
         self.tool_calls_log: list[dict] = []
+        # ``tool_calls_log`` length at the last snapshot (None: none taken by this process).
+        self._snapshot_calls: int | None = None
+        self._snapshot_task_writes: dict[int, list[str]] = {}
         self.total_turns = 0
         # (loop key, succeeded) per non-readonly call. Success matters: counting
         # names alone flags a run of SUCCESSFUL edits as a loop.
@@ -512,9 +599,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._last_modify_warning_path: str | None = None
         self._phase2_inspection_handoff = ""
         # Escalation for an edit the executor has already rejected and the
-        # model sends again (see _escalate_repeat_rejection): the tool the
-        # next request must call, and per path the repeat count already acted on.
-        self._force_tool_next: str | None = None
+        # model sends again (see _escalate_repeat_rejection): per path the
+        # repeat count already acted on.
         self._repeat_escalations: dict[str, int] = {}
         self._compaction_count = 0
         self._generator_used: str | None = None
@@ -594,10 +680,12 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # can disable them without polluting the working tree.
         self.run_id = run_id
         self._trace: TraceWriter | NullTraceWriter = (
-            TraceWriter(self.output_dir, run_id=run_id, primary_kind=self.primary_kind)
+            TraceWriter(self.output_dir, run_id=run_id, primary_kind=self.primary_kind,
+                        usage=self._run_usage_counters, mirror=run_evidence)
             if enable_tracing
             else NullTraceWriter()
         )
+        self._keeps_run_evidence = enable_tracing and run_evidence is not None
         self._checkpointing_enabled = enable_checkpointing
         # Fingerprint is stable over the run; compute once so resume
         # validation doesn't re-hash on every turn.
@@ -626,11 +714,15 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # or a stop_reason the loop cannot answer. Traced so an interrupted
         # repair records what interrupted it, not only that it stopped.
         self._phase3_interrupt_detail: str = ""
-        # Which guard ended the Phase 3 repair loop ("no-progress streak",
-        # "plateau", "attempt cap", a budget/cancellation reason, or "all
+        # Which rule ended the Phase 3 repair loop (an attempt not kept, no
+        # edit, "attempt cap", a budget/cancellation reason, or "all
         # blockers fixed"). Traced so a run's exit can be attributed without
         # replaying the loop by hand. Report-only.
         self._phase3_exit_reason: str = "not reached"
+        # The Phase 3 round its steps are reported under ("First check",
+        # "Re-check after fix attempt 2"); see _report_round_step.
+        self._validation_round: str = "Validation"
+        self._phase3_sweep_running = False
         self._repair_progress: dict = {}
         # ``True`` once Phase 2 exits via end_turn (LLM said it's done).
         # Anything else — API error, cost cap, timeout, cancellation —
@@ -638,17 +730,22 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # possible resume. Kept separate from ``self._validation_issues``
         # because those are about Phase 3 quality, not run completion.
         self._phase2_exited_cleanly: bool = False
-        # Why Phase 2 stopped. "completed" only when the LLM signalled
-        # end_turn; otherwise one of: "api_error", "cost_cap", "timeout",
-        # "cancelled", "max_turns". The runner reads this to decide whether
-        # to warn the user that the downloaded output may be incomplete.
-        self._phase2_stop_reason: str = "max_turns"
+        # Why Phase 2 stopped: "completed" when the LLM signalled end_turn or
+        # the scaffold already covered the request; otherwise one of
+        # "api_error", "cost_cap", "timeout", "cancelled", "max_turns" (set
+        # only when the loop used every turn). Empty until Phase 2 ends. The
+        # runner reads this to decide whether to warn the user that the
+        # downloaded output may be incomplete.
+        self._phase2_stop_reason: str = ""
         # Which branch produced that reason, when the reason alone is
         # ambiguous. "validation_required" is set both by the end_turn blocker
         # gate and by the bounded-inspection handoff, two exits of very
         # different character. Traced only; the runner still reads
         # ``_phase2_stop_reason``, whose values are unchanged.
         self._phase2_stop_detail: str = ""
+        # Phase 2 was cut at its share of a budget while the model was working;
+        # only a closed checklist then shows the work was finished.
+        self._phase2_cut_at_share = False
         # Short provider error string captured when stop_reason == "api_error",
         # surfaced to the user so a rate-limit reads as such (not a mystery).
         self._phase2_api_error: str = ""
@@ -656,7 +753,6 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # model back to its open task_list items (bounded by
         # ``_MAX_TASK_NUDGES`` so a stubborn model can't loop the budget).
         self._end_turn_task_nudges: int = 0
-        self._end_turn_frontend_nudges: int = 0
         # Model-derived acceptance matrix (per entity: route/page/create),
         # computed by Phase 3 and saved in the recipe. Report-only.
         self._acceptance_matrix: dict | None = None
@@ -681,6 +777,14 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # defect the seed run shipped survives forever because later
         # runs never look at it again.
         self._seed_unresolved_issues: list[str] = []
+        # A modify run's previous version (modify_run.py): the seed recipe's findings, the
+        # Phase 2 start's validate_app result with them, and the hard blockers new since.
+        self._seed_recorded_issues: list[str] = []
+        self._seed_baseline: list[str] | None = None
+        self._seed_regressions: list[str] = []
+        # The previous version's API workflows, and those of them this run keeps for the next.
+        self._seed_workflows: list[dict] = []
+        self._carried_seed_workflows: list[dict] = []
         # Model-sync during modify (class-diagram only). When a
         # ``modify()`` instruction implies new domain entities (e.g. "add
         # authentication" → a ``User`` class), ``_derive_and_apply_model_deltas``
@@ -697,6 +801,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._model_sync_classes: list[dict] = []
         # The modify run's regeneration of the generated files (#659).
         self._regeneration: Regeneration | None = None
+        # The files the regeneration wrote, merged, moved (new path) or removed; kept across a resume.
+        self._regenerated_files: list[str] = []
         # The model the app's stored generator output came from (modify runs), to
         # rebuild the merge base after a BESSER upgrade (#659).
         self._previous_domain_model = previous_domain_model
@@ -711,6 +817,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._files_at_start: frozenset[str] = frozenset(self._workspace_file_list())
         # Files the app wrote in its test runs that this run deleted from the output.
         self._runtime_files = RuntimeFileRemoval()
+        # Files the agent wrote that name the run folder's path; deleted from the output.
+        self._scratch_files_removed: tuple[str, ...] = ()
         # The recipe this run wrote, as written; None until _save_recipe ran.
         self.saved_recipe: dict | None = None
 
@@ -727,6 +835,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._fix_target = None  # ReportedTarget | None
         self._fix_target_resolved: bool | None = None
         self._fix_target_message: str | None = None
+        # The check that exercised the target on the delivered tree, when resolved is True.
+        self._fix_target_evidence: str | None = None
 
     _LOOP_THRESHOLD = 4
     # Tighter, per-file threshold for the modify_file streak guard.
@@ -778,6 +888,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     # ==================================================================
 
     @ends_shell_session
+    @under_deadline
     def run(self, instructions: str) -> str:
         """Run the three-phase generation. Returns path to output directory."""
         if not instructions or not instructions.strip():
@@ -839,7 +950,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             self._trace.write(EVENT_VALIDATION_ISSUE, phase="phase1_5", message=issue)
 
         # -- Phase 2: LLM customization -----------------------------------
-        self._trace.write(EVENT_PHASE_ENTER, phase="phase2")
+        self._trace.write(EVENT_PHASE_ENTER, phase="phase2", compact_threshold=self._compact_threshold())
         self._run_phase2(instructions, extra_issues=phase1_issues)
         self._trace.write(
             EVENT_PHASE_EXIT, phase="phase2", turns=self.total_turns,
@@ -861,12 +972,12 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             self._save_phase3_checkpoint()
         self._trace.write(EVENT_PHASE_ENTER, phase="phase3")
         self._run_phase3_validation()
+        self._settle_open_setup()
         self._trace.write(
             EVENT_PHASE_EXIT,
             phase="phase3",
-            unresolved_blockers=sum(
-                1 for i in self._validation_issues if i.severity == "blocker"
-            ),
+            unresolved_blockers=sum(1 for i in self._validation_issues if is_completion_issue(i)),
+            not_confirmed=sum(1 for i in self._validation_issues if is_not_confirmed(i)),
             exit_reason=self._phase3_exit_reason,
         )
 
@@ -918,6 +1029,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         )
 
     @ends_shell_session
+    @under_deadline
     def resume(self, instructions: str) -> str:
         """Resume a previously-crashed run from its checkpoint.
 
@@ -977,6 +1089,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         )
         self._phase2_stop_reason = checkpoint.phase2_stop_reason
         self._phase2_exited_cleanly = checkpoint.phase2_exited_cleanly
+        self._phase2_cut_at_share = checkpoint.phase2_cut_at_share
         self._phase3_interrupted = False
         # On-disk changes survive interruption. Old scheduling history is only
         # relevant to those exact bytes; validation results are always rebuilt.
@@ -1045,7 +1158,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             phase1_issues = self._validate_phase1_output()
             for issue in phase1_issues:
                 self._trace.write(EVENT_VALIDATION_ISSUE, phase="phase1_5", message=issue)
-            self._trace.write(EVENT_PHASE_ENTER, phase="phase2_resume")
+            self._trace.write(EVENT_PHASE_ENTER, phase="phase2_resume", compact_threshold=self._compact_threshold())
             self._run_phase2(instructions, extra_issues=(
                 self._modify_scoped_issues(phase1_issues) if self._modify_mode else phase1_issues))
             self._trace.write(
@@ -1065,11 +1178,12 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             self._save_phase3_checkpoint()
         self._trace.write(EVENT_PHASE_ENTER, phase="phase3")
         self._run_phase3_validation()
+        self._settle_open_setup()
         self._trace.write(
             EVENT_PHASE_EXIT, phase="phase3",
             exit_reason=self._phase3_exit_reason,
         )
-        self._evaluate_fix_target_gate()
+        self._modify_end_checks()
 
         elapsed = time.monotonic() - self._start_time
         self._save_recipe(instructions, elapsed)
@@ -1133,6 +1247,25 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             return None
         return self.max_runtime_seconds - (time.monotonic() - self._start_time)
 
+    def _run_usage_counters(self) -> dict[str, Any]:
+        """The client's cumulative token counters and the model serving it, for the run log."""
+        usage = self.client.usage
+        counters = {key: int(getattr(usage, key, 0) or 0) for key in (
+            "api_calls", "input_tokens", "output_tokens", "cache_creation_tokens", "cache_read_tokens")}
+        counters["model"] = getattr(usage, "served_model", None) or getattr(self.client, "model", None)
+        return counters
+
+    def _safe_usage_counters(self) -> dict[str, Any]:
+        """:meth:`_run_usage_counters`, or ``{}`` for a client that keeps none (a test double)."""
+        try:
+            return self._run_usage_counters()
+        except Exception:
+            return {}
+
+    def _record_generator_output(self, record: dict) -> None:
+        """Log one generator call's files (see ``ToolExecutor.on_generated``)."""
+        self._trace.write(EVENT_GENERATOR_OUTPUT, **record)
+
     def _run_phase1(self, instructions: str) -> None:
         """Select and run the best generator, then inventory the output."""
         # Almost every BESSER generator needs a domain model. When the
@@ -1186,7 +1319,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 logger.info("Phase 1: Generated %d files", len(result.get("files", [])))
                 self._install_scaffold_frontend_dependencies()
                 if self._asks_for_frontend() and not self._has_frontend_files():
-                    note = (f"{generator_name} has no UI; the React frontend "
+                    note = (f"{generator_name} has no UI; the frontend "
                             "will be authored in the customization phase")
                     logger.info("Phase 1: %s", note)
                     if self.on_phase_details:
@@ -1579,6 +1712,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             call["outcome"] = "ok" if routing is not None else "failed"
         if routing is not None:
             self._record_routing(routing)
+        if self.target is None:
+            # Without a target only the models (a GUI model, a frontend in the scaffold) ask for a frontend.
+            logger.warning("Phase 1: target undecided; a frontend is built only if the models have one")
+            self._trace.write(EVENT_TARGET, kind=None, description="target undecided")
 
     def _record_routing(self, routing: Routing) -> None:
         """A create run's routing answer: the target and the stack no generator builds."""
@@ -1857,6 +1994,24 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         logger.info("Phase 2: locked %s, the application they write already exists",
                     ", ".join(sorted(locked)))
 
+    def _offer_test_api(self) -> None:
+        """Offer test_api, and the prompt text naming it, only while the workspace holds a
+        FastAPI backend it can drive. Called when a phase starts: the tool list opens the
+        cached prompt prefix."""
+        if self._test_api_tool is None:
+            return
+        try:
+            self._test_api_offered = bool(self._probeable_backends())
+        except Exception:
+            logger.warning("Backend discovery failed; test_api stays offered", exc_info=True)
+            self._test_api_offered = True
+        tools = [t for t in self.tools if (t.get("name") if isinstance(t, dict) else None) != "test_api"]
+        if self._test_api_offered:
+            names = [t.get("name") if isinstance(t, dict) else None for t in tools]
+            tools.insert(names.index("validate_app") if "validate_app" in names else len(tools),
+                         self._test_api_tool)
+        self.tools = tools
+
     def _ensure_gitignore(self) -> None:
         """Write a .gitignore into the output root if the run didn't author one."""
         try:
@@ -1864,10 +2019,20 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             if not os.path.exists(path):
                 with open_plain_write(path, "w", root=self.output_dir, encoding="utf-8") as fh:
                     fh.write(self._GITIGNORE)
+                record_generated_files(self.output_dir, [".gitignore"], "gitignore", get_besser_version())
         except OSError:
             logger.debug("could not write .gitignore", exc_info=True)
 
     def _run_phase2(self, instructions: str, extra_issues: list[str] | None = None) -> None:
+        """Run Phase 2 with Phase 3's share of the clock held back until it returns."""
+        self.deadline.hold(self.max_runtime_seconds * _PHASE3_BUDGET_SHARE)
+        self._phase2_cut_at_share = False
+        try:
+            self._run_phase2_turns(instructions, extra_issues)
+        finally:
+            self.deadline.hold(0)
+
+    def _run_phase2_turns(self, instructions: str, extra_issues: list[str] | None = None) -> None:
         """Run the Phase 2 customisation loop.
 
         Before starting, do ONE cheap LLM call (~$0.01) to scope the
@@ -1884,12 +2049,15 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # dirs next to the assembled backend/.
         self._drop_redundant_generator_tools()
         self._lock_application_generators()
+        self._offer_test_api()
 
         # Ship a .gitignore so a pushed/cloned repo doesn't carry caches, a
         # runtime DB, node_modules, or a leaked .env. Deterministic — no LLM.
         self._ensure_gitignore()
 
         scoped_issues = list(extra_issues) if extra_issues else []
+        if self._modify_mode:
+            scoped_issues = self._modify_opening_issues(scoped_issues)
         # "Issues to fix" takes blockers only; warnings stay in validate_app, marked advisory.
         scoped_issues.extend(issue for issue in self._validate_app()["issues"]
                              if _classify_issue(issue).severity == "blocker")
@@ -1936,6 +2104,13 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 )
                 call["outcome"] = "failed" if gap_tasks is None else "ok"
                 call["tasks"] = len(gap_tasks or [])
+            # The planner list carries the derived-enum initial-state items as text;
+            # no other check covers them (see _collect_task_issues).
+            enum_items = set(_note_derived_enum_initial_state(
+                self.domain_model, _requirements_ledger.original_request(planner_instructions)))
+            if gap_tasks and enum_items:
+                gap_tasks = [{"text": t, "unchecked": True} if isinstance(t, str) and t in enum_items else t
+                             for t in gap_tasks]
             # The planning call may have switched the client to its
             # outage fallback model — surface that before Phase 2 turns.
             self._notify_model_switch()
@@ -1974,6 +2149,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                         self._generator_used,
                     )
                     self._phase2_exited_cleanly = True
+                    self._phase2_stop_reason = "completed"
+                    self._phase2_stop_detail = "scaffold already covers the request"
                     if self.on_progress:
                         self.on_progress(
                             1, "__customize_skipped__",
@@ -2014,10 +2191,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             "your turn runs it by itself: call it after code changes, never just before you finish. "
             "Fix import/DDL errors first, then schema-router contracts and business "
             "behavior. Schema edits require updating all consumers and forms. "
-            "Use test_api to exercise complete workflows with persisted values and negative "
-            "cases from the original specification, not just health endpoints. Read routes "
-            "and request schemas first. "
-            "Never announce the app is functional before verification."
+            + ("Use test_api to exercise complete workflows with persisted values and negative "
+               "cases from the original specification, not just health endpoints. Read routes "
+               "and request schemas first. " if self._test_api_offered else "")
+            + "Never announce the app is functional before verification."
         )
 
         _cost_warning_fired = False
@@ -2032,9 +2209,17 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         no_information_progress = 0
         inspected: set[tuple[str, str]] = set()
         observed_plans = {self._repair_obligations_revision()}
+        observed_results: set[str] = set()
+        shown_blocker_report: tuple | None = None
         inspection_nudged = False
         self._phase2_inspection_handoff = ""
-        for turn in range(start_turn, self.max_turns):
+        call_limit = self._phase2_call_limit()
+        phase2_seconds = self.deadline.work_remaining()
+        budget_announced = 0.0
+        for turn in range(start_turn, self._turn_guard()):
+            if self._tool_calls_executed() >= call_limit:  # Phase 2's share of the work
+                self._end_phase2_work_share(call_limit)
+                break
             self.total_turns = turn + 1
             self._trace.write(EVENT_TURN_START, turn=turn + 1)
 
@@ -2047,45 +2232,46 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 self._phase2_stop_reason = "cancelled"
                 break
 
-            # -- Runtime timeout check ------------------------------------
-            if self._start_time is not None:
-                elapsed = time.monotonic() - self._start_time
-                if elapsed > self.max_runtime_seconds:
-                    logger.warning(
-                        "Runtime timeout: %.1fs > %ds", elapsed, self.max_runtime_seconds,
-                    )
-                    self._phase2_stop_reason = "timeout"
-                    break
-
-            # -- Pre-call cost check ---------------------------------------
-            # The post-call check below catches the overrun; this one
-            # prevents firing ANOTHER billable request when the budget
-            # is already spent (e.g. after an expensive streaming turn).
-            if self.client.usage.estimated_cost >= self.max_cost_usd:  # reached is spent
+            # -- Phase 2's share of the time and spend ----------------------
+            if self.deadline.out_of_time():
+                self._stop_phase2_on_time()
+                break
+            # Checked before the call too, so no request starts on a spent share.
+            cost_limit = self.max_cost_usd * (1 - _PHASE3_BUDGET_SHARE)
+            if self.client.usage.estimated_cost >= cost_limit:  # reached is spent
                 logger.warning(
-                    "Cost cap already reached before turn %d: $%.4f >= $%.4f",
-                    turn + 1, self.client.usage.estimated_cost, self.max_cost_usd,
+                    "Phase 2 cost share spent before turn %d: $%.4f >= $%.4f",
+                    turn + 1, self.client.usage.estimated_cost, cost_limit,
                 )
-                self._phase2_stop_reason = "cost_cap"
+                self._stop_phase2_on_spend()
                 break
 
-            logger.info("LLM generation turn %d/%d", turn + 1, self.max_turns)
+            logger.info("LLM generation turn %d (%d of %d tool calls made)",
+                        turn + 1, self._tool_calls_executed(), call_limit)
 
             messages = self._maybe_compact(messages)
 
             try:
-                response = self._chat_with_pending_force(system, messages)
+                response = self._chat_turn(system, messages)
             except InvalidApiKeyError:
                 # Auth failures must PROPAGATE so the runner reports INVALID_KEY,
                 # not a misleading INTERNAL/api_error or a fake "incomplete
                 # success".
                 raise
+            except DeadlineReached as e:
+                logger.warning("Phase 2 stopped on turn %d: %s", turn + 1, e)
+                if e.cancelled:
+                    self._phase2_stop_reason = "cancelled"
+                else:
+                    self._stop_phase2_on_time()
+                break
             except Exception as e:
                 logger.error("LLM API call failed on turn %d: %s", turn + 1, e)
                 self._phase2_stop_reason = "api_error"
                 self._phase2_api_error = str(e)
                 self._phase2_quota_exhausted = _is_quota_exhausted(e)
                 break
+            self._trace.write(EVENT_TURN_END, turn=turn + 1)
 
             # The call may have switched the client to its outage
             # fallback model mid-flight — surface that to the UI.
@@ -2096,18 +2282,18 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             # Every turn's cost, the closing end_turn reply included. The token
             # counters show a run that re-bills its history (a low cache hit rate).
             self._trace_cost_update(turn + 1)
-            if not _cost_warning_fired and current_cost > self.max_cost_usd * 0.8:
+            if not _cost_warning_fired and current_cost > cost_limit * 0.8:
                 logger.warning(
-                    "Cost at 80%% of cap: $%.4f / $%.4f",
-                    current_cost, self.max_cost_usd,
+                    "Cost at 80%% of Phase 2's share: $%.4f / $%.4f",
+                    current_cost, cost_limit,
                 )
                 _cost_warning_fired = True
-            if current_cost > self.max_cost_usd:
+            if current_cost > cost_limit:
                 logger.warning(
-                    "Cost cap reached: $%.4f > $%.4f",
-                    current_cost, self.max_cost_usd,
+                    "Phase 2 cost share spent: $%.4f > $%.4f",
+                    current_cost, cost_limit,
                 )
-                self._phase2_stop_reason = "cost_cap"
+                self._stop_phase2_on_spend()
                 break
 
             if response["stop_reason"] == "end_turn":
@@ -2117,28 +2303,34 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 # rather than looping the user's budget away; Phase 3
                 # still validates whatever state it left).
                 execution_report = self._validate_app()
-                # Static frontend blockers go back to the model once (it has the
-                # context here); any other blocker ends Phase 2 as before.
-                frontend_blockers = ([issue for issue in self._static_frontend_issues()
-                                      if _classify_issue(issue).severity == "blocker"]
-                                     if execution_report["blocker_count"] else [])
-                if execution_report["blocker_count"] > len(frontend_blockers):
-                    self._phase2_stop_reason = "validation_required"
-                    self._phase2_stop_detail = "end_turn blocker gate"
-                    self._phase2_exited_cleanly = False
-                    break
+                # Every observed blocker goes back to the model, which has the context
+                # here; Phase 2 hands off only when it ends the turn again on the same
+                # tree and the same blockers.
+                blockers = [issue for issue in execution_report["issues"]
+                            if _classify_issue(issue).severity == "blocker"]
+                report_state = (self._workspace_revision(), tuple(blockers))
                 open_items = self.executor.open_tasks()
                 _has_verified_open = any(t.get("verify") for t in open_items)
                 _nudge_cap = (self._MAX_TASK_NUDGES + 2 if _has_verified_open
                               else self._MAX_TASK_NUDGES)
-                frontend_nudge = (bool(frontend_blockers)
-                                  and self._end_turn_frontend_nudges < self._MAX_FRONTEND_BLOCKER_NUDGES)
-                if (open_items or frontend_nudge) and self._end_turn_task_nudges < _nudge_cap:
-                    self._end_turn_task_nudges += 1
-                    self._end_turn_frontend_nudges += frontend_nudge
+                # Blockers do not shorten the nudges a verified open item gets: an
+                # unchanged blocker report spends one of them instead of handing off.
+                verified_nudge = _has_verified_open and self._end_turn_task_nudges < _nudge_cap
+                report_blockers = bool(execution_report["blocker_count"])
+                repeated_blockers = report_blockers and report_state == shown_blocker_report
+                if repeated_blockers and not verified_nudge:
+                    self._phase2_stop_reason = "validation_required"
+                    self._phase2_stop_detail = "end_turn blocker gate"
+                    self._phase2_exited_cleanly = False
+                    break
+                if report_blockers or (open_items and self._end_turn_task_nudges < _nudge_cap):
+                    if report_blockers:
+                        shown_blocker_report = report_state
+                    if not report_blockers or repeated_blockers:
+                        self._end_turn_task_nudges += 1
                     logger.info(
-                        "end_turn with %d open checklist item(s), %d frontend blocker(s) — nudge %d/%d",
-                        len(open_items), len(frontend_blockers) if frontend_nudge else 0,
+                        "end_turn with %d open checklist item(s), %d blocker(s) — nudge %d/%d",
+                        len(open_items), execution_report["blocker_count"],
                         self._end_turn_task_nudges, _nudge_cap,
                     )
                     # An empty end_turn reply (no text, no tool calls) is not
@@ -2150,13 +2342,17 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                             {"role": "assistant", "content": response["content"]}
                         )
                     parts = []
-                    if frontend_nudge:
-                        shown = "\n".join(f"  - {clip_finding(issue)}"
-                                          for issue in frontend_blockers[:self._VALIDATE_APP_MAX_ISSUES])
+                    if report_blockers:
+                        shown = "\n".join(f"  - {issue}" for issue in blockers)
+                        more = execution_report["blocker_count"] - len(blockers)
                         parts.append(
-                            "Ending the turn ran validate_app, and the frontend still has these "
-                            f"blockers:\n{shown}\nFix them now; Phase 2 ends with them unfixed "
-                            "the next time you end the turn.")
+                            "Ending the turn ran validate_app, and it still reports these "
+                            f"blockers:\n{shown}" + (f"\n  (+{more} more)" if more > 0 else "")
+                            + "\nFix them now." + (
+                                "" if _has_verified_open
+                                and self._end_turn_task_nudges < _nudge_cap else
+                                " Ending the turn again without changing them hands "
+                                "the run to validation with them unfixed."))
                     if open_items:
                         listing = "\n".join(
                             f"  {t['id']}. {t['text']}" for t in open_items
@@ -2166,13 +2362,11 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                             "are still OPEN:\n"
                             f"{listing}\n"
                             "Finish each one now. If an item is already "
-                            "complete, mark it with task_list(action='done', "
-                            "id=N, evidence=[{id, path, quote}]) when no verifier "
-                            "is attached. If required work cannot be finished, "
-                            "record task_list(action='blocked', id=N, reason=...). "
-                            "If the user did not ask for it, close it "
-                            "honestly with task_list(action='drop', id=N, "
-                            "reason=...) - never mark undone work done. End "
+                            "complete, mark it with task_list(done=[...]). If "
+                            "required work cannot be finished, record "
+                            "task_list(blocked=[{id, reason}]). If the user did "
+                            "not ask for it, close it honestly with "
+                            "task_list(drop=[{id, reason}]) - never mark undone work done. End "
                             "the turn only when every item is closed."
                         )
                     messages.append({
@@ -2180,11 +2374,6 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                         "content": [{"type": "text", "text": "\n\n".join(parts)}],
                     })
                     continue
-                if frontend_blockers:
-                    self._phase2_stop_reason = "validation_required"
-                    self._phase2_stop_detail = "end_turn frontend blocker gate"
-                    self._phase2_exited_cleanly = False
-                    break
                 logger.info("LLM completed after %d turns", turn + 1)
                 self._phase2_exited_cleanly = True
                 self._phase2_stop_reason = "completed"
@@ -2201,43 +2390,59 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 if source_changed:
                     inspected.clear()
                     observed_plans.clear()
+                    observed_results.clear()
+                    inspection_nudged = False  # the next stretch gets its own reminder
                 novel_inspection = self._record_novel_inspections(tool_blocks, tool_results, inspected)
+                novel_result = self._record_novel_results(tool_blocks, tool_results, observed_results)
                 plan = self._repair_obligations_revision()
                 novel_plan = plan not in observed_plans
                 observed_plans.add(plan)
-                no_source_progress = 0 if source_changed else no_source_progress + 1
-                no_information_progress = (0 if source_changed or novel_inspection or novel_plan
-                                           else no_information_progress + 1)
+                # Counted in executed calls, so batching does not change how long a model may verify.
+                no_source_progress = 0 if source_changed else no_source_progress + len(tool_blocks)
+                no_information_progress = (0 if source_changed or novel_inspection or novel_result or novel_plan
+                                           else no_information_progress + len(tool_blocks))
                 last_progress_revision = revision
-                handoff = (no_information_progress >= self._PHASE2_STAGNANT_TURNS
-                           or no_source_progress >= self._PHASE2_INSPECTION_TURNS)
-                if not inspection_nudged and no_source_progress >= self._PHASE2_STAGNANT_TURNS:
+                stagnant = no_information_progress >= self._PHASE2_STAGNANT_CALLS
+                # The reminder is always delivered before a handoff: one turn after it, at the earliest.
+                handoff = stagnant and inspection_nudged
+                if not inspection_nudged and (stagnant or no_source_progress >= self._PHASE2_INSPECTION_CALLS):
                     inspection_nudged = True
+                    open_items = self.executor.open_tasks()
                     messages.append({"role": "user", "content": [{"type": "text", "text": (
-                        "<system-reminder>You have inspected/planned without changing source for "
-                        f"{no_source_progress} turns. New successful reads are useful, but inspection is bounded. "
-                        "Use the code already inspected to implement one coherent missing behavior, "
-                        "or use test_api/task_list evidence to verify behavior already present. "
-                        "Do not make cosmetic edits to reset progress or repeat unchanged reads. "
+                        "<system-reminder>You have made "
+                        f"{no_source_progress} tool calls without changing source. New results are useful, "
+                        "but inspection is bounded. "
+                        "Use the code already inspected to implement one coherent missing behavior"
+                        + (", or use test_api to verify behavior already present. "
+                           if self._test_api_offered else ". ") +
+                        "Do not make cosmetic edits to reset progress or repeat unchanged reads or commands. "
                         "If a prerequisite prevents progress, record the concrete blocker. "
-                        "The next stage will retain unresolved work, not treat inspection as completion.</system-reminder>"
+                        "The next stage will retain unresolved work, not treat inspection as completion."
+                        + ("\n\nThese checklist items are still OPEN; close each one with task_list as done, "
+                           "blocked with its reason, or dropped if the user did not ask for it:\n"
+                           + "\n".join(f"  {t['id']}. {t['text']}" for t in open_items) if open_items else "")
+                        + "</system-reminder>"
                     )}]})
                 if handoff:
                     self._phase2_stop_reason = "validation_required"
                     self._phase2_stop_detail = (
                         f"inspection handoff (no source change for {no_source_progress} "
-                        f"turns, no new information for {no_information_progress})")
+                        f"tool calls, no new information for {no_information_progress})")
                     paths = sorted({path for path, _ in inspected})
                     self._phase2_inspection_handoff = (
                         f"Phase 2 inspected {len(inspected)} distinct successful source excerpts and "
                         f"{len(observed_plans)} task/scenario states since the last source change. "
-                        f"No source change for {no_source_progress} turns; no new inspection/plan for "
-                        f"{no_information_progress} turns. Inspected paths: {', '.join(paths[:12]) or 'none'}"
+                        f"No source change for {no_source_progress} tool calls; no new result for "
+                        f"{no_information_progress} calls. Inspected paths: {', '.join(paths[:12]) or 'none'}"
                         + (" (additional paths omitted)" if len(paths) > 12 else "")
                         + ". This is an inspection handoff, not verification. Use the listed source and "
                         "concrete diagnostics to implement or verify the next unresolved behavior; avoid restarting a full-file tour."
                     )
                     logger.warning("Phase 2: bounded inspection/no-progress limit; switching to diagnostic-led repair")
+                if not handoff:
+                    budget_announced, reminder = self._budget_reminder(call_limit, phase2_seconds, budget_announced)
+                    if reminder:
+                        messages.append(reminder)
 
                 # Per-file modify-loop guard. After the tool_results are
                 # appended, check whether the LLM has just made a streak
@@ -2289,7 +2494,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                     )
                     continue
 
-                self._phase2_stop_reason = "api_error"
+                # Its own stop reason: the provider answered, so it is not a provider error.
+                self._phase2_stop_reason = "output_limit"
                 self._phase2_api_error = (
                     "The model hit its output token limit"
                     + (f" ({current_max_tokens} tokens)" if current_max_tokens else "")
@@ -2317,6 +2523,66 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 self._phase2_stop_reason = "api_error"
                 self._phase2_api_error = f"unexpected stop_reason: {response['stop_reason']}"
                 break
+        else:
+            # No break: the runaway guard on turns ended Phase 2.
+            self._phase2_stop_reason = "max_turns"
+            self._phase2_stop_detail = f"turn guard reached ({self._turn_guard()} turns)"
+
+    def _end_phase2_work_share(self, call_limit: int) -> None:
+        """Phase 2 made the tool calls it may make: its share, or, with no share
+        kept for repair, the whole budget, a step limit."""
+        budget = self._call_budget()
+        if call_limit < budget:
+            self._hand_off_phase2_share("tool-call", f"{budget - call_limit} of {budget} calls")
+        else:
+            self._phase2_stop_reason = "max_turns"
+
+    def _stop_phase2_on_time(self) -> None:
+        """No LLM call may start in Phase 2: the runtime cap is reached, or only Phase 2's share of it."""
+        if self.deadline.cap_reached():
+            logger.warning("Runtime cap of %ds reached", self.max_runtime_seconds)
+            self._phase2_stop_reason = "timeout"
+        else:
+            self._hand_off_phase2_share(
+                "time", f"{self.max_runtime_seconds * _PHASE3_BUDGET_SHARE:.0f} of {self.max_runtime_seconds} s")
+
+    def _stop_phase2_on_spend(self) -> None:
+        """Phase 2 spent the cost cap, or only its share of it."""
+        if self.client.usage.estimated_cost >= self.max_cost_usd:
+            self._phase2_stop_reason = "cost_cap"
+        else:
+            self._hand_off_phase2_share(
+                "cost", f"${self.max_cost_usd * _PHASE3_BUDGET_SHARE:.2f} of ${self.max_cost_usd:.2f}")
+
+    def _hand_off_phase2_share(self, meter: str, reserved: str) -> None:
+        """Phase 2 used its share of one budget, not the budget: it hands off to
+        validation, and Phase 3 decides how the run ends."""
+        self._phase2_stop_reason = "validation_required"
+        self._phase2_exited_cleanly = False
+        self._phase2_cut_at_share = True
+        self._phase2_stop_detail = f"{meter} share used ({reserved} reserved for {self._phase3_work()})"
+        logger.warning("Phase 2: %s", self._phase2_stop_detail)
+
+    def _phase3_work(self) -> str:
+        """What Phase 3 does with the share Phase 2 leaves it."""
+        return "validation and repair" if self.auto_fix_issues else "validation"
+
+    def _tool_calls_executed(self) -> int:
+        """Tool calls the model's turns executed in this run; Phase 1's generator run is not one."""
+        return sum(1 for call in self.tool_calls_log if call.get("turn", 0) > 0)
+
+    def _call_budget(self) -> int:
+        """The run's work budget in executed tool calls."""
+        return self.max_turns * _CALLS_PER_TURN
+
+    def _turn_guard(self) -> int:
+        """Turns after which the run stops whatever budget is left: a runaway guard."""
+        return self.max_turns * _CALLS_PER_TURN
+
+    def _phase2_call_limit(self) -> int:
+        """Tool calls Phase 2 may make; with auto-fix on the rest is kept for Phase 3's repair loop."""
+        budget = self._call_budget()
+        return budget - int(budget * _PHASE3_BUDGET_SHARE) if self.auto_fix_issues else budget
 
     # Above this the request is not repeated as the first user message. The
     # system prompt already carries it whole ("## User request"), and a second
@@ -2353,6 +2619,61 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 "off — re-state only what you still need to write."
             ),
         }]}
+
+    @staticmethod
+    def _record_novel_results(tool_blocks, tool_results, seen) -> bool:
+        """Credit a successful result of any tool but ``read_file`` that was not
+        seen before; a failed call or command is no progress. Digits and UUIDs are
+        masked, so ports, ids, timings and timestamps do not make a repeated
+        command look new."""
+        names = {block.id: block.name for block in tool_blocks}
+        novel = False
+        for result in tool_results:
+            name, content = names.get(result.get("tool_use_id")), result.get("content")
+            if name in (None, "read_file") or not isinstance(content, str):
+                continue
+            try:
+                payload = json.loads(content)
+            except (TypeError, ValueError):
+                payload = None
+            if isinstance(payload, dict) and (payload.get("error") or payload.get("success") is False
+                                              or payload.get("exit_code") not in (None, 0)):
+                continue
+            masked = _re.sub(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}|[0-9]+", "0", content)
+            key = hashlib.sha256(f"{name}\0{masked}".encode("utf-8")).hexdigest()
+            if key not in seen and len(seen) < 1000:
+                seen.add(key)
+                novel = True
+        return novel
+
+    # Shares of Phase 2's budget at which the model is told what is left.
+    _BUDGET_REMINDER_AT = (0.5, 0.75, 0.9)
+
+    def _budget_reminder(self, call_limit: int, phase2_seconds: float | None,
+                         announced: float) -> tuple[float, dict | None]:
+        """The highest share of Phase 2's budget now used, and the message telling the
+        model what is left when it passed a share not announced yet. Sent after tool
+        results, never in the system prompt, so the cached prefix does not change."""
+        calls_left = call_limit - self._tool_calls_executed()
+        cost_limit = self.max_cost_usd * (1 - _PHASE3_BUDGET_SHARE)
+        spent = self.client.usage.estimated_cost
+        seconds_left = self.deadline.work_remaining()
+        used = max(1 - calls_left / call_limit, spent / cost_limit if cost_limit > 0 else 0.0,
+                   1 - seconds_left / phase2_seconds if seconds_left is not None and phase2_seconds else 0.0)
+        reached = max((mark for mark in self._BUDGET_REMINDER_AT if used >= mark), default=0.0)
+        if reached <= announced:
+            return announced, None
+        left = [f"{max(0, calls_left)} tool calls"]
+        if seconds_left is not None:
+            left.append(f"{max(0.0, seconds_left) / 60:.0f} minutes")
+        if spent > 0:  # a model with no price reports none
+            left.append(f"${max(0.0, cost_limit - spent):.2f}")
+        text = (f"<system-reminder>{reached:.0%} of this phase's budget is used. About {', '.join(left)} "
+                f"remain before the run moves on to {self._phase3_work()}. Keep working through the open "
+                "items. Record any you cannot finish with what remains as blocked in task_list, with "
+                "the reason; never mark undone work done."
+                "</system-reminder>")
+        return reached, {"role": "user", "content": [{"type": "text", "text": text}]}
 
     @staticmethod
     def _record_novel_inspections(tool_blocks, tool_results, seen) -> bool:
@@ -2399,7 +2720,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         if not self.on_progress:
             return
         if not getattr(self, "_progress_takes_detail", True):
-            self.on_progress(turn, tool, status)
+            try:
+                self.on_progress(turn, tool, status)
+            except Exception:
+                logger.debug("on_progress callback raised; continuing", exc_info=True)
             return
         try:
             self.on_progress(turn, tool, status, detail)
@@ -2454,7 +2778,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         args = getattr(block, "input", None)
         # Shell calls share the workspace, its venv and the probe's state file;
         # run in parallel they killed each other's processes and crossed ports.
-        if name in ("run_command", "install_dependencies"):
+        if name in _SHELL_TOOLS:
             return "shell"
         if name in self._WRITE_TOOLS and isinstance(args, dict):
             path = args.get("path")
@@ -2487,6 +2811,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # one that batches, which makes MAX_TURNS mean wildly different things
         # per model — invisible unless this is recorded.
         self._blocks_in_turn = len(tool_blocks)
+        # Calls finish (and are traced) out of order; this keeps the model's.
+        self._batch_index = {id(block): index for index, block in enumerate(tool_blocks)}
         return self._run_tool_blocks(tool_blocks, turn)
 
     def _run_tool_blocks(self, tool_blocks: list, turn: int) -> list[dict]:
@@ -2506,6 +2832,19 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             results.extend(self._execute_single_tool(b, turn) for b in validations)
             order = {b.id: index for index, b in enumerate(tool_blocks)}
             return sorted(results, key=lambda result: order[result["tool_use_id"]])
+
+        # A shell call sees every write the model emitted before it, and no
+        # write runs during it: the batch is cut into stages at each shell call
+        # that has a write before or after it. Reads stay parallel within a stage.
+        names = [getattr(b, "name", None) for b in tool_blocks]
+        first_shell = next((i for i, name in enumerate(names) if name in _SHELL_TOOLS), None)
+        if first_shell is not None and any(name in self._WRITE_TOOLS for name in names):
+            if first_shell:
+                return (self._run_tool_blocks(tool_blocks[:first_shell], turn)
+                        + self._run_tool_blocks(tool_blocks[first_shell:], turn))
+            next_write = next((i for i, name in enumerate(names) if name in self._WRITE_TOOLS), len(names))
+            return (self._run_tool_blocks(tool_blocks[:next_write], turn)
+                    + self._run_tool_blocks(tool_blocks[next_write:], turn))
 
         groups: dict[str, list] = {}
         for block in tool_blocks:
@@ -2542,7 +2881,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 
         tool_results: list[dict] = []
         with ThreadPoolExecutor(max_workers=_MAX_PARALLEL_WORKERS) as pool:
-            futures = {pool.submit(_run_group, blocks): blocks
+            # Each group runs in a copy of this thread's context: the run's deadline and id.
+            futures = {pool.submit(contextvars.copy_context().run, _run_group, blocks): blocks
                        for blocks in groups.values()}
             for future in as_completed(futures):
                 blocks = futures[future]
@@ -2584,8 +2924,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         elif tool_name == "task_list":
             # Bookkeeping is not a loop when it works, which is why task_list
             # is read-only for loop purposes. A streak of REFUSED calls (e.g.
-            # marking tasks done one per turn, each rejected for supplying no
-            # evidence) is a loop. _is_stuck only fires when every call in the window
+            # marking items done one per turn while their checks fail) is a
+            # loop. _is_stuck only fires when every call in the window
             # failed, so a healthy batch still never trips it.
             loop_key = "task_list"
         else:
@@ -2625,7 +2965,9 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                                   getattr(self, "_blocks_in_turn", 1)),
             )
 
+        started = time.monotonic()
         execution = self.executor.execute_typed(tool_name, block.input)
+        seconds = round(time.monotonic() - started, 3)
         # A landed edit may have satisfied a checkable item. Close it here
         # rather than making the model spend turns arguing for it.
         if execution.succeeded and tool_name in _WRITE_TOOLS_ON_RECORD:
@@ -2634,9 +2976,6 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 execution.payload["checklist_closed"] = closed
                 logger.info("Auto-closed %d verified checklist item(s): %s",
                             len(closed), [item["id"] for item in closed])
-        recovery = execution.payload.get("edit_recovery", {})
-        if recovery.get("next_tool") in {"read_file", "replace_file_lines", "modify_file"}:
-            self._force_tool_next = recovery["next_tool"]
         result = execution.to_json()
         success = execution.succeeded
 
@@ -2664,7 +3003,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 "Marking an item done is bookkeeping, not progress, and the "
                 "checklist will keep refusing items you have not implemented. "
                 "Stop closing items: open the file named by the next unresolved "
-                "task and make the change, then cite it."
+                "task and make the change; a checked item closes by itself once its check passes."
             )
             result = dumps_for_model(result_obj)
 
@@ -2692,13 +3031,18 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             self._record_full_tool_input(turn + 1, tool_name, block.input, success, execution.status)
         self._trace.write(
             EVENT_TOOL_CALL,
+            # Unredacted but for test_api header values: the record redacts it, the run's own key first.
+            uncut=({"input": _without_header_values(tool_name, block.input), "result": result}
+                   if self._keeps_run_evidence else None),
             turn=turn + 1,
             tool=tool_name,
             success=success,
             status=execution.status,
+            seconds=seconds,
             input=logged_input,
             # How many calls the model batched into this turn (1 = no batching).
             blocks_in_turn=getattr(self, "_blocks_in_turn", 1),
+            batch_index=getattr(self, "_batch_index", {}).get(id(block), 0),
             # What the model was told, redacted and bounded.
             result=_trace_result_excerpt(result),
             # WHY it failed, and which edit tier matched when it succeeded —
@@ -2763,6 +3107,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 source_revision=self._workspace_revision() if phase == "phase3" else "",
                 phase2_stop_reason=self._phase2_stop_reason,
                 phase2_exited_cleanly=self._phase2_exited_cleanly,
+                phase2_cut_at_share=self._phase2_cut_at_share,
                 repair_progress=self._repair_progress if phase == "phase3" else {},
                 locked_generators=sorted(self.executor.locked_generators),
                 modify=self._modify_checkpoint_state(),
@@ -2808,7 +3153,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     def _finish_checkpoint(self) -> None:
         """Keep recovery state until both customization and validation finished."""
         if (self._phase2_exited_cleanly and not self._phase3_interrupted
-                and not any(is_completion_issue(issue) for issue in self._validation_issues)):
+                and not any(is_completion_issue(issue) or is_not_confirmed(issue)
+                            for issue in self._validation_issues)):
             delete_checkpoint(self.output_dir)
         elif self._checkpoint_phase == "phase3":
             self._save_phase3_checkpoint()
@@ -2904,6 +3250,13 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         from besser.spec_driven_agent.validation.frontend_schema import collect_frontend_schema_issues
 
         raw.extend(collect_frontend_schema_issues(self.output_dir))
+        try:
+            from besser.spec_driven_agent.validation.api_call_shapes import collect_api_call_issues
+
+            raw.extend(collect_api_call_issues(self.output_dir))
+        except Exception as exc:
+            logger.warning("API call shape validation failed", exc_info=True)
+            raw.append(_check_did_not_run("the API call shape check", f"it crashed: {type(exc).__name__}"))
         # Only a finding that PROVES the app cannot boot may skip the probe.
         # Skipping on any static finding (a frontend field, a schema mismatch)
         # means a weak model, which always leaves something static behind,
@@ -2970,6 +3323,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         cached = getattr(self, "_runtime_probe_cache", None)
         if cached and cached[0] == revision:
             return list(cached[1])
+        if self._phase3_sweep_running:
+            self._report_round_step("starting the app's backend and creating test records")
         issues: list[str] = []
         mapper_issues = _import_smoke_issues(self.output_dir)
         issues.extend(mapper_issues)
@@ -3002,8 +3357,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         construct, is not evidence of a defect - but it is not evidence of a
         working app either. Only a spec-derived scenario that created a record
         and read it back retires one. Where nothing retires it, the finding is
-        re-prefixed ``runtime unverified:`` so it reaches the fix loop as a
-        blocker instead of a warning nothing consumes.
+        re-prefixed ``runtime unverified:``: not confirmed, listed for the user,
+        never a blocker.
         """
         from besser.spec_driven_agent.planning.mutation_inventory import route_serves
         from besser.spec_driven_agent.validation.api_probe import confirmed_create_paths, declares_failure
@@ -3039,8 +3394,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                     continue
                 item = "runtime unverified: " + item
             elif item.startswith("action unverified: "):
-                # Same shape as the create side. Without this promotion the
-                # finding stays a warning the blocker-only fix loop ignores.
+                # Same shape as the create side.
                 if settled(_re.match(r"action unverified: (.+?): POST (\S+) -", item), exercised):
                     continue
                 item = "runtime unverified: " + item
@@ -3069,7 +3423,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             return []
         try:
             from besser.spec_driven_agent.validation.acceptance import build_acceptance_matrix, matrix_issues
-            self._acceptance_matrix = build_acceptance_matrix(self.output_dir, self.domain_model)
+            self._acceptance_matrix = build_acceptance_matrix(self.output_dir, self.domain_model,
+                                                              gui_model=self.gui_model)
             return matrix_issues(self._acceptance_matrix)
         except Exception as exc:
             logger.warning("Acceptance matrix computation failed", exc_info=True)
@@ -3084,44 +3439,51 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             logger.warning("Frontend form validation failed", exc_info=True)
             return [_check_did_not_run("the frontend form check", f"it crashed: {type(exc).__name__}")]
 
-    def _static_frontend_issues(self) -> list[str]:
-        """Phase 3's frontend source checks that need no build or node: shown by validate_app too.
-
-        The acceptance matrix is left out with a GUI model: those screens are the
-        user's scope, and the matrix would ask for pages they did not model.
-        """
-        if not self._has_frontend_files():
-            return []
-        from besser.spec_driven_agent.validation.frontend_resolution import collect_frontend_resolution_issues
-
-        return [*self._collect_frontend_contract_issues(), *collect_frontend_resolution_issues(self.output_dir),
-                *self._frontend_form_issues(),
-                *(self._acceptance_matrix_issues() if self.gui_model is None else [])]
-
     def _validate_app(self) -> dict:
-        """Model-facing, revision-bound diagnostics with no additional LLM cost."""
+        """The final gate's deterministic checks (:meth:`_verify_workspace`), for the agent.
+
+        The requirements judgment is not run again: its last verdicts are listed.
+        """
+        from besser.spec_driven_agent.validation.ui_probe import NOT_RUN_PREFIX
+
         # Phase 3's last requirement judgment (no new call): a blocker the run holds is
         # never answered with "verified". Empty until the judge has run.
         ledger = [issue for issue in _requirements_ledger.ledger_issues(self._requirement_verdicts)
-                  if _classify_issue(issue).severity == "blocker"]
-        revision = self._workspace_revision()
-        key = (revision, tuple(ledger))
-        if self._app_validation_cache and self._app_validation_cache[0] == key:
+                  if _classify_issue(issue).severity == "blocker" or is_not_confirmed(issue)]
+
+        # An install changes findings without changing the revision.
+        def cache_key() -> tuple:
+            return self._workspace_revision(), tuple(ledger), self._install_state()
+
+        if self._app_validation_cache and self._app_validation_cache[0] == cache_key():
             return self._app_validation_cache[1]
-        raw = self._collect_execution_issues()
-        # A static frontend warning (e.g. an entity with no page) is reported, not refused: say so.
-        raw += [issue if _classify_issue(issue).severity == "blocker" else f"{_ADVISORY_PREFIX}{issue}"
-                for issue in dict.fromkeys(self._static_frontend_issues()) if issue not in raw]
+        checked = self._verify_workspace()
         if ledger and self._requirement_cache_key(self._requirements_to_judge()) != self._requirement_verdicts_key:
             # Judged on other source than the judge would read now: the edit may have settled
             # it, and finishing judges it again. An edit the judge does not read changes nothing.
             ledger = [f"{_ADVISORY_PREFIX}judged before your latest edits; it is re-judged when you finish: {issue}"
                       for issue in ledger]
-        raw += ledger
-        issues = sorted((_classify_issue(s) for s in raw), key=self._repair_priority)
+
+        def skipped(issue: ValidationIssue) -> bool:
+            return is_not_confirmed(issue) or issue.message.startswith(NOT_RUN_PREFIX)
+
+        # A warning is reported, not refused: say so.
+        shown = [issue if issue.severity == "blocker" or skipped(issue)
+                 else ValidationIssue(issue.severity, f"{_ADVISORY_PREFIX}{issue.message}")
+                 for issue in checked]
+        issues = sorted([*shown, *map(_classify_issue, ledger)],
+                        key=lambda issue: (issue.severity != "blocker", self._repair_priority(issue)))
         blockers = [issue for issue in issues if issue.severity == "blocker"]
-        # A required check that did not run is a warning, not a pass.
-        unverified = not blockers and any(is_completion_issue(issue) for issue in issues)
+        # A check that reached no conclusion or did not run is a warning, not a pass.
+        unverified = any(skipped(issue) for issue in issues)
+        not_confirmed_step = (
+            "Findings marked unverified are not confirmed, not defects: do not edit working code for them. "
+            "A check that did not run cannot be settled by a source edit. "
+            + ("For create unverified (guessed fixtures), "
+               "each listed endpoint needs a test_api scenario that creates the record with valid unique fixtures "
+               "and then, in that same scenario, GETs it by id under the same path; a scenario holds at most "
+               "20 requests, so split the endpoints across several scenarios; do not remove "
+               "business validation to satisfy guessed samples. " if self._test_api_offered else ""))
         result = {
             "verified": not blockers and not unverified,
             "blocker_count": len(blockers),
@@ -3129,18 +3491,16 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             # report alone ran to 2,500 chars.
             "issues": [clip_finding(issue.message) for issue in issues[:self._VALIDATE_APP_MAX_ISSUES]],
             "remaining_issue_count": max(0, len(issues) - self._VALIDATE_APP_MAX_ISSUES),
-            "scope": "Python declarations, schema/router contracts, backend startup and create probes where supported; not complete business acceptance",
-            "next_step": ("Repair concrete failures and call validate_app again. For create unverified (guessed fixtures), "
-                          "each listed endpoint needs a test_api scenario that creates the record with valid unique fixtures "
-                          "and then, in that same scenario, GETs it by id under the same path; a scenario holds at most "
-                          "20 requests, so split the endpoints across several scenarios; do not remove "
-                          "business validation to satisfy guessed samples.") if blockers else
-                         ("Some required checks did not run on this server (the validation unverified findings); "
-                          "no source edit can settle them, so do not edit code for them. Verify the remaining "
-                          "user requirements and business workflows before completion.") if unverified else
+            "scope": ("the deterministic checks that decide the run, as at the end; type check, frontend "
+                      "build and screen check only where they can run, else listed as not run; not the "
+                      "requirements judgment, whose last verdicts are listed; not complete business acceptance"),
+            "next_step": ("Repair concrete failures and call validate_app again. "
+                          + (not_confirmed_step if unverified else "")).rstrip() if blockers else
+                         (not_confirmed_step + "Verify the remaining user requirements and business workflows "
+                          "before completion.") if unverified else
                          "These checks pass. Verify the remaining user requirements and business workflows before completion.",
         }
-        self._app_validation_cache = (key, result)
+        self._app_validation_cache = (cache_key(), result)
         return result
 
     def _test_api(self, args: dict) -> dict:
@@ -3315,6 +3675,14 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 )
         return issues
 
+    def _repair_build_configuration(self) -> None:
+        """Write the frontend build configuration and run instructions; their lines are the harness's."""
+        project_name = (self._source_project_export or {}).get("name") or ""
+        with harness_writes(self.output_dir, "frontend_scaffold_repair", EXCLUDED_OUTPUT_NAMES):
+            repairs = ensure_frontend_scaffold(self.output_dir, app_name=project_name)
+        for repair in repairs:
+            logger.info("Auto-fixed: %s", repair)
+
     def _collect_validation_issues(self) -> list[ValidationIssue]:
         """Collect all validation issues from the output directory.
 
@@ -3322,9 +3690,29 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         Phase 3 fix loop only acts on ``blocker`` items when
         ``auto_fix_issues`` is enabled.
         """
-        # The checks run in fresh sandboxes, but they read and build this
-        # workspace: nothing the model left running may write to it meanwhile.
-        self.executor.stop_shell_processes()
+        # Names its steps on the run card (``_report_round_step``).
+        self._phase3_sweep_running = True
+        try:
+            return self._verify_workspace(sweep=True)
+        finally:
+            self._phase3_sweep_running = False
+
+    def _verify_workspace(self, sweep: bool = False) -> list[ValidationIssue]:
+        """Every deterministic check that decides the run, most urgent first.
+
+        ``validate_app`` and end_turn run it as it is, and it writes no source
+        file (a build still writes its output folder). The Phase 3 sweep (``sweep=True``, every Phase 3 check
+        and re-check) first stops the agent's processes and applies the
+        deterministic repairs, and adds the requirements judgment, the
+        checklist's findings and the authorization check. Outside the sweep the
+        findings are those of the tree the repairs would leave, and tsc does not
+        run on a project whose dependencies the agent can install until it
+        installs them: a not-run note naming the install, never a blocker.
+        """
+        if sweep:
+            # The checks run in fresh sandboxes, but they read and build this
+            # workspace: nothing the model left running may write to it meanwhile.
+            self.executor.stop_shell_processes()
         # Repair the build configuration BEFORE looking for defects in it.
         # The class-only path never asks the model for a Vite config: across
         # 192 recorded class-only runs, 192 had none and 96 also had a JSX
@@ -3334,11 +3722,12 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # nor pays to repair a defect we can settle for free - and, unlike
         # the packaging-time hook, it puts back a config a Phase 3 edit
         # deleted. Idempotent; it never overwrites what a project already has.
-        project_name = (self._source_project_export or {}).get("name") or ""
-        for repair in ensure_frontend_scaffold(self.output_dir, app_name=project_name):
-            logger.info("Auto-fixed: %s", repair)
+        # Only the sweep repairs: mid-Phase 2 a written config would shadow the one
+        # the model has yet to write.
+        if sweep:
+            self._repair_build_configuration()
         build_contexts = compose_build_contexts(self.output_dir)
-        self._restore_scaffold_requirements(build_contexts)
+        restored = self._restore_scaffold_requirements(build_contexts, write=sweep)
         raw_issues: list[str] = [
             required_check_unverified(
                 "model assembly",
@@ -3376,9 +3765,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                                 # Later repairs must start from this content, or
                                 # they write ``npm ci`` back.
                                 content = content.replace("npm ci", "npm install")
-                                with open_plain_write(fpath, "w", root=self.output_dir, encoding="utf-8") as f:
-                                    f.write(content)
-                                logger.info("Auto-fixed: %s: npm ci -> npm install (no lock file)", rel)
+                                if sweep:
+                                    with open_plain_write(fpath, "w", root=self.output_dir, encoding="utf-8") as f:
+                                        f.write(content)
+                                    logger.info("Auto-fixed: %s: npm ci -> npm install (no lock file)", rel)
                         # COPY of a package-lock.json that does not exist is a
                         # HARD build failure ("failed to compute cache key"), and
                         # the LLM cannot write a lockfile - npm resolves it from
@@ -3388,24 +3778,24 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                             self.output_dir
                         ):
                             stripped = _strip_missing_lockfile_copy(content)
-                            if stripped != content:
-                                content = stripped
+                            if stripped != content and sweep:
                                 with open_plain_write(fpath, "w", root=self.output_dir, encoding="utf-8") as f:
-                                    f.write(content)
+                                    f.write(stripped)
                                 logger.info(
                                     "Auto-fixed: %s: dropped COPY of a "
                                     "package-lock.json that does not exist", rel,
                                 )
+                            content = stripped
 
                         # COPY sources resolve against the build context.
                         raw_issues.extend(dockerfile_copy_issues(
-                            self.output_dir, fpath, content, build_contexts))
+                            self.output_dir, fpath, content, build_contexts, restored))
                     except Exception:
                         logger.warning("Dockerfile check failed for %s", rel, exc_info=True)
 
         # Known runtime-incompatible pairs (dependency_pins.py). pip resolves
         # them without complaint, so the dry-run below cannot catch them.
-        for root, files in walk_app_tree(self.output_dir):
+        for root, files in walk_app_tree(self.output_dir) if sweep else ():
             for fname in files:
                 if fname == "requirements.txt":
                     fpath = os.path.join(root, fname)
@@ -3418,7 +3808,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 
         # Dependency resolution may execute untrusted build backends and
         # access the network. Keep it behind the same explicit shell-tools
-        # trust gate as run_command/install_dependencies, and in the same
+        # trust gate as run_command, and in the same
         # sandbox: network on (pip must reach the index), everything else
         # confined like run_command.
         if self.allow_shell_tools:
@@ -3427,8 +3817,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                     if fname == "requirements.txt":
                         req_path = os.path.join(root, fname)
                         rel = os.path.relpath(req_path, self.output_dir).replace("\\", "/")
+                        # Its verdict holds while the file is unchanged.
                         raw_issues.extend(self._revision_cached(
-                            f"pip [{rel}]", (), lambda rel=rel: self._pip_dry_run_issues(rel)))
+                            f"pip [{rel}]", (), lambda rel=rel: self._pip_dry_run_issues(rel),
+                            source=self._files_revision(lambda path, rel=rel: path == rel)))
 
         # Static checks catch per-project compile errors that would
         # otherwise only surface at deploy time. ruff is near-instant
@@ -3464,36 +3856,43 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # page present, create wired. REPORT-ONLY (warnings + recipe
         # field): a GUI-scoped run may legitimately omit entities, so
         # these are visibility, never blockers. It measures web routes and
-        # pages, so it says nothing about a native or CLI target.
-        raw_issues.extend(self._acceptance_matrix_issues())
+        # pages, so it says nothing about a native or CLI target. Outside the
+        # sweep it waits for a frontend, and a GUI model's screens are the user's
+        # scope: the agent is not asked for pages they did not model.
+        if sweep or (self.gui_model is None and self._has_frontend_files()):
+            raw_issues.extend(self._acceptance_matrix_issues())
 
         execution_issues = self._collect_execution_issues()
-        # An enabled ledger that extracted nothing verified nothing. Saying so
-        # is the difference between "the user asked for nothing" and "we never
-        # looked".
-        if (self.enable_requirements_ledger and self._requirements is None
-                and self._requirement_extraction_attempts):
-            raw_issues.append(_check_did_not_run(
-                "the requirements ledger",
-                f"{self._requirement_extraction_attempts} extraction attempt(s) on "
-                f"{getattr(self.client, 'model', 'this model')} returned nothing",
-            ))
-        # Only an observed failure defers the judge; an unverified create or
-        # action (e.g. a guessed POST refused by login) says nothing about the app.
-        if not self.enable_requirements_ledger or not _hard_blockers(
-                [i for i in map(_classify_issue, execution_issues) if i.severity == "blocker"]):
-            raw_issues.extend(self._collect_requirement_issues())
-        else:
-            raw_issues.append("validation: business-requirement judgment deferred until startup/data-entry blockers are fixed")
-        raw_issues.extend(self._collect_task_issues())
+        if sweep:
+            # An enabled ledger that extracted nothing verified nothing. Saying so
+            # is the difference between "the user asked for nothing" and "we never
+            # looked".
+            if (self.enable_requirements_ledger and self._requirements is None
+                    and self._requirement_extraction_attempts):
+                raw_issues.append(_check_did_not_run(
+                    "the requirements ledger",
+                    f"{self._requirement_extraction_attempts} extraction attempt(s) on "
+                    f"{getattr(self.client, 'model', 'this model')} returned nothing",
+                ))
+            # Only an observed failure defers the judge; an unverified create or
+            # action (e.g. a guessed POST refused by login) says nothing about the app.
+            if not self.enable_requirements_ledger or not _hard_blockers(
+                    [i for i in map(_classify_issue, execution_issues) if i.severity == "blocker"]):
+                raw_issues.extend(self._collect_requirement_issues())
+            else:
+                raw_issues.append(f"{JUDGMENT_DEFERRED} until startup/data-entry blockers are fixed")
+            # Open checklist items are Phase 2's own end-turn gate, not findings yet.
+            raw_issues.extend(self._collect_task_issues())
         raw_issues.extend(self._collect_ruff_issues())
         raw_issues.extend(execution_issues)
-        raw_issues.extend(self._authorization_issues())
+        if sweep:
+            raw_issues.extend(self._authorization_issues())
         # The TS collector reports a relevant disabled check as unknown; it
         # never enables tooling. Already-authorized dependency setup is an
         # actionable verification prerequisite, not a request for source edits.
-        raw_issues.extend(self._collect_tsc_issues())
+        raw_issues.extend(self._collect_tsc_issues() if sweep else self._collect_tsc_issues(installed_only=True))
         raw_issues.extend(self._format_notes)
+        raw_issues.extend(self._agent_left_out_issues())
         raw_issues.extend(_collect_uncompiled_source_issues(
             self.output_dir,
             frozenset({".rs", ".kt"}) if self.enable_toolchain_validation else frozenset()))
@@ -3526,12 +3925,20 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         build_verdicts = self._frontend_build_verdicts
         remaining = self.max_runtime_seconds - (
             time.monotonic() - self._start_time if self._start_time is not None else 0)
+        if (sweep and self.enable_toolchain_validation and self.allow_shell_tools
+                and any(rel.rpartition("/")[2] == "package.json" for rel in self._workspace_file_list())):
+            self._report_round_step("building the frontend")
         raw_issues.extend(collect_frontend_build_issues(
             self.output_dir, enabled=self.enable_toolchain_validation,
-            allow_shell=self.allow_shell_tools, source_revision=self._workspace_revision,
-            build_verdicts=build_verdicts, can_run=self._verification_call_allowed,
-            timeout=remaining,
+            allow_shell=self.allow_shell_tools, source_revision=self._frontend_revision,
+            build_verdicts=build_verdicts, can_run=self._checks_allowed,
+            timeout=remaining, rewritten_builds=None if sweep else rewritten_build_scripts(self.output_dir),
         ))
+        raw_issues.extend(self._collect_screen_issues())
+        if not sweep:
+            # The install is the agent's to run when it chooses; only the final check holds the run for it.
+            raw_issues = [dependency_setup_not_run(issue) if issue.startswith("verification setup:") else issue
+                          for issue in raw_issues]
 
         issues = [_classify_issue(s) for s in drop_duplicate_python_findings(raw_issues)]
         # For the duration of a fix/modify run, promote findings that match
@@ -3551,15 +3958,17 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     def _scaffold_family(self) -> str | None:
         return self._SCAFFOLD_FAMILIES.get(self._generator_used or "")
 
-    def _restore_scaffold_requirements(self, build_contexts: dict[str, str]) -> None:
+    def _restore_scaffold_requirements(self, build_contexts: dict[str, str], write: bool = True) -> set[str]:
         """Put back a requirements.txt a Phase 2 edit deleted from a FastAPI scaffold.
 
         A repair step, run before validation (which only reports). The default
         it writes is the FastAPI stack, so only that scaffold family gets it,
         and only where a Dockerfile's COPY resolves in the build context.
+        Returns the paths restored; with ``write=False``, those it would restore.
         """
+        restored: set[str] = set()
         if self._scaffold_family() != "fastapi":
-            return
+            return restored
         workspace = os.path.realpath(self.output_dir)
         for root, dirs, files in walk_plain(self.output_dir):
             dirs[:] = [d for d in dirs if d not in ("node_modules", ".git", _SNAPSHOT_DIR)]
@@ -3576,9 +3985,12 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                     target = os.path.dirname(path)
                     inside = os.path.realpath(target).startswith(workspace + os.sep)
                     if (os.path.basename(path) == "requirements.txt" and inside
-                            and os.path.isdir(target) and _ensure_requirements_txt(target)):
-                        logger.info("Auto-fixed: restored missing %s",
-                                    os.path.relpath(path, self.output_dir))
+                            and os.path.isdir(target) and (not write or _ensure_requirements_txt(target))):
+                        restored.add(path)
+                        if write:
+                            logger.info("Auto-fixed: restored missing %s",
+                                        os.path.relpath(path, self.output_dir))
+        return restored
 
     def _install_scaffold_frontend_dependencies(self) -> None:
         """Install the deterministic frontend's declared packages, once.
@@ -3590,8 +4002,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         the workspace, not change it -- see ``test_validation_honesty``), so
         this belongs here, at scaffold time, where writing files is the point.
 
-        Best-effort and silent on failure: the model keeps its own
-        ``install_dependencies`` tool, and ``collect_frontend_build_issues``
+        Best-effort and silent on failure: the model can still install
+        through ``run_command``, and ``collect_frontend_build_issues``
         still reports an uninstalled frontend.
         """
         import subprocess
@@ -3664,19 +4076,12 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             f"Remove the rewrite and extend the existing {family} app."
         ]
 
-    # "web application" must match: a trailing \b after "app" cannot match
-    # when the word continues into "lication", and that is the most natural
-    # phrasing of the request. Every alternative here has to tolerate the
-    # word being spelled out.
-    # Deliberately NOT included: "spa" — a hotel spec has one.
-    _WEBAPP_ASK_RE = _FRONTEND_ASK_RE
-
     def _asks_for_frontend(self) -> bool:
-        """The run must ship a web frontend: a ``web_app`` target, or, with no
-        target decided, web-app vocabulary or a bare "app" on create."""
+        """The run must author a web frontend: a ``web_app`` target, or, with no target
+        decided, a GUI model."""
         if self.target is not None:
             return self.target.is_web_app
-        return requests_frontend(self._instructions, bare_app=not self._modify_mode)
+        return self.gui_model is not None
 
     def _has_frontend_files(self) -> bool:
         for root, files in walk_app_tree(self.output_dir):
@@ -3700,8 +4105,25 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     )
     _FRONTEND_TASK_FILES_CLAUSE = "This task cannot be marked done until frontend files exist on disk."
 
-    # The text both checklist variants start with; a checkpoint is matched on it.
-    _FRONTEND_TASK_PREFIX = _FRONTEND_CHECKLIST_TASK.split(_FRONTEND_TASK_FILES_CLAUSE)[0].rstrip()
+    def _frontend_task_text(self) -> str:
+        """The item's text: React and Vite unless the routing answer names another
+        frontend framework (an unknown or missing one keeps React). A Django
+        scaffold without a GUI model has no templates: the item asks for them."""
+        if self._scaffold_family() == "django":
+            return (
+                "Create the Django pages (none exist yet) — write with write_file the "
+                "templates (a base template with a nav, extended by every page), views and "
+                "urls for a home page and, per entity, a list page with a table plus working "
+                f"Create/Edit/Delete forms. {self._FRONTEND_TASK_FILES_CLAUSE}")
+        framework = routed_frontend_framework(self._unsupported_stack)
+        if not framework:
+            return self._FRONTEND_CHECKLIST_TASK
+        return (
+            f"Create the {framework} frontend (none exists yet) — write its files with "
+            f"write_file: the project manifest and entry point {framework} uses, an app "
+            "shell with a router (a home route + nav), an API module (fetch helpers for "
+            "the backend routes), and per entity a list page with a table plus working "
+            f"Create/Edit/Delete wired to the API. {self._FRONTEND_TASK_FILES_CLAUSE}")
 
     def _routed_entity_pages(self) -> dict[str, bool]:
         """{class: has a frontend page} for each model class with a backend route
@@ -3722,8 +4144,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         file closes it."""
         routed = list(self._routed_entity_pages()) if self.gui_model is None and self.domain_model else []
         if not routed:
-            return {"text": self._FRONTEND_CHECKLIST_TASK, "verify": self._has_frontend_files}
-        text = self._FRONTEND_CHECKLIST_TASK.replace(self._FRONTEND_TASK_FILES_CLAUSE, (
+            return {"text": self._frontend_task_text(), "verify": self._has_frontend_files}
+        text = self._frontend_task_text().replace(self._FRONTEND_TASK_FILES_CLAUSE, (
             f"Build a screen for each class with backend routes ({', '.join(routed)}) unless the request "
             "scopes the UI to fewer screens, in which case the request wins."))
         return {"text": text, "verify": self._frontend_has_entity_screen}
@@ -3739,8 +4161,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         if not self._asks_for_frontend():
             return
         verify = self._frontend_checklist_task()["verify"]
+        # The text both variants start with: the routed classes follow it.
+        prefix = self._frontend_task_text().split(self._FRONTEND_TASK_FILES_CLAUSE)[0].rstrip()
         for task in getattr(self.executor, "_tasks", []):
-            if task.get("verify") is None and task["text"].startswith(self._FRONTEND_TASK_PREFIX):
+            if task.get("verify") is None and task["text"].startswith(prefix):
                 task["verify"] = verify
 
     def _frontend_has_entity_screen(self) -> bool:
@@ -3774,6 +4198,27 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                     continue
         return bool(_route_may_serve_home(_CodeFiles(files)))
 
+    def _agent_left_out_issues(self) -> list[str]:
+        """``agent left out:`` when the web app generator's output on disk has no agents folder
+        while the project has an agent: what was generated, whatever the GUI model says now."""
+        generated = self._generator_used == "generate_web_app" or any(
+            call.get("tool") == "generate_web_app" and call.get("success") for call in self.tool_calls_log)
+        web_app = os.path.join(self.output_dir, _APPLICATION_OUTPUT_DIRS["generate_web_app"])
+        if (generated and self.agent_model is not None and os.path.isdir(web_app)
+                and not os.path.isdir(os.path.join(web_app, "agents"))):
+            return [agent_left_out_note(self.agent_model.name)]
+        return []
+
+    def _app_agent(self):
+        """The agent model when it is part of the app: without a GUI, when a screen
+        uses it, or when the run targets the agent (as its primary kind or through
+        the BAF generator); else None."""
+        targets_agent = (self.primary_kind == "agent"
+                         or "generate_baf" in (self._generator_used, self.target_generator))
+        if self.agent_model is None or self.gui_model is None or targets_agent:
+            return self.agent_model
+        return self.agent_model if gui_uses_agent(self.gui_model) else None
+
     def _deterministic_gap_tasks(self) -> list[str]:
         """Checklist items the harness ADDS regardless of the planner.
 
@@ -3787,14 +4232,15 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         if self._asks_for_frontend() and not self._has_frontend_files():
             # Cheat-proof: done is refused until the frontend exists.
             tasks.append(self._frontend_checklist_task())
-        if not self._modify_mode and agent_data_requirement(self.agent_model, self.domain_model):
+        if not self._modify_mode and agent_data_requirement(self._app_agent(), self.domain_model):
             # The requirements judge checks it in Phase 3 (agent_data); a modify
             # run's app already has an agent, so only the judge applies there.
             tasks.append(AGENT_DOMAIN_TASK.format(agent=self.agent_model.name))
         tasks.extend(action_gap_tasks(self.output_dir, self._expected_action_endpoints()))
-        tasks.extend(self._unenforced_rule_tasks())
+        # No other check covers these two kinds of item (see _collect_task_issues).
+        tasks.extend({"text": text, "unchecked": True} for text in self._unenforced_rule_tasks())
         if not self._modify_mode and self._scaffold_family() == "fastapi":
-            tasks.extend(derived_attribute_tasks(self.domain_model))
+            tasks.extend({"text": text, "unchecked": True} for text in derived_attribute_tasks(self.domain_model))
             # A path the user wrote must exist verbatim, whatever the planner judged.
             tasks.extend(requested_route_tasks(
                 self.output_dir, _requirements_ledger.original_request(self._instructions)))
@@ -3831,6 +4277,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         return self._action_endpoints
 
     def _collect_task_issues(self) -> list[str]:
+        """A finding per checklist item no check closed."""
         conversion_requirements = [item for item in self._requirements_for_validation()
                                    if item.get("conversion_issue_id")]
         verified_conversion_texts = set()
@@ -3846,28 +4293,45 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             ) if item["status"] == "implemented"}
             verified_conversion_texts = {item["text"] for item in conversion_requirements
                                          if item["id"] in verified_ids}
+        # A Phase 3 edit can satisfy a formerly open or blocked item: settle
+        # every item from the current tree first, never from a claim.
+        self.executor.autoclose_verified_tasks()
         issues = []
+        stubs: list[str] | None = None  # the ``action contract:`` findings, read once if needed
         for task in self.executor.open_tasks() + self.executor.blocked_tasks():
             if task["text"] in verified_conversion_texts:
                 task.update(done=True, blocked=False, verification="evidence_checked")
                 task.pop("blocked_reason", None)
                 continue
+            text = task["text"]  # Verbatim: the fix prompt cites a requirement's exact text by id.
             verify = task.get("verify")
-            if verify is not None:
-                try:
-                    if verify():
-                        # A Phase 3 edit can satisfy a formerly blocked structural
-                        # task; evaluate the real callback, never trust the claim.
-                        self.executor._task_list({"action": "done", "id": task["id"]})
-                        continue
-                except Exception:
-                    pass  # The task remains unresolved, not successful.
+            try:
+                failed = verify is not None and not verify()
+            except Exception:
+                failed = False  # The check could not run: unknown, not a defect.
+            if failed:
+                if task.get("_action_contract") and stubs is None:
+                    stubs = action_implementation_issues(self.output_dir, self._expected_action_endpoints())
+                if not _action_already_reported(task.get("_action_contract"), stubs or ()):
+                    issues.append(
+                        f"task incomplete: task {task['id']} is not done: {text}. Its deterministic "
+                        "check fails on the current source; implement the required work."
+                    )
+                continue
+            blocked = (f" The agent recorded it as blocked: {task['blocked_reason']}."
+                       if task.get("blocked_reason") else "")
+            # Only an observed failure blocks: an item nothing closed is reported, not repaired.
             issues.append(
-                f"task unverified: task {task['id']} remains unresolved: {task['text']}. "
-                f"{task.get('blocked_reason', '')} Inspect and implement the required work; "
-                "record exact current evidence with task_list (existing=true is allowed "
-                "for an implementation already present; acceptance still needs verification)."
+                f"task unverified: task {task['id']} was not confirmed: {text}.{blocked} "
+                f"{_named_file_edits(task, self.output_dir)}Nothing closed it; the other checks still cover the app."
             )
+        # An item seeded unchecked has no other check: a close on the model's word alone is said.
+        for task in self.executor.unverified_tasks():
+            if task.get("unchecked"):
+                issues.append(
+                    f"task unverified: task {task['id']} was closed by the agent, not checked: "
+                    f"{task['text']}. No other check covers this item."
+                )
         return issues
 
     def _unenforced_rule_tasks(self) -> list[str]:
@@ -4083,7 +4547,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         model's data, and the per-entity checks of a non-web app (reported,
         never planned as obligations)."""
         requirements = self._requirements_for_validation()
-        derived = [item for item in [agent_data_requirement(self.agent_model, self.domain_model)] if item]
+        derived = [item for item in [agent_data_requirement(self._app_agent(), self.domain_model)] if item]
         if not self._generator_used:
             # A BESSER generator built the base (a BAF chatbot, Python classes):
             # per-entity screens are not what it delivers.
@@ -4106,12 +4570,13 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             )
             return findings
         if self._requirements is None:
+            self._report_round_step("listing the requirements in the request")
             self._extract_requirements(self._instructions)
         if self._requirements is None:
             if (_requirements_ledger._is_real_provider(self.client)
                     or getattr(self.domain_model, "conversion_issues", None)):
                 return [
-                    "requirement unverified: requirement extraction failed; "
+                    f"{_REQUIREMENTS_NOT_EXTRACTED}; "
                     "the original specification has not been checked. Do not "
                     "treat this as an empty requirement list or verified completion."
                 ]
@@ -4119,10 +4584,13 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         requirements = self._requirements_to_judge()
         if not requirements:
             return []
-        digest, digest_gaps = _requirements_ledger.build_app_digest_and_gaps(self.output_dir)
+        digest, digest_gaps = _requirements_ledger.build_app_digest_and_gaps(
+            self.output_dir, stylesheets=_requirements_ledger.shows_stylesheets(requirements))
         cache_key = self._requirement_cache_key(requirements)
         imports = self._import_index(cache_key)
-        scope = json.dumps([requirements, self._instructions], sort_keys=True)
+        scope = self._requirement_scope(requirements)
+        if self._previous_verdicts and not self._requirement_verdicts_scope:
+            self._seed_previous_verdicts(requirements)  # first pass, also after a resume
         verdicts = self._requirement_judgments.get(cache_key)
         checked = None  # the check of a fresh judgment, reused below when nothing was kept
         # A judge outage is an unknown no code edit settles: a warning that
@@ -4131,11 +4599,16 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             "the requirements judge",
             "it returned no verdicts; coverage of the original specification has not been verified",
         )
-        judge_stopped = ("requirement unverified: verification stopped or budget exhausted; "
-                         "original-specification coverage is not verified.")
+        cuts = self.deadline.cuts  # a judge call the deadline stopped is not a judge failure
+
+        def judge_stopped() -> str:
+            reason = (self._budget_stop_reason()
+                      or (self.deadline.last_cut if self.deadline.cuts != cuts else "verification stopped"))
+            return (f"{_REQUIREMENTS_NOT_CHECKED} {reason}; "
+                    "original-specification coverage is not verified.")
         if verdicts is None:
             if not self._verification_call_allowed():
-                return [judge_stopped]
+                return [judge_stopped()]
             if cache_key in self._requirement_judge_failures:
                 return [judge_failed]  # the same prompt already failed; asking again re-rolls a full-price call
             if len(self._requirement_judge_failures) >= _requirements_ledger.JUDGE_FAILED_ROUNDS_PER_RUN:
@@ -4145,6 +4618,11 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                         "revisions and is not asked again this run."]
             kept = self._requirements_still_verified(scope, imports)
             to_judge = [item for item in requirements if item["id"] not in kept]
+            if to_judge:
+                self._report_round_step(
+                    f"checking {len(to_judge)} of {counted(len(requirements), 'requirement')} against the code "
+                    f"({len(kept)} unchanged since the last check)" if kept else
+                    f"checking {counted(len(to_judge), 'requirement')} against the code")
             with self._traced_llm_call("requirements_judge") as call:
                 verdicts = _requirements_ledger.judge_coverage(
                     to_judge, digest, self.client, original_spec=self._instructions,
@@ -4160,8 +4638,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 verdicts = sorted([*kept.values(), *verdicts], key=lambda item: item["id"])
                 checked = None
         if verdicts is None:
-            if not self._verification_call_allowed():
-                return [judge_stopped]  # a stop mid-judgment is not a judge failure
+            if not self._verification_call_allowed() or self.deadline.cuts != cuts:
+                return [judge_stopped()]  # a stop mid-judgment is not a judge failure
             self._requirement_judge_failures.add(cache_key)
             return [judge_failed]
         # Cache successful judgments only, keyed to the full bytes of the judged
@@ -4175,11 +4653,16 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         # A partial/missing/unverified verdict about a file the digest left out or cut
         # was not judged on the code; it joins the focused round with that file shown
         # (the judge is told to answer unverified for code it was not shown).
+        # An unverified absence is settled below, never by showing more code.
+        # Nor is a verdict carried from the previous run on files this run left unchanged.
+        carried = self._carried_previous_verdicts()
+        rejudgeable = [item for item in self._requirement_verdicts
+                       if not (item.get("kind") == _requirements_ledger.ABSENCE_KIND and item["status"] == "unverified")
+                       and item["id"] not in carried]
         unseen = {item["id"]: _requirements_ledger.named_digest_gaps(item, digest_gaps)
-                  for item in self._requirement_verdicts if item["status"] in ("partial", "missing", "unverified")}
+                  for item in rejudgeable if item["status"] in ("partial", "missing", "unverified")}
         unseen = {rid: paths for rid, paths in unseen.items() if paths}
-        unknown_ids = {item["id"] for item in self._requirement_verdicts
-                       if item["status"] == "unverified"} | set(unseen)
+        unknown_ids = {item["id"] for item in rejudgeable if item["status"] == "unverified"} | set(unseen)
         if (unknown_ids and cache_key not in self._requirement_evidence_retries
                 and len(self._requirement_judge_failures) < _requirements_ledger.JUDGE_FAILED_ROUNDS_PER_RUN
                 and self._verification_call_allowed()):
@@ -4193,10 +4676,62 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 self._requirement_judgments[cache_key] = verdicts
                 self._requirement_verdicts = _requirements_ledger.verify_evidence(verdicts, self.output_dir, imports)
         self._requirement_verdicts = _requirements_ledger.scope_to_output(
-            self._requirement_verdicts, self._ui_in_scope())
+            _requirements_ledger.settle_uncitable(self._requirement_verdicts, self.output_dir, imports,
+                                                  self._seed_source_hashes),
+            self._ui_in_scope())
+        if self._previous_verdicts:
+            self._requirement_verdicts = _requirements_ledger.mark_inherited(
+                self._requirement_verdicts,
+                [item for item in self._previous_verdicts if item["id"] in self._previous_ids],
+                inherit=not self._follow_up_continues, changed=frozenset(self._replaced_ids))
         self._requirement_verdicts_scope = scope
         self._requirement_verdicts_key = cache_key
         return _requirements_ledger.ledger_issues(self._requirement_verdicts)
+
+    def _cite_requirements(self, citations) -> list[dict]:
+        """``validate_app`` citations: the agent's ``{requirement, path, line}`` source lines for a
+        requirement the judge found implemented whose citation quoted only part of one line
+        (``CITED_FRAGMENT_LINES``). Each must be that whole line, and is checked like the
+        judge's; verified, they replace its citation in the current judgment. A refuted
+        citation (``EVIDENCE_REFUTED``) cannot be replaced: any working line would verify, so
+        a missing implementation could be cleared by citing unrelated code."""
+        key = self._requirement_verdicts_key
+        judged = self._requirement_judgments.get(key) or []
+        stale = judged and self._requirement_cache_key(self._requirements_to_judge()) != key
+        cited: dict = {}
+        results = []
+        for index, citation in enumerate(citations[:20] if isinstance(citations, list) else [citations]):
+            rid = _requirements_ledger._verdict_id(citation.get("requirement")) if isinstance(citation, dict) else None
+            if rid is None or not all(isinstance(citation.get(k), str) and citation[k].strip() for k in ("path", "line")):
+                results.append({"citation": index, "accepted": False,
+                                "reason": "a citation is {requirement: <id>, path: <file>, line: <whole source line>}"})
+                continue
+            cited.setdefault(rid, []).append({"path": citation["path"].strip(), "line": citation["line"]})
+        for rid, evidence in cited.items():
+            raw = next((item for item in judged if item["id"] == rid), None)
+            current = next((item for item in self._requirement_verdicts if item["id"] == rid), None)
+            if not judged:
+                reason = "the requirements have not been judged yet; there is no citation to replace"
+            elif stale:
+                reason = "the source changed since the last judgment; it is judged again when this attempt ends"
+            elif not (raw and current and raw.get("status") == "implemented" and current.get("status") == "unverified"):
+                reason = "only a requirement the judge found implemented, whose citation was rejected, can be cited"
+            else:
+                reason = _requirements_ledger.cites_fragment_lines(current, evidence, self.output_dir)
+            if not reason:
+                [checked] = _requirements_ledger.verify_evidence(
+                    [{**raw, "evidence": evidence, "note": ""}], self.output_dir, self._import_index(key))
+                reason = checked["note"] if checked["status"] != "implemented" else ""
+            results.append({"requirement": rid, "accepted": not reason, **({"reason": reason} if reason else {})})
+            if reason:
+                continue
+            self._trace.write(EVENT_REQUIREMENT_CITED, requirement=rid, evidence=evidence)
+            note = " ".join(f"{raw.get('note') or ''} The fix agent supplied the citation.".split())
+            judged = [{**raw, "evidence": evidence, "note": note} if item["id"] == rid else item for item in judged]
+            self._requirement_judgments[key] = judged
+            self._requirement_verdicts = [{**checked, "note": note} if item["id"] == rid else item
+                                          for item in self._requirement_verdicts]
+        return results
 
     def _rejudge_unknown(self, requirements: list[dict], unknown_ids: set[int], unseen: dict[int, list[str]],
                          imports: _requirements_ledger.ImportIndex) -> dict[int, dict]:
@@ -4205,7 +4740,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         (``_REJUDGE_ROUNDS``). Returns the raw verdicts that replace the first judge's.
 
         Only a verified "implemented" replaces a verdict as it is: the focused digest omits
-        most of the app, so a missing/partial from it proves no absence. Otherwise the
+        most of the app, so a missing/partial from it proves no absence, except about a
+        refuted citation (``EVIDENCE_REFUTED``), whose file it shows whole. Otherwise the
         CHECKED first verdict keeps its status and takes the re-judge's citation (when it
         gave one), note and inspection paths: the first judge's note ("risk_service.py was
         not provided") is stale (r12-p81), and a raw first "implemented" with the re-judge's
@@ -4223,6 +4759,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             focused_digest, gaps, shown = _requirements_ledger.build_app_digest_details(
                 self.output_dir, focus_paths=focus_paths)
             to_rejudge = [item for item in requirements if item["id"] in focus]
+            self._report_round_step(
+                f"checking {counted(len(to_rejudge), 'requirement')} again with the relevant files shown")
             with self._traced_llm_call("requirements_rejudge") as call:
                 repair = _requirements_ledger.judge_coverage(
                     to_rejudge, focused_digest, self.client, original_spec=self._instructions,
@@ -4240,10 +4778,15 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                     replacements[rid] = item
                     continue
                 base = {key: value for key, value in first[rid].items()
-                        if key not in (*_requirements_ledger.VERDICT_FINGERPRINT_KEYS, _requirements_ledger.EVIDENCE_UNLOCATED)}
+                        if key not in (*_requirements_ledger.VERDICT_FINGERPRINT_KEYS, _requirements_ledger.EVIDENCE_UNLOCATED,
+                                       _requirements_ledger.CITED_FRAGMENT_LINES, _requirements_ledger.EVIDENCE_REFUTED)}
                 cited = bool(_requirements_ledger.render_evidence(item.get("evidence")).strip(": "))
                 # Its own "implemented" is kept and re-checked, so the reason is about its citation.
-                status = "implemented" if item.get("status") == "implemented" and cited else base["status"]
+                # Its missing or partial settles a refuted citation, whose file it was shown whole.
+                status = ("implemented" if item.get("status") == "implemented" and cited
+                          else item["status"] if first[rid].get(_requirements_ledger.EVIDENCE_REFUTED)
+                          and item.get("status") in ("missing", "partial")
+                          else base["status"])
                 # Without a citation of its own the first one stays, and so does why it failed.
                 reason = "" if cited else _check_reason(str(first[rid].get("note") or ""))
                 replacements[rid] = {**base, "status": status,
@@ -4255,12 +4798,14 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             # A file this round did not show whole (left out or cut), named by an answer that is
             # not a verified implemented. The schema files a focused digest shows are not.
             left_out = (frozenset(files) - shown) | gaps
-            named = {item["id"]: _requirements_ledger.named_digest_gaps(item, left_out)
-                     for item in repaired if item["id"] not in valid_ids}
+            answers = {item["id"]: item for item in repaired if item["id"] not in valid_ids}
+            named = {rid: _requirements_ledger.named_digest_gaps(item, left_out) for rid, item in answers.items()}
             named = {rid: paths for rid, paths in named.items() if paths}
             if not named or not self._verification_call_allowed():
                 break
-            focus = {rid: [*paths, *focus[rid]] for rid, paths in named.items()}
+            # The files the answer relied on stay shown, also those this round showed for another requirement.
+            focus = {rid: [*paths, *_requirements_ledger.named_digest_gaps(answers[rid], frozenset(files)), *focus[rid]]
+                     for rid, paths in named.items()}
         return replacements
 
     def _requirements_still_verified(self, scope: str,
@@ -4268,20 +4813,33 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         """The last pass's verified verdicts whose cited files, and the files
         those import or are mounted by, are byte-identical (no call): an edit
         elsewhere must not re-roll them. An edit to a cited file can break the
-        behaviour while the cited line survives."""
+        behaviour while the cited line survives. In a modify run, also the
+        previous run's unmet verdicts on files this run left unchanged."""
         if scope != self._requirement_verdicts_scope:
             return {}
-
-        def unchanged(hashes: dict[str, str]) -> bool:
-            return all(digest and _requirements_ledger.cited_file_hash(os.path.join(self.output_dir, rel)) == digest
-                       for rel, digest in hashes.items())
-
         # A verdict recorded before dependency hashes existed has none to check.
-        previous = [item for item in self._requirement_verdicts if item.get("status") == "implemented"
-                    and item.get("cited_file_hashes") and unchanged(item["cited_file_hashes"])
-                    and unchanged(item.get("dependency_file_hashes") or {})]
-        return {item["id"]: item for item in _requirements_ledger.verify_evidence(previous, self.output_dir, imports)
+        previous = [item for item in self._requirement_verdicts
+                    if item.get("status") == "implemented" and self._fingerprint_unchanged(item)]
+        kept = {item["id"]: item for item in _requirements_ledger.verify_evidence(previous, self.output_dir, imports)
                 if item["status"] == "implemented"}
+        return {**self._carried_previous_verdicts(), **kept}
+
+    def _carried_previous_verdicts(self) -> dict[int, dict]:
+        """A modify run's unmet verdicts of the previous run whose named files, and the files
+        those rest on, this run left byte-identical: kept as they were, without a judge call.
+        None when the new messages ask to finish earlier work: then they are judged and repaired."""
+        if self._follow_up_continues:
+            return {}
+        return {item["id"]: item for item in self._previous_verdicts or []
+                if item["id"] in self._previous_ids and item["status"] != "implemented"
+                and self._fingerprint_unchanged(item)}
+
+    def _fingerprint_unchanged(self, verdict: dict) -> bool:
+        """The verdict records file hashes, and every one of them still matches."""
+        hashes = {**(verdict.get("dependency_file_hashes") or {}), **(verdict.get("cited_file_hashes") or {})}
+        return bool(verdict.get("cited_file_hashes")) and all(
+            digest and _requirements_ledger.cited_file_hash(os.path.join(self.output_dir, rel)) == digest
+            for rel, digest in hashes.items())
 
     def _format_python_output(self) -> None:
         """Format the Python files the LLM wrote whole (``write_file``) in this run.
@@ -4332,17 +4890,61 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         ], sort_keys=True).encode("utf-8")).hexdigest()
 
     def _extract_requirements(self, instructions: str) -> None:
+        if self._stated_requirements is not None:
+            self._requirements = _requirements_ledger.stated_requirements_ledger(
+                self._stated_requirements, instructions,
+                newest_states_nothing_new=self._followup_states_nothing_new)
+            self._stated_requirements = None  # decided once: used, or extract below
+            if self._requirements is not None:
+                self._requirements_source = "editor"
+                # The assistant's verdict that the newest message only asks to retry or fix.
+                self._follow_up_continues = self._followup_states_nothing_new and bool(
+                    _requirements_ledger.later_messages(instructions))
+                self._adopt_previous_verdicts(self._matched_previous_ids(self._requirements))
+                self._trace.write(EVENT_REQUIREMENTS, source="editor", items=self._requirements)
+                return
         # One initial attempt and one recovery attempt; failed extraction stays
         # unknown instead of being cached forever as a successful empty list.
         if self._requirement_extraction_attempts >= 2 or not self._verification_call_allowed():
             return
+        # A modify run keeps the previous run's requirements and extracts only the messages since.
+        previous = self._previous_requirements()
+        follow_up = None
         self._requirement_extraction_attempts += 1
+        before = self._safe_usage_counters()
         with self._traced_llm_call("requirements_extraction") as call:
-            self._requirements = _requirements_ledger.extract_requirements(
-                instructions, self.client, can_call=self._verification_call_allowed)
+            if previous:
+                follow_up = _requirements_ledger.extract_follow_up(
+                    previous, instructions, self._previous_instructions, self.client,
+                    can_call=self._verification_call_allowed)
+                self._requirements = follow_up["requirements"] if follow_up else None
+            if previous and follow_up is None and self._verification_call_allowed():
+                # The follow-up call failed: judge the whole request, as a run without a previous ledger.
+                logger.warning("Requirements ledger: the follow-up extraction returned nothing; "
+                               "extracting the whole request instead")
+                self._previous_verdicts = None
+                self._requirement_extraction_attempts += 1
+                self._requirements = _requirements_ledger.extract_requirements(
+                    instructions, self.client, can_call=self._verification_call_allowed)
+            elif not previous:
+                self._requirements = _requirements_ledger.extract_requirements(
+                    instructions, self.client, can_call=self._verification_call_allowed)
             call["outcome"] = "failed" if self._requirements is None else "ok"
             call["requirements"] = len(self._requirements or [])
-        if self._requirements is None:
+        if follow_up is not None:
+            self._continue_previous_ledger(previous, follow_up)
+        if self._requirements is not None:
+            self._requirements_source = "extracted"
+            after = self._safe_usage_counters()
+            # The extraction's own tokens, so the run trace can give the
+            # RequirementExtraction its LLM call (and not count them twice).
+            self._trace.write(
+                EVENT_REQUIREMENTS, source="extracted", items=self._requirements,
+                extraction_usage={key: after[key] - before.get(key, 0)
+                                  for key in after if isinstance(after[key], int)},
+                model=after.get("model"),
+            )
+        else:
             # extract_requirements has five silent None paths; an empty list
             # in the recipe would read as "the user asked for nothing" rather
             # than "we never looked".
@@ -4352,13 +4954,82 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 self._requirement_extraction_attempts, getattr(self.client, "model", "?"),
             )
 
+    def _derived_requirement_texts(self) -> set[str]:
+        """The texts of the requirements a run derives from the model and the agent, not the request."""
+        requirements, self._requirements = self._requirements, []
+        try:
+            return {item["text"] for item in self._requirements_to_judge()}
+        finally:
+            self._requirements = requirements
+
+    def _previous_requirements(self) -> list[dict]:
+        """The previous run's own requirements (its ledger without the items this run derives
+        again from the model and the agent): ``[]`` outside a modify run or without a ledger."""
+        if not self._previous_verdicts:
+            return []
+        derived = self._derived_requirement_texts()
+        return [{key: item[key] for key in ("id", "text", "kind", "ref") if key in item}
+                for item in self._previous_verdicts if item["text"] not in derived]
+
+    def _continue_previous_ledger(self, previous: list[dict], follow_up: dict) -> None:
+        """The ledger: the previous run's requirements, then the new messages' own, numbered
+        after them. One a new message changes or removes stays, judged as usual: unmet, it is
+        reported as changed by that message, never as a regression (an extraction that names
+        too many must not empty the ledger)."""
+        next_id = max(item["id"] for item in previous) + 1
+        self._requirements = previous + [{**item, "id": next_id + i} for i, item in enumerate(self._requirements)]
+        self._follow_up_continues = follow_up["continues"]
+        self._replaced_ids = set(follow_up["replaces"])
+        if self._replaced_ids:
+            logger.info("Requirements ledger: the new messages change R%s of the previous run",
+                        ", R".join(map(str, sorted(self._replaced_ids))))
+        self._adopt_previous_verdicts({item["id"]: item["id"] for item in previous})
+
+    def _matched_previous_ids(self, requirements: list[dict]) -> dict[int, int]:
+        """Previous id -> id in ``requirements`` (the editor's) of the same requirement: the
+        same trace artifact when the previous one names one, else the same text."""
+        by_ref = {item["ref"]: item["id"] for item in requirements if item.get("ref")}
+        by_text = {item["text"]: item["id"] for item in requirements}
+        matched = {item["id"]: by_ref.get(item["ref"]) if item.get("ref") else by_text.get(item["text"])
+                   for item in self._previous_requirements()}
+        return {old: new for old, new in matched.items() if new is not None}
+
+    def _adopt_previous_verdicts(self, current_id: dict[int, int]) -> None:
+        """Keep the previous verdicts of the requirements this run still holds, under their ids
+        here (``current_id``: previous id -> id), and of the derived requirements by text."""
+        if not self._previous_verdicts:
+            return
+        derived = self._derived_requirement_texts()
+        derived_ids = {item["text"]: item["id"] for item in self._requirements_to_judge() if item["text"] in derived}
+        ledger = [item for item in self._previous_verdicts if item["text"] not in derived]
+        self._previous_ids = {current_id[item["id"]] for item in ledger
+                              if item["id"] in current_id and item.get("kind") != "verification"}
+        self._previous_verdicts = (
+            [{**item, "id": current_id[item["id"]]} for item in ledger if item["id"] in current_id]
+            + [{**item, "id": derived_ids[item["text"]]} for item in self._previous_verdicts
+               if item["text"] in derived_ids])
+
+    def _seed_previous_verdicts(self, requirements: list[dict]) -> None:
+        """Start the kept-verdict check from the previous run's verdicts on the tree it
+        delivered: a requirement whose files this run leaves unchanged is not judged again."""
+        self._requirement_verdicts = [item for item in self._previous_verdicts or []
+                                      if item["status"] == "implemented"]
+        self._requirement_verdicts_scope = self._requirement_scope(requirements)
+
+    def _requirement_scope(self, requirements: list[dict]) -> str:
+        """What a set of verdicts answered: the requirements and the request."""
+        return json.dumps([requirements, self._instructions], sort_keys=True)
+
+    def _checks_allowed(self) -> bool:
+        """A deterministic check may start: not cancelled, and time before the cap
+        for it. Checks are free, so spend does not stop them (LLM calls need more,
+        see ``_budget_stop_reason``)."""
+        return not (self.deadline.cancelled or self.deadline.checks_out_of_time())
+
     def _verification_call_allowed(self) -> bool:
-        """Do not start a paid extraction/judgment after a stop or spend cap."""
-        return not (
-            (self.max_cost_usd is not None and self.client.usage.estimated_cost >= self.max_cost_usd)
-            or (self._start_time is not None and time.monotonic() - self._start_time >= self.max_runtime_seconds)
-            or (self._should_continue is not None and not self._should_continue())
-        )
+        """Do not start a paid extraction/judgment after a stop or spend cap,
+        or with too little time left for it to finish."""
+        return not self._budget_stop_reason()
 
     @staticmethod
     def _is_project_tool_output(rel: str, names_by_dir: dict[str, set[str]]) -> bool:
@@ -4387,6 +5058,31 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         ``_REVISION_HASH_CAP`` bytes plus its size, so a large asset cannot
         stall the check.
         """
+        return self._files_revision()
+
+    def _frontend_revision(self) -> str:
+        """The revision of what a type check or frontend build can read: every file
+        but Python sources and the rest of a Python project's folder (one holding a
+        ``requirements.txt`` or ``pyproject.toml`` and neither a frontend nor holding
+        one). The workspace revision when no folder holds a ``package.json`` or ``tsconfig.json``."""
+        files = self._workspace_file_list()
+
+        def folders(*names: str) -> set[str]:
+            return {rel.rpartition("/")[0] for rel in files if rel.rpartition("/")[2] in names}
+
+        def under(rel: str, folder: str) -> bool:
+            return not folder or rel.startswith(folder + "/")
+
+        frontends = folders("package.json", "tsconfig.json")
+        if not frontends:
+            return self._workspace_revision()
+        backends = {folder for folder in folders("requirements.txt", "pyproject.toml") - frontends - {""}
+                    if not any(under(frontend, folder) for frontend in frontends)}
+        return self._files_revision(lambda rel: not rel.endswith(".py") and (
+            any(under(rel, folder) for folder in frontends) or not any(under(rel, folder) for folder in backends)))
+
+    def _files_revision(self, keep: Callable[[str], bool] | None = None) -> str:
+        """:meth:`_workspace_revision` of the files ``keep`` accepts, all when None."""
         fingerprint = hashlib.sha256()
         workspace = os.path.realpath(self.output_dir)
         rels = sorted(self._workspace_file_list())
@@ -4395,6 +5091,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             folder, _, name = rel.rpartition("/")
             names_by_dir.setdefault(folder, set()).add(name)
         for rel in rels:
+            if keep is not None and not keep(rel):
+                continue
             if (rel.lower().endswith(_REVISION_IGNORED_SUFFIXES)
                     or _REVISION_IGNORED_DIRS.intersection(rel.split("/")[:-1])
                     or self._is_project_tool_output(rel, names_by_dir)):
@@ -4451,18 +5149,21 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         "Android module: the build server has no Android SDK",
     )
 
-    def _revision_cached(self, check: str, inputs: tuple, collect: Callable[[], list[str]]) -> list[str]:
+    def _revision_cached(self, check: str, inputs: tuple, collect: Callable[[], list[str]],
+                         source: str | None = None) -> list[str]:
         """``collect()``'s findings, reused for the same tree and ``inputs``.
 
         Phase 3 re-validates after no-edit rounds and after a rollback
         restore; tsc, cargo, kotlinc and the pip dry-run cost up to 30-180 s
         each for an answer that cannot have changed. A failure is a verdict
         and is reused too; a result holding a check that did not run is not.
-        Keyed by revision, not just the latest one, so a restored tree hits.
-        In memory only, per run, like ``_runtime_probe_issues``.
+        Keyed by revision, not just the latest one, so a restored tree hits;
+        ``source`` is the revision of the files the check reads, when it reads
+        fewer than the whole tree. In memory only, per run, like
+        ``_runtime_probe_issues``.
         """
         results = self._check_results
-        key = (check, self._workspace_revision(), inputs)
+        key = (check, source or self._workspace_revision(), inputs)
         if key in results:
             return list(results[key])
         issues = collect()
@@ -4471,6 +5172,45 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                    for issue in issues):
             results[key] = list(issues)
         return issues
+
+    def _collect_screen_issues(self) -> list[str]:
+        """Open the screens of each frontend whose build passed on this tree (``ui_probe.py``).
+
+        Cached per tree like :meth:`_revision_cached`; a check that did not run
+        is not, unless no edit can change that (no browser, turned off). The
+        screens that threw and showed nothing go to the trace as blocker candidates.
+        """
+        from besser.spec_driven_agent.validation.ui_probe import (
+            BLOCKER_CANDIDATES,
+            NOT_RUN_PREFIX,
+            collect_screen_report,
+            not_run,
+        )
+
+        revision = self._workspace_revision()
+        # A build verdict is keyed (folder, frontend revision, install markers, script); None is a pass.
+        frontend = self._frontend_revision()
+        built = tuple(sorted({key[0] for key, verdict in self._frontend_build_verdicts.items()
+                              if key[1] == frontend and verdict is None}))
+        if not built:
+            return []
+        key = ("screens", revision, built)
+        if key in self._check_results:
+            return list(self._check_results[key])
+        if not self._verification_call_allowed():
+            return [not_run("validation was stopped or its budget exhausted")]
+        remaining = self.max_runtime_seconds - (
+            time.monotonic() - self._start_time if self._start_time is not None else 0)
+        self._trace.write(EVENT_PHASE_ENTER, phase="phase3_screens")
+        report = collect_screen_report(self.output_dir, list(built), timeout=remaining,
+                                       domain_model=self.domain_model)
+        self._trace.write(EVENT_PHASE_EXIT, phase="phase3_screens", screens=len(report["screens"]),
+                          seconds=report["seconds"], **{BLOCKER_CANDIDATES: report["candidates"]},
+                          exit_reason=f"{len(report['screens'])} screen(s) opened in {report['seconds']}s")
+        stable = (not_run("no browser available"), not_run("turned off on this server"))
+        if all(not issue.startswith(NOT_RUN_PREFIX) or issue in stable for issue in report["issues"]):
+            self._check_results[key] = list(report["issues"])
+        return report["issues"]
 
     def _pip_dry_run_issues(self, rel: str) -> list[str]:
         """``pip install --dry-run`` of one requirements file, sandboxed."""
@@ -4490,16 +5230,20 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             return [_check_did_not_run(f"the dependency check for {rel}", str(exc))]
         except Exception as exc:
             # A timeout is "not checked", never "no conflict".
-            reason = ("timed out after 30s"
+            reason = (timeout_cause(exc, "timed out after 30s")
                       if isinstance(exc, subprocess.TimeoutExpired)
                       else type(exc).__name__)
             return [_check_did_not_run(f"the dependency check for {rel}", reason)]
         issue = dependency_check_issue(rel, result.stderr) if result.returncode != 0 else None
         return [issue] if issue else []
 
-    def _collect_tsc_issues(self) -> list[str]:
-        """Delegate to the toolchain module, once per tree, install state and
-        compiler choice (host ``tsc``/``npm``, a project-local ``tsc``)."""
+    def _collect_tsc_issues(self, installed_only: bool = False) -> list[str]:
+        """Delegate to the toolchain module, once per frontend revision, install
+        state and compiler choice (host ``tsc``/``npm``, a project-local ``tsc``).
+
+        ``installed_only``: a project whose dependencies the agent can install
+        is not compiled until they are; the install is asked for.
+        """
         local_tsc = os.path.join("node_modules", ".bin", "tsc.cmd" if os.name == "nt" else "tsc")
         installs = tuple(
             (folder, install_markers(os.path.join(self.output_dir, folder)),
@@ -4507,12 +5251,20 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             for folder in sorted({rel.rpartition("/")[0] for rel in self._workspace_file_list()
                                   if rel.rpartition("/")[2] == "tsconfig.json"}))
         tools = tuple(shutil.which(name) for name in ("tsc", "tsc.cmd", "npm", "npm.cmd"))
-        return self._revision_cached(
-            "tsc", (self.allow_shell_tools, self.enable_toolchain_validation, tools, installs),
-            lambda: _collect_tsc_issues(
+        # The first install marker is node_modules itself.
+        skip_uninstalled = installed_only and any(markers[0] is None for _, markers, _ in installs)
+
+        def type_check() -> list[str]:
+            if installs and self._phase3_sweep_running:
+                self._report_round_step("type-checking the TypeScript code")
+            return _collect_tsc_issues(
                 self.output_dir, self.allow_shell_tools,
                 self.enable_toolchain_validation, _RECIPE_EXCLUDED_DIRS,
-            ))
+                without_dependencies=not skip_uninstalled,
+            )
+        return self._revision_cached(
+            "tsc", (self.allow_shell_tools, self.enable_toolchain_validation, tools, installs, skip_uninstalled),
+            type_check, source=self._frontend_revision() if installs else None)
 
     @classmethod
     def _collapse_repeated_names(cls, err_lines: list[str]) -> list[str]:
@@ -4556,6 +5308,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     # Interactive error feedback
     # ==================================================================
 
+    @under_deadline
     def fix_error(self, error_message: str) -> str:
         """
         Fix a user-reported error. The LLM analyzes it and either:
@@ -4603,8 +5356,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         self._previous_errors.append(error_line)
 
         # A fix request is a new request: it gets a full runtime window, not
-        # what generate() left of its own (which also bounds run_command).
+        # what generate() left of its own (which also bounds run_command),
+        # and a quota that was exhausted then may have been topped up since.
         self._start_time = time.monotonic()
+        self._phase2_quota_exhausted = False
 
         retry_note = ""
         if already_tried:
@@ -4651,10 +5406,12 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             self.total_turns += 1
 
             try:
-                response = self._chat_with_pending_force(system, messages)
+                response = self._chat_turn(system, messages)
             except InvalidApiKeyError:
                 # The caller must report the bad key, not a fix summary.
                 raise
+            except DeadlineReached as e:
+                return stopped(str(e), turn)
             except Exception as e:
                 logger.error("Fix cycle API call failed: %s", e)
                 return stopped(f"the LLM call failed: {e}", turn)
@@ -4699,16 +5456,18 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
     def _budget_stop_reason(self) -> str:
         """Why the run may not start another billable call, or "" if it may.
 
-        Same comparisons as ``_verification_call_allowed``: a cap exactly
-        reached is spent.
+        A cap exactly reached is spent; a call is not started with less time
+        left than it needs (``Deadline.out_of_time``).
         """
-        if self._should_continue is not None and not self._should_continue():
+        if self.deadline.cancelled:
             return "the run was cancelled"
         if self.max_cost_usd is not None and self.client.usage.estimated_cost >= self.max_cost_usd:
             return (f"the ${self.max_cost_usd:.2f} cost cap is spent "
                     f"(${self.client.usage.estimated_cost:.2f} used)")
-        if self._start_time is not None and time.monotonic() - self._start_time >= self.max_runtime_seconds:
-            return f"the {self.max_runtime_seconds}s runtime cap was reached"
+        if self._phase2_quota_exhausted:
+            return "the provider quota is exhausted"
+        if self.deadline.out_of_time():
+            return f"too little of the {self.max_runtime_seconds}s runtime cap is left"
         return ""
 
     # ==================================================================
@@ -4765,6 +5524,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 response_model=(self.domain_model if self._generator_used in ROUTER_TEMPLATE_GENERATORS
                                 else None),
                 mutation_coverage=mutation_coverage_applies(self.domain_model, known_requirements),
+                use_client=True,
             )
         except Exception:
             logger.debug("Endpoint manifest build failed", exc_info=True)
@@ -4801,44 +5561,44 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             target=self.target,
             previous_target=self._previous_target,
             routed_stack=self._unsupported_stack if self._routed else None,
+            scaffold_family=self._scaffold_family(),
             # Without both, the runtime-verification runbook never renders.
             allow_shell=self.allow_shell_tools,
             output_dir=self.output_dir,
         )
 
     def _maybe_compact(self, messages: list[dict]) -> list[dict]:
-        """Delegate to compaction module.
+        """Evict stale file bodies, then delegate to the compaction module.
 
-        When history eviction is enabled (``BESSER_LLM_HISTORY_EVICTION=1``),
-        first run a lossless checkpoint eviction: stub stale write_file/read_file
-        bodies in older messages (the files are on disk, re-readable). This runs
-        ONLY at the compaction checkpoint (when history already exceeds the
-        threshold), never per turn — so it doesn't repeatedly bust the prompt
-        cache. It's lighter-touch than summarization and often drops the history
-        back under the threshold so no summarize is needed; if not, the summarize
-        below still runs on top. Gated OFF by default and not yet verified
-        end to end — see history_eviction.py.
+        With history eviction on (``BESSER_LLM_HISTORY_EVICTION``), stale file
+        bodies are stubbed in batches (``evict_superseded_file_bodies``), so the
+        cached prefix is rewritten once per batch, not every turn. At the
+        compaction threshold every stale body is stubbed at once, however
+        young, which often avoids the lossy summary below; the newest read of
+        a file not edited since is kept. The files stay on disk, re-readable.
         """
         model = getattr(self.client, "model", None)
-        # The reserve must match the output the model is actually ALLOWED to
-        # produce this run. The from-scratch and modify paths raise
-        # client.max_tokens to FROM_SCRATCH_MAX_TOKENS (32_768), which is
-        # double the COMPACT_RESERVE_TOKENS default - so a constant reserve
-        # leaves only half the headroom the response may need.
-        reserve = max(
-            COMPACT_RESERVE_TOKENS, int(getattr(self.client, "max_tokens", 0) or 0)
-        )
+        reserve = self._compaction_reserve()
         evicted = 0
-        if _HISTORY_EVICTION_ENABLED and _estimate_tokens(messages) >= effective_threshold(
-            model, reserve=reserve
-        ):
-            messages, evicted = evict_stale_file_bodies(messages)
+        if _HISTORY_EVICTION_ENABLED:
+            original = messages
+            before = _estimate_tokens(messages)
+            messages, evicted = evict_superseded_file_bodies(messages)
+            reason = "superseded"
+            if (_estimate_tokens(messages) if evicted else before) >= effective_threshold(model, reserve=reserve):
+                messages, more = evict_superseded_file_bodies(
+                    messages, stale_after_turns=0, batch_share=0, min_batch_chars=0)
+                if more:
+                    evicted, reason = evicted + more, "threshold"
             if evicted:
+                # write_file needs the whole file seen; a stubbed last copy is not seen.
+                self.executor.forget_full_views(unseen_after_eviction(original, messages))
                 self._eviction_count = getattr(self, "_eviction_count", 0) + 1
-                logger.info(
-                    "Checkpoint eviction: stubbed %d stale file body/bodies "
-                    "(history now ~%d tokens)", evicted, _estimate_tokens(messages),
-                )
+                after = _estimate_tokens(messages)
+                logger.info("Eviction (%s): stubbed %d file body/bodies, history ~%d -> ~%d tokens",
+                            reason, evicted, before, after)
+                self._trace.write(EVENT_EVICTION, turn=self.total_turns, stubbed=evicted,
+                                  reason=reason, tokens_before=before, tokens_after=after)
         result, did_compact = maybe_compact(
             messages=messages,
             tool_calls_log=self.tool_calls_log,
@@ -4866,11 +5626,22 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         )
         if did_compact:
             self._compaction_count += 1
+            self._trace.write(EVENT_COMPACTION, turn=self.total_turns,
+                              tokens_before=_estimate_tokens(messages), tokens_after=_estimate_tokens(result))
         if did_compact or evicted:
             result = self._drop_stale_thinking(result, "the history was compacted")
             # Earlier read results may be gone: no "unchanged since" stubs.
             self.executor.forget_shown_results()
         return result
+
+    def _compaction_reserve(self) -> int:
+        """Output headroom of the next response: the run's raised max_tokens,
+        not only the COMPACT_RESERVE_TOKENS floor."""
+        return max(COMPACT_RESERVE_TOKENS, int(getattr(self.client, "max_tokens", 0) or 0))
+
+    def _compact_threshold(self) -> int:
+        """The compaction threshold this run's model resolves to now."""
+        return effective_threshold(getattr(self.client, "model", None), reserve=self._compaction_reserve())
 
     def _drop_stale_thinking(self, messages: list[dict], why: str) -> list[dict]:
         """Remove thinking blocks whose conversation is no longer what is sent.
@@ -5208,20 +5979,162 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
 
     def _checks_that_ran(self) -> dict:
         """What ran on the delivered tree: a passing frontend build, and the calls of the
-        API workflows that passed on it."""
+        API workflows that passed on it that reached their handler (a request-validation
+        422 did not)."""
+        from besser.spec_driven_agent.validation.api_probe import request_validation_refusal
+
         revision = self._workspace_revision()
         passed = [record["report"] for record in self._api_scenarios.values()
                   if record["revision"] == revision and record["report"].get("status") == "passed"]
-        # A build verdict is keyed (folder, revision, install markers, script); None is a pass.
-        builds = [verdict for key, verdict in self._frontend_build_verdicts.items() if key[1] == revision]
+        # A build verdict is keyed (folder, frontend revision, install markers, script); None is a pass.
+        frontend = self._frontend_revision()
+        builds = [verdict for key, verdict in self._frontend_build_verdicts.items() if key[1] == frontend]
         return {
             "frontend_build": ("passed" if any(verdict is None for verdict in builds) else "failed" if builds
                                else "not_run" if self._has_frontend_files() else "none"),
             "exercised": {(str(response.get("method", "")).upper(), str(response.get("path", "")))
                           for report in passed for response in report.get("responses") or []
-                          if isinstance(response, dict) and response.get("path")},
+                          if isinstance(response, dict) and response.get("path")
+                          and not request_validation_refusal(response)},
             "workflows_passed": len(passed),
         }
+
+    # The note of a verdict an earlier version was judged with, the delivered one was not.
+    _NOT_JUDGED_ON_DELIVERED = "not judged on the delivered version of the app"
+
+    def _recorded_verdicts(self) -> list[dict]:
+        """The verdicts the recipe and the report show. When the judge did not run on the
+        delivered tree (``verification_gaps``' requirements class) the last verdicts answer an
+        earlier version: none of them shows anything about this one, so each is unverified."""
+        verdicts = self._requirement_verdicts
+        messages = [issue.message for issue in self._validation_issues]
+        if not verdicts or not any(m.startswith(_REQUIREMENTS_NO_VERDICT) for m in messages):
+            return verdicts
+        try:
+            if self._requirement_cache_key(self._requirements_to_judge()) == self._requirement_verdicts_key:
+                return verdicts
+        except Exception:
+            logger.warning("Could not tell which version the requirement verdicts answer", exc_info=True)
+        return [{key: value for key, value in verdict.items() if key not in (
+                    _requirements_ledger.EVIDENCE_REFUTED, _requirements_ledger.CITED_FRAGMENT_LINES)}
+                | ({"status": "unverified", "note": self._NOT_JUDGED_ON_DELIVERED}
+                   if verdict.get("status") in ("implemented", "missing", "partial", "unverified") else {})
+                for verdict in verdicts]
+
+    def _settle_open_setup(self) -> None:
+        """At Phase 3 exit, a ``verification setup:`` the agent left undone becomes what it now is:
+        checks that did not run (``validation unverified:``). Rewritten once here, so the trace,
+        the recipe, the counts, telemetry and the report all read it the same way."""
+        self._validation_issues = [
+            _classify_issue(dependencies_not_installed(issue.message))
+            if issue.message.startswith("verification setup:") else issue
+            for issue in self._validation_issues]
+
+    def _runtime_evidence(self) -> tuple[list[dict], list[dict]]:
+        """The backends the probe started on the delivered tree, and the reports of the
+        ``test_api`` workflows run on it."""
+        revision = self._workspace_revision()
+        facts = getattr(self, "_runtime_probe_facts", None)
+        booted = [backend for backend in (facts[1] if facts and facts[0] == revision else [])
+                  if backend.get("boot") == "ok"]
+        reports = [record["report"] for record in self._api_scenarios.values()
+                   if record.get("revision") == revision and isinstance(record.get("report"), dict)]
+        return booted, reports
+
+    def _never_started(self) -> bool:
+        """A backend to start, and nothing started it on the delivered tree: no probe
+        boot and no ``test_api`` workflow that booted it or passed."""
+        try:
+            if not self._probeable_backends():
+                return False
+        except Exception:
+            logger.warning("Backend discovery failed; the app counts as never started", exc_info=True)
+        booted, reports = self._runtime_evidence()
+        return not booted and not any(report.get("boot") == "ok" or report.get("status") == "passed"
+                                      for report in reports)
+
+    def verification_gaps(self) -> list[tuple[str, str, bool]]:
+        """Each class of checks that left no evidence at all on the delivered tree, with why.
+
+        ``(class, reason, configured_off)``: ``requirements`` (no verdict on this tree: the
+        extraction or the judge failed, or it was stopped), ``runtime`` (the backend was never
+        started), ``records`` (it started, but no entity was created and no workflow created a
+        record) or ``build`` (a frontend with a ``package.json`` was never built). The reasons
+        are fixed phrases, never an error's text: the run record carries them.
+        ``configured_off`` marks a class the server has switched off (the ledger, the startup
+        check, the build check or shell tools): a property of the server, not of this run.
+        Individual findings that are not confirmed are not gaps. Only the FastAPI backends the
+        probe drives count for ``runtime``: a server the run built that no check can start is
+        ``runtime`` with ``RUNTIME_NOT_CHECKABLE``, marked ``configured_off``, since no edit
+        can give it evidence.
+        """
+        from besser.spec_driven_agent.validation.api_probe import confirmed_create_paths
+
+        messages = [str(getattr(issue, "message", issue)) for issue in self._validation_issues]
+        skipped = next((m for m in messages if m.startswith(_PHASE3_SKIPPED)), None)
+        gaps: list[tuple[str, str, bool]] = []
+        if (not self.enable_requirements_ledger
+                and _requirements_ledger.original_request(self._instructions).strip()):
+            gaps.append(("requirements", "the requirements check is off on this server", True))
+        for message in messages:
+            if message.startswith((_PHASE3_SKIPPED, _REQUIREMENTS_NOT_CHECKED)):
+                gaps.append(("requirements", _stopped_by(message), False))
+            elif message.startswith(_REQUIREMENTS_NOT_EXTRACTED):
+                gaps.append(("requirements", "your request could not be turned into requirements", False))
+            elif message.startswith(_REQUIREMENTS_JUDGE_FAILED):
+                gaps.append(("requirements", "the requirements check returned no verdict", False))
+            else:
+                continue
+            break
+        if self._never_started():
+            gaps.append(("runtime", "the startup check is off on this server", True)
+                        if not self.enable_import_smoke_check and not skipped else
+                        ("runtime", _stopped_by(skipped) if skipped else self._never_started_reason(messages), False))
+        elif self._unprobeable_server():
+            gaps.append(("runtime", RUNTIME_NOT_CHECKABLE, True))
+        else:
+            booted, reports = self._runtime_evidence()
+            entities = [entry for backend in booted for entry in (backend.get("entities") or {}).values()]
+            if (entities and not any(entry.get("verdict") == "created" for entry in entities)
+                    and not any(confirmed_create_paths(report) for report in reports)):
+                gaps.append(("records", "every create the check tried was refused", False))
+        if (self._checks_that_ran()["frontend_build"] == "not_run"
+                and any(rel.rpartition("/")[2] == "package.json" for rel in self._workspace_file_list())):
+            if not (self.enable_toolchain_validation and self.allow_shell_tools):
+                gaps.append(("build", "the build check is off on this server", True))
+            else:
+                gaps.append(("build", "its dependencies were not installed"
+                             if any(m.startswith("verification setup:") or DEPENDENCIES_NOT_INSTALLED in m
+                                    for m in messages)
+                             else _stopped_by(skipped) if skipped else "the build did not run", False))
+        return gaps
+
+    def _unprobeable_server(self) -> bool:
+        """The run built a server (a whole-application generator, or a backend target) and no
+        runtime check can start it: the workspace holds no backend the probe drives."""
+        if self._generator_used not in _APPLICATION_OUTPUT_DIRS and getattr(self.target, "kind", None) != BACKEND:
+            return False
+        try:
+            return not self._probeable_backends()
+        except Exception:
+            logger.warning("Backend discovery failed; the runtime class is left to _never_started", exc_info=True)
+            return False
+
+    def _never_started_reason(self, messages: list[str]) -> str:
+        """Why the backend was never started, as a fixed phrase."""
+        facts = getattr(self, "_runtime_probe_facts", None)
+        boots = [f"{backend.get('boot')} {backend.get('error') or ''}" for backend in (facts[1] if facts else [])]
+        notes = [m for m in messages if m.startswith(RUNTIME_CHECK_UNVERIFIED) and "(api scenario " not in m]
+        text = " ".join(boots + notes).lower()
+        if "missing_dependency" in text or "no module named" in text or "missing dependency" in text:
+            return "a dependency it needs is missing"
+        if "timed out" in text or "timeout" in text:
+            return "its startup timed out"
+        if "sandbox" in text:
+            return "no sandbox was available to start it"
+        if "crash" in text or "import_error" in text or "probe_error" in text:
+            return "the startup check failed before the app answered"
+        return "the delivered version was not started"
 
     def _business_rules_stated(self) -> bool | None:
         """False only when the ledger ran and found nothing to check: no requirement in the
@@ -5257,7 +6170,8 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         account of every call so far.
         """
         self.executor.stop_shell_processes()
-        result = remove_app_runtime_files(self.output_dir, self._written_paths() | self._files_at_start)
+        result = remove_app_runtime_files(self.output_dir, self._written_paths() | self._files_at_start,
+                                          self.executor.command_app_files)
         if result.removed:
             logger.warning("Removed %d file(s) the app wrote while it was test-run; they are not "
                            "part of the output: %s", len(result.removed), ", ".join(result.removed[:20]))
@@ -5267,6 +6181,14 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             tuple(dict.fromkeys(earlier.not_removed + result.not_removed)),
             result.note or earlier.note)
         outcome = self._runtime_files
+        written = self._written_paths() - self._files_at_start
+        scratch, bound = remove_run_folder_bound_files(
+            self.output_dir, written, written - self.executor._generator_files)
+        if scratch:
+            logger.warning("Removed %d helper script(s) the agent wrote that name the run folder's path; "
+                           "they work only inside this run: %s", len(scratch), ", ".join(scratch[:20]))
+        self._scratch_files_removed += scratch
+        temporary_paths = bound[:self._MAX_RECIPE_RUNTIME_FILES]
         return {
             # Written by the app while the agent test-ran it, and deleted: not output.
             "runtime_files_removed": list(outcome.removed[:self._MAX_RECIPE_RUNTIME_FILES]),
@@ -5275,6 +6197,12 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             "runtime_files_not_removed": list(outcome.not_removed[:self._MAX_RECIPE_RUNTIME_FILES]),
             "runtime_files_not_removed_count": len(outcome.not_removed),
             "runtime_files_note": outcome.note,
+            # Written by the agent with the run folder's own path in it: works only in this run.
+            "scratch_files_removed": list(self._scratch_files_removed[:self._MAX_RECIPE_RUNTIME_FILES]),
+            "scratch_files_removed_count": len(self._scratch_files_removed),
+            # Kept: part of the app or used by it, but they name that temporary folder.
+            "temporary_path_files": list(temporary_paths),
+            "temporary_path_files_count": len(bound),
         }
 
     def _save_recipe(self, instructions: str, elapsed: float) -> None:
@@ -5390,6 +6318,7 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             "llm_model": self.client.model,
             "generator_used": self._generator_used,
             "target": self.target.to_dict() if self.target else None,
+            "routed_stack": self._unsupported_stack if self._routed else None,
             "turns": self.total_turns,
             "tool_calls_count": len(self.tool_calls_log),
             "compactions": self._compaction_count,
@@ -5411,10 +6340,14 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
             # what was NOT built is read here, not inferred from the code.
             # The file hashes stay out: only this run's kept-verdict check reads them.
             "requirements": _requirements_ledger.with_verification_levels(
-                _requirements_ledger.without_fingerprints(self._requirement_verdicts), self.output_dir,
+                _requirements_ledger.without_fingerprints(self._recorded_verdicts()), self.output_dir,
                 **self._checks_that_ran()),
             # False: the request and the model state no business rule, so none was checked.
             "business_rules_stated": self._business_rules_stated(),
+            # "editor" when the ledger is the modeling assistant's extraction
+            # (verdicts carry its trace id as "ref"), "extracted" when the run
+            # extracted it, None when no ledger was built.
+            "requirements_source": self._requirements_source,
             "api_scenarios": api_scenario_snapshot(self._api_scenarios.values(), include_reports=True),
             "api_scenarios_retired": list(self._retired_api_scenarios),
             "model_conversion_issues": getattr(self.domain_model, "conversion_issues", []) or [],
@@ -5458,6 +6391,10 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
         model_change = getattr(self, "_model_change", None) if self._modify_mode else None
         if model_change is not None:
             recipe["model_change"] = model_change.to_dict()
+        if self._modify_mode and self._regenerated_files:
+            recipe["regenerated_files"] = list(self._regenerated_files)
+        if self._modify_mode and self._seed_regressions:
+            recipe["seed_regressions"] = list(self._seed_regressions)
         # Fix/modify success-gate outcome. Present ONLY on a fix run so the
         # from-scratch recipe stays byte-identical; records the reported
         # target and whether it was confirmed fixed, so a later "what did
@@ -5470,10 +6407,16 @@ class LLMOrchestrator(ModifyRunMixin, Phase3RepairMixin, EditLoopGuardsMixin):
                 "entities": list(self._fix_target.entities),
                 "target_resolved": self._fix_target_resolved,
                 "target_message": self._fix_target_message,
+                "target_evidence": self._fix_target_evidence,
             }
+        try:
+            save_api_workflows(self.output_dir, self._api_workflows_to_keep())
+        except ValueError:
+            logger.warning("API workflows not kept for later runs", exc_info=True)
         recipe_path = os.path.join(self.output_dir, ".besser_recipe.json")
         try:
-            self.saved_recipe, text = bounded_recipe(recipe)
+            self.saved_recipe, text = bounded_recipe(recipe, full_record=(
+                f"full record kept server-side under run {self.run_id}" if self._keeps_run_evidence else ""))
             with open_plain_write(recipe_path, "w", root=self.output_dir, encoding="utf-8") as f:
                 f.write(text)
         except Exception as e:
@@ -5516,6 +6459,41 @@ _ADVISORY_PREFIX = "advisory, not a blocker: "
 
 # Focused re-judge rounds per judged source: the first, and one more for files it left out.
 _REJUDGE_ROUNDS = 2
+
+
+def _named_file_edits(task: dict, workspace: str) -> str:
+    """Whether the run edited the files a checklist item names, as a sentence ('' when it names none).
+
+    A named path that is not a workspace file (``routers/x.py`` for ``backend/routers/x.py``)
+    is said to be absent, not untouched.
+    """
+    written = task.get("written") or ()
+    named = task.get("files") or []
+    absent = [path for path in named
+              if path not in written and not os.path.isfile(os.path.join(workspace, path))]
+    files = [path for path in named if path not in absent]
+    note = f"No workspace file is at {', '.join(absent)}. " if absent else ""
+    if not files:
+        return note
+    edited = [path for path in files if path in written]
+    if len(edited) == len(files):
+        said = f"Every file it names was edited ({', '.join(files)}); that alone does not show it is done. "
+    elif edited:
+        rest = [path for path in files if path not in edited]
+        said = (f"Some of the files it names were edited. Edited: {', '.join(edited)}; "
+                f"not touched: {', '.join(rest)}. ")
+    else:
+        said = f"The files it names were not touched ({', '.join(files)}). "
+    return said + note
+
+
+def _action_already_reported(action, reported) -> bool:
+    """An ``action contract:`` finding already names the stub handler of this item."""
+    if not action:
+        return False
+    path, _function, method, route = action
+    head, served = f"action contract: {path} line ", f": {method} {route} ("
+    return any(str(message).startswith(head) and served in str(message) for message in reported)
 
 
 def _check_reason(note: str) -> str:
@@ -5639,13 +6617,18 @@ def _redact_for_trace(value: Any) -> Any:
     return value
 
 
-def _trace_safe_input(tool_name: str, data: Any) -> Any:
-    """A tool input as the trace and checkpoint record it: redacted, bounded."""
+def _without_header_values(tool_name: str, data: Any) -> Any:
+    """A tool input with test_api's header values hidden."""
     if tool_name == "test_api" and isinstance(data, dict) and "requests" in data:
         from besser.spec_driven_agent.validation.api_probe import redact_scenario_headers
 
         data = {**data, "requests": redact_scenario_headers(data["requests"])}
-    return _sanitize_for_log(_redact_for_trace(data))
+    return data
+
+
+def _trace_safe_input(tool_name: str, data: Any) -> Any:
+    """A tool input as the trace and checkpoint record it: redacted, bounded."""
+    return _sanitize_for_log(_redact_for_trace(_without_header_values(tool_name, data)))
 
 
 def _trace_result_excerpt(result: Any) -> dict:

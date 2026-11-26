@@ -152,39 +152,46 @@ def parse_buml_content(content: str, warnings: list[str] | None = None) -> Domai
         if not isinstance(content, str):
             raise TypeError(f"Expected B-UML content as str or DomainModel, got {type(content)!r}")
 
-        # Only the model is loaded, not a generator run at the end of the file.
-        cleaned_content = "\n".join(
-            line for line in content.splitlines()
-            if not any(gen in line for gen in ["Generator(", ".generate("])
-        )
-
-        # Execute the cleaned B-UML content through the safe AST-based loader.
-        local_vars = safe_load_buml(cleaned_content, allowed_names)
+        # A generator run or a print at the end of the file is skipped by the
+        # loader (reported in ``warnings``); only the model is loaded.
+        local_vars = safe_load_buml(content, allowed_names, warnings=warnings)
 
         domain_name = "Imported_Domain_Model"
         domain_timestamp = None
-        for var_name, var_value in local_vars.items():
-            if isinstance(var_value, DomainModel):
-                domain_name = var_value.name
-                if var_value.has_explicit_timestamp:
-                    domain_timestamp = var_value.timestamp
+        built_models = [v for v in local_vars.values() if isinstance(v, DomainModel)]
+        if len(built_models) > 1:
+            # Building it twice (``m = build()`` and again under the main block)
+            # makes a second copy of every class.
+            warnings.append(
+                f"The file builds {len(built_models)} DomainModels; the last one, "
+                f"{built_models[-1].name!r}, was imported"
+            )
+            built_models = built_models[-1:]
+        for built in built_models:
+            domain_name = built.name
+            if built.has_explicit_timestamp:
+                domain_timestamp = built.timestamp
+
+        # Elements come from the variables the file set and from the DomainModel
+        # it built, which holds them when a helper function built the model.
+        elements = list(local_vars.values())
+        for built in built_models:
+            elements += [*built.types, *built.associations, *built.generalizations, *built.constraints]
 
         domain_model = DomainModel(domain_name, timestamp=domain_timestamp)
         # First pass: Add all classes and enumerations
-        classes = {}
-        for var_name, var_value in local_vars.items():
-            if isinstance(var_value, (Class, Enumeration)):
-                domain_model.types.add(var_value)
-                classes[var_name] = var_value
-            elif isinstance(var_value, Constraint):
-                domain_model.constraints.add(var_value)
+        for element in elements:
+            if isinstance(element, (Class, Enumeration)):
+                domain_model.types.add(element)
+            elif isinstance(element, Constraint):
+                domain_model.constraints.add(element)
 
         # Second pass: Add associations and generalizations
-        for var_name, var_value in local_vars.items():
-            if isinstance(var_value, BinaryAssociation):
-                domain_model.associations.add(var_value)
-            elif isinstance(var_value, Generalization):
-                domain_model.generalizations.add(var_value)
+        for element in elements:
+            if isinstance(element, BinaryAssociation):
+                domain_model.associations.add(element)
+            elif isinstance(element, Generalization):
+                domain_model.generalizations.add(element)
 
         return domain_model
 

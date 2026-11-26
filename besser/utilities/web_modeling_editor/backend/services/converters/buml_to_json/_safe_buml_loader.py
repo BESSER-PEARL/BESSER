@@ -7,6 +7,15 @@ public constructors. Top-level imports are skipped, never executed (an
 ``X as Y`` alias of an allowed name binds ``Y`` to it); there are no
 function/class definitions, no control flow, no comprehensions.
 
+Files written by hand or by an LLM are runnable scripts: helper functions that
+build the model, a validation check that prints, a generator run, an
+``if __name__ == "__main__":`` block. When the caller collects ``warnings``
+(a model a user uploads), plain top-level functions are accepted, their bodies
+validated like the rest, the main block is loaded like top-level code, and a
+statement that runs the script rather than building the model (it uses a name
+that is not B-UML, such as ``print`` or a generator) is skipped, never run, and
+reported there.
+
 This loader validates the AST against a strict allowlist of node types and
 name references BEFORE executing it. Anything outside the allowlist raises
 ``SafeBumlLoaderError``. Only after validation passes do we compile and
@@ -21,9 +30,12 @@ from __future__ import annotations
 
 import ast
 import datetime as _datetime
+import logging
 import sys
 import types
 from typing import Any, Dict, Mapping, Optional, Set
+
+logger = logging.getLogger(__name__)
 
 
 # Stand-in for the ``datetime`` module, for ``allowed_names``. Generated BUML
@@ -107,7 +119,33 @@ _ALLOWED_NODE_TYPES: Set[type] = {
     ast.Try,
     ast.ExceptHandler,
     ast.Pass,
+    # ``return`` inside a top-level helper function (validated by
+    # _validate_function); at module level Python itself refuses it.
+    ast.Return,
 }
+
+# Statements allowed at module level. A ``FunctionDef`` is a plain helper,
+# checked by _validate_function, and only in a hand-written script (``warnings``).
+_TOP_LEVEL_STATEMENTS = (ast.Assign, ast.AnnAssign, ast.Expr, ast.Try, ast.FunctionDef)
+
+# How a refused top-level statement is named in the error.
+_STATEMENT_NAMES = {
+    "For": "a for loop", "AsyncFor": "a for loop", "While": "a while loop",
+    "If": "an if statement", "With": "a with block", "AsyncWith": "a with block",
+    "ClassDef": "a class definition", "AsyncFunctionDef": "an async function",
+    "Delete": "a del statement", "AugAssign": "an augmented assignment (+=)",
+    "Global": "a global statement", "Raise": "a raise statement", "Assert": "an assert",
+    "FunctionDef": "a function definition",
+}
+
+# Calls of the file's own functions, per load. A builder calls a helper once per
+# element (tens of calls); without a cap, helpers that each call the one below
+# twice reach 2**n calls from a few lines.
+_MAX_FUNCTION_CALLS = 10_000
+_CALL_COUNTER_NAME = "_besser_count_call"
+
+# Skipped script lines listed one by one; the rest are counted in one message.
+_MAX_SKIP_WARNINGS = 20
 
 # Inside ``UnaryOp`` we only allow the operators needed for signed numeric
 # literals (``-1``, ``+1``) and the occasional boolean negation flag.
@@ -287,8 +325,13 @@ def _validate_node(
         _validate_write_target(node, allowed_names, declared_vars)
 
     if isinstance(node, ast.Name):
-        # Store-context names are fine (we collect them separately); only
-        # Load-context references need to resolve to something we allow.
+        # A bound name, wherever it is bound (a ``try`` body is not in
+        # _collect_assigned_names): an underscore name would rebind the run-time
+        # guards (_besser_guarded_setattr, _besser_count_call), and binding
+        # ``NameError`` would change what the guard's handler catches.
+        if not isinstance(node.ctx, ast.Load):
+            if _is_dunder(node.id) or node.id in _EXCEPTION_NAMES:
+                raise SafeBumlLoaderError(f"Assignment to {node.id!r} is forbidden in BUML")
         if isinstance(node.ctx, ast.Load):
             # Inside `try: ... except NameError: pass` an unresolved name is the
             # POINT. Safe: it resolves at runtime against the same controlled
@@ -465,9 +508,9 @@ def _import_aliases(stmt: ast.Import | ast.ImportFrom, allowed_names: Mapping[st
     for alias in stmt.names:
         if alias.asname is None or alias.asname == alias.name:
             continue
-        if _is_dunder(alias.asname):
+        if _is_dunder(alias.asname) or alias.asname in _EXCEPTION_NAMES:
             raise SafeBumlLoaderError(
-                f"Import alias to underscore/dunder name is forbidden: {alias.asname!r}"
+                f"Import alias to an underscore name or NameError is forbidden: {alias.asname!r}"
             )
         if alias.name in allowed_names:
             aliases[alias.asname] = allowed_names[alias.name]
@@ -495,7 +538,140 @@ def _collect_assigned_names(module: ast.Module) -> Set[str]:
             # Annotated assignments only have a single target.
             if isinstance(stmt.target, ast.Name):
                 names.add(stmt.target.id)
+        elif isinstance(stmt, ast.FunctionDef):
+            names.add(stmt.name)
     return names
+
+
+def _local_names(func: ast.FunctionDef) -> Set[str]:
+    """The parameters of ``func`` and every name its body assigns."""
+    args = func.args
+    names = {a.arg for a in args.posonlyargs + args.args + args.kwonlyargs}
+    names |= _collect_assigned_names(ast.Module(body=func.body, type_ignores=[]))
+    return names
+
+
+def _validate_function(
+    func: ast.FunctionDef, allowed_names: Mapping[str, Any], declared_vars: Set[str],
+) -> None:
+    """Accept a plain top-level helper: no decorators, ``*args`` / ``**kwargs``
+    or nested definitions, and a body that passes the same validation as the
+    module (``return`` included). Its parameters and locals count as declared."""
+    if func.decorator_list:
+        raise SafeBumlLoaderError("a decorated function is not allowed in BUML")
+    if func.args.vararg or func.args.kwarg:
+        raise SafeBumlLoaderError("*args / **kwargs are not allowed in BUML")
+    # ``def f[T: <expr>]()`` (3.12+): the bound is compiled and evaluated lazily,
+    # outside this validation.
+    if getattr(func, "type_params", None):
+        raise SafeBumlLoaderError("type parameters are not allowed in BUML")
+    if _is_dunder(func.name) or func.name in _EXCEPTION_NAMES:
+        raise SafeBumlLoaderError(f"Function name {func.name!r} is forbidden in BUML")
+    local_vars = declared_vars | _local_names(func)
+    for name in local_vars - declared_vars:
+        if _is_dunder(name) or name in _EXCEPTION_NAMES:
+            raise SafeBumlLoaderError(f"Name {name!r} is forbidden in BUML")
+    args = func.args
+    for expr in [*args.defaults, *(d for d in args.kw_defaults if d is not None),
+                 *(a.annotation for a in args.posonlyargs + args.args + args.kwonlyargs if a.annotation),
+                 *([func.returns] if func.returns else [])]:
+        _validate_node(expr, allowed_names, declared_vars)
+    for stmt in func.body:
+        _validate_node(stmt, allowed_names, local_vars)
+
+
+def _loaded_names(node: ast.AST) -> Set[str]:
+    return {n.id for n in ast.walk(node) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)}
+
+
+def _stored_names(stmt: ast.stmt) -> Set[str]:
+    if isinstance(stmt, ast.FunctionDef):
+        return {stmt.name}
+    return {n.id for n in ast.walk(stmt) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)}
+
+
+def _bound_names(tree: ast.Module) -> Set[str]:
+    """Every name the file binds anywhere: assignments, loop targets, functions, parameters."""
+    names: Set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+            names.add(node.id)
+        elif isinstance(node, ast.FunctionDef):
+            names.add(node.name)
+        elif isinstance(node, ast.arg):
+            names.add(node.arg)
+    return names
+
+
+def _value_root(stmt: ast.stmt) -> Optional[str]:
+    """The name a statement's value starts from: ``Class`` in ``b = Class(...)``,
+    ``gen`` in ``gen.generate()``. ``None`` for a literal or a container."""
+    value = getattr(stmt, "value", None) if isinstance(
+        stmt, (ast.Assign, ast.AnnAssign, ast.Expr, ast.Return)) else None
+    while isinstance(value, (ast.Call, ast.Attribute, ast.Subscript)):
+        value = value.func if isinstance(value, ast.Call) else value.value
+    return value.id if isinstance(value, ast.Name) else None
+
+
+def _skip_runner_statements(
+    body: list, known: Set[str], source_lines: list, warnings: Optional[list],
+) -> list:
+    """Drop the statements of ``body`` that run the script instead of building the model.
+
+    A statement is skipped when it uses a name that is neither B-UML nor bound by
+    the file (``print``, a generator class, ``os``), or a variable whose last
+    assignment was skipped, unless it builds a model element: an assignment or
+    call that starts from a B-UML name or a kept variable is kept, so a typo such
+    as ``Proprety(...)`` is an error that names the variable, not a missing class.
+    Skipped statements never run. One pass in file order. Returns the kept statements.
+    """
+    kept: list = []
+    skipped: list = []                      # (statement, why)
+    runner_vars: Dict[str, int] = {}        # variable -> line of the skipped statement that set it
+    for stmt in body:
+        if isinstance(stmt, ast.FunctionDef):
+            kept.append(stmt)
+            runner_vars.pop(stmt.name, None)
+            continue
+        if isinstance(stmt, ast.Try):
+            # The builders' ``except NameError: pass`` guard: an unknown name in
+            # it is the point (validated by _validate_try_shape, never skipped).
+            kept.append(stmt)
+            continue
+        loaded = _loaded_names(stmt)
+        bad = sorted(n for n in loaded if n not in known or n in runner_vars)
+        root = _value_root(stmt)
+        builds_model = (isinstance(stmt, (ast.Assign, ast.AnnAssign, ast.Expr, ast.Return))
+                        and (root is None or (root in known and root not in runner_vars)))
+        if bad and not builds_model:
+            name = root if root in bad else bad[0]
+            why = (f"it uses {name!r}, which is set by a skipped line" if name in runner_vars
+                   else f"it uses {name!r}, which is not part of B-UML")
+            skipped.append((stmt, why))
+            for stored in _stored_names(stmt):
+                runner_vars[stored] = stmt.lineno
+            continue
+        for name in sorted(loaded & runner_vars.keys()):
+            raise SafeBumlLoaderError(
+                f"line {stmt.lineno}: {name!r} is set on line {runner_vars[name]}, which was skipped "
+                "because it uses a name that is not part of B-UML"
+            )
+        kept.append(stmt)
+        for stored in _stored_names(stmt):
+            runner_vars.pop(stored, None)
+
+    for stmt, why in skipped[:_MAX_SKIP_WARNINGS]:
+        snippet = source_lines[stmt.lineno - 1].strip()[:80] if stmt.lineno <= len(source_lines) else ""
+        message = f"Skipped line {stmt.lineno} ({snippet}): {why}, so it runs the script rather than building the model"
+        logger.warning("BUML import: %s", message)
+        if warnings is not None:
+            warnings.append(message)
+    if len(skipped) > _MAX_SKIP_WARNINGS:
+        message = f"Skipped {len(skipped) - _MAX_SKIP_WARNINGS} more lines that run the script"
+        logger.warning("BUML import: %s", message)
+        if warnings is not None:
+            warnings.append(message)
+    return kept
 
 
 def safe_load_buml(
@@ -504,6 +680,7 @@ def safe_load_buml(
     max_ast_nodes: int = _MAX_AST_NODES,
     max_content_chars: int = _MAX_CONTENT_BYTES,
     shadowable_names: Optional[Mapping[str, Any]] = None,
+    warnings: Optional[list] = None,
 ) -> Dict[str, Any]:
     """
     Parse ``content`` as Python, validate against the allowlist, and execute
@@ -533,6 +710,12 @@ def safe_load_buml(
         variable of that name: then the name is the content's variable only.
         For a file whose models may use them (a class called ``Person`` in a
         project file with a trace written before its metaclasses got aliases).
+    warnings:
+        Given for a hand-written script (a model ``.py`` a user uploads): its
+        ``if __name__ == "__main__":`` body is loaded, and each statement that
+        runs the script rather than building the model is skipped and reported
+        here (see _skip_runner_statements). Without it, such a statement is
+        refused and the main block is stripped.
 
     Returns
     -------
@@ -560,7 +743,8 @@ def safe_load_buml(
         if not isinstance(value, types.ModuleType)
     }
 
-    tree = ast.parse(content.removeprefix("﻿"), mode="exec")
+    source = content.removeprefix("﻿")
+    tree = ast.parse(source, mode="exec")
 
     def _is_main_guard(stmt) -> bool:
         """True for exactly ``if __name__ == "__main__":`` (either order)."""
@@ -593,31 +777,40 @@ def safe_load_buml(
             f"BUML AST too complex ({node_count} nodes > {max_ast_nodes})"
         )
 
-    # Only module-level statements are allowed to be Assign or Expr. Things
-    # like ``FunctionDef``, ``ClassDef``, ``Import``, ``If``, ``For`` never
-    # appear in our emitted BUML and are not in ``_ALLOWED_NODE_TYPES``, so
-    # they'll be caught during recursive validation anyway. Double-check here
-    # to fail fast with a clear message.
-    #
-    # One tolerated exception: a trailing ``if __name__ == "__main__":``
-    # guard, which users routinely leave in hand-edited/exported BUML
-    # files. It is STRIPPED, not executed — its body never runs under
-    # this loader and is not validated, so it adds zero attack surface.
-    # Top-level imports are dropped the same way; see _import_aliases.
-    kept_body = []
+    # Imports are dropped (see _import_aliases). A hand-written script (the
+    # caller passes ``warnings``): the body of ``if __name__ == "__main__":`` is
+    # loaded like top-level code, since scripts often build the model there, and
+    # statements that run the script rather than build the model are skipped
+    # (_skip_runner_statements). Machine-written content (no ``warnings``): the
+    # main block is stripped, never run, and anything else is refused.
+    script = warnings is not None
+    body = []
     aliases: Dict[str, Any] = {}
     for stmt in tree.body:
         if _is_main_guard(stmt):
-            continue
-        if isinstance(stmt, (ast.Import, ast.ImportFrom)):
+            if script:
+                body.extend(stmt.body)
+        elif isinstance(stmt, (ast.Import, ast.ImportFrom)):
             aliases.update(_import_aliases(stmt, allowed_names))
-            continue
-        if not isinstance(stmt, (ast.Assign, ast.AnnAssign, ast.Expr, ast.Try)):
+        else:
+            body.append(stmt)
+    known = (set(allowed_names) | set(aliases) | set(shadowable_names or {}) | _EXCEPTION_NAMES
+             | _bound_names(tree))
+    source_lines = source.splitlines()
+    if script:
+        body = _skip_runner_statements(body, known, source_lines, warnings)
+    for stmt in body:
+        if isinstance(stmt, ast.FunctionDef) and script:
+            stmt.body = _skip_runner_statements(stmt.body, known, source_lines, warnings) or [ast.Pass()]
+        elif not isinstance(stmt, _TOP_LEVEL_STATEMENTS) or isinstance(stmt, ast.FunctionDef):
+            kind = type(stmt).__name__
             raise SafeBumlLoaderError(
-                f"Top-level statement not allowed: {type(stmt).__name__}"
+                f"Top-level statement not allowed: {kind} (line {stmt.lineno}): "
+                f"{_STATEMENT_NAMES.get(kind, kind)} is not supported in an imported B-UML file, "
+                "which may only assign and call B-UML constructors"
+                + (" and helper functions" if script else "")
             )
-        kept_body.append(stmt)
-    tree.body = kept_body
+    tree.body = body
     allowed_names = {**allowed_names, **aliases}
 
     declared_vars = _collect_assigned_names(tree)
@@ -635,12 +828,24 @@ def safe_load_buml(
                 f"Assignment to underscore/dunder name is forbidden: {name!r}"
             )
 
-    _validate_node(tree, allowed_names, declared_vars)
+    for stmt in tree.body:
+        try:
+            if isinstance(stmt, ast.FunctionDef):
+                _validate_function(stmt, allowed_names, declared_vars)
+            else:
+                _validate_node(stmt, allowed_names, declared_vars)
+        except SafeBumlLoaderError as error:
+            raise SafeBumlLoaderError(f"line {stmt.lineno}: {error}") from None
     _check_assignment_shapes(tree)
 
     # Every attribute write goes through a run-time check of the real target
     # object; see _make_guarded_setattr.
     tree = _GuardAttributeWrites().visit(tree)
+    # Every call of a helper function counts against _MAX_FUNCTION_CALLS.
+    for stmt in tree.body:
+        if isinstance(stmt, ast.FunctionDef):
+            stmt.body.insert(0, ast.Expr(value=ast.Call(
+                func=ast.Name(id=_CALL_COUNTER_NAME, ctx=ast.Load()), args=[], keywords=[])))
 
     # Re-parse with location info preserved (ast.parse already did this, but
     # fix_missing_locations is cheap insurance for manually constructed ASTs).
@@ -661,6 +866,26 @@ def safe_load_buml(
         if value is SAFE_DATETIME_MODULE:
             globals_ns[name] = make_safe_datetime_module()
     globals_ns[_SETATTR_GUARD_NAME] = _make_guarded_setattr(globals_ns)
-    locals_ns: Dict[str, Any] = {}
-    exec(code, globals_ns, locals_ns)  # noqa: S102 - AST pre-validated above
-    return locals_ns
+    globals_ns[_CALL_COUNTER_NAME] = _make_call_counter()
+    # One namespace, as in a module: a helper function sees the file's other
+    # functions and variables. What the file bound is returned, not what was injected.
+    injected = dict(globals_ns)
+    exec(code, globals_ns)  # noqa: S102 - AST pre-validated above
+    return {
+        name: value for name, value in globals_ns.items()
+        if name != "__builtins__" and (name not in injected or value is not injected[name])
+    }
+
+
+def _make_call_counter():
+    """Count calls of the file's helper functions; refuse past _MAX_FUNCTION_CALLS."""
+    calls = [0]
+
+    def _count_call() -> None:
+        calls[0] += 1
+        if calls[0] > _MAX_FUNCTION_CALLS:
+            raise SafeBumlLoaderError(
+                f"BUML helper functions made more than {_MAX_FUNCTION_CALLS} calls"
+            )
+
+    return _count_call

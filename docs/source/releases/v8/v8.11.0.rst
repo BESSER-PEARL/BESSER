@@ -230,6 +230,13 @@ Fixes
   how to free space and opens a *Free up space* dialog that lists the saved
   projects by size and last edit, with export and delete
   (`WME #298 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/298>`_).
+* **Removing OCL constraints with the assistant.** "Remove the
+  book_has_title constraint" removes that constraint instead of deleting its
+  class, and "remove the OCL constraints" removes all of them. When one box
+  holds several constraints, the others stay
+  (`#837 <https://github.com/BESSER-PEARL/BESSER/issues/837>`_,
+  `WME #313 <https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor/pull/313>`_,
+  `modeling-agent #101 <https://github.com/BESSER-PEARL/modeling-agent/pull/101>`_).
 * **Smaller fixes.** The SQL generator writes its DDL as UTF-8, so a class
   named "Bücher" no longer breaks on Windows; a CNOT converts back as the
   editor draws it; a project whose owner contains "PROJECT DEFINITION" imports

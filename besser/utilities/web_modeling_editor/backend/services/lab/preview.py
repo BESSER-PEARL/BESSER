@@ -15,9 +15,11 @@ the preview's OpenAI key or the GitHub OAuth secret.
 from __future__ import annotations
 
 import copy
+import hmac
 import ipaddress
 import logging
 import os
+import secrets
 import shutil
 import signal
 import socket
@@ -26,7 +28,7 @@ import subprocess
 import sys
 import threading
 import time
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import IO, Callable, Mapping, Optional, Sequence
 from urllib.parse import urlsplit
 
@@ -73,6 +75,10 @@ PREVIEW_BACKEND_PORT = 9100
 PREVIEW_FRONTEND_PORT = 8180
 PREVIEW_AGENT_PORT = 8865
 SLOT_PORT_STEP = 10
+#: On a preview host: where a lab user enters with the slot's pass, and the cookie the host's gate then asks for
+#: (scripts/lab/nginx-lab.conf sends both to the lab backend's /lab/preview/enter and /lab/preview/gate).
+PREVIEW_ENTER_PATH = "/.besser-lab/enter"
+PREVIEW_PASS_COOKIE = "besser_lab_preview"
 #: A slot nobody has used for this long may be taken for another change (D4: a switch breaks a session in use).
 SLOT_IDLE_TAKEOVER_SECONDS = 600
 
@@ -602,6 +608,8 @@ class _Slot:
     agent_off: str = ""
     #: bumped whenever the slot changes hands, so a preparation for an earlier change discards its work
     generation: int = 0
+    #: the pass of whoever may open the slot's host (:meth:`PreviewPool.pass_admits`); new with each change
+    token: str = field(default_factory=lambda: secrets.token_urlsafe(32))
 
 
 def _origin(url: str) -> str:
@@ -710,10 +718,22 @@ class PreviewPool:
                 logger.info("Lab preview: slot %d idle since %.0f s, handing it from change %s to %s", slot.index,
                             now - (slot.last_used_at or 0.0), slot.change.id if slot.change else None, change.id)
             previous = slot.supervisor
+            # Another change: who could open the slot for the change before can no longer.
+            slot.token = secrets.token_urlsafe(32)
             slot.change, slot.used_by, slot.started_at, slot.last_used_at = change, login, now, now
             slot.supervisor = None
             self._prepare_locked(slot, change, previous)
             return self._render(copy.copy(slot))
+
+    def pass_admits(self, slot: int, token: str) -> bool:
+        """Whether ``token`` is the pass of ``slot`` now. The preview host asks before it lets a request through
+        to a change's unreviewed code, which has no sign-in of its own: only a signed-in lab user is given the
+        pass (``entryUrl``). False for an unknown or unused slot."""
+        with self._lock:
+            if not 0 <= slot < len(self._slots):
+                return False
+            current = self._slots[slot]
+            return bool(token) and current.change is not None and hmac.compare_digest(token, current.token)
 
     def touch(self, slot: int, login: str) -> None:
         """``login`` still uses ``slot``: it is not idle. ``KeyError`` for an unknown slot."""
@@ -792,6 +812,7 @@ class PreviewPool:
     @staticmethod
     def _clear_locked(slot: _Slot) -> None:
         slot.generation += 1
+        slot.token = secrets.token_urlsafe(32)
         slot.change = slot.used_by = slot.started_at = slot.last_used_at = slot.supervisor = None
         slot.step = slot.error = slot.agent_off = ""
 
@@ -919,7 +940,10 @@ class PreviewPool:
         detail =(slot.disabled or self._detail or slot.error or slot.step
                   or ("" if confined else _UNCONFINED_DETAIL))
         change = slot.change
+        entry = (f"{slot.public_url}{PREVIEW_ENTER_PATH}?token={slot.token}"
+                 if enabled and slot.public_url and change is not None else None)
         return LabPreviewSlot(
+            entryUrl=entry,
             enabled=enabled, url=slot.url if enabled else None, confined=confined, detail=detail,
             services=services, slot=slot.index, changeId=change.id if change else None,
             title=change.title if change else None, owner=change.owner if change else None, usedBy=slot.used_by,

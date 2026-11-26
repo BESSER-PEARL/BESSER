@@ -319,6 +319,42 @@ def test_a_slot_on_the_labs_own_origin_is_off_with_a_reason(made):
         pool.take(B, "ben")
 
 
+def test_a_hosted_slot_showing_a_change_has_an_entry_link_with_its_pass(made):
+    pool, _, _ = made(TWO_SLOTS)
+    assert [slot.entryUrl for slot in pool.view().slots] == [None, None]
+    assert pool.pass_admits(0, "") is False
+
+    entry = pool.take(A, "ana").entryUrl
+    prefix = "https://preview.lab.example.org/.besser-lab/enter?token="
+    assert entry.startswith(prefix) and pool.view().slots[1].entryUrl is None
+    token = entry[len(prefix):]
+    assert len(token) >= 40
+    assert pool.pass_admits(0, token) is True
+    assert pool.pass_admits(0, token + "x") is False and pool.pass_admits(0, "") is False
+    # The pass of one slot does not open another, nor a slot the pool does not have.
+    assert pool.pass_admits(1, token) is False and pool.pass_admits(7, token) is False
+    # The same change again keeps the pass: the link an open tab holds stays good.
+    assert pool.take(A, "ben").entryUrl == entry
+
+
+def test_the_pass_of_a_slot_ends_with_its_change(made):
+    pool, _, _ = made(TWO_SLOTS[:1])
+    prefix = "https://preview.lab.example.org/.besser-lab/enter?token="
+    first = pool.take(A, "ana").entryUrl[len(prefix):]
+
+    pool.release(A.id)
+    assert pool.pass_admits(0, first) is False and pool.view().slots[0].entryUrl is None
+
+    second = pool.take(B, "ben").entryUrl[len(prefix):]
+    assert second != first
+    assert pool.pass_admits(0, second) is True and pool.pass_admits(0, first) is False
+
+
+def test_a_local_slot_has_no_entry_link(made):
+    pool, _, _ = made()
+    assert pool.take(A, "ana").entryUrl is None
+
+
 def test_the_preview_is_off_when_its_only_slot_is_on_the_labs_origin(made):
     pool, _, _ = made(["https://lab.example.org"], deployment_url="https://lab.example.org/")
 

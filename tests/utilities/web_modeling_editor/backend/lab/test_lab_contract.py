@@ -72,6 +72,9 @@ ROUTES = [
      "LabProposalRef", 204),
 ]
 ROUTE_IDS = [f"{method} {path}" for method, path, *_ in ROUTES]
+# A preview host's gate: reached by the browser on the preview host, where no lab session is sent. The slot's pass
+# admits, not a session (test_lab_router.py covers them).
+GATE_ROUTES = [("GET", "/besser_api/lab/preview/enter"), ("GET", "/besser_api/lab/preview/gate")]
 
 PATH_VALUES = {"{service}": "backend", "{note_id}": "m7"}
 
@@ -117,7 +120,7 @@ def lab_on(route_settings, app_state):
 def test_the_lab_paths_are_exactly_the_table(openapi):
     lab_operations = {(method.upper(), path) for path, item in openapi["paths"].items()
                       if path.startswith("/besser_api/lab/") for method in item}
-    assert lab_operations == {(method, path) for method, path, *_ in ROUTES}
+    assert lab_operations == {(method, path) for method, path, *_ in ROUTES} | set(GATE_ROUTES)
 
 
 @pytest.mark.parametrize("method, path, query, body, request_model, answer", ROUTES, ids=ROUTE_IDS)

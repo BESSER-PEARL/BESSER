@@ -554,6 +554,10 @@ class LabService:
                                   detail="The preview is off on this lab (BESSER_LAB_PREVIEW_ENABLED is not set).")
         return self.preview.view()
 
+    def preview_pass_admits(self, slot: int, token: str) -> bool:
+        """Whether ``token`` opens preview ``slot`` now (:meth:`PreviewPool.pass_admits`); False with the preview off."""
+        return self.preview is not None and self.preview.pass_admits(slot, token)
+
     def take_preview_slot(self, user: LabUser, change_id: str) -> LabPreviewSlot:
         """Show the change in a preview slot (prepared in the background).
 

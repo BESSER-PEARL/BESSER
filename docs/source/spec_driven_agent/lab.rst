@@ -632,7 +632,19 @@ a plain editor backend, not a second lab) and no ``GITHUB_CLIENT_ID``, so
 sign-in is off in the preview. The preview editor gets ``VITE_DEV_BACKEND_URL``
 (``<slot origin>/besser_api``) and ``UML_BOT_WS_URL`` (``wss://<slot
 host>/agent``). The nginx site sends each slot's ``/besser_api/``, ``/agent``
-and ``/`` to its three ports and never routes a preview to the lab backend.
+and ``/`` to its three ports; of the lab backend a preview host reaches only
+the two gate routes below.
+
+**The gate.** A preview has no sign-in of its own, so its host admits only who
+holds the slot's pass. The lab gives the pass to its signed-in users, as the
+``entryUrl`` of the slot (``<slot origin>/.besser-lab/enter?token=<pass>``),
+which the Try it tab frames and links. nginx sends that path to ``GET
+/lab/preview/enter``, which stores the pass as an ``HttpOnly`` cookie of the
+preview host and redirects to ``/``; for every other request nginx asks ``GET
+/lab/preview/gate`` (``auth_request``) and answers 403 without the pass. The
+two routes take no lab session, the cookie is removed before a request reaches
+the change's services, and the pass is new with each change a slot shows. A
+local slot (no ``BESSER_LAB_PREVIEW_URLS``) has no gate and no ``entryUrl``.
 
 **The assistant and its key.** The preview's modeling agent gets
 ``OPENAI_BASE_URL=http://127.0.0.1:<BESSER_LAB_PREVIEW_LLM_PROXY_PORT>/v1``

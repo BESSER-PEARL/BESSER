@@ -27,7 +27,10 @@ Two kinds of origin, so code the lab agent writes never runs where the browser h
 | | `/agent` | the slot's modeling agent, `8865 + 10 i` (WebSocket) |
 | | `/` | the slot's editor dev server (Vite), `8180 + 10 i`, hot reload; `frame-ancestors https://<LAB_HOST>` |
 
-No preview block routes to port 9000. Every block admits only `LAB_ALLOW_CIDRS`.
+A preview block reaches port 9000 only for its gate: every request must carry the slot's pass, which the lab gives
+to its signed-in users (the Try it tab enters through `/.besser-lab/enter?token=...`; nginx asks
+`/besser_api/lab/preview/gate` for each request and answers 403 without the pass). Every block admits only
+`LAB_ALLOW_CIDRS`.
 
 | Process | Listens on | Runs from |
 |---|---|---|
@@ -170,6 +173,7 @@ Files on the host:
    curl -s -o /dev/null -w '%{http_code}\n' https://lab.example.org/                  # 200: the lab editor
    curl -s -o /dev/null -w '%{http_code}\n' https://lab.example.org/besser_api/lab/home  # 401 without a session
    curl -sI https://preview.lab.example.org/ | grep -i content-security-policy        # frame-ancestors https://lab.example.org
+   curl -s -o /dev/null -w '%{http_code}\n' https://preview.lab.example.org/           # 403 without the slot's pass
    ```
 
    Then sign in on `https://<LAB_HOST>/` with an allowed login: the home page shows the base branches, the month's

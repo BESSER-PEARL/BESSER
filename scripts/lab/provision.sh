@@ -198,6 +198,7 @@ render_nginx_conf() {
       }
       gsub(/__PREVIEW_HOSTS__/, previews, line)
       gsub(/__PREVIEW_HOST__/, host_of[slot + 1], line)
+      gsub(/__PREVIEW_SLOT__/, slot, line)
       gsub(/__PREVIEW_BACKEND_PORT__/, backend + slot * step, line)
       gsub(/__PREVIEW_FRONTEND_PORT__/, frontend + slot * step, line)
       gsub(/__PREVIEW_AGENT_PORT__/, agent + slot * step, line)

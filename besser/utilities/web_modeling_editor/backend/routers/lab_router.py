@@ -15,8 +15,8 @@ import contextlib
 import uuid
 from typing import Annotated, Any, Iterator, Optional
 
-from fastapi import APIRouter, HTTPException, Path, Query
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Cookie, HTTPException, Path, Query
+from fastapi.responses import RedirectResponse, StreamingResponse
 from pydantic import ValidationError
 
 from besser.spec_driven_agent.lab.github_tools import GitHubReadError
@@ -24,6 +24,7 @@ from besser.spec_driven_agent.lab.memory import LabMemoryError
 from besser.spec_driven_agent.lab.workspace import LabWorkspaceError
 from besser.utilities.web_modeling_editor.backend.dependencies import (
     LabServiceDep,
+    OptionalLabServiceDep,
     SettingsDep,
     SpecDrivenRuntimeDep,
 )
@@ -61,6 +62,7 @@ from besser.utilities.web_modeling_editor.backend.models.lab import (
 from besser.utilities.web_modeling_editor.backend.routers.auth import LabUserDep
 from besser.utilities.web_modeling_editor.backend.services.deployment.github_service import GitHubService
 from besser.utilities.web_modeling_editor.backend.services.lab.github_reader import LabGitHubReader
+from besser.utilities.web_modeling_editor.backend.services.lab.preview import PREVIEW_PASS_COOKIE
 from besser.utilities.web_modeling_editor.backend.services.lab.pull_requests import (
     PullRequestError,
     PullRequestInputError,
@@ -308,6 +310,44 @@ async def lab_review(user: LabUserDep, lab: LabServiceDep, changeId: ChangeIdQue
 async def lab_preview(user: LabUserDep, lab: LabServiceDep) -> LabPreviewView:
     """Every preview slot: the change it shows, who used it last, and the state of its three services."""
     return await _call(lab.preview_view)
+
+
+# The two routes of a preview host's gate. They take no lab session: the browser reaches them on the preview
+# host, where the lab's session is not sent. The slot's pass, given only to signed-in lab users, is what admits.
+
+@router.get("/lab/preview/enter", status_code=302, response_class=RedirectResponse,
+            responses={403: {"description": "The pass is not this slot's, or the slot shows no change."}})
+async def lab_enter_preview(
+    settings: SettingsDep,
+    lab: OptionalLabServiceDep,
+    slot: Annotated[int, Query(ge=0, le=63)],
+    token: Annotated[str, Query(max_length=200)] = "",
+) -> RedirectResponse:
+    """Entering a preview with its pass (the ``entryUrl`` of a slot): stores the pass as a cookie of the preview
+    host and goes on to the preview. The preview host's reverse proxy sends ``/.besser-lab/enter`` here."""
+    if not settings.lab_enabled:
+        raise HTTPException(status_code=404, detail="Not Found")
+    if lab is None or not lab.preview_pass_admits(slot, token):
+        raise HTTPException(status_code=403, detail="Open this preview from its change's Try it tab.")
+    response = RedirectResponse("/", status_code=302)
+    response.set_cookie(PREVIEW_PASS_COOKIE, token, path="/", secure=True, httponly=True, samesite="lax")
+    return response
+
+
+@router.get("/lab/preview/gate", status_code=204,
+            responses={401: {"description": "No pass, or not this slot's."}})
+async def lab_preview_gate(
+    settings: SettingsDep,
+    lab: OptionalLabServiceDep,
+    slot: Annotated[int, Query(ge=0, le=63)],
+    besser_lab_preview: Annotated[str, Cookie(max_length=200)] = "",
+) -> None:
+    """Whether a request to a preview host may pass: asked by the host's reverse proxy for every request
+    (nginx ``auth_request``), with the request's cookies. 204 lets it through to the change's services."""
+    if not settings.lab_enabled:
+        raise HTTPException(status_code=404, detail="Not Found")
+    if lab is None or not lab.preview_pass_admits(slot, besser_lab_preview):
+        raise HTTPException(status_code=401, detail="Open this preview from its change's Try it tab.")
 
 
 @router.post("/lab/preview/slot", response_model=LabPreviewSlot,

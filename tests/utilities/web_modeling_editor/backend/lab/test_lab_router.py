@@ -44,6 +44,7 @@ from tests.spec_driven_agent.lab.conftest import (  # noqa: F401
     lab_layout_template,
 )
 from tests.spec_driven_agent.lab.test_session import FakeReader, issue_data
+from tests.utilities.web_modeling_editor.backend.lab.test_lab_contract import GATE_ROUTES
 from tests.utilities.web_modeling_editor.backend.lab.test_lab_contract import ROUTES as CONTRACT_ROUTES
 from tests.utilities.web_modeling_editor.backend.lab.test_lab_lifecycle import quiet_lifespan  # noqa: F401
 from tests.utilities.web_modeling_editor.backend.lab.test_lab_runner import (  # noqa: F401
@@ -118,7 +119,7 @@ def test_the_openapi_schema_is_the_same_with_the_lab_on_or_off():
 
     assert json.dumps(off["openapi"], indent=2) == json.dumps(on["openapi"], indent=2)
     assert {path for path in off["openapi"]["paths"] if path.startswith("/besser_api/lab/")} == {
-        path for _, path, *_ in CONTRACT_ROUTES}
+        path for _, path, *_ in CONTRACT_ROUTES} | {path for _, path in GATE_ROUTES}
     # A body that is not JSON at all fails before the lab gate runs: 422 rather than 404, accepted.
     assert off["broken_json"] == on["broken_json"] == 422
 
@@ -515,6 +516,47 @@ def test_restart_is_gated_and_refused_with_the_preview_off(client, lab, route_se
 
     route_settings.lab_enabled = False
     assert client.post("/besser_api/lab/preview/restart", json=body, headers=session("ana")).status_code == 404
+
+
+# -- The preview host's gate -------------------------------------------------------------------------------
+
+def test_entering_a_preview_with_its_pass_stores_it_and_the_gate_then_admits(client, pool):
+    pool.pass_admits = lambda slot, token: (slot, token) == (0, "the-pass")
+
+    entered = client.get("/besser_api/lab/preview/enter", params={"slot": 0, "token": "the-pass"},
+                         follow_redirects=False)
+    assert entered.status_code == 302 and entered.headers["location"] == "/"
+    cookie = entered.headers["set-cookie"]
+    assert cookie.startswith("besser_lab_preview=the-pass;")
+    assert {"HttpOnly", "Secure", "SameSite=lax", "Path=/"} <= {part.strip() for part in cookie.split(";")}
+
+    def gate(slot, value=None):
+        headers = {"Cookie": f"besser_lab_preview={value}"} if value is not None else {}
+        return client.get("/besser_api/lab/preview/gate", params={"slot": slot}, headers=headers).status_code
+
+    assert gate(0, "the-pass") == 204
+    assert gate(0) == gate(0, "another") == gate(1, "the-pass") == 401
+
+
+def test_a_wrong_pass_does_not_enter_and_a_lab_session_is_not_a_pass(client, pool):
+    pool.pass_admits = lambda slot, token: (slot, token) == (0, "the-pass")
+
+    wrong = client.get("/besser_api/lab/preview/enter", params={"slot": 0, "token": "guess"},
+                       headers=session("ana"), follow_redirects=False)
+    assert wrong.status_code == 403 and "set-cookie" not in wrong.headers
+    assert client.get("/besser_api/lab/preview/gate", params={"slot": 0}, headers=session("ana")).status_code == 401
+
+
+def test_the_gate_admits_nobody_with_the_preview_off_and_is_absent_with_the_lab_off(client, lab, route_settings):
+    cookie = {"Cookie": "besser_lab_preview=the-pass"}
+    assert client.get("/besser_api/lab/preview/gate", params={"slot": 0}, headers=cookie).status_code == 401
+    assert client.get("/besser_api/lab/preview/enter", params={"slot": 0, "token": "the-pass"},
+                      follow_redirects=False).status_code == 403
+
+    route_settings.lab_enabled = False
+    assert client.get("/besser_api/lab/preview/gate", params={"slot": 0}, headers=cookie).status_code == 404
+    assert client.get("/besser_api/lab/preview/enter", params={"slot": 0, "token": "the-pass"},
+                      follow_redirects=False).status_code == 404
 
 
 def test_logs_are_redacted_bounded_and_of_known_services(client, pool):

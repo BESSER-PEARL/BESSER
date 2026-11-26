@@ -762,6 +762,9 @@ class LabPreviewSlot(LabPreview):
     #: seconds since the epoch
     startedAt: Optional[float]
     lastUsedAt: Optional[float]
+    #: Where a signed-in lab user enters the preview: ``url`` with the slot's pass, which the preview host's
+    #: gate turns into a cookie. None when the slot is off or has no host of its own (local mode: use ``url``).
+    entryUrl: Optional[str] = None
 
 
 class LabPreviewView(ResponseModel):

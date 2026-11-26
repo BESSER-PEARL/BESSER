@@ -208,9 +208,19 @@ def test_preview_blocks_use_the_slot_ports_and_never_reach_the_lab_backend(rende
     assert len(previews) == 2
     for index, block in enumerate(previews):
         offset = index * SLOT_PORT_STEP
-        assert _upstream_ports(block) == {PREVIEW_BACKEND_PORT + offset, PREVIEW_FRONTEND_PORT + offset,
-                                          PREVIEW_AGENT_PORT + offset}
-        assert LAB_BACKEND_PORT not in _upstream_ports(block)
+        gate = re.search(r"location = /\.besser-lab/gate \{([^}]*)\}", block).group(1)
+        enter = re.search(r"location = /\.besser-lab/enter \{([^}]*)\}", block).group(1)
+        services = block.replace(gate, "").replace(enter, "")
+        assert _upstream_ports(services) == {PREVIEW_BACKEND_PORT + offset, PREVIEW_FRONTEND_PORT + offset,
+                                             PREVIEW_AGENT_PORT + offset}
+        # Only the gate reaches the lab backend, and only its two routes, for this slot.
+        assert "internal;" in gate
+        assert f"127.0.0.1:{LAB_BACKEND_PORT}/besser_api/lab/preview/gate?slot={index};" in gate
+        assert f"127.0.0.1:{LAB_BACKEND_PORT}/besser_api/lab/preview/enter?slot={index}&token=$arg_token;" in enter
+        assert "auth_request off;" in enter
+        assert re.search(r"^\s*auth_request /\.besser-lab/gate;", block, re.M)
+        # The pass never reaches the change's services.
+        assert services.count("proxy_pass ") == services.count('proxy_set_header Cookie            "";') == 4
         assert 'Content-Security-Policy "frame-ancestors https://lab.test"' in block
         assert "X-Frame-Options" not in block
 

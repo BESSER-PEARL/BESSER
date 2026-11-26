@@ -235,7 +235,9 @@ Fixes
   ``if __name__ == "__main__":`` block, a validation check that prints, or a
   generator run imports instead of failing with "Top-level statement not
   allowed". The model-building code runs as before. The script code around it
-  is skipped and listed in the import's warnings. An error now names its line
+  is skipped and listed in the import's warnings. An error now names its line,
+  and no file may bind a name starting with an underscore, even inside a
+  ``try`` block, so it cannot replace the import's own guards
   (`#836 <https://github.com/BESSER-PEARL/BESSER/issues/836>`_, see
   :ref:`what a B-UML Python import runs <web-editor-buml-import>`).
 * **Removing OCL constraints with the assistant.** "Remove the

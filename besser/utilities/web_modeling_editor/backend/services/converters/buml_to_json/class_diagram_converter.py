@@ -159,6 +159,14 @@ def parse_buml_content(content: str, warnings: list[str] | None = None) -> Domai
         domain_name = "Imported_Domain_Model"
         domain_timestamp = None
         built_models = [v for v in local_vars.values() if isinstance(v, DomainModel)]
+        if len(built_models) > 1:
+            # Building it twice (``m = build()`` and again under the main block)
+            # makes a second copy of every class.
+            warnings.append(
+                f"The file builds {len(built_models)} DomainModels; the last one, "
+                f"{built_models[-1].name!r}, was imported"
+            )
+            built_models = built_models[-1:]
         for built in built_models:
             domain_name = built.name
             if built.has_explicit_timestamp:

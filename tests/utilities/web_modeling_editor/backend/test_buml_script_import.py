@@ -184,3 +184,76 @@ def test_functions_load_only_from_a_hand_written_script():
     """BESSER's own exports (BPMN, component, trace, ...) never contain one."""
     with pytest.raises(loader.SafeBumlLoaderError, match="a function definition"):
         loader.safe_load_buml("def f():\n    return 1\n", allowed_names={})
+
+
+# --------------------------------------------------------------------------- #
+# Security review of PR #847
+# --------------------------------------------------------------------------- #
+def _fan_out(prefix):
+    src = prefix + "def f0():\n    return 1\n"
+    for level in range(1, 41):
+        src += f"def f{level}():\n    return [f{level - 1}(), f{level - 1}()]\n"
+    return src + "x = f40()\n"
+
+
+@pytest.mark.parametrize("prefix", [
+    # Rebinding the counter in a try body, the one place assignments were not checked.
+    "try:\n    _besser_count_call = Class\nexcept NameError:\n    pass\n",
+    # Binding NameError so that try block counts as B-UML.
+    "def unused(NameError):\n    return 1\n\ntry:\n    _besser_count_call = Class\nexcept NameError:\n    pass\n",
+])
+def test_the_call_budget_cannot_be_rebound(prefix):
+    with pytest.raises(loader.SafeBumlLoaderError):
+        _load(_fan_out(prefix))
+
+
+@pytest.mark.parametrize("src", [
+    "try:\n    _besser_guarded_setattr = Class\nexcept NameError:\n    pass\n",
+    "try:\n    NameError = Class\nexcept NameError:\n    pass\n",
+])
+def test_a_try_body_cannot_bind_a_guard_name(src):
+    """Also without warnings: this was open in the strict loader too."""
+    with pytest.raises(loader.SafeBumlLoaderError):
+        loader.safe_load_buml(src, allowed_names={"Class": object})
+
+
+def test_function_type_parameters_are_refused():
+    with pytest.raises(loader.SafeBumlLoaderError, match="type parameters"):
+        _load("def f[T: Class]():\n    return 1\n")
+
+
+def test_skipping_is_linear_in_the_file_size():
+    import time
+    src = "x0 = print\n" + "".join(f"x{i} = x{i - 1}\n" for i in range(1, 3000))
+    warnings = []
+    start = time.monotonic()
+    loader.safe_load_buml(src, allowed_names={}, warnings=warnings)
+    assert time.monotonic() - start < 5
+    assert len(warnings) == 21 and "2980 more" in warnings[-1]
+
+
+def test_the_builders_name_error_guard_is_not_skipped():
+    """``domain_model_to_code`` writes it around a method's state machine."""
+    model, warnings = _import(IMPORTS + """
+book = Class(name="Book")
+try:
+    book.state_machine = sm
+except NameError:
+    pass
+""")
+    assert _names(model) == ["Book"]
+    assert warnings == []
+
+
+def test_a_model_built_twice_imports_once():
+    model, warnings = _import(IMPORTS + """
+def build():
+    return DomainModel(name="Shop", types={Class(name="Order")})
+
+
+first = build()
+if __name__ == "__main__":
+    model = build()
+""")
+    assert _names(model) == ["Order"]
+    assert any("2 DomainModels" in w for w in warnings)

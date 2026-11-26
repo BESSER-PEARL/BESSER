@@ -144,6 +144,9 @@ _STATEMENT_NAMES = {
 _MAX_FUNCTION_CALLS = 10_000
 _CALL_COUNTER_NAME = "_besser_count_call"
 
+# Skipped script lines listed one by one; the rest are counted in one message.
+_MAX_SKIP_WARNINGS = 20
+
 # Inside ``UnaryOp`` we only allow the operators needed for signed numeric
 # literals (``-1``, ``+1``) and the occasional boolean negation flag.
 _ALLOWED_UNARY_OPS: Set[type] = {ast.USub, ast.UAdd, ast.Not}
@@ -322,8 +325,13 @@ def _validate_node(
         _validate_write_target(node, allowed_names, declared_vars)
 
     if isinstance(node, ast.Name):
-        # Store-context names are fine (we collect them separately); only
-        # Load-context references need to resolve to something we allow.
+        # A bound name, wherever it is bound (a ``try`` body is not in
+        # _collect_assigned_names): an underscore name would rebind the run-time
+        # guards (_besser_guarded_setattr, _besser_count_call), and binding
+        # ``NameError`` would change what the guard's handler catches.
+        if not isinstance(node.ctx, ast.Load):
+            if _is_dunder(node.id) or node.id in _EXCEPTION_NAMES:
+                raise SafeBumlLoaderError(f"Assignment to {node.id!r} is forbidden in BUML")
         if isinstance(node.ctx, ast.Load):
             # Inside `try: ... except NameError: pass` an unresolved name is the
             # POINT. Safe: it resolves at runtime against the same controlled
@@ -553,12 +561,16 @@ def _validate_function(
         raise SafeBumlLoaderError("a decorated function is not allowed in BUML")
     if func.args.vararg or func.args.kwarg:
         raise SafeBumlLoaderError("*args / **kwargs are not allowed in BUML")
+    # ``def f[T: <expr>]()`` (3.12+): the bound is compiled and evaluated lazily,
+    # outside this validation.
+    if getattr(func, "type_params", None):
+        raise SafeBumlLoaderError("type parameters are not allowed in BUML")
     if _is_dunder(func.name):
         raise SafeBumlLoaderError(f"Function name may not start with an underscore: {func.name!r}")
     local_vars = declared_vars | _local_names(func)
     for name in local_vars - declared_vars:
-        if _is_dunder(name):
-            raise SafeBumlLoaderError(f"Underscore/dunder name is forbidden: {name!r}")
+        if _is_dunder(name) or name in _EXCEPTION_NAMES:
+            raise SafeBumlLoaderError(f"Name {name!r} is forbidden in BUML")
     args = func.args
     for expr in [*args.defaults, *(d for d in args.kw_defaults if d is not None),
                  *(a.annotation for a in args.posonlyargs + args.args + args.kwonlyargs if a.annotation),
@@ -602,58 +614,63 @@ def _value_root(stmt: ast.stmt) -> Optional[str]:
 
 
 def _skip_runner_statements(
-    body: list, known: Set[str], source: str, warnings: Optional[list],
+    body: list, known: Set[str], source_lines: list, warnings: Optional[list],
 ) -> list:
     """Drop the statements of ``body`` that run the script instead of building the model.
 
     A statement is skipped when it uses a name that is neither B-UML nor bound by
-    the file (``print``, a generator class, ``os``), or a variable only skipped
-    statements set, unless it builds a model element: an assignment or call that
-    starts from a B-UML name or a kept variable is kept, so a typo such as
-    ``Proprety(...)`` is an error that names the variable, not a missing class.
-    Skipped statements never run. Returns the kept statements.
+    the file (``print``, a generator class, ``os``), or a variable whose last
+    assignment was skipped, unless it builds a model element: an assignment or
+    call that starts from a B-UML name or a kept variable is kept, so a typo such
+    as ``Proprety(...)`` is an error that names the variable, not a missing class.
+    Skipped statements never run. One pass in file order. Returns the kept statements.
     """
-    skipped: Dict[int, str] = {}  # statement index -> why it runs the script
-    runner_vars: Set[str] = set()
-    while True:
-        changed = False
-        for index, stmt in enumerate(body):
-            if index in skipped or isinstance(stmt, ast.FunctionDef):
-                continue
-            bad = sorted(n for n in _loaded_names(stmt) if n not in known or n in runner_vars)
-            if not bad:
-                continue
-            root = _value_root(stmt)
-            builds_model = (isinstance(stmt, (ast.Assign, ast.AnnAssign, ast.Expr, ast.Return))
-                            and (root is None or (root in known and root not in runner_vars)))
-            if builds_model:
-                continue
+    kept: list = []
+    skipped: list = []                      # (statement, why)
+    runner_vars: Dict[str, int] = {}        # variable -> line of the skipped statement that set it
+    for stmt in body:
+        if isinstance(stmt, ast.FunctionDef):
+            kept.append(stmt)
+            runner_vars.pop(stmt.name, None)
+            continue
+        if isinstance(stmt, ast.Try):
+            # The builders' ``except NameError: pass`` guard: an unknown name in
+            # it is the point (validated by _validate_try_shape, never skipped).
+            kept.append(stmt)
+            continue
+        loaded = _loaded_names(stmt)
+        bad = sorted(n for n in loaded if n not in known or n in runner_vars)
+        root = _value_root(stmt)
+        builds_model = (isinstance(stmt, (ast.Assign, ast.AnnAssign, ast.Expr, ast.Return))
+                        and (root is None or (root in known and root not in runner_vars)))
+        if bad and not builds_model:
             name = root if root in bad else bad[0]
-            skipped[index] = (f"it uses {name!r}, which is set by a skipped line" if name in runner_vars
-                              else f"it uses {name!r}, which is not part of B-UML")
-            changed = True
-        kept_stores = set().union(*(_stored_names(s) for i, s in enumerate(body) if i not in skipped))
-        runner_vars = set().union(*(_stored_names(body[i]) for i in skipped)) - kept_stores
-        if not changed:
-            break
+            why = (f"it uses {name!r}, which is set by a skipped line" if name in runner_vars
+                   else f"it uses {name!r}, which is not part of B-UML")
+            skipped.append((stmt, why))
+            for stored in _stored_names(stmt):
+                runner_vars[stored] = stmt.lineno
+            continue
+        for name in sorted(loaded & runner_vars.keys()):
+            raise SafeBumlLoaderError(
+                f"line {stmt.lineno}: {name!r} is set on line {runner_vars[name]}, which was skipped "
+                "because it uses a name that is not part of B-UML"
+            )
+        kept.append(stmt)
+        for stored in _stored_names(stmt):
+            runner_vars.pop(stored, None)
 
-    for index in sorted(skipped):
-        stmt = body[index]
-        snippet = (ast.get_source_segment(source, stmt) or "").splitlines()[0][:80]
-        message = (f"Skipped line {stmt.lineno} ({snippet}): {skipped[index]}, "
-                   "so it runs the script rather than building the model")
+    for stmt, why in skipped[:_MAX_SKIP_WARNINGS]:
+        snippet = source_lines[stmt.lineno - 1].strip()[:80] if stmt.lineno <= len(source_lines) else ""
+        message = f"Skipped line {stmt.lineno} ({snippet}): {why}, so it runs the script rather than building the model"
         logger.warning("BUML import: %s", message)
         if warnings is not None:
             warnings.append(message)
-
-    kept = [s for i, s in enumerate(body) if i not in skipped]
-    for stmt in kept:
-        for name in sorted(_loaded_names(stmt) & runner_vars):
-            line = next(body[i].lineno for i in sorted(skipped) if name in _stored_names(body[i]))
-            raise SafeBumlLoaderError(
-                f"line {stmt.lineno}: {name!r} is set on line {line}, which was skipped because it "
-                f"uses a name that is not part of B-UML"
-            )
+    if len(skipped) > _MAX_SKIP_WARNINGS:
+        message = f"Skipped {len(skipped) - _MAX_SKIP_WARNINGS} more lines that run the script"
+        logger.warning("BUML import: %s", message)
+        if warnings is not None:
+            warnings.append(message)
     return kept
 
 
@@ -777,12 +794,14 @@ def safe_load_buml(
             aliases.update(_import_aliases(stmt, allowed_names))
         else:
             body.append(stmt)
-    known = set(allowed_names) | set(aliases) | set(shadowable_names or {}) | _bound_names(tree)
+    known = (set(allowed_names) | set(aliases) | set(shadowable_names or {}) | _EXCEPTION_NAMES
+             | _bound_names(tree))
+    source_lines = source.splitlines()
     if script:
-        body = _skip_runner_statements(body, known, source, warnings)
+        body = _skip_runner_statements(body, known, source_lines, warnings)
     for stmt in body:
         if isinstance(stmt, ast.FunctionDef) and script:
-            stmt.body = _skip_runner_statements(stmt.body, known, source, warnings) or [ast.Pass()]
+            stmt.body = _skip_runner_statements(stmt.body, known, source_lines, warnings) or [ast.Pass()]
         elif not isinstance(stmt, _TOP_LEVEL_STATEMENTS) or isinstance(stmt, ast.FunctionDef):
             kind = type(stmt).__name__
             raise SafeBumlLoaderError(

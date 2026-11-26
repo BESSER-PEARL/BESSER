@@ -935,24 +935,28 @@ of B-UML constructors and of the file's own variables. Imports are dropped.
 Loops, ``if`` statements, function and class definitions are refused, with the
 line.
 
-A class diagram is often a script written by hand or by an LLM, so its import
-also accepts what such a script adds around the model:
+A class diagram is often a script written by hand or by an LLM, so the class
+diagram reader (``parse_buml_content``: a class-diagram file, a project's class
+sections, ``/get-svg``) also accepts what such a script adds around the model:
 
 - plain top-level helper functions (``def build_model(): ... return model``),
-  their bodies checked the same way, with a cap on how many calls they make
-  (no decorators, ``*args`` or nested functions);
+  their bodies checked the same way, with at most 10,000 calls per file (no
+  decorators, type parameters, ``*args`` or nested functions);
 - the body of ``if __name__ == "__main__":`` is loaded like top-level code;
 - a statement that runs the script rather than building the model, because it
-  uses a name that is not B-UML (``print``, a generator, ``os``), is skipped,
-  never run, and listed in the import's ``warnings``;
+  uses a name that is not B-UML (``print``, a generator, ``os``) or a variable
+  only such a statement set, is skipped, never run, and listed in the import's
+  ``warnings`` (the first 20, then a count);
 - the diagram is read from the ``DomainModel`` the file builds as well as from
-  its top-level variables, so a model built inside a function imports too.
+  its top-level variables, so a model built inside a function imports too. A
+  file that builds several reads the last one, with a warning.
 
 A model statement that uses an unknown name (a typo such as
-``Proprety(...)``) is still an error that names its line. The other B-UML
-imports (BPMN, quantum, component, knowledge graph, a project's trace) read
-files BESSER writes: there such a statement is refused and the main block is
-ignored.
+``Proprety(...)``) is still an error that names its line. No name starting with
+an underscore, and not ``NameError``, may be bound anywhere in the file. The
+other B-UML readers (BPMN, quantum, component, deployment, knowledge graph, a
+project's trace) read files BESSER writes: there helper functions and script
+statements are refused, and the main block is ignored.
 
 
 .. _web-editor-backend-env:

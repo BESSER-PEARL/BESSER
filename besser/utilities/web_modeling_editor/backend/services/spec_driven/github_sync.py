@@ -243,10 +243,14 @@ async def push_run_to_github(
         # That new README says what the project is and when it was generated (#750).
         model_source = f"{repo_model.MODEL_DIR}/{repo_model.DOMAIN_SOURCE}"
         project = repo_model.project_of(effective_export) if isinstance(effective_export, dict) else {}
+        # The editor's ?buml= link reads the file without a token, so it fails for a private repo. Only a
+        # new repo's visibility is known here; an existing repo keeps the link.
         add_readme_block(workdir, readme_besser_block(
             owner, repo_name, target_branch,
             model_source=model_source if os.path.isfile(os.path.join(workdir, *model_source.split("/"))) else None,
             has_provenance=os.path.isfile(os.path.join(workdir, PROVENANCE_FILENAME)),
+            is_private=is_first_push and bool(deploy_config.is_private),
+            has_trace=bool(project.get("trace")),
         ), title=repo_name if is_first_push else None,
             about=readme_about(project.get("description"), "Generated"))
 

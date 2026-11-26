@@ -503,7 +503,15 @@ Backend-side notes that do not belong in the contract:
 - The pushed ``README.md`` keeps the agent's text and ends with a block between
   ``<!-- besser:begin -->`` and ``<!-- besser:end -->``: a "Built with BESSER"
   badge, a link that opens ``buml/domain_model.py`` in the editor (``?buml=``),
-  the Built with BESSER catalog and ``BESSER_GENERATION.md``. A new repo whose
+  ``BESSER_GENERATION.md``, a "Continue from GitHub" line and a list that says
+  what ``.besser_recipe.json``, ``.besser_attribution.json``,
+  ``.agent-trace/<run id>.json``, the AI commit headers (``AI-Tool``,
+  ``AI-Model``, ``AI-Role``, ``AI-Tokens``, ``BESSER-Origin``) and
+  ``buml/diagrams.json`` are; when the project has a trace, it says the trace is
+  in ``buml/diagrams.json`` under ``trace``. The editor reads the ``?buml=`` file
+  without a token, so a new private repo gets no such link, and its block says
+  to use "Continue from GitHub". The backend does not look up the visibility
+  of an existing repo, so that block keeps the link. A new repo whose
   run has no README gets one titled with the repo name, followed by the
   project's description (left out when blank) and the date it was generated.
   Each push renders the block again in

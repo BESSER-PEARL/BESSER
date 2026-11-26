@@ -12,6 +12,7 @@ import pytest
 
 from besser.spec_driven_agent.execution import sandbox as sandbox_mod
 from besser.spec_driven_agent.execution import shell_session
+from besser.spec_driven_agent.execution import sandbox as sandbox_module
 from besser.spec_driven_agent.execution.sandbox import (
     SandboxUnavailable,
     pasta_argv,
@@ -26,6 +27,27 @@ _GOLDEN_DNS = [*_GOLDEN[:-1], "--dns-forward", "169.254.1.53", "--dns-host", "12
 
 def _values(argv, flag):
     return [argv[i + 1] for i, a in enumerate(argv) if a == flag]
+
+
+@pytest.fixture(autouse=True)
+def as_root(monkeypatch):
+    """The worker of the public editor runs as root in its container: the argv these tests pin."""
+    monkeypatch.setattr(sandbox_module, "_runs_as_root", lambda: True)
+
+
+def test_an_unprivileged_caller_attaches_pasta_as_itself_and_is_root_only_inside_the_sandbox(monkeypatch):
+    """bootstrapped.besser-pearl.org, 2026-11-26: the lab image runs as uid 1000 and every install failed with
+    "a private network cannot be set up here (Can't set GID to 0: Operation not permitted)"."""
+    monkeypatch.setattr(sandbox_module, "_runs_as_root", lambda: False)
+    argv = pasta_argv("/usr/bin/pasta", 4242)
+    assert "--runas" not in argv
+    assert argv == [arg for i, arg in enumerate(_GOLDEN) if i not in (4, 5)]
+    # One user namespace, owned by the caller, so that pasta can enter its network namespace.
+    assert sandbox_module._isolation_args(network=False, private=True)[-4:] == ["--uid", "0", "--gid", "0"]
+    # Only where pasta attaches: a check without network stays the caller's own uid inside.
+    assert "--uid" not in sandbox_module._isolation_args(network=False)
+    monkeypatch.setattr(sandbox_module, "_runs_as_root", lambda: True)
+    assert "--uid" not in sandbox_module._isolation_args(network=False, private=True)
 
 
 def test_default_arguments_give_the_pre_change_argv():

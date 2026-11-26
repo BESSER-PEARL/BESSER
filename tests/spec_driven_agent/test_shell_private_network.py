@@ -37,7 +37,9 @@ def _option_values(argv: list[str]) -> dict[str, list[str]]:
     return values
 
 
-def test_pasta_forwards_nothing_and_maps_no_gateway():
+def test_pasta_forwards_nothing_and_maps_no_gateway(monkeypatch):
+    # As the public editor's worker runs: root in its container.
+    monkeypatch.setattr("besser.spec_driven_agent.execution.sandbox._runs_as_root", lambda: True)
     argv = pasta_argv("/usr/bin/pasta", 4242)
     values = _option_values(argv)
 

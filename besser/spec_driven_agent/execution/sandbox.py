@@ -317,7 +317,13 @@ def _mount_args(workspace: str, writable: "Sequence[str] | None" = None,
     return args
 
 
-def _isolation_args(network: bool = True) -> list[str]:
+def _runs_as_root() -> bool:
+    """Whether this process is root (always true where there are no user ids, which has no sandbox anyway)."""
+    return not hasattr(os, "geteuid") or os.geteuid() == 0
+
+
+def _isolation_args(network: bool = True, *, private: bool = False) -> list[str]:
+    """``private``: pasta will attach a private network to this sandbox."""
     return [
         # Validators get no network: generated code must not reach the
         # worker's neighbours or the internet while it is being checked.
@@ -335,6 +341,11 @@ def _isolation_args(network: bool = True) -> list[str]:
         # with it instead of orphaning the command's children.
         "--die-with-parent",
         "--new-session",
+        # An unprivileged caller's bwrap makes two nested user namespaces (root in the first to mount
+        # /dev, back to the caller's uid in the second) and leaves the network namespace owned by the
+        # first, which pasta, joining the second, cannot enter. Mapping the caller to root inside keeps
+        # it to one. It is root only inside the sandbox: outside it is still the unprivileged caller.
+        *(["--uid", "0", "--gid", "0"] if private and not _runs_as_root() else []),
     ]
 
 
@@ -448,8 +459,9 @@ def pasta_argv(pasta: str, pid: int, dns_host: str | None = None, *,
     outbound = [_forward_port(port) for port in tcp_out]
     argv = [
         pasta, "-f", "-q", "--config-net",
-        # As root, pasta would drop to nobody, which cannot join the userns.
-        "--runas", "0:0",
+        # As root, pasta would drop to nobody, which cannot join the userns. An unprivileged caller
+        # owns the sandbox's user namespace and joins it as itself (it could not become root first).
+        *(["--runas", "0:0"] if _runs_as_root() else []),
         *[arg for spec in inbound or ["none"] for arg in ("-t", spec)],
         "-u", "none",
         *[arg for spec in outbound or ["none"] for arg in ("-T", spec)],
@@ -587,7 +599,7 @@ def _network_selftest(bwrap: str) -> tuple[bool, str]:
         with tempfile.TemporaryFile() as err:
             try:
                 proc = subprocess.Popen(
-                    [bwrap, "--info-fd", str(info_w), *_isolation_args(network=False),
+                    [bwrap, "--info-fd", str(info_w), *_isolation_args(network=False, private=True),
                      "--ro-bind", "/", "/", "--proc", "/proc", "--dev", "/dev",
                      "--", sys.executable, "-I", "-S", "-c", probe],
                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=err,
@@ -718,7 +730,7 @@ def sandboxed_command(
     os.makedirs(sandbox_home(workspace), exist_ok=True)
     argv = [
         bwrap,
-        *_isolation_args(network and not private),
+        *_isolation_args(network and not private, private=private),
         *mounts,
         *dns,
         "--chdir", cwd,

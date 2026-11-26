@@ -11,6 +11,8 @@ The loader stays an allowlist: the model-building code is validated and run,
 script-runner statements (they use names that are not B-UML, such as ``print``
 or a generator) are skipped with a warning and never run.
 """
+import sys
+
 import pytest
 
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json import (
@@ -218,6 +220,7 @@ def test_a_try_body_cannot_bind_a_guard_name(src):
         loader.safe_load_buml(src, allowed_names={"Class": object})
 
 
+@pytest.mark.skipif(sys.version_info < (3, 12), reason="type parameters do not parse before Python 3.12")
 def test_function_type_parameters_are_refused():
     with pytest.raises(loader.SafeBumlLoaderError, match="type parameters"):
         _load("def f[T: Class]():\n    return 1\n")

@@ -924,6 +924,36 @@ let through. The check reads the prolog with the same XML parser rdflib uses, so
 mistaken for a declaration. Turtle, N-Triples and N3 have no DTD and are not
 scanned.
 
+.. _web-editor-buml-import:
+
+What a B-UML Python import runs
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+An uploaded ``.py`` model is never run as Python. ``safe_load_buml`` checks it
+against an allowlist and runs only what builds the model: assignments and calls
+of B-UML constructors and of the file's own variables. Imports are dropped.
+Loops, ``if`` statements, function and class definitions are refused, with the
+line.
+
+A class diagram is often a script written by hand or by an LLM, so its import
+also accepts what such a script adds around the model:
+
+- plain top-level helper functions (``def build_model(): ... return model``),
+  their bodies checked the same way, with a cap on how many calls they make
+  (no decorators, ``*args`` or nested functions);
+- the body of ``if __name__ == "__main__":`` is loaded like top-level code;
+- a statement that runs the script rather than building the model, because it
+  uses a name that is not B-UML (``print``, a generator, ``os``), is skipped,
+  never run, and listed in the import's ``warnings``;
+- the diagram is read from the ``DomainModel`` the file builds as well as from
+  its top-level variables, so a model built inside a function imports too.
+
+A model statement that uses an unknown name (a typo such as
+``Proprety(...)``) is still an error that names its line. The other B-UML
+imports (BPMN, quantum, component, knowledge graph, a project's trace) read
+files BESSER writes: there such a statement is refused and the main block is
+ignored.
+
 
 .. _web-editor-backend-env:
 

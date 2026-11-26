@@ -508,9 +508,9 @@ def _import_aliases(stmt: ast.Import | ast.ImportFrom, allowed_names: Mapping[st
     for alias in stmt.names:
         if alias.asname is None or alias.asname == alias.name:
             continue
-        if _is_dunder(alias.asname):
+        if _is_dunder(alias.asname) or alias.asname in _EXCEPTION_NAMES:
             raise SafeBumlLoaderError(
-                f"Import alias to underscore/dunder name is forbidden: {alias.asname!r}"
+                f"Import alias to an underscore name or NameError is forbidden: {alias.asname!r}"
             )
         if alias.name in allowed_names:
             aliases[alias.asname] = allowed_names[alias.name]
@@ -565,8 +565,8 @@ def _validate_function(
     # outside this validation.
     if getattr(func, "type_params", None):
         raise SafeBumlLoaderError("type parameters are not allowed in BUML")
-    if _is_dunder(func.name):
-        raise SafeBumlLoaderError(f"Function name may not start with an underscore: {func.name!r}")
+    if _is_dunder(func.name) or func.name in _EXCEPTION_NAMES:
+        raise SafeBumlLoaderError(f"Function name {func.name!r} is forbidden in BUML")
     local_vars = declared_vars | _local_names(func)
     for name in local_vars - declared_vars:
         if _is_dunder(name) or name in _EXCEPTION_NAMES:

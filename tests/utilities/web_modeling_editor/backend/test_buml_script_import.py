@@ -210,6 +210,7 @@ def test_the_call_budget_cannot_be_rebound(prefix):
 @pytest.mark.parametrize("src", [
     "try:\n    _besser_guarded_setattr = Class\nexcept NameError:\n    pass\n",
     "try:\n    NameError = Class\nexcept NameError:\n    pass\n",
+    "from besser import Class as NameError\n",
 ])
 def test_a_try_body_cannot_bind_a_guard_name(src):
     """Also without warnings: this was open in the strict loader too."""
@@ -257,3 +258,8 @@ if __name__ == "__main__":
 """)
     assert _names(model) == ["Order"]
     assert any("2 DomainModels" in w for w in warnings)
+
+
+def test_a_function_cannot_be_named_name_error():
+    with pytest.raises(loader.SafeBumlLoaderError, match="forbidden"):
+        _load("def NameError():\n    return 1\n")

@@ -4,6 +4,8 @@ Without it a chart could only read the CRUD list of its class (``/<class>/``),
 so a dashboard over a large table downloaded every row and aggregated in the
 browser. An endpoint is a backend path or an absolute http(s) URL.
 """
+import time
+
 import pytest
 
 from besser.BUML.metamodel.gui.binding import DataBinding, is_valid_endpoint
@@ -51,6 +53,8 @@ def test_a_blank_endpoint_means_none(blank):
     "/stats/\x07sales",
     "/stats/sa\u200bles",        # invisible format characters
     "/stats/sa\u2028les",
+    "https://api\u200b.example.org/sales",  # ... in the host too
+    "https://api\x07.example.org/sales",
 ])
 def test_anything_else_is_refused(endpoint):
     with pytest.raises(ValueError, match="Invalid endpoint"):
@@ -78,6 +82,17 @@ def test_is_valid_endpoint_matches_the_setter():
     assert not is_valid_endpoint("//evil.example.org")
     assert not is_valid_endpoint("")
     assert not is_valid_endpoint(None)
+
+
+@pytest.mark.parametrize("prefix", ["http://", "/"])
+def test_a_long_refused_endpoint_is_refused_in_linear_time(prefix):
+    # CodeQL alert 39 (py/polynomial-redos): the host run and the path run matched the
+    # same characters, so a long host followed by a space took quadratic time to refuse
+    # (100,000 characters took tens of seconds). The value comes from a request body.
+    endpoint = prefix + "!" * 100_000 + " x"
+    started = time.perf_counter()
+    assert not is_valid_endpoint(endpoint)
+    assert time.perf_counter() - started < 1.0
 
 
 def test_str_names_the_endpoint_and_the_aggregation():

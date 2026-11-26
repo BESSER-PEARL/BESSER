@@ -90,8 +90,9 @@ def clean_attribute_name(attr_text: str) -> str:
         Cleaned attribute name
     """
     text = re.sub(r'^[\+\-\#]\s*', '', attr_text)  # remove + - #
-    text = re.sub(r'\s*:\s*.*$', '', text)  # remove type annotation
-    return text.strip()
+    # Cut at the type annotation with str.partition: the regex it replaces was
+    # quadratic on a run of spaces with no ':' after it.
+    return text.partition(':')[0].strip()
 
 def clean_method_name(method_text: str) -> str:
     """
@@ -108,11 +109,11 @@ def clean_method_name(method_text: str) -> str:
 
     # Remove visibility prefix (+ - #)
     text = re.sub(r'^[\+\-\#]\s*', '', method_text)
-    # Remove parameters (everything from opening parenthesis onwards)
-    text = re.sub(r'\s*\(.*$', '', text)
-    # Remove type annotation if present before parameters were removed
-    text = re.sub(r'\s*:\s*.*$', '', text)
-    return text.strip()
+    # Remove parameters (everything from opening parenthesis onwards), then a
+    # type annotation. str.partition, not a regex: ``\s*\(.*$`` was quadratic
+    # on a run of spaces with no '(' after it.
+    text = text.partition('(')[0]
+    return text.partition(':')[0].strip()
 
 def get_element_by_id(class_model, element_id):
     """

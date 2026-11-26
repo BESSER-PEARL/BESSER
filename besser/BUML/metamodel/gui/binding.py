@@ -5,9 +5,11 @@ from besser.BUML.metamodel.structural.structural import Element
 
 # A DataBinding endpoint: a backend path ("/stats/exports?year=2025", not "//host/...")
 # or an absolute http(s) URL with a host. Whitespace, control characters and invisible
-# format characters are refused, so the value goes into a URL as is.
+# format characters are refused, so the value goes into a URL as is. The host is a
+# lookahead, not its own quantifier: two adjacent runs over the same characters made
+# a rejected value cost quadratic time.
 _ENDPOINT_RE = re.compile(
-    r"^(/(?!/)|https?://[^/\s?#]+)"
+    r"^(/(?!/)|https?://(?=[^/?#]))"
     r"[^\s\x00-\x1f\x7f\u200b-\u200f\u2028-\u202e\u2060-\u2064\ufeff]*$",
     re.IGNORECASE,
 )

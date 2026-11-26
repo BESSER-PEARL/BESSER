@@ -435,6 +435,24 @@ class LabHomeResponse(ResponseModel):
     labKey: bool
 
 
+class LabIssueOption(ResponseModel):
+    """An open issue the home offers to start a change from."""
+
+    repo: LabRepoKey
+    number: int
+    title: str
+    author: str
+    #: ISO date of the last update
+    updatedAt: str
+    url: str
+
+
+class LabIssuesResponse(ResponseModel):
+    """Response of ``GET /lab/issues``: open issues of one repository, as GitHub's search orders them."""
+
+    issues: list[LabIssueOption]
+
+
 # -- Changes and their thread --------------------------------------------------------------------------
 
 class LabRunRecord(ResponseModel):

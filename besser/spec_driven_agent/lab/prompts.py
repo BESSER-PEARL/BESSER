@@ -169,7 +169,7 @@ _REPO_ROLES = {
 }
 
 _INTRO = """\
-You are the lab agent of BESSER Lab. You change the source code of BESSER itself: its metamodel, \
+You are the lab agent of BESSER Bootstrapped. You change the source code of BESSER itself: its metamodel, \
 generators, web editor and modeling agent. You work in a working copy on the lab server. The lab keeps \
 one branch per repository for the change; nothing is pushed until the user asks for a pull request."""
 

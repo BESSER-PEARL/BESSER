@@ -15,7 +15,12 @@ import time
 from dataclasses import replace
 
 import httpx
+from types import SimpleNamespace
+
 import pytest
+
+from besser.utilities.web_modeling_editor.backend.routers import lab_router
+from besser.spec_driven_agent.lab.github_tools import GitHubReadError
 from fastapi import FastAPI
 
 import besser
@@ -127,7 +132,7 @@ def test_a_lab_that_could_not_start_answers_503_with_the_reason(client, lab_sett
         del app.state.lab, app.state.lab_unavailable
 
     assert response.status_code == 503
-    assert response.json()["detail"] == ("BESSER Lab cannot start: The base clones are not ready: run "
+    assert response.json()["detail"] == ("BESSER Bootstrapped cannot start: The base clones are not ready: run "
                                          "scripts/lab/setup_workspace.sh.")
 
 
@@ -229,6 +234,46 @@ def test_the_diff_of_a_closed_change_is_refused_and_a_path_needs_its_repository(
 
 
 # -- Pull requests -----------------------------------------------------------------------------------------------
+
+def test_the_issue_picker_lists_open_issues_of_one_repository_with_the_users_token(client, lab, monkeypatch):
+    asked = []
+
+    class FakeReader:
+        def __init__(self, github, repos, loop, *, login):
+            self.token, self.login = github.token, login
+
+        def search(self, query, repo, kind, state, limit):
+            asked.append((self.token, self.login, query, repo, kind, state, limit))
+            if query == "boom":
+                raise GitHubReadError("signed_out")
+            if query == "down":
+                raise GitHubReadError("failed", detail="GitHub answered HTTP 502")
+            return [{"repo": repo, "number": 835, "kind": "issue", "title": "Improve the readme", "state": "open",
+                     "url": "https://github.com/BESSER-PEARL/BESSER/issues/835", "author": "jcabot",
+                     "updated_at": "2026-11-25"}]
+
+    monkeypatch.setattr(lab_router, "LabGitHubReader", FakeReader)
+    monkeypatch.setattr(lab_router, "GitHubService", lambda token: SimpleNamespace(token=token))
+
+    listed = client.get("/besser_api/lab/issues", params={"repo": "besser"}, headers=session("ana"))
+    assert listed.status_code == 200, listed.text
+    assert listed.json() == {"issues": [{"repo": "besser", "number": 835, "title": "Improve the readme",
+                                         "author": "jcabot", "updatedAt": "2026-11-25",
+                                         "url": "https://github.com/BESSER-PEARL/BESSER/issues/835"}]}
+    client.get("/besser_api/lab/issues", params={"repo": "frontend", "q": "  readme link "}, headers=session("ana"))
+    # Open issues only, the most recently updated when nothing is searched for, read as the signed-in user.
+    assert [call[2:] for call in asked] == [("sort:updated-desc", "besser", "issue", "open", 30),
+                                            ("readme link", "frontend", "issue", "open", 30)]
+    assert {call[1] for call in asked} == {"ana"} and all(call[0] for call in asked)
+
+    assert client.get("/besser_api/lab/issues", params={"repo": "besser", "q": "boom"},
+                      headers=session("ana")).status_code == 401
+    assert client.get("/besser_api/lab/issues", params={"repo": "besser", "q": "down"},
+                      headers=session("ana")).status_code == 502
+    assert client.get("/besser_api/lab/issues", params={"repo": "not-a-repo"}, headers=session("ana")).status_code == 422
+    assert client.get("/besser_api/lab/issues", params={"repo": "besser"}).status_code == 401
+    assert client.get("/besser_api/lab/issues", params={"repo": "besser"}, headers=session("mallory")).status_code == 403
+
 
 def test_closing_an_issue_the_change_did_not_start_from_is_400(client, lab, monkeypatch):
     change = lab.workspace.open_change(lab.workspace.create_draft(owner="ana"), title="Note",

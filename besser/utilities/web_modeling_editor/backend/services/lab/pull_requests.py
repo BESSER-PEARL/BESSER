@@ -317,7 +317,7 @@ def compose_lab_block(change: LabChange, plan: Optional[LabPlan], last: Optional
             lines.append(f"{position}. {info.repo}: {info.url}{marker}")
         lines.append("")
     who = ", ".join(f"@{login}" for login in requested_by) or f"@{change.owner}"
-    lines += [f"Requested in BESSER Lab by {who}" + (f", built by {model}." if model else "."), LAB_BLOCK_END]
+    lines += [f"Requested in BESSER Bootstrapped by {who}" + (f", built by {model}." if model else "."), LAB_BLOCK_END]
     return "\n".join(lines)
 
 
@@ -397,7 +397,7 @@ def _closing_issues(change: LabChange, closes_issues: Optional[Sequence[IssueRef
 
 
 def _default_body(change: LabChange) -> str:
-    return f"{change.title}\n\nOpened as a draft from BESSER Lab ({change.kind.value} change)."
+    return f"{change.title}\n\nOpened as a draft from BESSER Bootstrapped ({change.kind.value} change)."
 
 
 def _changes_in_merge_order(workspace: LabWorkspace, change: LabChange) -> list[RepoChange]:
@@ -412,7 +412,7 @@ def _refuse_unpushable(workspace: LabWorkspace, change: LabChange, changes: Sequ
         if not repo_change.branch.startswith(LAB_BRANCH_PREFIX):
             raise PullRequestError(
                 f"The {repo_change.repo} branch {repo_change.branch!r} is not a lab branch "
-                f"({LAB_BRANCH_PREFIX}...); BESSER Lab pushes only its own branches.")
+                f"({LAB_BRANCH_PREFIX}...); BESSER Bootstrapped pushes only its own branches.")
         # Renames split in two: moving a workflow out of the folder deletes it.
         workflows = sorted(path for path in workspace.touched_paths(change, repo_change.repo)
                            if path.startswith(_WORKFLOWS_DIR))

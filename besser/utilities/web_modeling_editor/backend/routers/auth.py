@@ -74,7 +74,7 @@ def require_lab_user(
     session = github_sessions.user_tokens.get(github_session) or {}
     login = session.get("username")
     if not is_session_allowed(settings, session):
-        raise HTTPException(status_code=403, detail="This GitHub account is not allowed to use BESSER Lab.")
+        raise HTTPException(status_code=403, detail="This GitHub account is not allowed to use BESSER Bootstrapped.")
     return LabUser(login=login, session_id=github_session, access_token=session["access_token"])
 
 

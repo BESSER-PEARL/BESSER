@@ -344,7 +344,7 @@ def test_body_has_report_plan_deviations_skipped_checks_and_no_cost(lab):
     for text in ("Added the note element.", "Kept the old icon", "No German translation",
                  "Add a note element to the editor.", "1. Add the element", "2. Register it",
                  "Passed: BESSER tests", "Failed: Ruff", "Skipped: Docs build", "full test suites did not run",
-                 "Requested in BESSER Lab by @jordi, @ana, built by claude-sonnet-5."):
+                 "Requested in BESSER Bootstrapped by @jordi, @ana, built by claude-sonnet-5."):
         assert text in body, text
     assert "$" not in body and "1.25" not in body and "USD" not in body
 

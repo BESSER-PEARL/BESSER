@@ -51,6 +51,7 @@ ROUTES = [
     ("GET", "/besser_api/lab/diff", {"changeId": CHANGE_ID, "repo": "besser", "path": "README.md"}, None, None,
      "LabDiffResponse"),
     ("GET", "/besser_api/lab/review", {"changeId": CHANGE_ID}, None, None, "LabReviewResponse"),
+    ("GET", "/besser_api/lab/issues", {"repo": "besser"}, None, None, "LabIssuesResponse"),
     ("GET", "/besser_api/lab/preview", None, None, None, "LabPreviewView"),
     ("POST", "/besser_api/lab/preview/slot", None, {"changeId": CHANGE_ID}, "LabTakeSlotRequest",
      "LabPreviewSlot"),
@@ -215,7 +216,7 @@ def test_every_route_is_served_by_the_lab_service(client, lab_unavailable, metho
     response = _call(client, method, path, query, body)
 
     assert response.status_code == 503, response.text
-    assert response.json() == {"detail": f"BESSER Lab cannot start: {UNAVAILABLE}"}
+    assert response.json() == {"detail": f"BESSER Bootstrapped cannot start: {UNAVAILABLE}"}
 
 
 def test_no_placeholder_is_left_in_the_router():

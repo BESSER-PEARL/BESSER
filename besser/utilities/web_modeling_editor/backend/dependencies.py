@@ -60,8 +60,8 @@ def get_lab_service(request: Request) -> LabService:
     lab = getattr(request.app.state, "lab", None)
     if lab is None:
         reason = getattr(request.app.state, "lab_unavailable", "")
-        raise HTTPException(status_code=503, detail=f"BESSER Lab cannot start: {reason}" if reason else
-                            "BESSER Lab has no working copy configured (BESSER_LAB_WORKSPACE_ROOT).")
+        raise HTTPException(status_code=503, detail=f"BESSER Bootstrapped cannot start: {reason}" if reason else
+                            "BESSER Bootstrapped has no working copy configured (BESSER_LAB_WORKSPACE_ROOT).")
     return lab
 
 

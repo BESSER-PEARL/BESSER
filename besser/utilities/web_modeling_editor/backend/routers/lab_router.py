@@ -19,6 +19,7 @@ from fastapi import APIRouter, HTTPException, Path, Query
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 
+from besser.spec_driven_agent.lab.github_tools import GitHubReadError
 from besser.spec_driven_agent.lab.memory import LabMemoryError
 from besser.spec_driven_agent.lab.workspace import LabWorkspaceError
 from besser.utilities.web_modeling_editor.backend.dependencies import (
@@ -47,6 +48,8 @@ from besser.utilities.web_modeling_editor.backend.models.lab import (
     LabPullRequestRequest,
     LabPullRequestsResponse,
     LabRefusalResponse,
+    LabIssueOption,
+    LabIssuesResponse,
     LabRepoKey,
     LabReviewResponse,
     LabSettingsResponse,
@@ -56,6 +59,8 @@ from besser.utilities.web_modeling_editor.backend.models.lab import (
     LabUpdateBranchResponse,
 )
 from besser.utilities.web_modeling_editor.backend.routers.auth import LabUserDep
+from besser.utilities.web_modeling_editor.backend.services.deployment.github_service import GitHubService
+from besser.utilities.web_modeling_editor.backend.services.lab.github_reader import LabGitHubReader
 from besser.utilities.web_modeling_editor.backend.services.lab.pull_requests import (
     PullRequestError,
     PullRequestInputError,
@@ -66,6 +71,9 @@ from besser.utilities.web_modeling_editor.backend.services.lab.service import (
     REFUSAL_STATUS,
     LabRefusal,
 )
+
+#: How many issues the home's picker lists at once.
+ISSUE_PICKER_LIMIT = 30
 
 router = APIRouter(prefix="/besser_api", tags=["lab"])
 
@@ -259,6 +267,30 @@ async def lab_diff(
     request).
     """
     return await _call(lab.diff, changeId, repo, path)
+
+
+@router.get("/lab/issues", response_model=LabIssuesResponse)
+async def lab_issues(
+    user: LabUserDep,
+    lab: LabServiceDep,
+    repo: Annotated[LabRepoKey, Query(description="The repository whose issues to list.")],
+    q: Annotated[str, Query(max_length=200, description="Words to search the issues for; empty lists the "
+                                                           "most recently updated.")] = "",
+) -> LabIssuesResponse:
+    """Open issues of one of the lab's repositories on GitHub, for the home's issue picker: those matching ``q``,
+    or the most recently updated ones. Read with the signed-in user's token; 401 when GitHub no longer accepts
+    it, 502 when GitHub cannot be read."""
+    reader = LabGitHubReader(GitHubService(user.access_token), lab.workspace.base_repos,
+                             asyncio.get_running_loop(), login=user.login)
+    query = q.strip() or "sort:updated-desc"
+    try:
+        found = await asyncio.to_thread(reader.search, query, repo, "issue", "open", ISSUE_PICKER_LIMIT)
+    except GitHubReadError as exc:
+        raise HTTPException(status_code=401 if exc.reason == "signed_out" else 502, detail=str(exc)) from None
+    return LabIssuesResponse(issues=[
+        LabIssueOption(repo=item["repo"], number=item["number"], title=item["title"], author=item["author"],
+                       updatedAt=item["updated_at"], url=item["url"])
+        for item in found])
 
 
 @router.get("/lab/review", response_model=LabReviewResponse,
